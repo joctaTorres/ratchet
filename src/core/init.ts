@@ -451,7 +451,7 @@ export class InitCommand {
       // In extend mode, just ensure directories exist without spinner
       const directories = [
         ratchetPath,
-        path.join(ratchetPath, 'specs'),
+        path.join(ratchetPath, 'features'),
         path.join(ratchetPath, 'changes'),
         path.join(ratchetPath, 'changes', 'archive'),
       ];
@@ -466,7 +466,7 @@ export class InitCommand {
 
     const directories = [
       ratchetPath,
-      path.join(ratchetPath, 'specs'),
+      path.join(ratchetPath, 'features'),
       path.join(ratchetPath, 'changes'),
       path.join(ratchetPath, 'changes', 'archive'),
     ];

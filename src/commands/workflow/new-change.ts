@@ -13,17 +13,6 @@ import {
   type PlanningHome,
 } from '../../core/planning-home.js';
 import { validateSchemaExists } from './shared.js';
-import {
-  resolveInitiativeLinkReference,
-  type InitiativeLinkReference,
-} from '../../core/collections/initiatives/index.js';
-import {
-  assertInitiativeSelectorsHaveReference,
-  assertRepoLocalInitiativeLinkPlanningHome,
-  formatInitiativeLink,
-  printJson,
-  statusFromError,
-} from './initiative-link.js';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -31,12 +20,7 @@ import {
 
 export interface NewChangeOptions {
   description?: string;
-  goal?: string;
-  areas?: string;
   schema?: string;
-  initiative?: string;
-  store?: string;
-  storePath?: string;
   json?: boolean;
 }
 
@@ -47,47 +31,27 @@ interface NewChangeOutput {
     metadataPath: string;
     schema: string;
   };
-  initiative?: InitiativeLinkReference;
 }
 
 // -----------------------------------------------------------------------------
-// Command Implementation
+// Helpers
 // -----------------------------------------------------------------------------
 
-function parseAffectedAreas(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(',')
-    .map((area) => area.trim())
-    .filter((area) => area.length > 0);
+function printJson(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
 }
 
-function validateWorkspaceAffectedAreas(planningHome: PlanningHome, affectedAreas: string[]): void {
-  if (affectedAreas.length === 0) {
-    return;
-  }
-
-  if (planningHome.kind !== 'workspace') {
-    throw new Error('--areas can only be used when creating a workspace-scoped change');
-  }
-
-  const validAreas = new Set(planningHome.workspace?.links ?? []);
-  const invalidAreas = affectedAreas.filter((area) => !validAreas.has(area));
-
-  if (invalidAreas.length > 0) {
-    const validList = [...validAreas].sort((a, b) => a.localeCompare(b));
-    const validMessage = validList.length > 0 ? validList.join(', ') : '(no registered links)';
-    throw new Error(
-      `Invalid affected area${invalidAreas.length === 1 ? '' : 's'}: ${invalidAreas.join(', ')}. ` +
-        `Valid workspace link names: ${validMessage}`
-    );
-  }
+function statusFromError(error: unknown): { code: string; message: string } {
+  return {
+    code: 'error',
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 function outputForCreatedChange(
   id: string,
   changeDir: string,
-  schema: string,
-  initiative: InitiativeLinkReference | undefined
+  schema: string
 ): NewChangeOutput {
   return {
     change: {
@@ -96,7 +60,6 @@ function outputForCreatedChange(
       metadataPath: path.join(changeDir, '.openspec.yaml'),
       schema,
     },
-    ...(initiative ? { initiative } : {}),
   };
 }
 
@@ -106,13 +69,13 @@ function printCreatedChangeHuman(payload: NewChangeOutput, planningHome: Plannin
   }
 
   const location = formatChangeLocation(planningHome, payload.change.id);
-  const scope = planningHome.kind === 'workspace' ? 'workspace change' : 'change';
-  console.log(`Created ${scope} '${payload.change.id}' at ${location}/`);
+  console.log(`Created change '${payload.change.id}' at ${location}/`);
   console.log(`Schema: ${payload.change.schema}`);
-  if (payload.initiative) {
-    console.log(`Initiative: ${formatInitiativeLink(payload.initiative)}`);
-  }
 }
+
+// -----------------------------------------------------------------------------
+// Command Implementation
+// -----------------------------------------------------------------------------
 
 export async function newChangeCommand(name: string | undefined, options: NewChangeOptions): Promise<void> {
   const spinner = options.json ? undefined : ora();
@@ -127,22 +90,8 @@ export async function newChangeCommand(name: string | undefined, options: NewCha
       throw new Error(validation.error);
     }
 
-    assertInitiativeSelectorsHaveReference(options);
-
     const planningHome = resolveCurrentPlanningHomeSync();
     const projectRoot = planningHome.root;
-    const affectedAreas = parseAffectedAreas(options.areas);
-    validateWorkspaceAffectedAreas(planningHome, affectedAreas);
-
-    let initiative: InitiativeLinkReference | undefined;
-    if (options.initiative !== undefined) {
-      assertRepoLocalInitiativeLinkPlanningHome(planningHome);
-
-      initiative = await resolveInitiativeLinkReference(options.initiative, {
-        store: options.store,
-        storePath: options.storePath,
-      });
-    }
 
     // Validate schema if provided
     if (options.schema) {
@@ -154,18 +103,10 @@ export async function newChangeCommand(name: string | undefined, options: NewCha
       spinner.start(`Creating change '${name}' with schema '${resolvedSchema}'...`);
     }
 
-    const workspaceGoal = planningHome.kind === 'workspace'
-      ? options.goal ?? options.description
-      : options.goal;
     const result = await createChange(projectRoot, name, {
       schema: options.schema,
       defaultSchema: planningHome.defaultSchema,
       changesDir: planningHome.changesDir,
-      metadata: {
-        ...(workspaceGoal ? { goal: workspaceGoal } : {}),
-        ...(affectedAreas.length > 0 ? { affected_areas: affectedAreas } : {}),
-        ...(initiative ? { initiative } : {}),
-      },
     });
 
     // If description provided, create README.md with description
@@ -175,7 +116,7 @@ export async function newChangeCommand(name: string | undefined, options: NewCha
       await fs.writeFile(readmePath, `# ${name}\n\n${options.description}\n`, 'utf-8');
     }
 
-    const payload = outputForCreatedChange(name, result.changeDir, result.schema, initiative);
+    const payload = outputForCreatedChange(name, result.changeDir, result.schema);
 
     if (options.json) {
       printJson(payload);
@@ -184,15 +125,6 @@ export async function newChangeCommand(name: string | undefined, options: NewCha
 
     spinner?.stop();
     printCreatedChangeHuman(payload, planningHome);
-
-    if (planningHome.kind === 'workspace' && !initiative) {
-      if (affectedAreas.length > 0) {
-        console.log(`Affected areas: ${affectedAreas.join(', ')}`);
-      } else {
-        console.log('Affected areas: unresolved; identify them in change metadata or coordination tasks as planning continues.');
-      }
-      console.log('Next: run openspec status --change "' + name + '" to inspect workspace planning artifacts.');
-    }
   } catch (error) {
     spinner?.stop();
     if (options.json) {

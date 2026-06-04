@@ -16,12 +16,12 @@ describe('ChangeMetadataSchema', () => {
   describe('valid metadata', () => {
     it('should accept valid schema with created date', () => {
       const result = ChangeMetadataSchema.safeParse({
-        schema: 'spec-driven',
+        schema: 'ratchet',
         created: '2025-01-05',
       });
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.schema).toBe('spec-driven');
+        expect(result.data.schema).toBe('ratchet');
         expect(result.data.created).toBe('2025-01-05');
       }
     });
@@ -39,7 +39,7 @@ describe('ChangeMetadataSchema', () => {
 
     it('should accept a portable initiative link', () => {
       const result = ChangeMetadataSchema.safeParse({
-        schema: 'spec-driven',
+        schema: 'ratchet',
         initiative: {
           store: 'platform',
           id: 'billing-launch',
@@ -73,7 +73,7 @@ describe('ChangeMetadataSchema', () => {
 
     it('should reject invalid date format', () => {
       const result = ChangeMetadataSchema.safeParse({
-        schema: 'spec-driven',
+        schema: 'ratchet',
         created: '01/05/2025', // Wrong format
       });
       expect(result.success).toBe(false);
@@ -81,7 +81,7 @@ describe('ChangeMetadataSchema', () => {
 
     it('should reject non-ISO date format', () => {
       const result = ChangeMetadataSchema.safeParse({
-        schema: 'spec-driven',
+        schema: 'ratchet',
         created: '2025-1-5', // Missing leading zeros
       });
       expect(result.success).toBe(false);
@@ -89,7 +89,7 @@ describe('ChangeMetadataSchema', () => {
 
     it('should reject initiative links with local paths or copied content', () => {
       const result = ChangeMetadataSchema.safeParse({
-        schema: 'spec-driven',
+        schema: 'ratchet',
         initiative: {
           store: 'platform',
           id: 'billing-launch',
@@ -109,7 +109,7 @@ describe('ChangeMetadataSchema', () => {
         { store: 'platform', id: 'billing launch' },
       ]) {
         const result = ChangeMetadataSchema.safeParse({
-          schema: 'spec-driven',
+          schema: 'ratchet',
           initiative,
         });
 
@@ -124,8 +124,8 @@ describe('writeChangeMetadata', () => {
   let changeDir: string;
 
   beforeEach(async () => {
-    testDir = path.join(os.tmpdir(), `openspec-test-${randomUUID()}`);
-    changeDir = path.join(testDir, 'openspec', 'changes', 'test-change');
+    testDir = path.join(os.tmpdir(), `ratchet-test-${randomUUID()}`);
+    changeDir = path.join(testDir, '.ratchet', 'changes', 'test-change');
     await fs.mkdir(changeDir, { recursive: true });
   });
 
@@ -135,14 +135,14 @@ describe('writeChangeMetadata', () => {
 
   it('should write valid YAML metadata file', async () => {
     writeChangeMetadata(changeDir, {
-      schema: 'spec-driven',
+      schema: 'ratchet',
       created: '2025-01-05',
     });
 
-    const metaPath = path.join(changeDir, '.openspec.yaml');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
     const content = await fs.readFile(metaPath, 'utf-8');
 
-    expect(content).toContain('schema: spec-driven');
+    expect(content).toContain('schema: ratchet');
     expect(content).toContain('created: 2025-01-05');
   });
 
@@ -161,8 +161,8 @@ describe('readChangeMetadata', () => {
   let changeDir: string;
 
   beforeEach(async () => {
-    testDir = path.join(os.tmpdir(), `openspec-test-${randomUUID()}`);
-    changeDir = path.join(testDir, 'openspec', 'changes', 'test-change');
+    testDir = path.join(os.tmpdir(), `ratchet-test-${randomUUID()}`);
+    changeDir = path.join(testDir, '.ratchet', 'changes', 'test-change');
     await fs.mkdir(changeDir, { recursive: true });
   });
 
@@ -176,26 +176,26 @@ describe('readChangeMetadata', () => {
   });
 
   it('should read valid metadata', async () => {
-    const metaPath = path.join(changeDir, '.openspec.yaml');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
     await fs.writeFile(
       metaPath,
-      'schema: spec-driven\ncreated: "2025-01-05"\n',
+      'schema: ratchet\ncreated: "2025-01-05"\n',
       'utf-8'
     );
 
     const result = readChangeMetadata(changeDir);
     expect(result).toEqual({
-      schema: 'spec-driven',
+      schema: 'ratchet',
       created: '2025-01-05',
     });
   });
 
   it('should read portable initiative metadata', async () => {
-    const metaPath = path.join(changeDir, '.openspec.yaml');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
     await fs.writeFile(
       metaPath,
       [
-        'schema: spec-driven',
+        'schema: ratchet',
         'initiative:',
         '  store: platform',
         '  id: billing-launch',
@@ -212,21 +212,21 @@ describe('readChangeMetadata', () => {
   });
 
   it('should throw ChangeMetadataError for invalid YAML', async () => {
-    const metaPath = path.join(changeDir, '.openspec.yaml');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
     await fs.writeFile(metaPath, '{ invalid yaml', 'utf-8');
 
     expect(() => readChangeMetadata(changeDir)).toThrow(ChangeMetadataError);
   });
 
   it('should throw ChangeMetadataError for missing schema field', async () => {
-    const metaPath = path.join(changeDir, '.openspec.yaml');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
     await fs.writeFile(metaPath, 'created: "2025-01-05"\n', 'utf-8');
 
     expect(() => readChangeMetadata(changeDir)).toThrow(ChangeMetadataError);
   });
 
   it('should throw ChangeMetadataError for unknown schema', async () => {
-    const metaPath = path.join(changeDir, '.openspec.yaml');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
     await fs.writeFile(metaPath, 'schema: unknown-schema\n', 'utf-8');
 
     expect(() => readChangeMetadata(changeDir)).toThrow(/Unknown schema/);
@@ -238,8 +238,8 @@ describe('resolveSchemaForChange', () => {
   let changeDir: string;
 
   beforeEach(async () => {
-    testDir = path.join(os.tmpdir(), `openspec-test-${randomUUID()}`);
-    changeDir = path.join(testDir, 'openspec', 'changes', 'test-change');
+    testDir = path.join(os.tmpdir(), `ratchet-test-${randomUUID()}`);
+    changeDir = path.join(testDir, '.ratchet', 'changes', 'test-change');
     await fs.mkdir(changeDir, { recursive: true });
   });
 
@@ -249,29 +249,29 @@ describe('resolveSchemaForChange', () => {
 
   it('should return explicit schema when provided', async () => {
     // Even with metadata file, explicit schema wins
-    const metaPath = path.join(changeDir, '.openspec.yaml');
-    await fs.writeFile(metaPath, 'schema: spec-driven\n', 'utf-8');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
+    await fs.writeFile(metaPath, 'schema: ratchet\n', 'utf-8');
 
     const result = resolveSchemaForChange(changeDir, 'custom-schema');
     expect(result).toBe('custom-schema');
   });
 
   it('should return schema from metadata when no explicit schema', async () => {
-    const metaPath = path.join(changeDir, '.openspec.yaml');
-    await fs.writeFile(metaPath, 'schema: spec-driven\n', 'utf-8');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
+    await fs.writeFile(metaPath, 'schema: ratchet\n', 'utf-8');
 
     const result = resolveSchemaForChange(changeDir);
-    expect(result).toBe('spec-driven');
+    expect(result).toBe('ratchet');
   });
 
   it('should return default when no metadata and no explicit schema', () => {
     const result = resolveSchemaForChange(changeDir);
-    expect(result).toBe('spec-driven');
+    expect(result).toBe('ratchet');
   });
 
   it('should fail when metadata exists but cannot be read', async () => {
     // Create an invalid metadata file
-    const metaPath = path.join(changeDir, '.openspec.yaml');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
     await fs.writeFile(metaPath, '{ invalid yaml', 'utf-8');
 
     expect(() => resolveSchemaForChange(changeDir)).toThrow(ChangeMetadataError);
@@ -279,7 +279,7 @@ describe('resolveSchemaForChange', () => {
 
   it('should use project config schema when no metadata exists', async () => {
     // Create project config
-    const configDir = path.join(testDir, 'openspec');
+    const configDir = path.join(testDir, '.ratchet');
     await fs.mkdir(configDir, { recursive: true });
     await fs.writeFile(
       path.join(configDir, 'config.yaml'),
@@ -293,7 +293,7 @@ describe('resolveSchemaForChange', () => {
 
   it('should prefer change metadata over project config', async () => {
     // Create project config
-    const configDir = path.join(testDir, 'openspec');
+    const configDir = path.join(testDir, '.ratchet');
     await fs.mkdir(configDir, { recursive: true });
     await fs.writeFile(
       path.join(configDir, 'config.yaml'),
@@ -302,16 +302,16 @@ describe('resolveSchemaForChange', () => {
     );
 
     // Create change metadata with different schema
-    const metaPath = path.join(changeDir, '.openspec.yaml');
-    await fs.writeFile(metaPath, 'schema: spec-driven\n', 'utf-8');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
+    await fs.writeFile(metaPath, 'schema: ratchet\n', 'utf-8');
 
     const result = resolveSchemaForChange(changeDir);
-    expect(result).toBe('spec-driven'); // Change metadata wins
+    expect(result).toBe('ratchet'); // Change metadata wins
   });
 
   it('should prefer explicit schema over all config sources', async () => {
     // Create project config
-    const configDir = path.join(testDir, 'openspec');
+    const configDir = path.join(testDir, '.ratchet');
     await fs.mkdir(configDir, { recursive: true });
     await fs.writeFile(
       path.join(configDir, 'config.yaml'),
@@ -320,8 +320,8 @@ describe('resolveSchemaForChange', () => {
     );
 
     // Create change metadata
-    const metaPath = path.join(changeDir, '.openspec.yaml');
-    await fs.writeFile(metaPath, 'schema: spec-driven\n', 'utf-8');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
+    await fs.writeFile(metaPath, 'schema: ratchet\n', 'utf-8');
 
     // Explicit schema should win
     const result = resolveSchemaForChange(changeDir, 'custom-schema');
@@ -330,7 +330,7 @@ describe('resolveSchemaForChange', () => {
 
   it('should test full precedence order: CLI > metadata > config > default', async () => {
     // Setup all levels
-    const configDir = path.join(testDir, 'openspec');
+    const configDir = path.join(testDir, '.ratchet');
     await fs.mkdir(configDir, { recursive: true });
     await fs.writeFile(
       path.join(configDir, 'config.yaml'),
@@ -338,12 +338,12 @@ describe('resolveSchemaForChange', () => {
       'utf-8'
     );
 
-    const metaPath = path.join(changeDir, '.openspec.yaml');
-    await fs.writeFile(metaPath, 'schema: spec-driven\n', 'utf-8');
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
+    await fs.writeFile(metaPath, 'schema: ratchet\n', 'utf-8');
 
     // Test each level
     expect(resolveSchemaForChange(changeDir, 'custom-schema')).toBe('custom-schema'); // CLI wins
-    expect(resolveSchemaForChange(changeDir)).toBe('spec-driven'); // Metadata wins when no CLI
+    expect(resolveSchemaForChange(changeDir)).toBe('ratchet'); // Metadata wins when no CLI
 
     // Remove metadata, config should win
     await fs.unlink(metaPath);
@@ -351,13 +351,13 @@ describe('resolveSchemaForChange', () => {
 
     // Remove config, default should win
     await fs.unlink(path.join(configDir, 'config.yaml'));
-    expect(resolveSchemaForChange(changeDir)).toBe('spec-driven'); // Default wins
+    expect(resolveSchemaForChange(changeDir)).toBe('ratchet'); // Default wins
   });
 });
 
 describe('validateSchemaName', () => {
   it('should accept valid schema name', () => {
-    expect(() => validateSchemaName('spec-driven')).not.toThrow();
+    expect(() => validateSchemaName('ratchet')).not.toThrow();
   });
 
   it('should throw for unknown schema', () => {

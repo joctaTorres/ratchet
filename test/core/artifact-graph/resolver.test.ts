@@ -18,7 +18,7 @@ describe('artifact-graph/resolver', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    tempDir = path.join(os.tmpdir(), `openspec-resolver-test-${Date.now()}`);
+    tempDir = path.join(os.tmpdir(), `ratchet-resolver-test-${Date.now()}`);
     fs.mkdirSync(tempDir, { recursive: true });
     originalEnv = { ...process.env };
   });
@@ -40,7 +40,7 @@ describe('artifact-graph/resolver', () => {
     it('should use XDG_DATA_HOME when set', () => {
       process.env.XDG_DATA_HOME = tempDir;
       const userDir = getUserSchemasDir();
-      expect(userDir).toBe(path.join(tempDir, 'openspec', 'schemas'));
+      expect(userDir).toBe(path.join(tempDir, '.ratchet', 'schemas'));
     });
   });
 
@@ -51,45 +51,45 @@ describe('artifact-graph/resolver', () => {
     });
 
     it('should return package dir for built-in schema', () => {
-      const dir = getSchemaDir('spec-driven');
+      const dir = getSchemaDir('ratchet');
       expect(dir).not.toBeNull();
       expect(dir).toContain('schemas');
-      expect(dir).toContain('spec-driven');
+      expect(dir).toContain('ratchet');
     });
 
     it('should prefer user override directory', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'spec-driven');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'ratchet');
       fs.mkdirSync(userSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(userSchemaDir, 'schema.yaml'),
         'name: custom\nversion: 1\nartifacts: []'
       );
 
-      const dir = getSchemaDir('spec-driven');
+      const dir = getSchemaDir('ratchet');
       expect(dir).toBe(userSchemaDir);
     });
   });
 
   describe('resolveSchema', () => {
-    it('should return built-in spec-driven schema', () => {
-      const schema = resolveSchema('spec-driven');
+    it('should return built-in ratchet schema', () => {
+      const schema = resolveSchema('ratchet');
 
-      expect(schema.name).toBe('spec-driven');
+      expect(schema.name).toBe('ratchet');
       expect(schema.version).toBe(1);
       expect(schema.artifacts.length).toBeGreaterThan(0);
     });
 
     it('should strip .yaml extension from name', () => {
-      const schema1 = resolveSchema('spec-driven');
-      const schema2 = resolveSchema('spec-driven.yaml');
+      const schema1 = resolveSchema('ratchet');
+      const schema2 = resolveSchema('ratchet.yaml');
 
       expect(schema1).toEqual(schema2);
     });
 
     it('should strip .yml extension from name', () => {
-      const schema1 = resolveSchema('spec-driven');
-      const schema2 = resolveSchema('spec-driven.yml');
+      const schema1 = resolveSchema('ratchet');
+      const schema2 = resolveSchema('ratchet.yml');
 
       expect(schema1).toEqual(schema2);
     });
@@ -97,7 +97,7 @@ describe('artifact-graph/resolver', () => {
     it('should prefer user override over built-in', () => {
       // Set up global data dir
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'spec-driven');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'ratchet');
       fs.mkdirSync(userSchemaDir, { recursive: true });
 
       // Create a custom schema with same name as built-in
@@ -112,7 +112,7 @@ artifacts:
 `;
       fs.writeFileSync(path.join(userSchemaDir, 'schema.yaml'), customSchema);
 
-      const schema = resolveSchema('spec-driven');
+      const schema = resolveSchema('ratchet');
 
       expect(schema.name).toBe('custom-override');
       expect(schema.version).toBe(99);
@@ -120,7 +120,7 @@ artifacts:
 
     it('should validate user override and throw on invalid schema', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'spec-driven');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'ratchet');
       fs.mkdirSync(userSchemaDir, { recursive: true });
 
       // Create an invalid schema (missing required fields)
@@ -133,12 +133,12 @@ artifacts:
 `;
       fs.writeFileSync(path.join(userSchemaDir, 'schema.yaml'), invalidSchema);
 
-      expect(() => resolveSchema('spec-driven')).toThrow(SchemaLoadError);
+      expect(() => resolveSchema('ratchet')).toThrow(SchemaLoadError);
     });
 
     it('should include file path in validation error message', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'spec-driven');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'ratchet');
       fs.mkdirSync(userSchemaDir, { recursive: true });
 
       const invalidSchema = `
@@ -151,7 +151,7 @@ artifacts:
       fs.writeFileSync(schemaPath, invalidSchema);
 
       try {
-        resolveSchema('spec-driven');
+        resolveSchema('ratchet');
         expect.fail('Should have thrown');
       } catch (e) {
         const error = e as SchemaLoadError;
@@ -163,7 +163,7 @@ artifacts:
 
     it('should detect cycles in user override schemas', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'spec-driven');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'ratchet');
       fs.mkdirSync(userSchemaDir, { recursive: true });
 
       // Create a schema with cyclic dependencies
@@ -184,12 +184,12 @@ artifacts:
 `;
       fs.writeFileSync(path.join(userSchemaDir, 'schema.yaml'), cyclicSchema);
 
-      expect(() => resolveSchema('spec-driven')).toThrow(/Cyclic dependency/);
+      expect(() => resolveSchema('ratchet')).toThrow(/Cyclic dependency/);
     });
 
     it('should detect invalid requires references in user override schemas', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'spec-driven');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'ratchet');
       fs.mkdirSync(userSchemaDir, { recursive: true });
 
       // Create a schema with invalid requires reference
@@ -205,12 +205,12 @@ artifacts:
 `;
       fs.writeFileSync(path.join(userSchemaDir, 'schema.yaml'), invalidRefSchema);
 
-      expect(() => resolveSchema('spec-driven')).toThrow(/does not exist/);
+      expect(() => resolveSchema('ratchet')).toThrow(/does not exist/);
     });
 
     it('should throw SchemaLoadError on YAML syntax errors', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'spec-driven');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'ratchet');
       fs.mkdirSync(userSchemaDir, { recursive: true });
 
       // Create malformed YAML
@@ -222,7 +222,7 @@ version: [[[invalid yaml
       fs.writeFileSync(schemaPath, malformedYaml);
 
       try {
-        resolveSchema('spec-driven');
+        resolveSchema('ratchet');
         expect.fail('Should have thrown');
       } catch (e) {
         expect(e).toBeInstanceOf(SchemaLoadError);
@@ -236,9 +236,9 @@ version: [[[invalid yaml
       process.env.XDG_DATA_HOME = tempDir;
       // Don't create any user schemas
 
-      const schema = resolveSchema('spec-driven');
+      const schema = resolveSchema('ratchet');
 
-      expect(schema.name).toBe('spec-driven');
+      expect(schema.name).toBe('ratchet');
       expect(schema.version).toBe(1);
     });
 
@@ -252,7 +252,7 @@ version: [[[invalid yaml
         expect.fail('Should have thrown');
       } catch (e) {
         const error = e as Error;
-        expect(error.message).toContain('spec-driven');
+        expect(error.message).toContain('ratchet');
       }
     });
   });
@@ -261,32 +261,32 @@ version: [[[invalid yaml
     it('should list built-in schemas', () => {
       const schemas = listSchemas();
 
-      expect(schemas).toContain('spec-driven');
+      expect(schemas).toContain('ratchet');
     });
 
     it('should include user override schemas', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'custom-workflow');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'custom-workflow');
       fs.mkdirSync(userSchemaDir, { recursive: true });
       fs.writeFileSync(path.join(userSchemaDir, 'schema.yaml'), 'name: custom\nversion: 1\nartifacts: []');
 
       const schemas = listSchemas();
 
       expect(schemas).toContain('custom-workflow');
-      expect(schemas).toContain('spec-driven');
+      expect(schemas).toContain('ratchet');
     });
 
     it('should deduplicate schemas with same name', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'spec-driven');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'ratchet');
       fs.mkdirSync(userSchemaDir, { recursive: true });
-      // Override spec-driven
+      // Override ratchet
       fs.writeFileSync(path.join(userSchemaDir, 'schema.yaml'), 'name: custom\nversion: 1\nartifacts: []');
 
       const schemas = listSchemas();
 
       // Should only appear once
-      const count = schemas.filter(s => s === 'spec-driven').length;
+      const count = schemas.filter(s => s === 'ratchet').length;
       expect(count).toBe(1);
     });
 
@@ -299,7 +299,7 @@ version: [[[invalid yaml
 
     it('should only include directories with schema.yaml', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemasBase = path.join(tempDir, 'openspec', 'schemas');
+      const userSchemasBase = path.join(tempDir, '.ratchet', 'schemas');
 
       // Create a directory without schema.yaml
       const emptyDir = path.join(userSchemasBase, 'empty-dir');
@@ -325,12 +325,12 @@ version: [[[invalid yaml
     it('should return correct path', () => {
       const projectRoot = '/path/to/project';
       const schemasDir = getProjectSchemasDir(projectRoot);
-      expect(schemasDir).toBe(path.join('/path/to/project', 'openspec', 'schemas'));
+      expect(schemasDir).toBe(path.join('/path/to/project', '.ratchet', 'schemas'));
     });
 
     it('should work with relative-looking paths', () => {
       const schemasDir = getProjectSchemasDir('./my-project');
-      expect(schemasDir).toBe(path.join('my-project', 'openspec', 'schemas'));
+      expect(schemasDir).toBe(path.join('my-project', '.ratchet', 'schemas'));
     });
   });
 
@@ -343,7 +343,7 @@ version: [[[invalid yaml
     it('should prefer project-local schema over user override', () => {
       // Set up user override
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'my-schema');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'my-schema');
       fs.mkdirSync(userSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(userSchemaDir, 'schema.yaml'),
@@ -352,7 +352,7 @@ version: [[[invalid yaml
 
       // Set up project-local schema
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'my-schema');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'my-schema');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),
@@ -366,21 +366,21 @@ version: [[[invalid yaml
     it('should prefer project-local schema over package built-in', () => {
       // Set up project-local schema that overrides built-in
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'spec-driven');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'ratchet');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),
-        'name: project-spec-driven\nversion: 99\nartifacts: []\n'
+        'name: project-ratchet\nversion: 99\nartifacts: []\n'
       );
 
-      const dir = getSchemaDir('spec-driven', projectRoot);
+      const dir = getSchemaDir('ratchet', projectRoot);
       expect(dir).toBe(projectSchemaDir);
     });
 
     it('should fall back to user override when no project-local schema', () => {
       // Set up user override only
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'user-only-schema');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'user-only-schema');
       fs.mkdirSync(userSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(userSchemaDir, 'schema.yaml'),
@@ -398,7 +398,7 @@ version: [[[invalid yaml
       const projectRoot = path.join(tempDir, 'project');
       fs.mkdirSync(projectRoot, { recursive: true });
 
-      const dir = getSchemaDir('spec-driven', projectRoot);
+      const dir = getSchemaDir('ratchet', projectRoot);
       expect(dir).not.toBeNull();
       // Should be package path, not project or user
       expect(dir).not.toContain(projectRoot);
@@ -407,7 +407,7 @@ version: [[[invalid yaml
     it('should maintain backward compatibility when projectRoot not provided', () => {
       // Set up user override
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'my-schema');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'my-schema');
       fs.mkdirSync(userSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(userSchemaDir, 'schema.yaml'),
@@ -416,7 +416,7 @@ version: [[[invalid yaml
 
       // Set up project-local schema (should be ignored when projectRoot not provided)
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'my-schema');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'my-schema');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),
@@ -432,7 +432,7 @@ version: [[[invalid yaml
   describe('resolveSchema with projectRoot', () => {
     it('should resolve project-local schema', () => {
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'team-workflow');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'team-workflow');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),
@@ -455,7 +455,7 @@ artifacts:
     it('should prefer project-local over user override when resolving', () => {
       // Set up user override
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'shared-schema');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'shared-schema');
       fs.mkdirSync(userSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(userSchemaDir, 'schema.yaml'),
@@ -471,7 +471,7 @@ artifacts:
 
       // Set up project-local schema
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'shared-schema');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'shared-schema');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),
@@ -494,7 +494,7 @@ artifacts:
   describe('listSchemas with projectRoot', () => {
     it('should include project-local schemas', () => {
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'team-workflow');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'team-workflow');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),
@@ -503,13 +503,13 @@ artifacts:
 
       const schemas = listSchemas(projectRoot);
       expect(schemas).toContain('team-workflow');
-      expect(schemas).toContain('spec-driven'); // built-in still included
+      expect(schemas).toContain('ratchet'); // built-in still included
     });
 
     it('should deduplicate project-local schema that shadows user override', () => {
       // Set up user override
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'my-schema');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'my-schema');
       fs.mkdirSync(userSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(userSchemaDir, 'schema.yaml'),
@@ -518,7 +518,7 @@ artifacts:
 
       // Set up project-local schema with same name
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'my-schema');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'my-schema');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),
@@ -533,7 +533,7 @@ artifacts:
     it('should maintain backward compatibility when projectRoot not provided', () => {
       // Set up project-local schema
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'project-only');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'project-only');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),
@@ -549,7 +549,7 @@ artifacts:
   describe('listSchemasWithInfo with projectRoot', () => {
     it('should return source: project for project-local schemas', () => {
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'team-workflow');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'team-workflow');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),
@@ -575,14 +575,14 @@ artifacts:
       fs.mkdirSync(projectRoot, { recursive: true });
 
       const schemas = listSchemasWithInfo(projectRoot);
-      const specDriven = schemas.find(s => s.name === 'spec-driven');
+      const specDriven = schemas.find(s => s.name === 'ratchet');
       expect(specDriven).toBeDefined();
       expect(specDriven!.source).toBe('package');
     });
 
     it('should return source: user for user override schemas', () => {
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'user-custom');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'user-custom');
       fs.mkdirSync(userSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(userSchemaDir, 'schema.yaml'),
@@ -609,7 +609,7 @@ artifacts:
     it('should show project source when project-local shadows user override', () => {
       // Set up user override
       process.env.XDG_DATA_HOME = tempDir;
-      const userSchemaDir = path.join(tempDir, 'openspec', 'schemas', 'shared');
+      const userSchemaDir = path.join(tempDir, '.ratchet', 'schemas', 'shared');
       fs.mkdirSync(userSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(userSchemaDir, 'schema.yaml'),
@@ -626,7 +626,7 @@ artifacts:
 
       // Set up project-local with same name
       const projectRoot = path.join(tempDir, 'project');
-      const projectSchemaDir = path.join(projectRoot, 'openspec', 'schemas', 'shared');
+      const projectSchemaDir = path.join(projectRoot, '.ratchet', 'schemas', 'shared');
       fs.mkdirSync(projectSchemaDir, { recursive: true });
       fs.writeFileSync(
         path.join(projectSchemaDir, 'schema.yaml'),

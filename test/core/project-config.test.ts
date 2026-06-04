@@ -13,7 +13,7 @@ describe('project-config', () => {
   let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openspec-test-config-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-test-config-'));
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
@@ -25,11 +25,11 @@ describe('project-config', () => {
   describe('readProjectConfig', () => {
     describe('resilient parsing', () => {
       it('should parse complete valid config', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: |
   Tech stack: TypeScript, React
   API style: RESTful
@@ -45,7 +45,7 @@ rules:
         const config = readProjectConfig(tempDir);
 
         expect(config).toEqual({
-          schema: 'spec-driven',
+          schema: 'ratchet',
           context: 'Tech stack: TypeScript, React\nAPI style: RESTful\n',
           rules: {
             proposal: ['Include rollback plan', 'Identify affected teams'],
@@ -56,20 +56,20 @@ rules:
       });
 
       it('should parse minimal config with schema only', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
-        fs.writeFileSync(path.join(configDir, 'config.yaml'), 'schema: spec-driven\n');
+        fs.writeFileSync(path.join(configDir, 'config.yaml'), 'schema: ratchet\n');
 
         const config = readProjectConfig(tempDir);
 
         expect(config).toEqual({
-          schema: 'spec-driven',
+          schema: 'ratchet',
         });
         expect(consoleWarnSpy).not.toHaveBeenCalled();
       });
 
       it('should return partial config when schema is invalid', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
@@ -95,11 +95,11 @@ rules:
       });
 
       it('should return partial config when context is invalid', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: 123
 rules:
   proposal:
@@ -110,7 +110,7 @@ rules:
         const config = readProjectConfig(tempDir);
 
         expect(config).toEqual({
-          schema: 'spec-driven',
+          schema: 'ratchet',
           rules: {
             proposal: ['Valid rule'],
           },
@@ -121,11 +121,11 @@ rules:
       });
 
       it('should return partial config when rules is not an object', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: Valid context
 rules: ["not", "an", "object"]
 `
@@ -134,7 +134,7 @@ rules: ["not", "an", "object"]
         const config = readProjectConfig(tempDir);
 
         expect(config).toEqual({
-          schema: 'spec-driven',
+          schema: 'ratchet',
           context: 'Valid context',
         });
         expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -144,11 +144,11 @@ rules: ["not", "an", "object"]
 
       it('should handle rules: null without aborting config parsing', () => {
         // YAML `rules:` with no value parses to null
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: Valid context
 rules:
 `
@@ -158,7 +158,7 @@ rules:
 
         // Should still parse schema and context despite null rules
         expect(config).toEqual({
-          schema: 'spec-driven',
+          schema: 'ratchet',
           context: 'Valid context',
         });
         expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -167,11 +167,11 @@ rules:
       });
 
       it('should filter out invalid rules for specific artifact', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 rules:
   proposal:
     - Valid rule
@@ -184,7 +184,7 @@ rules:
         const config = readProjectConfig(tempDir);
 
         expect(config).toEqual({
-          schema: 'spec-driven',
+          schema: 'ratchet',
           rules: {
             proposal: ['Valid rule'],
             design: ['Another valid rule'],
@@ -196,11 +196,11 @@ rules:
       });
 
       it('should filter out empty string rules', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 rules:
   proposal:
     - Valid rule
@@ -213,7 +213,7 @@ rules:
         const config = readProjectConfig(tempDir);
 
         expect(config).toEqual({
-          schema: 'spec-driven',
+          schema: 'ratchet',
           rules: {
             proposal: ['Valid rule', 'Another valid rule'],
           },
@@ -224,11 +224,11 @@ rules:
       });
 
       it('should skip artifact if all rules are empty strings', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 rules:
   proposal:
     - ""
@@ -241,7 +241,7 @@ rules:
         const config = readProjectConfig(tempDir);
 
         expect(config).toEqual({
-          schema: 'spec-driven',
+          schema: 'ratchet',
           rules: {
             specs: ['Valid rule'],
           },
@@ -249,7 +249,7 @@ rules:
       });
 
       it('should handle completely invalid YAML gracefully', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(path.join(configDir, 'config.yaml'), 'schema: [unclosed');
 
@@ -257,13 +257,13 @@ rules:
 
         expect(config).toBeNull();
         expect(consoleWarnSpy).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to parse openspec/config.yaml'),
+          expect.stringContaining('Failed to parse .ratchet/config.yaml'),
           expect.anything()
         );
       });
 
       it('should warn when config is not a YAML object', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(path.join(configDir, 'config.yaml'), '"just a string"');
 
@@ -276,7 +276,7 @@ rules:
       });
 
       it('should handle empty config file', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(path.join(configDir, 'config.yaml'), '');
 
@@ -288,12 +288,12 @@ rules:
 
     describe('context size limit enforcement', () => {
       it('should accept context under 50KB limit', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         const smallContext = 'a'.repeat(1000); // 1KB
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven\ncontext: "${smallContext}"\n`
+          `schema: ratchet\ncontext: "${smallContext}"\n`
         );
 
         const config = readProjectConfig(tempDir);
@@ -305,17 +305,17 @@ rules:
       });
 
       it('should reject context over 50KB limit', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         const largeContext = 'a'.repeat(51 * 1024); // 51KB
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven\ncontext: "${largeContext}"\n`
+          `schema: ratchet\ncontext: "${largeContext}"\n`
         );
 
         const config = readProjectConfig(tempDir);
 
-        expect(config).toEqual({ schema: 'spec-driven' });
+        expect(config).toEqual({ schema: 'ratchet' });
         expect(config?.context).toBeUndefined();
         expect(consoleWarnSpy).toHaveBeenCalledWith(
           expect.stringContaining('Context too large (51.0KB, limit: 50KB)')
@@ -326,12 +326,12 @@ rules:
       });
 
       it('should handle context exactly at 50KB limit', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         const exactContext = 'a'.repeat(50 * 1024); // Exactly 50KB
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven\ncontext: "${exactContext}"\n`
+          `schema: ratchet\ncontext: "${exactContext}"\n`
         );
 
         const config = readProjectConfig(tempDir);
@@ -343,13 +343,13 @@ rules:
       });
 
       it('should handle multi-byte UTF-8 characters in size calculation', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         // Unicode snowman is 3 bytes in UTF-8
         const contextWithUnicode = '☃'.repeat(18000); // ~54KB in UTF-8 (18000 * 3 bytes)
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: |
   ${contextWithUnicode}
 `
@@ -366,11 +366,11 @@ context: |
 
     describe('.yml/.yaml precedence', () => {
       it('should prefer .yaml when both exist', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          'schema: spec-driven\ncontext: from yaml\n'
+          'schema: ratchet\ncontext: from yaml\n'
         );
         fs.writeFileSync(
           path.join(configDir, 'config.yml'),
@@ -379,12 +379,12 @@ context: |
 
         const config = readProjectConfig(tempDir);
 
-        expect(config?.schema).toBe('spec-driven');
+        expect(config?.schema).toBe('ratchet');
         expect(config?.context).toBe('from yaml');
       });
 
       it('should use .yml when .yaml does not exist', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yml'),
@@ -398,7 +398,7 @@ context: |
       });
 
       it('should return null when neither .yaml nor .yml exist', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
 
         const config = readProjectConfig(tempDir);
@@ -407,7 +407,7 @@ context: |
         expect(consoleWarnSpy).not.toHaveBeenCalled();
       });
 
-      it('should return null when openspec directory does not exist', () => {
+      it('should return null when ratchet directory does not exist', () => {
         const config = readProjectConfig(tempDir);
 
         expect(config).toBeNull();
@@ -417,11 +417,11 @@ context: |
 
     describe('multi-line and special characters', () => {
       it('should preserve multi-line context', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: |
   Line 1: Tech stack
   Line 2: API conventions
@@ -437,11 +437,11 @@ context: |
       });
 
       it('should preserve special YAML characters in context', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: |
   Special chars: : @ # $ % & * [ ] { }
   Quotes: "double" 'single'
@@ -458,11 +458,11 @@ context: |
       });
 
       it('should preserve special characters in rule strings', () => {
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 rules:
   proposal:
     - "Use <template> tags in docs"
@@ -491,7 +491,7 @@ rules:
       };
       const validIds = new Set(['proposal', 'specs', 'design', 'tasks']);
 
-      const warnings = validateConfigRules(rules, validIds, 'spec-driven');
+      const warnings = validateConfigRules(rules, validIds, 'ratchet');
 
       expect(warnings).toEqual([]);
     });
@@ -504,11 +504,11 @@ rules:
       };
       const validIds = new Set(['proposal', 'specs', 'design', 'tasks']);
 
-      const warnings = validateConfigRules(rules, validIds, 'spec-driven');
+      const warnings = validateConfigRules(rules, validIds, 'ratchet');
 
       expect(warnings).toHaveLength(2);
       expect(warnings[0]).toContain('Unknown artifact ID in rules: "testplan"');
-      expect(warnings[0]).toContain('Valid IDs for schema "spec-driven": design, proposal, specs, tasks');
+      expect(warnings[0]).toContain('Valid IDs for schema "ratchet": design, proposal, specs, tasks');
       expect(warnings[1]).toContain('Unknown artifact ID in rules: "documentation"');
     });
 
@@ -520,7 +520,7 @@ rules:
       };
       const validIds = new Set(['proposal', 'specs']);
 
-      const warnings = validateConfigRules(rules, validIds, 'spec-driven');
+      const warnings = validateConfigRules(rules, validIds, 'ratchet');
 
       expect(warnings).toHaveLength(3);
     });
@@ -529,7 +529,7 @@ rules:
       const rules = {};
       const validIds = new Set(['proposal', 'specs']);
 
-      const warnings = validateConfigRules(rules, validIds, 'spec-driven');
+      const warnings = validateConfigRules(rules, validIds, 'ratchet');
 
       expect(warnings).toEqual([]);
     });
@@ -537,7 +537,7 @@ rules:
 
   describe('suggestSchemas', () => {
     const availableSchemas = [
-      { name: 'spec-driven', isBuiltIn: true },
+      { name: 'ratchet', isBuiltIn: true },
       { name: 'custom-workflow', isBuiltIn: false },
       { name: 'team-process', isBuiltIn: false },
     ];
@@ -547,7 +547,7 @@ rules:
 
       expect(message).toContain("Schema 'spec-drven' not found");
       expect(message).toContain('Did you mean one of these?');
-      expect(message).toContain('spec-driven (built-in)');
+      expect(message).toContain('ratchet (built-in)');
     });
 
     it('should suggest custom-workflow for workflow typo', () => {
@@ -561,17 +561,17 @@ rules:
       const message = suggestSchemas('nonexistent', availableSchemas);
 
       expect(message).toContain('Available schemas:');
-      expect(message).toContain('Built-in: spec-driven');
+      expect(message).toContain('Built-in: ratchet');
       expect(message).toContain('Project-local: custom-workflow, team-process');
     });
 
     it('should handle case when no project-local schemas exist', () => {
       const builtInOnly = [
-        { name: 'spec-driven', isBuiltIn: true },
+        { name: 'ratchet', isBuiltIn: true },
       ];
       const message = suggestSchemas('invalid', builtInOnly);
 
-      expect(message).toContain('Built-in: spec-driven');
+      expect(message).toContain('Built-in: ratchet');
       expect(message).toContain('Project-local: (none found)');
     });
 
@@ -579,7 +579,7 @@ rules:
       const message = suggestSchemas('wrong-schema', availableSchemas);
 
       expect(message).toContain(
-        "Fix: Edit openspec/config.yaml and change 'schema: wrong-schema' to a valid schema name"
+        "Fix: Edit .ratchet/config.yaml and change 'schema: wrong-schema' to a valid schema name"
       );
     });
 

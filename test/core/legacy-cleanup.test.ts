@@ -8,8 +8,8 @@ import {
   detectLegacyConfigFiles,
   detectLegacySlashCommands,
   detectLegacyStructureFiles,
-  hasOpenSpecMarkers,
-  isOnlyOpenSpecContent,
+  hasRatchetMarkers,
+  isOnlyRatchetContent,
   removeMarkerBlock,
   cleanupLegacyArtifacts,
   formatCleanupSummary,
@@ -26,91 +26,91 @@ describe('legacy-cleanup', () => {
   let testDir: string;
 
   beforeEach(async () => {
-    testDir = path.join(os.tmpdir(), `openspec-legacy-test-${randomUUID()}`);
+    testDir = path.join(os.tmpdir(), `ratchet-legacy-test-${randomUUID()}`);
     await fs.mkdir(testDir, { recursive: true });
-    // Create openspec directory structure
-    await fs.mkdir(path.join(testDir, 'openspec'), { recursive: true });
+    // Create ratchet directory structure
+    await fs.mkdir(path.join(testDir, '.ratchet'), { recursive: true });
   });
 
   afterEach(async () => {
     await fs.rm(testDir, { recursive: true, force: true });
   });
 
-  describe('hasOpenSpecMarkers', () => {
+  describe('hasRatchetMarkers', () => {
     it('should return true when both markers are present', () => {
       const content = `Some content
 ${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}
 More content`;
-      expect(hasOpenSpecMarkers(content)).toBe(true);
+      expect(hasRatchetMarkers(content)).toBe(true);
     });
 
     it('should return false when start marker is missing', () => {
       const content = `Some content
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}`;
-      expect(hasOpenSpecMarkers(content)).toBe(false);
+      expect(hasRatchetMarkers(content)).toBe(false);
     });
 
     it('should return false when end marker is missing', () => {
       const content = `${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 Some content`;
-      expect(hasOpenSpecMarkers(content)).toBe(false);
+      expect(hasRatchetMarkers(content)).toBe(false);
     });
 
     it('should return false when no markers are present', () => {
       const content = 'Plain content without markers';
-      expect(hasOpenSpecMarkers(content)).toBe(false);
+      expect(hasRatchetMarkers(content)).toBe(false);
     });
   });
 
-  describe('isOnlyOpenSpecContent', () => {
+  describe('isOnlyRatchetContent', () => {
     it('should return true when content is only markers and whitespace outside', () => {
       const content = `${RATCHET_MARKERS.start}
-OpenSpec content here
+Ratchet content here
 ${RATCHET_MARKERS.end}`;
-      expect(isOnlyOpenSpecContent(content)).toBe(true);
+      expect(isOnlyRatchetContent(content)).toBe(true);
     });
 
     it('should return true with whitespace before and after markers', () => {
       const content = `
 
 ${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}
 
 `;
-      expect(isOnlyOpenSpecContent(content)).toBe(true);
+      expect(isOnlyRatchetContent(content)).toBe(true);
     });
 
     it('should return false when content exists before markers', () => {
       const content = `User content here
 ${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}`;
-      expect(isOnlyOpenSpecContent(content)).toBe(false);
+      expect(isOnlyRatchetContent(content)).toBe(false);
     });
 
     it('should return false when content exists after markers', () => {
       const content = `${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}
 User content here`;
-      expect(isOnlyOpenSpecContent(content)).toBe(false);
+      expect(isOnlyRatchetContent(content)).toBe(false);
     });
 
     it('should return false when markers are missing', () => {
       const content = 'Plain content without markers';
-      expect(isOnlyOpenSpecContent(content)).toBe(false);
+      expect(isOnlyRatchetContent(content)).toBe(false);
     });
 
     it('should return false when end marker comes before start marker', () => {
       const content = `${RATCHET_MARKERS.end}
 Content
 ${RATCHET_MARKERS.start}`;
-      expect(isOnlyOpenSpecContent(content)).toBe(false);
+      expect(isOnlyRatchetContent(content)).toBe(false);
     });
   });
 
@@ -118,7 +118,7 @@ ${RATCHET_MARKERS.start}`;
     it('should remove marker block and preserve content before', () => {
       const content = `User content before
 ${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}`;
       const result = removeMarkerBlock(content);
       expect(result).toBe('User content before\n');
@@ -128,7 +128,7 @@ ${RATCHET_MARKERS.end}`;
 
     it('should remove marker block and preserve content after', () => {
       const content = `${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}
 User content after`;
       const result = removeMarkerBlock(content);
@@ -138,7 +138,7 @@ User content after`;
     it('should remove marker block and preserve content before and after', () => {
       const content = `User content before
 ${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}
 User content after`;
       const result = removeMarkerBlock(content);
@@ -152,7 +152,7 @@ User content after`;
 
 
 ${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}
 
 
@@ -163,7 +163,7 @@ Line 2`;
 
     it('should return empty string when only markers remain', () => {
       const content = `${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}`;
       const result = removeMarkerBlock(content);
       expect(result).toBe('');
@@ -204,10 +204,10 @@ After content`;
   });
 
   describe('detectLegacyConfigFiles', () => {
-    it('should detect CLAUDE.md with OpenSpec markers and put in update list', async () => {
+    it('should detect CLAUDE.md with Ratchet markers and put in update list', async () => {
       const claudePath = path.join(testDir, 'CLAUDE.md');
       await fs.writeFile(claudePath, `${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}`);
 
       const result = await detectLegacyConfigFiles(testDir);
@@ -220,7 +220,7 @@ ${RATCHET_MARKERS.end}`);
       const claudePath = path.join(testDir, 'CLAUDE.md');
       await fs.writeFile(claudePath, `User instructions here
 ${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}`);
 
       const result = await detectLegacyConfigFiles(testDir);
@@ -228,7 +228,7 @@ ${RATCHET_MARKERS.end}`);
       expect(result.filesToUpdate).toContain('CLAUDE.md');
     });
 
-    it('should not detect files without OpenSpec markers', async () => {
+    it('should not detect files without Ratchet markers', async () => {
       const claudePath = path.join(testDir, 'CLAUDE.md');
       await fs.writeFile(claudePath, 'Plain instructions without markers');
 
@@ -260,50 +260,50 @@ ${RATCHET_MARKERS.end}`);
 
   describe('detectLegacySlashCommands', () => {
     it('should detect legacy Claude slash command directory', async () => {
-      const dirPath = path.join(testDir, '.claude', 'commands', 'openspec');
+      const dirPath = path.join(testDir, '.claude', 'commands', '.ratchet');
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(path.join(dirPath, 'proposal.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.directories).toContain('.claude/commands/openspec');
+      expect(result.directories).toContain('.claude/commands/ratchet');
     });
 
     it('should detect legacy Cursor slash command files', async () => {
       const dirPath = path.join(testDir, '.cursor', 'commands');
       await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(path.join(dirPath, 'openspec-proposal.md'), 'content');
-      await fs.writeFile(path.join(dirPath, 'openspec-apply.md'), 'content');
+      await fs.writeFile(path.join(dirPath, 'ratchet-proposal.md'), 'content');
+      await fs.writeFile(path.join(dirPath, 'ratchet-apply.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.cursor/commands/openspec-proposal.md');
-      expect(result.files).toContain('.cursor/commands/openspec-apply.md');
+      expect(result.files).toContain('.cursor/commands/ratchet-proposal.md');
+      expect(result.files).toContain('.cursor/commands/ratchet-apply.md');
     });
 
     it('should detect legacy Windsurf workflow files', async () => {
       const dirPath = path.join(testDir, '.windsurf', 'workflows');
       await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(path.join(dirPath, 'openspec-archive.md'), 'content');
+      await fs.writeFile(path.join(dirPath, 'ratchet-archive.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.windsurf/workflows/openspec-archive.md');
+      expect(result.files).toContain('.windsurf/workflows/ratchet-archive.md');
     });
 
     it('should detect multiple tool directories and files', async () => {
       // Create directory-based
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'openspec'), { recursive: true });
-      await fs.mkdir(path.join(testDir, '.qoder', 'commands', 'openspec'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.qoder', 'commands', '.ratchet'), { recursive: true });
 
       // Create file-based
       await fs.mkdir(path.join(testDir, '.cursor', 'commands'), { recursive: true });
-      await fs.writeFile(path.join(testDir, '.cursor', 'commands', 'openspec-proposal.md'), 'content');
+      await fs.writeFile(path.join(testDir, '.cursor', 'commands', 'ratchet-proposal.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.directories).toContain('.claude/commands/openspec');
-      expect(result.directories).toContain('.qoder/commands/openspec');
-      expect(result.files).toContain('.cursor/commands/openspec-proposal.md');
+      expect(result.directories).toContain('.claude/commands/ratchet');
+      expect(result.directories).toContain('.qoder/commands/ratchet');
+      expect(result.files).toContain('.cursor/commands/ratchet-proposal.md');
     });
 
-    it('should not detect non-openspec files', async () => {
+    it('should not detect non-ratchet files', async () => {
       const dirPath = path.join(testDir, '.cursor', 'commands');
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(path.join(dirPath, 'other-command.md'), 'content');
@@ -321,19 +321,19 @@ ${RATCHET_MARKERS.end}`);
     it('should detect TOML-based slash commands for Qwen', async () => {
       const dirPath = path.join(testDir, '.qwen', 'commands');
       await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(path.join(dirPath, 'openspec-proposal.toml'), 'content');
+      await fs.writeFile(path.join(dirPath, 'ratchet-proposal.toml'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.qwen/commands/openspec-proposal.toml');
+      expect(result.files).toContain('.qwen/commands/ratchet-proposal.toml');
     });
 
     it('should detect Continue prompt files', async () => {
       const dirPath = path.join(testDir, '.continue', 'prompts');
       await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(path.join(dirPath, 'openspec-apply.prompt'), 'content');
+      await fs.writeFile(path.join(dirPath, 'ratchet-apply.prompt'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.continue/prompts/openspec-apply.prompt');
+      expect(result.files).toContain('.continue/prompts/ratchet-apply.prompt');
     });
 
     it('should detect legacy OpenCode opsx-* command files', async () => {
@@ -345,48 +345,48 @@ ${RATCHET_MARKERS.end}`);
       expect(result.files).toContain('.opencode/command/opsx-propose.md');
     });
 
-    it('should detect legacy OpenCode openspec-* command files', async () => {
+    it('should detect legacy OpenCode ratchet-* command files', async () => {
       const dirPath = path.join(testDir, '.opencode', 'command');
       await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(path.join(dirPath, 'openspec-new.md'), 'content');
+      await fs.writeFile(path.join(dirPath, 'ratchet-new.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.opencode/command/openspec-new.md');
+      expect(result.files).toContain('.opencode/command/ratchet-new.md');
     });
 
-    it('should detect both opsx-* and openspec-* OpenCode command files', async () => {
+    it('should detect both opsx-* and ratchet-* OpenCode command files', async () => {
       const dirPath = path.join(testDir, '.opencode', 'command');
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(path.join(dirPath, 'opsx-propose.md'), 'content');
-      await fs.writeFile(path.join(dirPath, 'openspec-new.md'), 'content');
+      await fs.writeFile(path.join(dirPath, 'ratchet-new.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
       expect(result.files).toContain('.opencode/command/opsx-propose.md');
-      expect(result.files).toContain('.opencode/command/openspec-new.md');
+      expect(result.files).toContain('.opencode/command/ratchet-new.md');
     });
   });
 
   describe('detectLegacyStructureFiles', () => {
-    it('should detect openspec/AGENTS.md', async () => {
-      const agentsPath = path.join(testDir, 'openspec', 'AGENTS.md');
+    it('should detect .ratchet/AGENTS.md', async () => {
+      const agentsPath = path.join(testDir, '.ratchet', 'AGENTS.md');
       await fs.writeFile(agentsPath, '# AGENTS.md content');
 
       const result = await detectLegacyStructureFiles(testDir);
-      expect(result.hasOpenspecAgents).toBe(true);
+      expect(result.hasRatchetAgents).toBe(true);
     });
 
-    it('should detect openspec/project.md', async () => {
-      const projectPath = path.join(testDir, 'openspec', 'project.md');
+    it('should detect .ratchet/project.md', async () => {
+      const projectPath = path.join(testDir, '.ratchet', 'project.md');
       await fs.writeFile(projectPath, '# Project content');
 
       const result = await detectLegacyStructureFiles(testDir);
       expect(result.hasProjectMd).toBe(true);
     });
 
-    it('should detect root AGENTS.md with OpenSpec markers', async () => {
+    it('should detect root AGENTS.md with Ratchet markers', async () => {
       const agentsPath = path.join(testDir, 'AGENTS.md');
       await fs.writeFile(agentsPath, `${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}`);
 
       const result = await detectLegacyStructureFiles(testDir);
@@ -403,7 +403,7 @@ ${RATCHET_MARKERS.end}`);
 
     it('should handle non-existent files gracefully', async () => {
       const result = await detectLegacyStructureFiles(testDir);
-      expect(result.hasOpenspecAgents).toBe(false);
+      expect(result.hasRatchetAgents).toBe(false);
       expect(result.hasProjectMd).toBe(false);
       expect(result.hasRootAgentsWithMarkers).toBe(false);
     });
@@ -424,23 +424,23 @@ ${RATCHET_MARKERS.end}`);
     });
 
     it('should return hasLegacyArtifacts: true when slash commands are found', async () => {
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'openspec'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
 
       const result = await detectLegacyArtifacts(testDir);
       expect(result.hasLegacyArtifacts).toBe(true);
-      expect(result.slashCommandDirs).toContain('.claude/commands/openspec');
+      expect(result.slashCommandDirs).toContain('.claude/commands/ratchet');
     });
 
-    it('should return hasLegacyArtifacts: true when openspec/AGENTS.md is found', async () => {
-      await fs.writeFile(path.join(testDir, 'openspec', 'AGENTS.md'), 'content');
+    it('should return hasLegacyArtifacts: true when .ratchet/AGENTS.md is found', async () => {
+      await fs.writeFile(path.join(testDir, '.ratchet', 'AGENTS.md'), 'content');
 
       const result = await detectLegacyArtifacts(testDir);
       expect(result.hasLegacyArtifacts).toBe(true);
-      expect(result.hasOpenspecAgents).toBe(true);
+      expect(result.hasRatchetAgents).toBe(true);
     });
 
     it('should detect project.md for migration hint (it is preserved, not deleted)', async () => {
-      await fs.writeFile(path.join(testDir, 'openspec', 'project.md'), 'content');
+      await fs.writeFile(path.join(testDir, '.ratchet', 'project.md'), 'content');
 
       const result = await detectLegacyArtifacts(testDir);
       // project.md triggers hasLegacyArtifacts to show migration hint
@@ -451,21 +451,21 @@ ${RATCHET_MARKERS.end}`);
     it('should combine all detection results', async () => {
       // Create various legacy artifacts
       await fs.writeFile(path.join(testDir, 'CLAUDE.md'), `${RATCHET_MARKERS.start}\nContent\n${RATCHET_MARKERS.end}`);
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'openspec'), { recursive: true });
-      await fs.writeFile(path.join(testDir, 'openspec', 'AGENTS.md'), 'content');
-      await fs.writeFile(path.join(testDir, 'openspec', 'project.md'), 'content');
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
+      await fs.writeFile(path.join(testDir, '.ratchet', 'AGENTS.md'), 'content');
+      await fs.writeFile(path.join(testDir, '.ratchet', 'project.md'), 'content');
 
       const result = await detectLegacyArtifacts(testDir);
       expect(result.hasLegacyArtifacts).toBe(true);
       expect(result.configFiles).toContain('CLAUDE.md');
-      expect(result.slashCommandDirs).toContain('.claude/commands/openspec');
-      expect(result.hasOpenspecAgents).toBe(true);
+      expect(result.slashCommandDirs).toContain('.claude/commands/ratchet');
+      expect(result.hasRatchetAgents).toBe(true);
       expect(result.hasProjectMd).toBe(true);
     });
   });
 
   describe('cleanupLegacyArtifacts', () => {
-    it('should remove markers from config files that have only OpenSpec content (never delete)', async () => {
+    it('should remove markers from config files that have only Ratchet content (never delete)', async () => {
       const claudePath = path.join(testDir, 'CLAUDE.md');
       await fs.writeFile(claudePath, `${RATCHET_MARKERS.start}\nContent\n${RATCHET_MARKERS.end}`);
 
@@ -487,7 +487,7 @@ ${RATCHET_MARKERS.end}`);
       const claudePath = path.join(testDir, 'CLAUDE.md');
       await fs.writeFile(claudePath, `User instructions
 ${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}`);
 
       const detection = await detectLegacyArtifacts(testDir);
@@ -500,14 +500,14 @@ ${RATCHET_MARKERS.end}`);
     });
 
     it('should delete legacy slash command directories', async () => {
-      const dirPath = path.join(testDir, '.claude', 'commands', 'openspec');
+      const dirPath = path.join(testDir, '.claude', 'commands', '.ratchet');
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(path.join(dirPath, 'proposal.md'), 'content');
 
       const detection = await detectLegacyArtifacts(testDir);
       const result = await cleanupLegacyArtifacts(testDir, detection);
 
-      expect(result.deletedDirs).toContain('.claude/commands/openspec');
+      expect(result.deletedDirs).toContain('.claude/commands/ratchet');
       await expect(fs.access(dirPath)).rejects.toThrow();
       // Parent directory should still exist
       await expect(fs.access(path.join(testDir, '.claude', 'commands'))).resolves.not.toThrow();
@@ -516,38 +516,38 @@ ${RATCHET_MARKERS.end}`);
     it('should delete legacy slash command files', async () => {
       const dirPath = path.join(testDir, '.cursor', 'commands');
       await fs.mkdir(dirPath, { recursive: true });
-      const filePath = path.join(dirPath, 'openspec-proposal.md');
+      const filePath = path.join(dirPath, 'ratchet-proposal.md');
       await fs.writeFile(filePath, 'content');
 
       const detection = await detectLegacyArtifacts(testDir);
       const result = await cleanupLegacyArtifacts(testDir, detection);
 
-      expect(result.deletedFiles).toContain('.cursor/commands/openspec-proposal.md');
+      expect(result.deletedFiles).toContain('.cursor/commands/ratchet-proposal.md');
       await expect(fs.access(filePath)).rejects.toThrow();
     });
 
-    it('should delete openspec/AGENTS.md', async () => {
-      const agentsPath = path.join(testDir, 'openspec', 'AGENTS.md');
+    it('should delete .ratchet/AGENTS.md', async () => {
+      const agentsPath = path.join(testDir, '.ratchet', 'AGENTS.md');
       await fs.writeFile(agentsPath, 'content');
 
       const detection = await detectLegacyArtifacts(testDir);
       const result = await cleanupLegacyArtifacts(testDir, detection);
 
-      expect(result.deletedFiles).toContain('openspec/AGENTS.md');
+      expect(result.deletedFiles).toContain('.ratchet/AGENTS.md');
       await expect(fs.access(agentsPath)).rejects.toThrow();
-      // openspec directory should still exist
-      await expect(fs.access(path.join(testDir, 'openspec'))).resolves.not.toThrow();
+      // ratchet directory should still exist
+      await expect(fs.access(path.join(testDir, '.ratchet'))).resolves.not.toThrow();
     });
 
-    it('should NOT delete openspec/project.md', async () => {
-      const projectPath = path.join(testDir, 'openspec', 'project.md');
+    it('should NOT delete .ratchet/project.md', async () => {
+      const projectPath = path.join(testDir, '.ratchet', 'project.md');
       await fs.writeFile(projectPath, 'User project content');
 
       const detection = await detectLegacyArtifacts(testDir);
       const result = await cleanupLegacyArtifacts(testDir, detection);
 
       expect(result.projectMdNeedsMigration).toBe(true);
-      expect(result.deletedFiles).not.toContain('openspec/project.md');
+      expect(result.deletedFiles).not.toContain('.ratchet/project.md');
       await expect(fs.access(projectPath)).resolves.not.toThrow();
     });
 
@@ -555,7 +555,7 @@ ${RATCHET_MARKERS.end}`);
       const agentsPath = path.join(testDir, 'AGENTS.md');
       await fs.writeFile(agentsPath, `User content
 ${RATCHET_MARKERS.start}
-OpenSpec content
+Ratchet content
 ${RATCHET_MARKERS.end}`);
 
       const detection = await detectLegacyArtifacts(testDir);
@@ -567,9 +567,9 @@ ${RATCHET_MARKERS.end}`);
       expect(content).not.toContain(RATCHET_MARKERS.start);
     });
 
-    it('should remove markers from root AGENTS.md even when only OpenSpec content (never delete)', async () => {
+    it('should remove markers from root AGENTS.md even when only Ratchet content (never delete)', async () => {
       const agentsPath = path.join(testDir, 'AGENTS.md');
-      await fs.writeFile(agentsPath, `${RATCHET_MARKERS.start}\nOpenSpec content\n${RATCHET_MARKERS.end}`);
+      await fs.writeFile(agentsPath, `${RATCHET_MARKERS.start}\nRatchet content\n${RATCHET_MARKERS.end}`);
 
       const detection = await detectLegacyArtifacts(testDir);
       const result = await cleanupLegacyArtifacts(testDir, detection);
@@ -588,7 +588,7 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: ['NON_EXISTENT.md'],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -622,13 +622,13 @@ ${RATCHET_MARKERS.end}`);
       const result = {
         deletedFiles: [],
         modifiedFiles: [],
-        deletedDirs: ['.claude/commands/openspec'],
+        deletedDirs: ['.claude/commands/ratchet'],
         projectMdNeedsMigration: false,
         errors: [],
       };
 
       const summary = formatCleanupSummary(result);
-      expect(summary).toContain('✓ Removed .claude/commands/openspec/ (replaced by /opsx:*)');
+      expect(summary).toContain('✓ Removed .claude/commands/.ratchet/ (replaced by /opsx:*)');
     });
 
     it('should format modified files', () => {
@@ -641,7 +641,7 @@ ${RATCHET_MARKERS.end}`);
       };
 
       const summary = formatCleanupSummary(result);
-      expect(summary).toContain('✓ Removed OpenSpec markers from AGENTS.md');
+      expect(summary).toContain('✓ Removed Ratchet markers from AGENTS.md');
     });
 
     it('should include migration hint for project.md', () => {
@@ -655,7 +655,7 @@ ${RATCHET_MARKERS.end}`);
 
       const summary = formatCleanupSummary(result);
       expect(summary).toContain('Needs your attention');
-      expect(summary).toContain('openspec/project.md');
+      expect(summary).toContain('.ratchet/project.md');
       expect(summary).toContain('config.yaml');
     });
 
@@ -694,14 +694,14 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: ['CLAUDE.md'],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
       };
 
       const summary = formatDetectionSummary(detection);
-      expect(summary).toContain('Upgrading to the new OpenSpec');
+      expect(summary).toContain('Upgrading to the new Ratchet');
       expect(summary).toContain('agent skills');
       expect(summary).toContain('keeping everything working');
     });
@@ -712,7 +712,7 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: ['CLAUDE.md'],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -732,7 +732,7 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: ['CLINE.md'],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -749,9 +749,9 @@ ${RATCHET_MARKERS.end}`);
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
-        slashCommandDirs: ['.claude/commands/openspec'],
+        slashCommandDirs: ['.claude/commands/ratchet'],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -759,7 +759,7 @@ ${RATCHET_MARKERS.end}`);
 
       const summary = formatDetectionSummary(detection);
       expect(summary).toContain('Files to remove');
-      expect(summary).toContain('• .claude/commands/openspec/');
+      expect(summary).toContain('• .claude/commands/.ratchet/');
     });
 
     it('should format slash command files', () => {
@@ -767,8 +767,8 @@ ${RATCHET_MARKERS.end}`);
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
-        slashCommandFiles: ['.cursor/commands/openspec-proposal.md'],
-        hasOpenspecAgents: false,
+        slashCommandFiles: ['.cursor/commands/ratchet-proposal.md'],
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -776,16 +776,16 @@ ${RATCHET_MARKERS.end}`);
 
       const summary = formatDetectionSummary(detection);
       expect(summary).toContain('Files to remove');
-      expect(summary).toContain('• .cursor/commands/openspec-proposal.md');
+      expect(summary).toContain('• .cursor/commands/ratchet-proposal.md');
     });
 
-    it('should format openspec/AGENTS.md', () => {
+    it('should format .ratchet/AGENTS.md', () => {
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: true,
+        hasRatchetAgents: true,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -793,7 +793,7 @@ ${RATCHET_MARKERS.end}`);
 
       const summary = formatDetectionSummary(detection);
       expect(summary).toContain('Files to remove');
-      expect(summary).toContain('• openspec/AGENTS.md');
+      expect(summary).toContain('• .ratchet/AGENTS.md');
     });
 
     it('should include attention section for project.md', () => {
@@ -802,7 +802,7 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: [],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: true,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: false,
@@ -810,7 +810,7 @@ ${RATCHET_MARKERS.end}`);
 
       const summary = formatDetectionSummary(detection);
       expect(summary).toContain('Needs your attention');
-      expect(summary).toContain('• openspec/project.md');
+      expect(summary).toContain('• .ratchet/project.md');
       expect(summary).toContain('won\'t delete this file');
       expect(summary).toContain('config.yaml');
       expect(summary).toContain('"context:"');
@@ -822,7 +822,7 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: ['CLAUDE.md'],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: true,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -833,16 +833,16 @@ ${RATCHET_MARKERS.end}`);
       expect(summary).toContain('Files to update');
       expect(summary).toContain('CLAUDE.md');
       expect(summary).toContain('Needs your attention');
-      expect(summary).toContain('openspec/project.md');
+      expect(summary).toContain('.ratchet/project.md');
     });
 
     it('should group both removals and updates correctly', () => {
       const detection = {
         configFiles: ['CLAUDE.md', 'CLINE.md'],
         configFilesToUpdate: ['CLAUDE.md', 'CLINE.md'],
-        slashCommandDirs: ['.claude/commands/openspec'],
+        slashCommandDirs: ['.claude/commands/ratchet'],
         slashCommandFiles: [],
-        hasOpenspecAgents: true,
+        hasRatchetAgents: true,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -852,9 +852,9 @@ ${RATCHET_MARKERS.end}`);
       // Check both sections exist
       expect(summary).toContain('Files to remove');
       expect(summary).toContain('Files to update');
-      // Check removals (only slash commands and openspec/AGENTS.md)
-      expect(summary).toContain('• .claude/commands/openspec/');
-      expect(summary).toContain('• openspec/AGENTS.md');
+      // Check removals (only slash commands and .ratchet/AGENTS.md)
+      expect(summary).toContain('• .claude/commands/.ratchet/');
+      expect(summary).toContain('• .ratchet/AGENTS.md');
       // Check updates (all config files)
       expect(summary).toContain('• CLAUDE.md');
       expect(summary).toContain('• CLINE.md');
@@ -866,7 +866,7 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: [],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: false,
@@ -881,7 +881,7 @@ ${RATCHET_MARKERS.end}`);
     it('should return migration hint message', () => {
       const hint = formatProjectMdMigrationHint();
       expect(hint).toContain('Needs your attention');
-      expect(hint).toContain('openspec/project.md');
+      expect(hint).toContain('.ratchet/project.md');
       expect(hint).toContain('won\'t delete this file');
       expect(hint).toContain('config.yaml');
       expect(hint).toContain('"context:"');
@@ -895,7 +895,7 @@ ${RATCHET_MARKERS.end}`);
 
     it('should explain the new context section benefits', () => {
       const hint = formatProjectMdMigrationHint();
-      expect(hint).toContain('included in every OpenSpec request');
+      expect(hint).toContain('included in every Ratchet request');
       expect(hint).toContain('reliably');
     });
   });
@@ -917,17 +917,17 @@ ${RATCHET_MARKERS.end}`);
     it('should include expected tool patterns', () => {
       expect(LEGACY_SLASH_COMMAND_PATHS['claude']).toEqual({
         type: 'directory',
-        path: '.claude/commands/openspec',
+        path: '.claude/commands/ratchet',
       });
 
       expect(LEGACY_SLASH_COMMAND_PATHS['cursor']).toEqual({
         type: 'files',
-        pattern: '.cursor/commands/openspec-*.md',
+        pattern: '.cursor/commands/ratchet-*.md',
       });
 
       expect(LEGACY_SLASH_COMMAND_PATHS['windsurf']).toEqual({
         type: 'files',
-        pattern: '.windsurf/workflows/openspec-*.md',
+        pattern: '.windsurf/workflows/ratchet-*.md',
       });
     });
 
@@ -949,9 +949,9 @@ ${RATCHET_MARKERS.end}`);
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
-        slashCommandDirs: ['.claude/commands/openspec'],
+        slashCommandDirs: ['.claude/commands/ratchet'],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -967,8 +967,8 @@ ${RATCHET_MARKERS.end}`);
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
-        slashCommandFiles: ['.cursor/commands/openspec-proposal.md'],
-        hasOpenspecAgents: false,
+        slashCommandFiles: ['.cursor/commands/ratchet-proposal.md'],
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -983,9 +983,9 @@ ${RATCHET_MARKERS.end}`);
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
-        slashCommandDirs: ['.claude/commands/openspec', '.qoder/commands/openspec'],
-        slashCommandFiles: ['.cursor/commands/openspec-apply.md', '.windsurf/workflows/openspec-archive.md'],
-        hasOpenspecAgents: false,
+        slashCommandDirs: ['.claude/commands/ratchet', '.qoder/commands/ratchet'],
+        slashCommandFiles: ['.cursor/commands/ratchet-apply.md', '.windsurf/workflows/ratchet-archive.md'],
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -1005,11 +1005,11 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: [],
         slashCommandDirs: [],
         slashCommandFiles: [
-          '.cursor/commands/openspec-proposal.md',
-          '.cursor/commands/openspec-apply.md',
-          '.cursor/commands/openspec-archive.md',
+          '.cursor/commands/ratchet-proposal.md',
+          '.cursor/commands/ratchet-apply.md',
+          '.cursor/commands/ratchet-archive.md',
         ],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -1026,7 +1026,7 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: [],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: false,
@@ -1041,8 +1041,8 @@ ${RATCHET_MARKERS.end}`);
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
-        slashCommandFiles: ['.qwen/commands/openspec-proposal.toml'],
-        hasOpenspecAgents: false,
+        slashCommandFiles: ['.qwen/commands/ratchet-proposal.toml'],
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -1058,8 +1058,8 @@ ${RATCHET_MARKERS.end}`);
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
-        slashCommandFiles: ['.continue/prompts/openspec-apply.prompt'],
-        hasOpenspecAgents: false,
+        slashCommandFiles: ['.continue/prompts/ratchet-apply.prompt'],
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -1075,8 +1075,8 @@ ${RATCHET_MARKERS.end}`);
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
-        slashCommandFiles: ['.github/prompts/openspec-apply.prompt.md'],
-        hasOpenspecAgents: false,
+        slashCommandFiles: ['.github/prompts/ratchet-apply.prompt.md'],
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -1093,7 +1093,7 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: [],
         slashCommandDirs: [],
         slashCommandFiles: ['.opencode/command/opsx-propose.md'],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -1104,13 +1104,13 @@ ${RATCHET_MARKERS.end}`);
       expect(tools).toHaveLength(1);
     });
 
-    it('should handle opencode openspec-* legacy files', () => {
+    it('should handle opencode ratchet-* legacy files', () => {
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
-        slashCommandFiles: ['.opencode/command/openspec-new.md'],
-        hasOpenspecAgents: false,
+        slashCommandFiles: ['.opencode/command/ratchet-new.md'],
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -1121,16 +1121,16 @@ ${RATCHET_MARKERS.end}`);
       expect(tools).toHaveLength(1);
     });
 
-    it('should deduplicate opencode when both opsx-* and openspec-* files exist', () => {
+    it('should deduplicate opencode when both opsx-* and ratchet-* files exist', () => {
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
         slashCommandFiles: [
           '.opencode/command/opsx-propose.md',
-          '.opencode/command/openspec-new.md',
+          '.opencode/command/ratchet-new.md',
         ],
-        hasOpenspecAgents: false,
+        hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,
@@ -1149,7 +1149,7 @@ ${RATCHET_MARKERS.end}`);
         configFilesToUpdate: ['CLAUDE.md'],
         slashCommandDirs: [],
         slashCommandFiles: [],
-        hasOpenspecAgents: true,
+        hasRatchetAgents: true,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
         hasLegacyArtifacts: true,

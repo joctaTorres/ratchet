@@ -1,4 +1,4 @@
-# OpenSpec Test Guidance
+# Ratchet Test Guidance
 
 Applies to tests under `test/`.
 

@@ -13,15 +13,15 @@ import {
 describe('instruction-loader', () => {
   describe('loadTemplate', () => {
     it('should load template from schema directory', () => {
-      // Uses built-in spec-driven schema
-      const template = loadTemplate('spec-driven', 'proposal.md');
+      // Uses built-in ratchet schema
+      const template = loadTemplate('ratchet', 'proposal.md');
 
       expect(template).toContain('## Why');
       expect(template).toContain('## What Changes');
     });
 
     it('should throw TemplateLoadError for non-existent template', () => {
-      expect(() => loadTemplate('spec-driven', 'nonexistent.md')).toThrow(
+      expect(() => loadTemplate('ratchet', 'nonexistent.md')).toThrow(
         TemplateLoadError
       );
     });
@@ -34,7 +34,7 @@ describe('instruction-loader', () => {
 
     it('should include template path in error', () => {
       try {
-        loadTemplate('spec-driven', 'nonexistent.md');
+        loadTemplate('ratchet', 'nonexistent.md');
         expect.fail('Should have thrown');
       } catch (err) {
         expect(err).toBeInstanceOf(TemplateLoadError);
@@ -47,7 +47,7 @@ describe('instruction-loader', () => {
     let tempDir: string;
 
     beforeEach(() => {
-      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openspec-test-'));
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-test-'));
     });
 
     afterEach(() => {
@@ -57,22 +57,22 @@ describe('instruction-loader', () => {
     it('should load context with default schema', () => {
       const context = loadChangeContext(tempDir, 'my-change');
 
-      expect(context.schemaName).toBe('spec-driven');
+      expect(context.schemaName).toBe('ratchet');
       expect(context.changeName).toBe('my-change');
-      expect(context.graph.getName()).toBe('spec-driven');
+      expect(context.graph.getName()).toBe('ratchet');
       expect(context.completed.size).toBe(0);
     });
 
     it('should load context with explicit schema', () => {
-      const context = loadChangeContext(tempDir, 'my-change', 'spec-driven');
+      const context = loadChangeContext(tempDir, 'my-change', 'ratchet');
 
-      expect(context.schemaName).toBe('spec-driven');
-      expect(context.graph.getName()).toBe('spec-driven');
+      expect(context.schemaName).toBe('ratchet');
+      expect(context.graph.getName()).toBe('ratchet');
     });
 
     it('should detect completed artifacts', () => {
       // Create change directory with proposal.md
-      const changeDir = path.join(tempDir, 'openspec', 'changes', 'my-change');
+      const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
       fs.mkdirSync(changeDir, { recursive: true });
       fs.writeFileSync(path.join(changeDir, 'proposal.md'), '# Proposal');
 
@@ -87,40 +87,40 @@ describe('instruction-loader', () => {
       expect(context.completed.size).toBe(0);
     });
 
-    it('should auto-detect schema from .openspec.yaml metadata', () => {
+    it('should auto-detect schema from .ratchet.yaml metadata', () => {
       // Create change directory with metadata file
-      const changeDir = path.join(tempDir, 'openspec', 'changes', 'my-change');
+      const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
       fs.mkdirSync(changeDir, { recursive: true });
-      fs.writeFileSync(path.join(changeDir, '.openspec.yaml'), 'schema: spec-driven\ncreated: "2025-01-05"\n');
+      fs.writeFileSync(path.join(changeDir, '.ratchet.yaml'), 'schema: ratchet\ncreated: "2025-01-05"\n');
 
       // Load without explicit schema - should detect from metadata
       const context = loadChangeContext(tempDir, 'my-change');
 
-      expect(context.schemaName).toBe('spec-driven');
-      expect(context.graph.getName()).toBe('spec-driven');
+      expect(context.schemaName).toBe('ratchet');
+      expect(context.graph.getName()).toBe('ratchet');
     });
 
     it('should use explicit schema over metadata schema', () => {
-      // Create change directory with metadata file using spec-driven
-      const changeDir = path.join(tempDir, 'openspec', 'changes', 'my-change');
+      // Create change directory with metadata file using ratchet
+      const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
       fs.mkdirSync(changeDir, { recursive: true });
-      fs.writeFileSync(path.join(changeDir, '.openspec.yaml'), 'schema: spec-driven\n');
+      fs.writeFileSync(path.join(changeDir, '.ratchet.yaml'), 'schema: ratchet\n');
 
       // Load with explicit schema - should override metadata
-      const context = loadChangeContext(tempDir, 'my-change', 'spec-driven');
+      const context = loadChangeContext(tempDir, 'my-change', 'ratchet');
 
-      expect(context.schemaName).toBe('spec-driven');
-      expect(context.graph.getName()).toBe('spec-driven');
+      expect(context.schemaName).toBe('ratchet');
+      expect(context.graph.getName()).toBe('ratchet');
     });
 
     it('should fall back to default when no metadata and no explicit schema', () => {
       // Create change directory without metadata file
-      const changeDir = path.join(tempDir, 'openspec', 'changes', 'my-change');
+      const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
       fs.mkdirSync(changeDir, { recursive: true });
 
       const context = loadChangeContext(tempDir, 'my-change');
 
-      expect(context.schemaName).toBe('spec-driven');
+      expect(context.schemaName).toBe('ratchet');
     });
   });
 
@@ -128,7 +128,7 @@ describe('instruction-loader', () => {
     let tempDir: string;
 
     beforeEach(() => {
-      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openspec-test-'));
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-test-'));
     });
 
     afterEach(() => {
@@ -141,7 +141,7 @@ describe('instruction-loader', () => {
 
       expect(instructions.changeName).toBe('my-change');
       expect(instructions.artifactId).toBe('proposal');
-      expect(instructions.schemaName).toBe('spec-driven');
+      expect(instructions.schemaName).toBe('ratchet');
       expect(instructions.outputPath).toBe('proposal.md');
     });
 
@@ -163,7 +163,7 @@ describe('instruction-loader', () => {
 
     it('should mark completed dependencies as done', () => {
       // Create proposal
-      const changeDir = path.join(tempDir, 'openspec', 'changes', 'my-change');
+      const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
       fs.mkdirSync(changeDir, { recursive: true });
       fs.writeFileSync(path.join(changeDir, 'proposal.md'), '# Proposal');
 
@@ -200,11 +200,11 @@ describe('instruction-loader', () => {
     describe('project config integration', () => {
       it('should return context as separate field for all artifacts', () => {
         // Create project config
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: |
   Tech stack: TypeScript, React
   API style: RESTful
@@ -232,11 +232,11 @@ context: |
 
       it('should preserve multi-line context', () => {
         // Create project config with multi-line context
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: |
   Line 1
   Line 2
@@ -252,11 +252,11 @@ context: |
 
       it('should preserve special characters in context', () => {
         // Create project config with special characters
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: |
   Special: < > & " ' @ # $ % [ ] { }
 `
@@ -270,11 +270,11 @@ context: |
 
       it('should return rules only for matching artifact', () => {
         // Create project config with rules
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 rules:
   proposal:
     - Include rollback plan
@@ -299,11 +299,11 @@ rules:
 
       it('should return undefined rules for non-matching artifact', () => {
         // Create project config with rules only for proposal
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 rules:
   proposal:
     - Include rollback plan
@@ -319,11 +319,11 @@ rules:
 
       it('should return undefined rules when empty array', () => {
         // Create project config with empty rules array
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: Some context
 rules:
   proposal: []
@@ -339,11 +339,11 @@ rules:
 
       it('should keep context, rules, and template as separate fields', () => {
         // Create project config with both context and rules
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: Project context here
 rules:
   proposal:
@@ -365,11 +365,11 @@ rules:
 
       it('should handle context without rules', () => {
         // Create project config with only context
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 context: Project context only
 `
         );
@@ -384,11 +384,11 @@ context: Project context only
 
       it('should handle rules without context', () => {
         // Create project config with only rules
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 rules:
   proposal:
     - Rule only
@@ -426,11 +426,11 @@ rules:
 
       it('should warn about unknown artifact IDs in rules', () => {
         // Create project config with invalid artifact ID
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 rules:
   proposal:
     - Valid rule
@@ -449,15 +449,15 @@ rules:
 
       it('should deduplicate validation warnings within session', () => {
         // Create a fresh temp directory to avoid cache pollution
-        const freshTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openspec-test-'));
+        const freshTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-test-'));
 
         try {
           // Create project config with a uniquely named invalid artifact ID
-          const configDir = path.join(freshTempDir, 'openspec');
+          const configDir = path.join(freshTempDir, '.ratchet');
           fs.mkdirSync(configDir, { recursive: true });
           fs.writeFileSync(
             path.join(configDir, 'config.yaml'),
-            `schema: spec-driven
+            `schema: ratchet
 rules:
   unique-invalid-artifact-${Date.now()}:
     - Invalid rule
@@ -486,11 +486,11 @@ rules:
 
       it('should not warn for valid artifact IDs', () => {
         // Create project config with valid artifact IDs
-        const configDir = path.join(tempDir, 'openspec');
+        const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
-          `schema: spec-driven
+          `schema: ratchet
 rules:
   proposal:
     - Rule 1
@@ -511,7 +511,7 @@ rules:
     let tempDir: string;
 
     beforeEach(() => {
-      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openspec-test-'));
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-test-'));
     });
 
     afterEach(() => {
@@ -523,7 +523,7 @@ rules:
       const status = formatChangeStatus(context);
 
       expect(status.changeName).toBe('my-change');
-      expect(status.schemaName).toBe('spec-driven');
+      expect(status.schemaName).toBe('ratchet');
       expect(status.isComplete).toBe(false);
 
       // proposal has no deps, should be ready
@@ -537,7 +537,7 @@ rules:
     });
 
     it('should show completed artifacts as done', () => {
-      const changeDir = path.join(tempDir, 'openspec', 'changes', 'my-change');
+      const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
       fs.mkdirSync(changeDir, { recursive: true });
       fs.writeFileSync(path.join(changeDir, 'proposal.md'), '# Proposal');
 
@@ -564,11 +564,11 @@ rules:
     });
 
     it('should report isComplete true when all done', () => {
-      const changeDir = path.join(tempDir, 'openspec', 'changes', 'my-change');
+      const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
       fs.mkdirSync(changeDir, { recursive: true });
       fs.mkdirSync(path.join(changeDir, 'specs'), { recursive: true });
 
-      // Create all required files for spec-driven schema
+      // Create all required files for ratchet schema
       fs.writeFileSync(path.join(changeDir, 'proposal.md'), '# Proposal');
       fs.writeFileSync(path.join(changeDir, 'specs', 'test.md'), '# Spec');
       fs.writeFileSync(path.join(changeDir, 'design.md'), '# Design');

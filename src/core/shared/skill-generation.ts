@@ -5,12 +5,10 @@
  */
 
 import {
-  getExploreSkillTemplate,
   getApplyChangeSkillTemplate,
   getArchiveChangeSkillTemplate,
   getVerifyChangeSkillTemplate,
   getOpsxProposeSkillTemplate,
-  getOpsxExploreCommandTemplate,
   getOpsxApplyCommandTemplate,
   getOpsxArchiveCommandTemplate,
   getOpsxVerifyCommandTemplate,
@@ -32,7 +30,7 @@ export interface SkillTemplateEntry {
  * Command template with ID mapping.
  */
 export interface CommandTemplateEntry {
-  template: ReturnType<typeof getOpsxExploreCommandTemplate>;
+  template: ReturnType<typeof getOpsxProposeCommandTemplate>;
   id: string;
 }
 
@@ -42,8 +40,9 @@ export interface CommandTemplateEntry {
  * @param workflowFilter - If provided, only return templates whose workflowId is in this array
  */
 export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemplateEntry[] {
+  // explore is internal-only: its prose is reused by propose, but it is never
+  // emitted as a generated skill or command.
   const all: SkillTemplateEntry[] = [
-    { template: getExploreSkillTemplate(), dirName: 'ratchet-explore', workflowId: 'explore' },
     { template: getApplyChangeSkillTemplate(), dirName: 'ratchet-apply-change', workflowId: 'apply' },
     { template: getArchiveChangeSkillTemplate(), dirName: 'ratchet-archive-change', workflowId: 'archive' },
     { template: getVerifyChangeSkillTemplate(), dirName: 'ratchet-verify-change', workflowId: 'verify' },
@@ -62,8 +61,8 @@ export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemp
  * @param workflowFilter - If provided, only return templates whose id is in this array
  */
 export function getCommandTemplates(workflowFilter?: readonly string[]): CommandTemplateEntry[] {
+  // explore is internal-only and is never emitted as a command.
   const all: CommandTemplateEntry[] = [
-    { template: getOpsxExploreCommandTemplate(), id: 'explore' },
     { template: getOpsxApplyCommandTemplate(), id: 'apply' },
     { template: getOpsxArchiveCommandTemplate(), id: 'archive' },
     { template: getOpsxVerifyCommandTemplate(), id: 'verify' },

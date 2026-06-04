@@ -9,8 +9,8 @@ import type { SkillTemplate, CommandTemplate } from '../types.js';
 export function getApplyChangeSkillTemplate(): SkillTemplate {
   return {
     name: 'ratchet-apply-change',
-    description: 'Implement tasks from an Ratchet change. Use when the user wants to start implementing, continue implementation, or work through tasks.',
-    instructions: `Implement tasks from an Ratchet change.
+    description: 'Implement tasks from a Ratchet change. Use when the user wants to start implementing, continue implementation, or work through tasks against the change features and plan.',
+    instructions: `Implement tasks from a Ratchet change.
 
 **Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
 
@@ -30,9 +30,9 @@ export function getApplyChangeSkillTemplate(): SkillTemplate {
    ratchet status --change "<name>" --json
    \`\`\`
    Parse the JSON to understand:
-   - \`schemaName\`: The workflow being used (e.g., "spec-driven")
+   - \`schemaName\`: The workflow being used (the built-in schema is "ratchet")
    - \`planningHome\`, \`changeRoot\`, and \`actionContext\`: planning scope and edit constraints
-   - Which artifact contains the tasks (typically "tasks" for spec-driven, check status for others)
+   - The tasks live in \`plan.md\` under \`## Tasks\` (the schema's \`apply.tracks\` file)
 
 3. **Get apply instructions**
 
@@ -41,13 +41,13 @@ export function getApplyChangeSkillTemplate(): SkillTemplate {
    \`\`\`
 
    This returns:
-   - \`contextFiles\`: artifact ID -> array of concrete file paths (varies by schema - could be proposal/specs/design/tasks or spec/tests/implementation/docs)
+   - \`contextFiles\`: artifact ID -> array of concrete file paths (for the ratchet schema: the \`features/**/*.feature\` files and \`plan.md\`)
    - Progress (total, complete, remaining)
    - Task list with status
    - Dynamic instruction based on current state
 
    **Handle states:**
-   - If \`state: "blocked"\` (missing artifacts): show message, suggest using ratchet-continue-change
+   - If \`state: "blocked"\` (missing artifacts): show message, suggest using ratchet-propose
    - If \`state: "all_done"\`: congratulate, suggest archive
    - Otherwise: proceed to implementation
 
@@ -56,9 +56,9 @@ export function getApplyChangeSkillTemplate(): SkillTemplate {
 4. **Read context files**
 
    Read every file path listed under \`contextFiles\` from the apply instructions output.
-   The files depend on the schema being used:
-   - **spec-driven**: proposal, specs, design, tasks
-   - Other schemas: follow the contextFiles from CLI output
+   For the ratchet schema these are:
+   - **features/**/*.feature**: each Scenario's Given/When/Then is the behavior contract to implement against
+   - **plan.md**: the ## Why / ## What Changes / ## Design context plus the ## Tasks checklist
 
 5. **Show current progress**
 
@@ -72,9 +72,9 @@ export function getApplyChangeSkillTemplate(): SkillTemplate {
 
    For each pending task:
    - Show which task is being worked on
-   - Make the code changes required
+   - Implement so each related Scenario's Given/When/Then holds true
    - Keep changes minimal and focused
-   - Mark task complete in the tasks file: \`- [ ]\` → \`- [x]\`
+   - Mark task complete in \`plan.md\` under \`## Tasks\`: \`- [ ]\` → \`- [x]\`
    - Continue to next task
 
    **Pause if:**
@@ -167,10 +167,10 @@ This skill supports the "actions on a change" model:
 export function getOpsxApplyCommandTemplate(): CommandTemplate {
   return {
     name: 'OPSX: Apply',
-    description: 'Implement tasks from an Ratchet change (Experimental)',
+    description: 'Implement tasks from a Ratchet change (Experimental)',
     category: 'Workflow',
     tags: ['workflow', 'artifacts', 'experimental'],
-    content: `Implement tasks from an Ratchet change.
+    content: `Implement tasks from a Ratchet change.
 
 **Input**: Optionally specify a change name (e.g., \`/opsx:apply add-auth\`). If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
 
@@ -190,9 +190,9 @@ export function getOpsxApplyCommandTemplate(): CommandTemplate {
    ratchet status --change "<name>" --json
    \`\`\`
    Parse the JSON to understand:
-   - \`schemaName\`: The workflow being used (e.g., "spec-driven")
+   - \`schemaName\`: The workflow being used (the built-in schema is "ratchet")
    - \`planningHome\`, \`changeRoot\`, and \`actionContext\`: planning scope and edit constraints
-   - Which artifact contains the tasks (typically "tasks" for spec-driven, check status for others)
+   - The tasks live in \`plan.md\` under \`## Tasks\` (the schema's \`apply.tracks\` file)
 
 3. **Get apply instructions**
 
@@ -201,13 +201,13 @@ export function getOpsxApplyCommandTemplate(): CommandTemplate {
    \`\`\`
 
    This returns:
-   - \`contextFiles\`: artifact ID -> array of concrete file paths (varies by schema)
+   - \`contextFiles\`: artifact ID -> array of concrete file paths (for the ratchet schema: the \`features/**/*.feature\` files and \`plan.md\`)
    - Progress (total, complete, remaining)
    - Task list with status
    - Dynamic instruction based on current state
 
    **Handle states:**
-   - If \`state: "blocked"\` (missing artifacts): show message, suggest using \`/opsx:continue\`
+   - If \`state: "blocked"\` (missing artifacts): show message, suggest using \`/opsx:propose\`
    - If \`state: "all_done"\`: congratulate, suggest archive
    - Otherwise: proceed to implementation
 
@@ -216,9 +216,9 @@ export function getOpsxApplyCommandTemplate(): CommandTemplate {
 4. **Read context files**
 
    Read every file path listed under \`contextFiles\` from the apply instructions output.
-   The files depend on the schema being used:
-   - **spec-driven**: proposal, specs, design, tasks
-   - Other schemas: follow the contextFiles from CLI output
+   For the ratchet schema these are:
+   - **features/**/*.feature**: each Scenario's Given/When/Then is the behavior contract to implement against
+   - **plan.md**: the ## Why / ## What Changes / ## Design context plus the ## Tasks checklist
 
 5. **Show current progress**
 
@@ -232,9 +232,9 @@ export function getOpsxApplyCommandTemplate(): CommandTemplate {
 
    For each pending task:
    - Show which task is being worked on
-   - Make the code changes required
+   - Implement so each related Scenario's Given/When/Then holds true
    - Keep changes minimal and focused
-   - Mark task complete in the tasks file: \`- [ ]\` → \`- [x]\`
+   - Mark task complete in \`plan.md\` under \`## Tasks\`: \`- [ ]\` → \`- [x]\`
    - Continue to next task
 
    **Pause if:**

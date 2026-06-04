@@ -8,9 +8,9 @@ import {
 
 describe('skill-generation', () => {
   describe('getSkillTemplates', () => {
-    it('should return all five skill templates', () => {
+    it('should return the four generated skill templates', () => {
       const templates = getSkillTemplates();
-      expect(templates).toHaveLength(5);
+      expect(templates).toHaveLength(4);
     });
 
     it('should have unique directory names', () => {
@@ -24,11 +24,12 @@ describe('skill-generation', () => {
       const templates = getSkillTemplates();
       const dirNames = templates.map(t => t.dirName);
 
-      expect(dirNames).toContain('ratchet-explore');
       expect(dirNames).toContain('ratchet-apply-change');
       expect(dirNames).toContain('ratchet-archive-change');
       expect(dirNames).toContain('ratchet-verify-change');
       expect(dirNames).toContain('ratchet-propose');
+      // explore is internal-only and is never generated
+      expect(dirNames).not.toContain('ratchet-explore');
     });
 
     it('should have valid template structure', () => {
@@ -52,12 +53,13 @@ describe('skill-generation', () => {
 
     it('should filter by workflow IDs when provided', () => {
       const filtered = getSkillTemplates(['propose', 'explore', 'apply', 'archive']);
-      expect(filtered).toHaveLength(4);
+      // explore has no generated template even when requested in the filter
+      expect(filtered).toHaveLength(3);
       const ids = filtered.map(t => t.workflowId);
       expect(ids).toContain('propose');
-      expect(ids).toContain('explore');
       expect(ids).toContain('apply');
       expect(ids).toContain('archive');
+      expect(ids).not.toContain('explore');
       expect(ids).not.toContain('new');
       expect(ids).not.toContain('ff');
     });
@@ -82,9 +84,9 @@ describe('skill-generation', () => {
   });
 
   describe('getCommandTemplates', () => {
-    it('should return all five command templates', () => {
+    it('should return the four generated command templates', () => {
       const templates = getCommandTemplates();
-      expect(templates).toHaveLength(5);
+      expect(templates).toHaveLength(4);
     });
 
     it('should have unique IDs', () => {
@@ -98,21 +100,23 @@ describe('skill-generation', () => {
       const templates = getCommandTemplates();
       const ids = templates.map(t => t.id);
 
-      expect(ids).toContain('explore');
       expect(ids).toContain('apply');
       expect(ids).toContain('archive');
       expect(ids).toContain('verify');
       expect(ids).toContain('propose');
+      // explore is internal-only and is never generated
+      expect(ids).not.toContain('explore');
     });
 
     it('should filter by workflow IDs when provided', () => {
       const filtered = getCommandTemplates(['propose', 'explore', 'apply', 'archive']);
-      expect(filtered).toHaveLength(4);
+      // explore has no generated command even when requested in the filter
+      expect(filtered).toHaveLength(3);
       const ids = filtered.map(t => t.id);
       expect(ids).toContain('propose');
-      expect(ids).toContain('explore');
       expect(ids).toContain('apply');
       expect(ids).toContain('archive');
+      expect(ids).not.toContain('explore');
       expect(ids).not.toContain('new');
       expect(ids).not.toContain('ff');
     });
@@ -130,9 +134,9 @@ describe('skill-generation', () => {
   });
 
   describe('getCommandContents', () => {
-    it('should return all five command contents', () => {
+    it('should return the four generated command contents', () => {
       const contents = getCommandContents();
-      expect(contents).toHaveLength(5);
+      expect(contents).toHaveLength(4);
     });
 
     it('should have valid content structure', () => {
@@ -158,10 +162,11 @@ describe('skill-generation', () => {
 
     it('should filter by workflow IDs when provided', () => {
       const filtered = getCommandContents(['propose', 'explore']);
-      expect(filtered).toHaveLength(2);
+      // explore has no generated content even when requested in the filter
+      expect(filtered).toHaveLength(1);
       const ids = filtered.map(c => c.id);
       expect(ids).toContain('propose');
-      expect(ids).toContain('explore');
+      expect(ids).not.toContain('explore');
       expect(ids).not.toContain('new');
     });
 

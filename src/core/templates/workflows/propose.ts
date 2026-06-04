@@ -9,13 +9,12 @@ import type { SkillTemplate, CommandTemplate } from '../types.js';
 export function getOpsxProposeSkillTemplate(): SkillTemplate {
   return {
     name: 'ratchet-propose',
-    description: 'Propose a new change with all artifacts generated in one step. Use when the user wants to quickly describe what they want to build and get a complete proposal with design, specs, and tasks ready for implementation.',
+    description: 'Propose a new change with all artifacts generated in one step. Use when the user wants to describe what they want to build and get executable Gherkin features plus a plan ready for implementation.',
     instructions: `Propose a new change - create the change and generate all artifacts in one step.
 
-I'll create a change with artifacts:
-- proposal.md (what & why)
-- design.md (how)
-- tasks.md (implementation steps)
+I'll create a change with two artifacts:
+- features/<capability>/*.feature (executable Gherkin: Feature / Scenario / Given-When-Then)
+- plan.md (## Why, ## What Changes, ## Design, ## Tasks)
 
 When ready to implement, run /opsx:apply
 
@@ -25,14 +24,18 @@ When ready to implement, run /opsx:apply
 
 **Steps**
 
-1. **If no clear input provided, ask what they want to build**
+1. **Explore first when the request is unclear, then derive a name**
 
-   Use the **AskUserQuestion tool** (open-ended, no preset options) to ask:
-   > "What change do you want to work on? Describe what you want to build or fix."
+   If the request is vague or you cannot confidently describe the behavior as
+   Gherkin scenarios, use the **AskUserQuestion tool** (open-ended, no preset
+   options) to clarify before scaffolding:
+   > "What change do you want to work on? Describe the behavior you want - who does what, and what should happen."
 
-   From their description, derive a kebab-case name (e.g., "add user authentication" → \`add-user-auth\`).
+   Ask follow-ups until you can name the capability and sketch at least one
+   Given/When/Then scenario. From their description, derive a kebab-case change
+   name (e.g., "add user authentication" → \`add-user-auth\`).
 
-   **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
+   **IMPORTANT**: Do NOT proceed without understanding the behavior to build.
 
 2. **Create the change directory**
    \`\`\`bash
@@ -45,7 +48,7 @@ When ready to implement, run /opsx:apply
    ratchet status --change "<name>" --json
    \`\`\`
    Parse the JSON to get:
-   - \`applyRequires\`: array of artifact IDs needed before implementation (e.g., \`["tasks"]\`)
+   - \`applyRequires\`: array of artifact IDs needed before implementation (e.g., \`["plan"]\`)
    - \`artifacts\`: list of all artifacts with their status and dependencies
    - \`planningHome\`, \`changeRoot\`, \`artifactPaths\`, and \`actionContext\`: path and scope context. Use these instead of assuming repo-local paths.
 
@@ -124,10 +127,9 @@ export function getOpsxProposeCommandTemplate(): CommandTemplate {
     tags: ['workflow', 'artifacts', 'experimental'],
     content: `Propose a new change - create the change and generate all artifacts in one step.
 
-I'll create a change with artifacts:
-- proposal.md (what & why)
-- design.md (how)
-- tasks.md (implementation steps)
+I'll create a change with two artifacts:
+- features/<capability>/*.feature (executable Gherkin: Feature / Scenario / Given-When-Then)
+- plan.md (## Why, ## What Changes, ## Design, ## Tasks)
 
 When ready to implement, run /opsx:apply
 
@@ -137,14 +139,18 @@ When ready to implement, run /opsx:apply
 
 **Steps**
 
-1. **If no input provided, ask what they want to build**
+1. **Explore first when the request is unclear, then derive a name**
 
-   Use the **AskUserQuestion tool** (open-ended, no preset options) to ask:
-   > "What change do you want to work on? Describe what you want to build or fix."
+   If the request is vague or you cannot confidently describe the behavior as
+   Gherkin scenarios, use the **AskUserQuestion tool** (open-ended, no preset
+   options) to clarify before scaffolding:
+   > "What change do you want to work on? Describe the behavior you want - who does what, and what should happen."
 
-   From their description, derive a kebab-case name (e.g., "add user authentication" → \`add-user-auth\`).
+   Ask follow-ups until you can name the capability and sketch at least one
+   Given/When/Then scenario. From their description, derive a kebab-case change
+   name (e.g., "add user authentication" → \`add-user-auth\`).
 
-   **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
+   **IMPORTANT**: Do NOT proceed without understanding the behavior to build.
 
 2. **Create the change directory**
    \`\`\`bash
@@ -157,7 +163,7 @@ When ready to implement, run /opsx:apply
    ratchet status --change "<name>" --json
    \`\`\`
    Parse the JSON to get:
-   - \`applyRequires\`: array of artifact IDs needed before implementation (e.g., \`["tasks"]\`)
+   - \`applyRequires\`: array of artifact IDs needed before implementation (e.g., \`["plan"]\`)
    - \`artifacts\`: list of all artifacts with their status and dependencies
    - \`planningHome\`, \`changeRoot\`, \`artifactPaths\`, and \`actionContext\`: path and scope context. Use these instead of assuming repo-local paths.
 

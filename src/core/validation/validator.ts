@@ -222,14 +222,12 @@ export class Validator {
           path: scenarioPath,
           message: `Scenario "${scenario.name}": ${VALIDATION_MESSAGES.SCENARIO_MISSING_GWT}`,
         });
-      } else if (gwt.thenOnlyPrimary) {
-        // Only Then among primaries already covered above; this branch handles
-        // the "Then-only" advisory style when GWT is satisfied but the scenario
-        // is dominated by assertions.
       }
 
       // Then-only scenario (no Given and no When primary, only Then) (WARNING).
-      if (gwt.hasThen && !gwt.hasGiven && !gwt.hasWhen) {
+      // This is also flagged as a missing-GWT ERROR above, but the advisory
+      // gives a more actionable hint.
+      if (gwt.thenOnlyPrimary) {
         issues.push({
           level: 'WARNING',
           path: scenarioPath,

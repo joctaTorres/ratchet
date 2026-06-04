@@ -7,7 +7,7 @@ import path from 'path';
 import { promises as fs } from 'fs';
 import chalk from 'chalk';
 import { FileSystemUtils, removeMarkerBlock as removeMarkerBlockUtil } from '../utils/file-system.js';
-import { RATCHET_MARKERS } from './config.js';
+import { RATCHET_MARKERS, RATCHET_DIR_NAME } from './config.js';
 
 /**
  * Legacy config file names from the old ToolRegistry.
@@ -275,12 +275,12 @@ export async function detectLegacyStructureFiles(
   let hasProjectMd = false;
   let hasRootAgentsWithMarkers = false;
 
-  // Check for ratchet/AGENTS.md
-  const ratchetAgentsPath = FileSystemUtils.joinPath(projectPath, 'ratchet', 'AGENTS.md');
+  // Check for .ratchet/AGENTS.md
+  const ratchetAgentsPath = FileSystemUtils.joinPath(projectPath, RATCHET_DIR_NAME, 'AGENTS.md');
   hasRatchetAgents = await FileSystemUtils.fileExists(ratchetAgentsPath);
 
-  // Check for ratchet/project.md (for migration messaging, not deleted)
-  const projectMdPath = FileSystemUtils.joinPath(projectPath, 'ratchet', 'project.md');
+  // Check for .ratchet/project.md (for migration messaging, not deleted)
+  const projectMdPath = FileSystemUtils.joinPath(projectPath, RATCHET_DIR_NAME, 'project.md');
   hasProjectMd = await FileSystemUtils.fileExists(projectMdPath);
 
   // Check for root AGENTS.md with Ratchet markers
@@ -410,15 +410,15 @@ export async function cleanupLegacyArtifacts(
     }
   }
 
-  // Delete ratchet/AGENTS.md (this is inside ratchet/, it's Ratchet-managed)
+  // Delete .ratchet/AGENTS.md (this is inside .ratchet/, it's Ratchet-managed)
   if (detection.hasRatchetAgents) {
-    const agentsPath = FileSystemUtils.joinPath(projectPath, 'ratchet', 'AGENTS.md');
+    const agentsPath = FileSystemUtils.joinPath(projectPath, RATCHET_DIR_NAME, 'AGENTS.md');
     if (await FileSystemUtils.fileExists(agentsPath)) {
       try {
         await fs.unlink(agentsPath);
-        result.deletedFiles.push('ratchet/AGENTS.md');
+        result.deletedFiles.push(`${RATCHET_DIR_NAME}/AGENTS.md`);
       } catch (error: any) {
-        result.errors.push(`Failed to delete ratchet/AGENTS.md: ${error.message}`);
+        result.errors.push(`Failed to delete ${RATCHET_DIR_NAME}/AGENTS.md: ${error.message}`);
       }
     }
   }
@@ -498,9 +498,9 @@ function buildRemovalsList(detection: LegacyDetectionResult): Array<{ path: stri
     removals.push({ path: file, explanation: 'replaced by skills/' });
   }
 
-  // ratchet/AGENTS.md (inside ratchet/, it's Ratchet-managed)
+  // .ratchet/AGENTS.md (inside .ratchet/, it's Ratchet-managed)
   if (detection.hasRatchetAgents) {
-    removals.push({ path: 'ratchet/AGENTS.md', explanation: 'obsolete workflow file' });
+    removals.push({ path: `${RATCHET_DIR_NAME}/AGENTS.md`, explanation: 'obsolete workflow file' });
   }
 
   // Note: Config files (CLAUDE.md, AGENTS.md, etc.) are NEVER in the removals list

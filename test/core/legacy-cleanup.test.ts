@@ -260,7 +260,7 @@ ${RATCHET_MARKERS.end}`);
 
   describe('detectLegacySlashCommands', () => {
     it('should detect legacy Claude slash command directory', async () => {
-      const dirPath = path.join(testDir, '.claude', 'commands', '.ratchet');
+      const dirPath = path.join(testDir, '.claude', 'commands', 'ratchet');
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(path.join(dirPath, 'proposal.md'), 'content');
 
@@ -290,8 +290,8 @@ ${RATCHET_MARKERS.end}`);
 
     it('should detect multiple tool directories and files', async () => {
       // Create directory-based
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
-      await fs.mkdir(path.join(testDir, '.qoder', 'commands', '.ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.qoder', 'commands', 'ratchet'), { recursive: true });
 
       // Create file-based
       await fs.mkdir(path.join(testDir, '.cursor', 'commands'), { recursive: true });
@@ -424,7 +424,7 @@ ${RATCHET_MARKERS.end}`);
     });
 
     it('should return hasLegacyArtifacts: true when slash commands are found', async () => {
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'ratchet'), { recursive: true });
 
       const result = await detectLegacyArtifacts(testDir);
       expect(result.hasLegacyArtifacts).toBe(true);
@@ -451,7 +451,7 @@ ${RATCHET_MARKERS.end}`);
     it('should combine all detection results', async () => {
       // Create various legacy artifacts
       await fs.writeFile(path.join(testDir, 'CLAUDE.md'), `${RATCHET_MARKERS.start}\nContent\n${RATCHET_MARKERS.end}`);
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'ratchet'), { recursive: true });
       await fs.writeFile(path.join(testDir, '.ratchet', 'AGENTS.md'), 'content');
       await fs.writeFile(path.join(testDir, '.ratchet', 'project.md'), 'content');
 
@@ -500,7 +500,7 @@ ${RATCHET_MARKERS.end}`);
     });
 
     it('should delete legacy slash command directories', async () => {
-      const dirPath = path.join(testDir, '.claude', 'commands', '.ratchet');
+      const dirPath = path.join(testDir, '.claude', 'commands', 'ratchet');
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(path.join(dirPath, 'proposal.md'), 'content');
 
@@ -628,7 +628,7 @@ ${RATCHET_MARKERS.end}`);
       };
 
       const summary = formatCleanupSummary(result);
-      expect(summary).toContain('✓ Removed .claude/commands/.ratchet/ (replaced by /opsx:*)');
+      expect(summary).toContain('✓ Removed .claude/commands/ratchet/ (replaced by /opsx:*)');
     });
 
     it('should format modified files', () => {
@@ -759,7 +759,7 @@ ${RATCHET_MARKERS.end}`);
 
       const summary = formatDetectionSummary(detection);
       expect(summary).toContain('Files to remove');
-      expect(summary).toContain('• .claude/commands/.ratchet/');
+      expect(summary).toContain('• .claude/commands/ratchet/');
     });
 
     it('should format slash command files', () => {
@@ -853,7 +853,7 @@ ${RATCHET_MARKERS.end}`);
       expect(summary).toContain('Files to remove');
       expect(summary).toContain('Files to update');
       // Check removals (only slash commands and .ratchet/AGENTS.md)
-      expect(summary).toContain('• .claude/commands/.ratchet/');
+      expect(summary).toContain('• .claude/commands/ratchet/');
       expect(summary).toContain('• .ratchet/AGENTS.md');
       // Check updates (all config files)
       expect(summary).toContain('• CLAUDE.md');

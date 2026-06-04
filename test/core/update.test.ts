@@ -98,12 +98,12 @@ describe('UpdateCommand', () => {
     it('should update skill files for configured Claude tool', async () => {
       // Set up a configured Claude tool by creating skill directories
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      const exploreSkillDir = path.join(skillsDir, 'ratchet-explore');
+      const exploreSkillDir = path.join(skillsDir, 'ratchet-propose');
       await fs.mkdir(exploreSkillDir, { recursive: true });
 
       // Create an existing skill file
       const oldSkillContent = `---
-name: ratchet-explore (old)
+name: ratchet-propose (old)
 description: Old description
 license: MIT
 compatibility: Requires ratchet CLI.
@@ -128,7 +128,7 @@ Old instructions content
         path.join(exploreSkillDir, 'SKILL.md'),
         'utf-8'
       );
-      expect(updatedSkill).toContain('name: ratchet-explore');
+      expect(updatedSkill).toContain('name: ratchet-propose');
       expect(updatedSkill).not.toContain('Old instructions content');
       expect(updatedSkill).toContain('license: MIT');
 
@@ -145,23 +145,22 @@ Old instructions content
       const skillsDir = path.join(testDir, '.claude', 'skills');
 
       // Create at least one skill to mark tool as configured
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old content'
       );
 
       await updateCommand.execute(testDir);
 
-      // Verify core profile skill files were created/updated (propose, explore, apply, sync, archive)
+      // Verify core profile skill files were created/updated (propose, apply, verify, archive)
       const coreSkillNames = [
-        'ratchet-explore',
-        'ratchet-apply-change',
-        'ratchet-sync-specs',
-        'ratchet-archive-change',
         'ratchet-propose',
+        'ratchet-apply-change',
+        'ratchet-verify-change',
+        'ratchet-archive-change',
       ];
 
       for (const skillName of coreSkillNames) {
@@ -175,13 +174,13 @@ Old instructions content
         expect(content).toContain('description:');
       }
 
-      // Verify non-core skills are NOT created
+      // Verify non-core / internal-only skills are NOT created
       const nonCoreSkillNames = [
+        'ratchet-explore',
         'ratchet-new-change',
         'ratchet-continue-change',
         'ratchet-ff-change',
         'ratchet-bulk-archive-change',
-        'ratchet-verify-change',
       ];
 
       for (const skillName of nonCoreSkillNames) {
@@ -196,11 +195,11 @@ Old instructions content
     it('should update opsx commands for configured Claude tool', async () => {
       // Set up a configured Claude tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old content'
       );
 
@@ -208,7 +207,7 @@ Old instructions content
 
       // Check opsx command files were created
       const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
-      const exploreCmd = path.join(commandsDir, 'explore.md');
+      const exploreCmd = path.join(commandsDir, 'propose.md');
       const exists = await FileSystemUtils.fileExists(exploreCmd);
       expect(exists).toBe(true);
 
@@ -223,18 +222,18 @@ Old instructions content
     it('should update core profile opsx commands when tool is configured', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old content'
       );
 
       await updateCommand.execute(testDir);
 
-      // Verify core profile commands were created (propose, explore, apply, sync, archive)
-      const coreCommandIds = ['explore', 'apply', 'sync', 'archive', 'propose'];
+      // Verify core profile commands were created (propose, apply, verify, archive)
+      const coreCommandIds = ['propose', 'apply', 'verify', 'archive'];
       const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
       for (const cmdId of coreCommandIds) {
         const cmdFile = path.join(commandsDir, `${cmdId}.md`);
@@ -242,8 +241,8 @@ Old instructions content
         expect(exists).toBe(true);
       }
 
-      // Verify non-core commands are NOT created
-      const nonCoreCommandIds = ['new', 'continue', 'ff', 'bulk-archive', 'verify'];
+      // Verify non-core / internal-only commands are NOT created
+      const nonCoreCommandIds = ['explore', 'new', 'continue', 'ff', 'bulk-archive'];
       for (const cmdId of nonCoreCommandIds) {
         const cmdFile = path.join(commandsDir, `${cmdId}.md`);
         const exists = await FileSystemUtils.fileExists(cmdFile);
@@ -257,21 +256,21 @@ Old instructions content
     it('should update multiple configured tools', async () => {
       // Set up Claude
       const claudeSkillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(claudeSkillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(claudeSkillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
       // Set up Cursor
       const cursorSkillsDir = path.join(testDir, '.cursor', 'skills');
-      await fs.mkdir(path.join(cursorSkillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(cursorSkillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(cursorSkillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(cursorSkillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -286,75 +285,72 @@ Old instructions content
 
       // Verify Claude skills updated
       const claudeSkill = await fs.readFile(
-        path.join(claudeSkillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(claudeSkillsDir, 'ratchet-propose', 'SKILL.md'),
         'utf-8'
       );
-      expect(claudeSkill).toContain('name: ratchet-explore');
+      expect(claudeSkill).toContain('name: ratchet-propose');
 
       // Verify Cursor skills updated
       const cursorSkill = await fs.readFile(
-        path.join(cursorSkillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(cursorSkillsDir, 'ratchet-propose', 'SKILL.md'),
         'utf-8'
       );
-      expect(cursorSkill).toContain('name: ratchet-explore');
+      expect(cursorSkill).toContain('name: ratchet-propose');
 
       consoleSpy.mockRestore();
     });
 
-    it('should update Qwen tool with correct command format', async () => {
-      // Set up Qwen
-      const qwenSkillsDir = path.join(testDir, '.qwen', 'skills');
-      await fs.mkdir(path.join(qwenSkillsDir, 'ratchet-explore'), {
+    it('should update OpenCode tool with correct command format', async () => {
+      // Set up OpenCode
+      const opencodeSkillsDir = path.join(testDir, '.opencode', 'skills');
+      await fs.mkdir(path.join(opencodeSkillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(qwenSkillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(opencodeSkillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
       await updateCommand.execute(testDir);
 
-      // Check Qwen command format (TOML) - Qwen uses flat path structure: opsx-<id>.toml
-      const qwenCmd = path.join(
+      const opencodeCmd = path.join(
         testDir,
-        '.qwen',
+        '.opencode',
         'commands',
-        'opsx-explore.toml'
+        'opsx-propose.md'
       );
-      const exists = await FileSystemUtils.fileExists(qwenCmd);
+      const exists = await FileSystemUtils.fileExists(opencodeCmd);
       expect(exists).toBe(true);
 
-      const content = await fs.readFile(qwenCmd, 'utf-8');
-      expect(content).toContain('description =');
-      expect(content).toContain('prompt =');
+      const content = await fs.readFile(opencodeCmd, 'utf-8');
+      expect(content).toContain('---');
+      expect(content).toContain('description:');
     });
 
-    it('should update Windsurf tool with correct command format', async () => {
-      // Set up Windsurf
-      const windsurfSkillsDir = path.join(testDir, '.windsurf', 'skills');
-      await fs.mkdir(path.join(windsurfSkillsDir, 'ratchet-explore'), {
+    it('should update GitHub Copilot tool with correct command format', async () => {
+      const ghSkillsDir = path.join(testDir, '.github', 'skills');
+      await fs.mkdir(path.join(ghSkillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(windsurfSkillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(ghSkillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
       await updateCommand.execute(testDir);
 
-      // Check Windsurf command format
-      const windsurfCmd = path.join(
+      const ghCmd = path.join(
         testDir,
-        '.windsurf',
-        'workflows',
-        'opsx-explore.md'
+        '.github',
+        'prompts',
+        'opsx-propose.prompt.md'
       );
-      const exists = await FileSystemUtils.fileExists(windsurfCmd);
+      const exists = await FileSystemUtils.fileExists(ghCmd);
       expect(exists).toBe(true);
 
-      const content = await fs.readFile(windsurfCmd, 'utf-8');
+      const content = await fs.readFile(ghCmd, 'utf-8');
       expect(content).toContain('---');
-      expect(content).toContain('name:');
+      expect(content).toContain('description:');
     });
   });
 
@@ -362,11 +358,11 @@ Old instructions content
     it('should handle tool update failures gracefully', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -398,20 +394,20 @@ Old instructions content
     it('should continue updating other tools when one fails', async () => {
       // Set up Claude and Cursor
       const claudeSkillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(claudeSkillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(claudeSkillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
       const cursorSkillsDir = path.join(testDir, '.cursor', 'skills');
-      await fs.mkdir(path.join(cursorSkillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(cursorSkillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(cursorSkillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(cursorSkillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -491,18 +487,18 @@ Old instructions content
     it('should generate valid YAML frontmatter in skill files', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
       await updateCommand.execute(testDir);
 
       const skillContent = await fs.readFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'utf-8'
       );
 
@@ -545,11 +541,11 @@ Old instructions content
     it('should display success message with tool name', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -568,11 +564,11 @@ Old instructions content
     it('should suggest IDE restart after update', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -611,13 +607,13 @@ Old instructions content
     it('should detect update needed when generatedBy is missing', async () => {
       // Set up a configured tool without generatedBy
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         `---
-name: ratchet-explore
+name: ratchet-propose
 metadata:
   author: ratchet
   version: "1.0"
@@ -642,13 +638,13 @@ Legacy content without generatedBy
     it('should detect update needed when version differs', async () => {
       // Set up a configured tool with old version
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         `---
-name: ratchet-explore
+name: ratchet-propose
 metadata:
   generatedBy: "0.1.0"
 ---
@@ -672,18 +668,18 @@ Old version content
     it('should embed generatedBy in updated skill files', async () => {
       // Set up a configured tool without generatedBy
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old content without version'
       );
 
       await updateCommand.execute(testDir);
 
       const updatedContent = await fs.readFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'utf-8'
       );
 
@@ -696,13 +692,13 @@ Old version content
     it('should update when force is true even if up to date', async () => {
       // Set up a configured tool with current version
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
 
       const { version } = await import('../../package.json');
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         `---
 metadata:
   generatedBy: "${version}"
@@ -733,11 +729,11 @@ Content
     it('should not show --force hint when force is used', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old content'
       );
 
@@ -761,7 +757,7 @@ Content
     it('should update all tools when force is used with mixed versions', async () => {
       // Set up Claude with current version
       const { version } = await import('../../package.json');
-      const claudeSkillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+      const claudeSkillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
       await fs.mkdir(claudeSkillDir, { recursive: true });
       await fs.writeFile(
         path.join(claudeSkillDir, 'SKILL.md'),
@@ -773,7 +769,7 @@ metadata:
       );
 
       // Set up Cursor with old version
-      const cursorSkillDir = path.join(testDir, '.cursor', 'skills', 'ratchet-explore');
+      const cursorSkillDir = path.join(testDir, '.cursor', 'skills', 'ratchet-propose');
       await fs.mkdir(cursorSkillDir, { recursive: true });
       await fs.writeFile(
         path.join(cursorSkillDir, 'SKILL.md'),
@@ -802,11 +798,11 @@ metadata:
     it('should show version in success message', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -828,12 +824,14 @@ metadata:
       const initCommand = new InitCommand({ tools: 'claude,cursor', force: true });
       await initCommand.execute(testDir);
 
-      // Make Claude stale to force a version update.
-      const claudeSkillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+      // Make Claude stale to force a version update. The version check reads the
+      // first generated skill in SKILL_NAMES order (apply-change, since explore
+      // is internal-only and not generated), so stale that file.
+      const claudeSkillFile = path.join(testDir, '.claude', 'skills', 'ratchet-apply-change', 'SKILL.md');
       const claudeContent = await fs.readFile(claudeSkillFile, 'utf-8');
       await fs.writeFile(
         claudeSkillFile,
-        claudeContent.replace(/generatedBy:\s*["'][^"']+["']/, 'generatedBy: "0.1.0"')
+        claudeContent.replace(/generatedBy:\s*["'][^"']+["']/, 'generatedBy: "0.0.0"')
       );
 
       const consoleSpy = vi.spyOn(console, 'log');
@@ -858,11 +856,11 @@ metadata:
     it('should detect and auto-cleanup legacy files with --force flag', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -908,11 +906,11 @@ ${RATCHET_MARKERS.end}
     it('should warn but continue with update when legacy files found in non-interactive mode', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -955,16 +953,16 @@ ${RATCHET_MARKERS.end}
     it('should cleanup legacy slash command directories with --force', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
       // Create legacy slash command directory
-      const legacyCommandDir = path.join(testDir, '.claude', 'commands', '.ratchet');
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
       await fs.mkdir(legacyCommandDir, { recursive: true });
       await fs.writeFile(
         path.join(legacyCommandDir, 'old-command.md'),
@@ -979,7 +977,7 @@ ${RATCHET_MARKERS.end}
 
       // Should show cleanup message for directory
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Removed .claude/commands/.ratchet/')
+        expect.stringContaining('Removed .claude/commands/ratchet/')
       );
 
       // Legacy directory should be deleted
@@ -992,11 +990,11 @@ ${RATCHET_MARKERS.end}
     it('should cleanup legacy .ratchet/AGENTS.md with --force', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -1029,11 +1027,11 @@ ${RATCHET_MARKERS.end}
     it('should not show legacy cleanup messages when no legacy files exist', async () => {
       // Set up a configured tool with no legacy files
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -1056,11 +1054,11 @@ ${RATCHET_MARKERS.end}
     it('should remove Ratchet marker block from mixed content files', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), {
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
         recursive: true,
       });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old'
       );
 
@@ -1114,7 +1112,7 @@ More user content after markers.
   describe('legacy tool upgrade', () => {
     it('should upgrade legacy tools to new skills with --force', async () => {
       // Create legacy slash command directory (no skills exist yet)
-      const legacyCommandDir = path.join(testDir, '.claude', 'commands', '.ratchet');
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
       await fs.mkdir(legacyCommandDir, { recursive: true });
       await fs.writeFile(
         path.join(legacyCommandDir, 'proposal.md'),
@@ -1146,7 +1144,7 @@ More user content after markers.
       );
 
       // Skills should be created
-      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
       const skillExists = await FileSystemUtils.fileExists(skillFile);
       expect(skillExists).toBe(true);
 
@@ -1159,9 +1157,9 @@ More user content after markers.
 
     it('should upgrade multiple legacy tools with --force', async () => {
       // Create legacy command directories for Claude and Cursor
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'ratchet'), { recursive: true });
       await fs.writeFile(
-        path.join(testDir, '.claude', 'commands', '.ratchet', 'proposal.md'),
+        path.join(testDir, '.claude', 'commands', 'ratchet', 'proposal.md'),
         'content'
       );
 
@@ -1183,8 +1181,8 @@ More user content after markers.
       );
 
       // Both tools should have skills created
-      const claudeSkillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
-      const cursorSkillFile = path.join(testDir, '.cursor', 'skills', 'ratchet-explore', 'SKILL.md');
+      const claudeSkillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
+      const cursorSkillFile = path.join(testDir, '.cursor', 'skills', 'ratchet-propose', 'SKILL.md');
 
       expect(await FileSystemUtils.fileExists(claudeSkillFile)).toBe(true);
       expect(await FileSystemUtils.fileExists(cursorSkillFile)).toBe(true);
@@ -1195,14 +1193,14 @@ More user content after markers.
     it('should not upgrade legacy tools already configured', async () => {
       // Set up a configured Claude tool with skills
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'existing skill'
       );
 
       // Also create legacy directory (simulating partial upgrade)
-      const legacyCommandDir = path.join(testDir, '.claude', 'commands', '.ratchet');
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
       await fs.mkdir(legacyCommandDir, { recursive: true });
       await fs.writeFile(
         path.join(legacyCommandDir, 'proposal.md'),
@@ -1217,7 +1215,7 @@ More user content after markers.
 
       // Legacy cleanup should happen
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Removed .claude/commands/.ratchet/')
+        expect.stringContaining('Removed .claude/commands/ratchet/')
       );
 
       // Should NOT show "Tools detected from legacy artifacts" because claude is already configured
@@ -1240,16 +1238,16 @@ More user content after markers.
     it('should upgrade only unconfigured legacy tools when mixed', async () => {
       // Set up configured Claude tool with skills
       const claudeSkillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-explore'), { recursive: true });
+      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-propose'), { recursive: true });
       await fs.writeFile(
-        path.join(claudeSkillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(claudeSkillsDir, 'ratchet-propose', 'SKILL.md'),
         'existing skill'
       );
 
       // Create legacy commands for both Claude (configured) and Cursor (not configured)
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'ratchet'), { recursive: true });
       await fs.writeFile(
-        path.join(testDir, '.claude', 'commands', '.ratchet', 'proposal.md'),
+        path.join(testDir, '.claude', 'commands', 'ratchet', 'proposal.md'),
         'content'
       );
 
@@ -1271,7 +1269,7 @@ More user content after markers.
       );
 
       // Cursor skills should be created
-      const cursorSkillFile = path.join(testDir, '.cursor', 'skills', 'ratchet-explore', 'SKILL.md');
+      const cursorSkillFile = path.join(testDir, '.cursor', 'skills', 'ratchet-propose', 'SKILL.md');
       expect(await FileSystemUtils.fileExists(cursorSkillFile)).toBe(true);
 
       // Should show "Getting started" for newly configured Cursor
@@ -1285,9 +1283,9 @@ More user content after markers.
     it('should not show getting started message when no new tools configured', async () => {
       // Set up a configured tool (no legacy artifacts)
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         'old skill'
       );
 
@@ -1309,9 +1307,9 @@ More user content after markers.
 
     it('should create only effective profile skills when upgrading legacy tools', async () => {
       // Create legacy command directory
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'ratchet'), { recursive: true });
       await fs.writeFile(
-        path.join(testDir, '.claude', 'commands', '.ratchet', 'proposal.md'),
+        path.join(testDir, '.claude', 'commands', 'ratchet', 'proposal.md'),
         'content'
       );
 
@@ -1322,9 +1320,8 @@ More user content after markers.
       // Default profile is core, so only core workflows should be generated.
       const skillNames = [
         'ratchet-propose',
-        'ratchet-explore',
         'ratchet-apply-change',
-        'ratchet-sync-specs',
+        'ratchet-verify-change',
         'ratchet-archive-change',
       ];
 
@@ -1341,9 +1338,9 @@ More user content after markers.
 
     it('should create commands when upgrading legacy tools', async () => {
       // Create legacy command directory
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'ratchet'), { recursive: true });
       await fs.writeFile(
-        path.join(testDir, '.claude', 'commands', '.ratchet', 'proposal.md'),
+        path.join(testDir, '.claude', 'commands', 'ratchet', 'proposal.md'),
         'content'
       );
 
@@ -1353,7 +1350,7 @@ More user content after markers.
 
       // New opsx commands should be created
       const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
-      const exploreCmd = path.join(commandsDir, 'explore.md');
+      const exploreCmd = path.join(commandsDir, 'propose.md');
       const exists = await FileSystemUtils.fileExists(exploreCmd);
       expect(exists).toBe(true);
     });
@@ -1363,12 +1360,12 @@ More user content after markers.
         featureFlags: {},
         profile: 'custom',
         delivery: 'both',
-        workflows: ['explore'],
+        workflows: ['apply'],
       });
 
-      await fs.mkdir(path.join(testDir, '.claude', 'commands', '.ratchet'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.claude', 'commands', 'ratchet'), { recursive: true });
       await fs.writeFile(
-        path.join(testDir, '.claude', 'commands', '.ratchet', 'proposal.md'),
+        path.join(testDir, '.claude', 'commands', 'ratchet', 'proposal.md'),
         'content'
       );
 
@@ -1377,7 +1374,7 @@ More user content after markers.
 
       const skillsDir = path.join(testDir, '.claude', 'skills');
       expect(await FileSystemUtils.fileExists(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md')
+        path.join(skillsDir, 'ratchet-apply-change', 'SKILL.md')
       )).toBe(true);
       expect(await FileSystemUtils.fileExists(
         path.join(skillsDir, 'ratchet-propose', 'SKILL.md')
@@ -1385,7 +1382,7 @@ More user content after markers.
 
       const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
       expect(await FileSystemUtils.fileExists(
-        path.join(commandsDir, 'explore.md')
+        path.join(commandsDir, 'apply.md')
       )).toBe(true);
       expect(await FileSystemUtils.fileExists(
         path.join(commandsDir, 'propose.md')
@@ -1395,71 +1392,33 @@ More user content after markers.
 
   describe('profile-aware updates', () => {
     it('should generate only profile workflows when custom profile is set', async () => {
-      // Set custom profile with only explore and new
+      // Set custom profile with only apply and verify
       setMockConfig({
         featureFlags: {},
         profile: 'custom',
         delivery: 'both',
-        workflows: ['explore', 'new'],
+        workflows: ['apply', 'verify'],
       });
 
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(skillsDir, 'ratchet-explore', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-apply-change'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-apply-change', 'SKILL.md'), 'old');
 
       await updateCommand.execute(testDir);
 
-      // Should create explore and new skills
+      // Should create apply and verify skills
       expect(await FileSystemUtils.fileExists(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md')
+        path.join(skillsDir, 'ratchet-apply-change', 'SKILL.md')
       )).toBe(true);
       expect(await FileSystemUtils.fileExists(
-        path.join(skillsDir, 'ratchet-new-change', 'SKILL.md')
+        path.join(skillsDir, 'ratchet-verify-change', 'SKILL.md')
       )).toBe(true);
 
       // Should NOT create non-profile skills
       expect(await FileSystemUtils.fileExists(
-        path.join(skillsDir, 'ratchet-apply-change', 'SKILL.md')
-      )).toBe(false);
-      expect(await FileSystemUtils.fileExists(
         path.join(skillsDir, 'ratchet-propose', 'SKILL.md')
       )).toBe(false);
-    });
-
-    it('should suggest core preset when custom profile preserves the old core workflow set', async () => {
-      setMockConfig({
-        featureFlags: {},
-        profile: 'custom',
-        delivery: 'both',
-        workflows: ['propose', 'explore', 'apply', 'archive'],
-      });
-
-      const initCommand = new InitCommand({ tools: 'claude', force: true });
-      await initCommand.execute(testDir);
-
-      const consoleSpy = vi.spyOn(console, 'log');
-
-      await updateCommand.execute(testDir);
-
-      const calls = consoleSpy.mock.calls.map(call =>
-        call.map(arg => String(arg)).join(' ')
-      );
-      expect(calls.some(call =>
-        call.includes('The core profile now includes sync')
-      )).toBe(true);
-      expect(calls.some(call =>
-        call.includes('ratchet config profile core') && call.includes('ratchet update')
-      )).toBe(true);
-
-      expect(await FileSystemUtils.fileExists(
-        path.join(testDir, '.claude', 'skills', 'ratchet-sync-specs', 'SKILL.md')
-      )).toBe(false);
-      expect(await FileSystemUtils.fileExists(
-        path.join(testDir, '.claude', 'commands', 'opsx', 'sync.md')
-      )).toBe(false);
-
-      consoleSpy.mockRestore();
     });
 
     it('should respect skills-only delivery setting', async () => {
@@ -1470,20 +1429,20 @@ More user content after markers.
       });
 
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(skillsDir, 'ratchet-explore', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
 
       await updateCommand.execute(testDir);
 
       // Skills should be created
       expect(await FileSystemUtils.fileExists(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md')
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md')
       )).toBe(true);
 
       // Commands should NOT be created
       const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
       expect(await FileSystemUtils.fileExists(
-        path.join(commandsDir, 'explore.md')
+        path.join(commandsDir, 'propose.md')
       )).toBe(false);
     });
 
@@ -1495,46 +1454,20 @@ More user content after markers.
       });
 
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(skillsDir, 'ratchet-explore', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
 
       await updateCommand.execute(testDir);
 
       // Commands should be created
       const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
       expect(await FileSystemUtils.fileExists(
-        path.join(commandsDir, 'explore.md')
+        path.join(commandsDir, 'propose.md')
       )).toBe(true);
 
       // Skills should be removed for commands-only delivery
       expect(await FileSystemUtils.fileExists(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md')
-      )).toBe(false);
-    });
-
-    it('should remove skills for configured tools without command adapters in commands-only delivery', async () => {
-      setMockConfig({
-        featureFlags: {},
-        profile: 'core',
-        delivery: 'commands',
-      });
-
-      const { AI_TOOLS } = await import('../../src/core/config.js');
-      const { CommandAdapterRegistry } = await import('../../src/core/command-generation/index.js');
-      const adapterlessTool = AI_TOOLS.find((tool) => tool.skillsDir && !CommandAdapterRegistry.get(tool.value));
-      expect(adapterlessTool).toBeDefined();
-      if (!adapterlessTool?.skillsDir) {
-        return;
-      }
-
-      const skillsDir = path.join(testDir, adapterlessTool.skillsDir, 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(skillsDir, 'ratchet-explore', 'SKILL.md'), 'old');
-
-      await expect(updateCommand.execute(testDir)).resolves.toBeUndefined();
-
-      expect(await FileSystemUtils.fileExists(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md')
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md')
       )).toBe(false);
     });
 
@@ -1546,13 +1479,13 @@ More user content after markers.
       });
 
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
       const packageJsonPath = path.join(process.cwd(), 'package.json');
       const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8')) as { version: string };
       await fs.writeFile(
-        path.join(skillsDir, 'ratchet-explore', 'SKILL.md'),
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
         `---
-name: ratchet-explore
+name: ratchet-propose
 metadata:
   generatedBy: "${packageJson.version}"
 ---
@@ -1562,13 +1495,13 @@ content
 
       const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
       await fs.mkdir(commandsDir, { recursive: true });
-      await fs.writeFile(path.join(commandsDir, 'explore.md'), 'old command');
+      await fs.writeFile(path.join(commandsDir, 'propose.md'), 'old command');
 
       await updateCommand.execute(testDir);
 
       // Command files should be removed due to delivery change, even though skill version is current
       expect(await FileSystemUtils.fileExists(
-        path.join(commandsDir, 'explore.md')
+        path.join(commandsDir, 'propose.md')
       )).toBe(false);
     });
 
@@ -1581,7 +1514,7 @@ content
 
       const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
       await fs.mkdir(commandsDir, { recursive: true });
-      await fs.writeFile(path.join(commandsDir, 'explore.md'), 'existing command');
+      await fs.writeFile(path.join(commandsDir, 'propose.md'), 'existing command');
 
       const consoleSpy = vi.spyOn(console, 'log');
 
@@ -1605,22 +1538,23 @@ content
     });
 
     it('should remove workflows outside profile during update sync', async () => {
-      // Set core profile (propose, explore, apply, sync, archive)
+      // Custom profile selecting only propose; verify is deselected.
       setMockConfig({
         featureFlags: {},
-        profile: 'core',
+        profile: 'custom',
         delivery: 'both',
+        workflows: ['propose'],
       });
 
-      // Set up tool with extra workflows beyond core profile
+      // Set up tool with an extra (deselected) workflow beyond the profile
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(skillsDir, 'ratchet-explore', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
 
-      // Add a non-core workflow
-      await fs.mkdir(path.join(skillsDir, 'ratchet-new-change'), { recursive: true });
-      await fs.writeFile(path.join(skillsDir, 'ratchet-new-change', 'SKILL.md'), 'old');
-      const extraCommandFile = path.join(testDir, '.claude', 'commands', 'opsx', 'new.md');
+      // Add a deselected workflow (verify) that is still a known workflow
+      await fs.mkdir(path.join(skillsDir, 'ratchet-verify-change'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-verify-change', 'SKILL.md'), 'old');
+      const extraCommandFile = path.join(testDir, '.claude', 'commands', 'opsx', 'verify.md');
       await fs.mkdir(path.dirname(extraCommandFile), { recursive: true });
       await fs.writeFile(extraCommandFile, 'old');
 
@@ -1630,7 +1564,7 @@ content
 
       // Deselected workflow artifacts should be removed for both delivery surfaces.
       expect(await FileSystemUtils.fileExists(
-        path.join(skillsDir, 'ratchet-new-change', 'SKILL.md')
+        path.join(skillsDir, 'ratchet-verify-change', 'SKILL.md')
       )).toBe(false);
       expect(await FileSystemUtils.fileExists(extraCommandFile)).toBe(false);
 
@@ -1651,8 +1585,8 @@ content
     it('should detect new tool directories not currently configured', async () => {
       // Set up a configured Claude tool
       const claudeSkillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(claudeSkillsDir, 'ratchet-explore', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(claudeSkillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
 
       // Create a Cursor directory (not configured — no skills)
       await fs.mkdir(path.join(testDir, '.cursor'), { recursive: true });
@@ -1676,13 +1610,13 @@ content
     it('should consolidate multiple new tools into one message', async () => {
       // Set up a configured Claude tool
       const claudeSkillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(claudeSkillsDir, 'ratchet-explore', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(claudeSkillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
 
       // Create two unconfigured tool directories
       await fs.mkdir(path.join(testDir, '.github'), { recursive: true });
       await fs.writeFile(path.join(testDir, '.github', 'copilot-instructions.md'), '');
-      await fs.mkdir(path.join(testDir, '.windsurf'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.opencode'), { recursive: true });
 
       const consoleSpy = vi.spyOn(console, 'log');
 
@@ -1697,7 +1631,7 @@ content
       );
       expect(consolidatedCalls).toHaveLength(1);
       expect(consolidatedCalls[0]).toContain('GitHub Copilot');
-      expect(consolidatedCalls[0]).toContain('Windsurf');
+      expect(consolidatedCalls[0]).toContain('OpenCode');
       expect(consolidatedCalls[0]).toContain("Run 'ratchet init' to add them.");
 
       const repeatedSingularCalls = calls.filter(call =>
@@ -1711,8 +1645,8 @@ content
     it('should not show new tool message when no new tools detected', async () => {
       // Set up a configured tool (only Claude, no other tool directories)
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(skillsDir, 'ratchet-explore', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
 
       const consoleSpy = vi.spyOn(console, 'log');
 
@@ -1734,22 +1668,22 @@ content
     it('should detect installed workflows across tools', async () => {
       // Create skills for Claude
       const claudeSkillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(claudeSkillsDir, 'ratchet-explore', 'SKILL.md'), 'content');
+      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(claudeSkillsDir, 'ratchet-propose', 'SKILL.md'), 'content');
       await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-apply-change'), { recursive: true });
       await fs.writeFile(path.join(claudeSkillsDir, 'ratchet-apply-change', 'SKILL.md'), 'content');
 
       const workflows = scanInstalledWorkflows(testDir, ['claude']);
-      expect(workflows).toContain('explore');
+      expect(workflows).toContain('propose');
       expect(workflows).toContain('apply');
-      expect(workflows).not.toContain('propose');
+      expect(workflows).not.toContain('verify');
     });
 
     it('should return union of workflows across multiple tools', async () => {
-      // Claude has explore
+      // Claude has propose
       const claudeSkillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(claudeSkillsDir, 'ratchet-explore', 'SKILL.md'), 'content');
+      await fs.mkdir(path.join(claudeSkillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(claudeSkillsDir, 'ratchet-propose', 'SKILL.md'), 'content');
 
       // Cursor has apply
       const cursorSkillsDir = path.join(testDir, '.cursor', 'skills');
@@ -1757,7 +1691,7 @@ content
       await fs.writeFile(path.join(cursorSkillsDir, 'ratchet-apply-change', 'SKILL.md'), 'content');
 
       const workflows = scanInstalledWorkflows(testDir, ['claude', 'cursor']);
-      expect(workflows).toContain('explore');
+      expect(workflows).toContain('propose');
       expect(workflows).toContain('apply');
     });
 
@@ -1779,18 +1713,18 @@ content
     it('should detect installed workflows from managed command files', async () => {
       const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
       await fs.mkdir(commandsDir, { recursive: true });
-      await fs.writeFile(path.join(commandsDir, 'explore.md'), 'content');
+      await fs.writeFile(path.join(commandsDir, 'propose.md'), 'content');
 
       const workflows = scanInstalledWorkflows(testDir, ['claude']);
-      expect(workflows).toContain('explore');
+      expect(workflows).toContain('propose');
     });
   });
 
   describe('tools output', () => {
     it('should list affected tools in output', async () => {
       const skillsDir = path.join(testDir, '.claude', 'skills');
-      await fs.mkdir(path.join(skillsDir, 'ratchet-explore'), { recursive: true });
-      await fs.writeFile(path.join(skillsDir, 'ratchet-explore', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
 
       const consoleSpy = vi.spyOn(console, 'log');
 

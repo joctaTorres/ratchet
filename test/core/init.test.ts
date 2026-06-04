@@ -60,7 +60,7 @@ describe('InitCommand', () => {
 
       const ratchetPath = path.join(testDir, '.ratchet');
       expect(await directoryExists(ratchetPath)).toBe(true);
-      expect(await directoryExists(path.join(ratchetPath, 'specs'))).toBe(true);
+      expect(await directoryExists(path.join(ratchetPath, 'features'))).toBe(true);
       expect(await directoryExists(path.join(ratchetPath, 'changes'))).toBe(true);
       expect(await directoryExists(path.join(ratchetPath, 'changes', 'archive'))).toBe(true);
     });

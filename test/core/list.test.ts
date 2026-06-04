@@ -54,9 +54,9 @@ describe('ListCommand', () => {
       await fs.mkdir(path.join(changesDir, 'archive'), { recursive: true });
       await fs.mkdir(path.join(changesDir, 'my-change'), { recursive: true });
       
-      // Create tasks.md with some tasks
+      // Create plan.md with some tasks
       await fs.writeFile(
-        path.join(changesDir, 'my-change', 'tasks.md'),
+        path.join(changesDir, 'my-change', 'plan.md'),
         '- [x] Task 1\n- [ ] Task 2\n'
       );
 
@@ -73,7 +73,7 @@ describe('ListCommand', () => {
       await fs.mkdir(path.join(changesDir, 'test-change'), { recursive: true });
       
       await fs.writeFile(
-        path.join(changesDir, 'test-change', 'tasks.md'),
+        path.join(changesDir, 'test-change', 'plan.md'),
         `# Tasks
 - [x] Completed task 1
 - [x] Completed task 2
@@ -95,7 +95,7 @@ Regular text that should be ignored
       await fs.mkdir(path.join(changesDir, 'completed-change'), { recursive: true });
       
       await fs.writeFile(
-        path.join(changesDir, 'completed-change', 'tasks.md'),
+        path.join(changesDir, 'completed-change', 'plan.md'),
         '- [x] Task 1\n- [x] Task 2\n- [x] Task 3\n'
       );
 
@@ -105,7 +105,7 @@ Regular text that should be ignored
       expect(logOutput.some(line => line.includes('✓ Complete'))).toBe(true);
     });
 
-    it('should handle changes without tasks.md', async () => {
+    it('should handle changes without plan.md', async () => {
       const changesDir = path.join(tempDir, '.ratchet', 'changes');
       await fs.mkdir(path.join(changesDir, 'no-tasks'), { recursive: true });
 
@@ -139,14 +139,14 @@ Regular text that should be ignored
       // Complete change
       await fs.mkdir(path.join(changesDir, 'completed'), { recursive: true });
       await fs.writeFile(
-        path.join(changesDir, 'completed', 'tasks.md'),
+        path.join(changesDir, 'completed', 'plan.md'),
         '- [x] Task 1\n- [x] Task 2\n'
       );
 
       // Partial change
       await fs.mkdir(path.join(changesDir, 'partial'), { recursive: true });
       await fs.writeFile(
-        path.join(changesDir, 'partial', 'tasks.md'),
+        path.join(changesDir, 'partial', 'plan.md'),
         '- [x] Done\n- [ ] Not done\n- [ ] Also not done\n'
       );
 

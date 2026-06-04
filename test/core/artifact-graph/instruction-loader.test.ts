@@ -14,10 +14,17 @@ describe('instruction-loader', () => {
   describe('loadTemplate', () => {
     it('should load template from schema directory', () => {
       // Uses built-in ratchet schema
-      const template = loadTemplate('ratchet', 'proposal.md');
+      const template = loadTemplate('ratchet', 'plan.md');
 
       expect(template).toContain('## Why');
       expect(template).toContain('## What Changes');
+    });
+
+    it('should load the feature template', () => {
+      const template = loadTemplate('ratchet', 'feature.feature');
+
+      expect(template).toContain('Feature:');
+      expect(template).toContain('Scenario:');
     });
 
     it('should throw TemplateLoadError for non-existent template', () => {
@@ -27,7 +34,7 @@ describe('instruction-loader', () => {
     });
 
     it('should throw TemplateLoadError for non-existent schema', () => {
-      expect(() => loadTemplate('nonexistent-schema', 'proposal.md')).toThrow(
+      expect(() => loadTemplate('nonexistent-schema', 'plan.md')).toThrow(
         TemplateLoadError
       );
     });
@@ -71,14 +78,15 @@ describe('instruction-loader', () => {
     });
 
     it('should detect completed artifacts', () => {
-      // Create change directory with proposal.md
+      // Create change directory with a feature file
       const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
-      fs.mkdirSync(changeDir, { recursive: true });
-      fs.writeFileSync(path.join(changeDir, 'proposal.md'), '# Proposal');
+      const featuresDir = path.join(changeDir, 'features', 'auth');
+      fs.mkdirSync(featuresDir, { recursive: true });
+      fs.writeFileSync(path.join(featuresDir, 'login.feature'), 'Feature: Login');
 
       const context = loadChangeContext(tempDir, 'my-change');
 
-      expect(context.completed.has('proposal')).toBe(true);
+      expect(context.completed.has('features')).toBe(true);
     });
 
     it('should return empty completed set for non-existent change directory', () => {
@@ -137,54 +145,54 @@ describe('instruction-loader', () => {
 
     it('should include artifact metadata', () => {
       const context = loadChangeContext(tempDir, 'my-change');
-      const instructions = generateInstructions(context, 'proposal');
+      const instructions = generateInstructions(context, 'features');
 
       expect(instructions.changeName).toBe('my-change');
-      expect(instructions.artifactId).toBe('proposal');
+      expect(instructions.artifactId).toBe('features');
       expect(instructions.schemaName).toBe('ratchet');
-      expect(instructions.outputPath).toBe('proposal.md');
+      expect(instructions.outputPath).toBe('features/**/*.feature');
     });
 
     it('should include template content', () => {
       const context = loadChangeContext(tempDir, 'my-change');
-      const instructions = generateInstructions(context, 'proposal');
+      const instructions = generateInstructions(context, 'plan');
 
       expect(instructions.template).toContain('## Why');
     });
 
     it('should show dependencies with completion status', () => {
       const context = loadChangeContext(tempDir, 'my-change');
-      const instructions = generateInstructions(context, 'specs');
+      const instructions = generateInstructions(context, 'plan');
 
       expect(instructions.dependencies).toHaveLength(1);
-      expect(instructions.dependencies[0].id).toBe('proposal');
+      expect(instructions.dependencies[0].id).toBe('features');
       expect(instructions.dependencies[0].done).toBe(false);
     });
 
     it('should mark completed dependencies as done', () => {
-      // Create proposal
+      // Create a feature file so 'features' is complete
       const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
-      fs.mkdirSync(changeDir, { recursive: true });
-      fs.writeFileSync(path.join(changeDir, 'proposal.md'), '# Proposal');
+      const featuresDir = path.join(changeDir, 'features', 'auth');
+      fs.mkdirSync(featuresDir, { recursive: true });
+      fs.writeFileSync(path.join(featuresDir, 'login.feature'), 'Feature: Login');
 
       const context = loadChangeContext(tempDir, 'my-change');
-      const instructions = generateInstructions(context, 'specs');
+      const instructions = generateInstructions(context, 'plan');
 
       expect(instructions.dependencies[0].done).toBe(true);
     });
 
     it('should list artifacts unlocked by this one', () => {
       const context = loadChangeContext(tempDir, 'my-change');
-      const instructions = generateInstructions(context, 'proposal');
+      const instructions = generateInstructions(context, 'features');
 
-      // proposal unlocks specs and design
-      expect(instructions.unlocks).toContain('specs');
-      expect(instructions.unlocks).toContain('design');
+      // features unlocks plan
+      expect(instructions.unlocks).toContain('plan');
     });
 
     it('should have empty dependencies for root artifact', () => {
       const context = loadChangeContext(tempDir, 'my-change');
-      const instructions = generateInstructions(context, 'proposal');
+      const instructions = generateInstructions(context, 'features');
 
       expect(instructions.dependencies).toHaveLength(0);
     });
@@ -212,7 +220,7 @@ context: |
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
-        const instructions = generateInstructions(context, 'proposal', tempDir);
+        const instructions = generateInstructions(context, 'plan', tempDir);
 
         // Context should be in separate field, not in template
         expect(instructions.context).toContain('Tech stack: TypeScript, React');
@@ -223,7 +231,7 @@ context: |
 
       it('should return undefined context when config is absent', () => {
         const context = loadChangeContext(tempDir, 'my-change');
-        const instructions = generateInstructions(context, 'proposal', tempDir);
+        const instructions = generateInstructions(context, 'plan', tempDir);
 
         expect(instructions.context).toBeUndefined();
         expect(instructions.rules).toBeUndefined();
@@ -245,7 +253,7 @@ context: |
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
-        const instructions = generateInstructions(context, 'proposal', tempDir);
+        const instructions = generateInstructions(context, 'plan', tempDir);
 
         expect(instructions.context).toContain('Line 1\nLine 2\nLine 3');
       });
@@ -263,7 +271,7 @@ context: |
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
-        const instructions = generateInstructions(context, 'proposal', tempDir);
+        const instructions = generateInstructions(context, 'plan', tempDir);
 
         expect(instructions.context).toContain('Special: < > & " \' @ # $ % [ ] { }');
       });
@@ -276,45 +284,44 @@ context: |
           path.join(configDir, 'config.yaml'),
           `schema: ratchet
 rules:
-  proposal:
-    - Include rollback plan
-    - Identify affected teams
-  specs:
+  features:
     - Use Given/When/Then format
+    - One file per capability
+  plan:
+    - Include rollback plan
 `
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
 
-        // Check proposal artifact has its rules
-        const proposalInstructions = generateInstructions(context, 'proposal', tempDir);
-        expect(proposalInstructions.rules).toEqual(['Include rollback plan', 'Identify affected teams']);
-        expect(proposalInstructions.template).not.toContain('rollback plan');
+        // Check features artifact has its rules
+        const featuresInstructions = generateInstructions(context, 'features', tempDir);
+        expect(featuresInstructions.rules).toEqual(['Use Given/When/Then format', 'One file per capability']);
 
-        // Check specs artifact has its rules
-        const specsInstructions = generateInstructions(context, 'specs', tempDir);
-        expect(specsInstructions.rules).toEqual(['Use Given/When/Then format']);
-        expect(specsInstructions.template).not.toContain('Given/When/Then');
+        // Check plan artifact has its rules
+        const planInstructions = generateInstructions(context, 'plan', tempDir);
+        expect(planInstructions.rules).toEqual(['Include rollback plan']);
+        expect(planInstructions.template).not.toContain('rollback plan');
       });
 
       it('should return undefined rules for non-matching artifact', () => {
-        // Create project config with rules only for proposal
+        // Create project config with rules only for features
         const configDir = path.join(tempDir, '.ratchet');
         fs.mkdirSync(configDir, { recursive: true });
         fs.writeFileSync(
           path.join(configDir, 'config.yaml'),
           `schema: ratchet
 rules:
-  proposal:
-    - Include rollback plan
+  features:
+    - Use Given/When/Then format
 `
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
 
-        // Check design artifact (no rules configured) has undefined rules
-        const designInstructions = generateInstructions(context, 'design', tempDir);
-        expect(designInstructions.rules).toBeUndefined();
+        // Check plan artifact (no rules configured) has undefined rules
+        const planInstructions = generateInstructions(context, 'plan', tempDir);
+        expect(planInstructions.rules).toBeUndefined();
       });
 
       it('should return undefined rules when empty array', () => {
@@ -326,12 +333,12 @@ rules:
           `schema: ratchet
 context: Some context
 rules:
-  proposal: []
+  features: []
 `
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
-        const instructions = generateInstructions(context, 'proposal', tempDir);
+        const instructions = generateInstructions(context, 'features', tempDir);
 
         expect(instructions.context).toBe('Some context');
         expect(instructions.rules).toBeUndefined();
@@ -346,13 +353,13 @@ rules:
           `schema: ratchet
 context: Project context here
 rules:
-  proposal:
+  plan:
     - Rule 1
 `
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
-        const instructions = generateInstructions(context, 'proposal', tempDir);
+        const instructions = generateInstructions(context, 'plan', tempDir);
 
         // All three should be separate
         expect(instructions.context).toBe('Project context here');
@@ -375,7 +382,7 @@ context: Project context only
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
-        const instructions = generateInstructions(context, 'proposal', tempDir);
+        const instructions = generateInstructions(context, 'plan', tempDir);
 
         expect(instructions.context).toBe('Project context only');
         expect(instructions.rules).toBeUndefined();
@@ -390,13 +397,13 @@ context: Project context only
           path.join(configDir, 'config.yaml'),
           `schema: ratchet
 rules:
-  proposal:
+  plan:
     - Rule only
 `
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
-        const instructions = generateInstructions(context, 'proposal', tempDir);
+        const instructions = generateInstructions(context, 'plan', tempDir);
 
         expect(instructions.context).toBeUndefined();
         expect(instructions.rules).toEqual(['Rule only']);
@@ -405,7 +412,7 @@ rules:
 
       it('should work without project root parameter', () => {
         const context = loadChangeContext(tempDir, 'my-change');
-        const instructions = generateInstructions(context, 'proposal'); // No projectRoot
+        const instructions = generateInstructions(context, 'plan'); // No projectRoot
 
         expect(instructions.context).toBeUndefined();
         expect(instructions.rules).toBeUndefined();
@@ -432,7 +439,7 @@ rules:
           path.join(configDir, 'config.yaml'),
           `schema: ratchet
 rules:
-  proposal:
+  features:
     - Valid rule
   invalid-artifact:
     - Invalid rule
@@ -440,7 +447,7 @@ rules:
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
-        generateInstructions(context, 'proposal', tempDir);
+        generateInstructions(context, 'features', tempDir);
 
         expect(consoleWarnSpy).toHaveBeenCalledWith(
           expect.stringContaining('Unknown artifact ID in rules: "invalid-artifact"')
@@ -467,9 +474,8 @@ rules:
           const context = loadChangeContext(freshTempDir, 'my-change');
 
           // Call multiple times
-          generateInstructions(context, 'proposal', freshTempDir);
-          generateInstructions(context, 'specs', freshTempDir);
-          generateInstructions(context, 'design', freshTempDir);
+          generateInstructions(context, 'features', freshTempDir);
+          generateInstructions(context, 'plan', freshTempDir);
 
           // Warning should be shown only once (deduplication works)
           // Note: We may have gotten warnings from other tests, so check that
@@ -492,15 +498,15 @@ rules:
           path.join(configDir, 'config.yaml'),
           `schema: ratchet
 rules:
-  proposal:
+  features:
     - Rule 1
-  specs:
+  plan:
     - Rule 2
 `
         );
 
         const context = loadChangeContext(tempDir, 'my-change');
-        generateInstructions(context, 'proposal', tempDir);
+        generateInstructions(context, 'features', tempDir);
 
         expect(consoleWarnSpy).not.toHaveBeenCalled();
       });
@@ -526,53 +532,52 @@ rules:
       expect(status.schemaName).toBe('ratchet');
       expect(status.isComplete).toBe(false);
 
-      // proposal has no deps, should be ready
-      const proposal = status.artifacts.find(a => a.id === 'proposal');
-      expect(proposal?.status).toBe('ready');
+      // features has no deps, should be ready
+      const features = status.artifacts.find(a => a.id === 'features');
+      expect(features?.status).toBe('ready');
 
-      // specs depends on proposal, should be blocked
-      const specs = status.artifacts.find(a => a.id === 'specs');
-      expect(specs?.status).toBe('blocked');
-      expect(specs?.missingDeps).toContain('proposal');
+      // plan depends on features, should be blocked
+      const plan = status.artifacts.find(a => a.id === 'plan');
+      expect(plan?.status).toBe('blocked');
+      expect(plan?.missingDeps).toContain('features');
     });
 
     it('should show completed artifacts as done', () => {
       const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
-      fs.mkdirSync(changeDir, { recursive: true });
-      fs.writeFileSync(path.join(changeDir, 'proposal.md'), '# Proposal');
+      const featuresDir = path.join(changeDir, 'features', 'auth');
+      fs.mkdirSync(featuresDir, { recursive: true });
+      fs.writeFileSync(path.join(featuresDir, 'login.feature'), 'Feature: Login');
 
       const context = loadChangeContext(tempDir, 'my-change');
       const status = formatChangeStatus(context);
 
-      const proposal = status.artifacts.find(a => a.id === 'proposal');
-      expect(proposal?.status).toBe('done');
+      const features = status.artifacts.find(a => a.id === 'features');
+      expect(features?.status).toBe('done');
 
-      // specs should now be ready
-      const specs = status.artifacts.find(a => a.id === 'specs');
-      expect(specs?.status).toBe('ready');
+      // plan should now be ready
+      const plan = status.artifacts.find(a => a.id === 'plan');
+      expect(plan?.status).toBe('ready');
     });
 
     it('should include output paths for each artifact', () => {
       const context = loadChangeContext(tempDir, 'my-change');
       const status = formatChangeStatus(context);
 
-      const proposal = status.artifacts.find(a => a.id === 'proposal');
-      expect(proposal?.outputPath).toBe('proposal.md');
+      const features = status.artifacts.find(a => a.id === 'features');
+      expect(features?.outputPath).toBe('features/**/*.feature');
 
-      const specs = status.artifacts.find(a => a.id === 'specs');
-      expect(specs?.outputPath).toBe('specs/**/*.md');
+      const plan = status.artifacts.find(a => a.id === 'plan');
+      expect(plan?.outputPath).toBe('plan.md');
     });
 
     it('should report isComplete true when all done', () => {
       const changeDir = path.join(tempDir, '.ratchet', 'changes', 'my-change');
-      fs.mkdirSync(changeDir, { recursive: true });
-      fs.mkdirSync(path.join(changeDir, 'specs'), { recursive: true });
+      const featuresDir = path.join(changeDir, 'features', 'auth');
+      fs.mkdirSync(featuresDir, { recursive: true });
 
       // Create all required files for ratchet schema
-      fs.writeFileSync(path.join(changeDir, 'proposal.md'), '# Proposal');
-      fs.writeFileSync(path.join(changeDir, 'specs', 'test.md'), '# Spec');
-      fs.writeFileSync(path.join(changeDir, 'design.md'), '# Design');
-      fs.writeFileSync(path.join(changeDir, 'tasks.md'), '# Tasks');
+      fs.writeFileSync(path.join(featuresDir, 'login.feature'), 'Feature: Login');
+      fs.writeFileSync(path.join(changeDir, 'plan.md'), '# Plan');
 
       const context = loadChangeContext(tempDir, 'my-change');
       const status = formatChangeStatus(context);
@@ -585,11 +590,10 @@ rules:
       const context = loadChangeContext(tempDir, 'my-change');
       const status = formatChangeStatus(context);
 
-      // tasks requires specs and design
-      const tasks = status.artifacts.find(a => a.id === 'tasks');
-      expect(tasks?.status).toBe('blocked');
-      expect(tasks?.missingDeps).toContain('specs');
-      expect(tasks?.missingDeps).toContain('design');
+      // plan requires features
+      const plan = status.artifacts.find(a => a.id === 'plan');
+      expect(plan?.status).toBe('blocked');
+      expect(plan?.missingDeps).toContain('features');
     });
 
     it('should sort artifacts in build order', () => {
@@ -597,13 +601,11 @@ rules:
       const status = formatChangeStatus(context);
 
       const ids = status.artifacts.map(a => a.id);
-      const proposalIdx = ids.indexOf('proposal');
-      const specsIdx = ids.indexOf('specs');
-      const tasksIdx = ids.indexOf('tasks');
+      const featuresIdx = ids.indexOf('features');
+      const planIdx = ids.indexOf('plan');
 
-      // proposal must come before specs, specs before tasks
-      expect(proposalIdx).toBeLessThan(specsIdx);
-      expect(specsIdx).toBeLessThan(tasksIdx);
+      // features must come before plan
+      expect(featuresIdx).toBeLessThan(planIdx);
     });
   });
 });

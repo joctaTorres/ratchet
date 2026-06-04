@@ -32,17 +32,17 @@ describe('ViewCommand', () => {
     const changesDir = path.join(tempDir, '.ratchet', 'changes');
     await fs.mkdir(changesDir, { recursive: true });
 
-    // Empty change (no tasks.md) - should show in Draft
+    // Empty change (no plan.md) - should show in Draft
     await fs.mkdir(path.join(changesDir, 'empty-change'), { recursive: true });
 
-    // Change with tasks.md but no tasks - should show in Draft
+    // Change with plan.md but no tasks - should show in Draft
     await fs.mkdir(path.join(changesDir, 'no-tasks-change'), { recursive: true });
-    await fs.writeFile(path.join(changesDir, 'no-tasks-change', 'tasks.md'), '# Tasks\n\nNo tasks yet.');
+    await fs.writeFile(path.join(changesDir, 'no-tasks-change', 'plan.md'), '# Tasks\n\nNo tasks yet.');
 
     // Change with all tasks complete - should show in Completed
     await fs.mkdir(path.join(changesDir, 'completed-change'), { recursive: true });
     await fs.writeFile(
-      path.join(changesDir, 'completed-change', 'tasks.md'),
+      path.join(changesDir, 'completed-change', 'plan.md'),
       '- [x] Done task\n'
     );
 
@@ -84,25 +84,25 @@ describe('ViewCommand', () => {
 
     await fs.mkdir(path.join(changesDir, 'gamma-change'), { recursive: true });
     await fs.writeFile(
-      path.join(changesDir, 'gamma-change', 'tasks.md'),
+      path.join(changesDir, 'gamma-change', 'plan.md'),
       '- [x] Done\n- [x] Also done\n- [ ] Not done\n'
     );
 
     await fs.mkdir(path.join(changesDir, 'beta-change'), { recursive: true });
     await fs.writeFile(
-      path.join(changesDir, 'beta-change', 'tasks.md'),
+      path.join(changesDir, 'beta-change', 'plan.md'),
       '- [x] Task 1\n- [ ] Task 2\n'
     );
 
     await fs.mkdir(path.join(changesDir, 'delta-change'), { recursive: true });
     await fs.writeFile(
-      path.join(changesDir, 'delta-change', 'tasks.md'),
+      path.join(changesDir, 'delta-change', 'plan.md'),
       '- [x] Task 1\n- [ ] Task 2\n'
     );
 
     await fs.mkdir(path.join(changesDir, 'alpha-change'), { recursive: true });
     await fs.writeFile(
-      path.join(changesDir, 'alpha-change', 'tasks.md'),
+      path.join(changesDir, 'alpha-change', 'plan.md'),
       '- [ ] Task 1\n- [ ] Task 2\n'
     );
 

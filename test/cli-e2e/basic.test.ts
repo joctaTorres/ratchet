@@ -91,7 +91,7 @@ describe('ratchet CLI e2e basics', () => {
 
   it('keeps instructions --json free of spinner output', async () => {
     const projectDir = await prepareFixture('tmp-init');
-    const result = await runCLI(['instructions', 'proposal', '--change', 'c1', '--json'], {
+    const result = await runCLI(['instructions', 'features', '--change', 'c1', '--json'], {
       cwd: projectDir,
     });
     expectJsonOnlyOutput(result);

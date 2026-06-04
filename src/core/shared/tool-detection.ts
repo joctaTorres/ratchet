@@ -32,15 +32,9 @@ export type SkillName = (typeof SKILL_NAMES)[number];
  */
 export const COMMAND_IDS = [
   'explore',
-  'new',
-  'continue',
   'apply',
-  'ff',
-  'sync',
   'archive',
-  'bulk-archive',
   'verify',
-  'onboard',
   'propose',
 ] as const;
 

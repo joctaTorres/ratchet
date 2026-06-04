@@ -61,17 +61,10 @@ const PROGRESS_SPINNER = {
 };
 
 const WORKFLOW_TO_SKILL_DIR: Record<string, string> = {
-  'explore': 'openspec-explore',
-  'new': 'openspec-new-change',
-  'continue': 'openspec-continue-change',
-  'apply': 'openspec-apply-change',
-  'ff': 'openspec-ff-change',
-  'sync': 'openspec-sync-specs',
-  'archive': 'openspec-archive-change',
-  'bulk-archive': 'openspec-bulk-archive-change',
-  'verify': 'openspec-verify-change',
-  'onboard': 'openspec-onboard',
   'propose': 'openspec-propose',
+  'apply': 'openspec-apply-change',
+  'verify': 'openspec-verify-change',
+  'archive': 'openspec-archive-change',
 };
 
 // -----------------------------------------------------------------------------

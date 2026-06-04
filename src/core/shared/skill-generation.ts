@@ -6,26 +6,14 @@
 
 import {
   getExploreSkillTemplate,
-  getNewChangeSkillTemplate,
-  getContinueChangeSkillTemplate,
   getApplyChangeSkillTemplate,
-  getFfChangeSkillTemplate,
-  getSyncSpecsSkillTemplate,
   getArchiveChangeSkillTemplate,
-  getBulkArchiveChangeSkillTemplate,
   getVerifyChangeSkillTemplate,
-  getOnboardSkillTemplate,
   getOpsxProposeSkillTemplate,
   getOpsxExploreCommandTemplate,
-  getOpsxNewCommandTemplate,
-  getOpsxContinueCommandTemplate,
   getOpsxApplyCommandTemplate,
-  getOpsxFfCommandTemplate,
-  getOpsxSyncCommandTemplate,
   getOpsxArchiveCommandTemplate,
-  getOpsxBulkArchiveCommandTemplate,
   getOpsxVerifyCommandTemplate,
-  getOpsxOnboardCommandTemplate,
   getOpsxProposeCommandTemplate,
   type SkillTemplate,
 } from '../templates/skill-templates.js';
@@ -56,15 +44,9 @@ export interface CommandTemplateEntry {
 export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemplateEntry[] {
   const all: SkillTemplateEntry[] = [
     { template: getExploreSkillTemplate(), dirName: 'openspec-explore', workflowId: 'explore' },
-    { template: getNewChangeSkillTemplate(), dirName: 'openspec-new-change', workflowId: 'new' },
-    { template: getContinueChangeSkillTemplate(), dirName: 'openspec-continue-change', workflowId: 'continue' },
     { template: getApplyChangeSkillTemplate(), dirName: 'openspec-apply-change', workflowId: 'apply' },
-    { template: getFfChangeSkillTemplate(), dirName: 'openspec-ff-change', workflowId: 'ff' },
-    { template: getSyncSpecsSkillTemplate(), dirName: 'openspec-sync-specs', workflowId: 'sync' },
     { template: getArchiveChangeSkillTemplate(), dirName: 'openspec-archive-change', workflowId: 'archive' },
-    { template: getBulkArchiveChangeSkillTemplate(), dirName: 'openspec-bulk-archive-change', workflowId: 'bulk-archive' },
     { template: getVerifyChangeSkillTemplate(), dirName: 'openspec-verify-change', workflowId: 'verify' },
-    { template: getOnboardSkillTemplate(), dirName: 'openspec-onboard', workflowId: 'onboard' },
     { template: getOpsxProposeSkillTemplate(), dirName: 'openspec-propose', workflowId: 'propose' },
   ];
 
@@ -82,15 +64,9 @@ export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemp
 export function getCommandTemplates(workflowFilter?: readonly string[]): CommandTemplateEntry[] {
   const all: CommandTemplateEntry[] = [
     { template: getOpsxExploreCommandTemplate(), id: 'explore' },
-    { template: getOpsxNewCommandTemplate(), id: 'new' },
-    { template: getOpsxContinueCommandTemplate(), id: 'continue' },
     { template: getOpsxApplyCommandTemplate(), id: 'apply' },
-    { template: getOpsxFfCommandTemplate(), id: 'ff' },
-    { template: getOpsxSyncCommandTemplate(), id: 'sync' },
     { template: getOpsxArchiveCommandTemplate(), id: 'archive' },
-    { template: getOpsxBulkArchiveCommandTemplate(), id: 'bulk-archive' },
     { template: getOpsxVerifyCommandTemplate(), id: 'verify' },
-    { template: getOpsxOnboardCommandTemplate(), id: 'onboard' },
     { template: getOpsxProposeCommandTemplate(), id: 'propose' },
   ];
 

@@ -12,10 +12,10 @@ type WorkflowId = (typeof ALL_WORKFLOWS)[number];
  * Maps workflow IDs to their skill directory names.
  */
 export const WORKFLOW_TO_SKILL_DIR: Record<WorkflowId, string> = {
-  'propose': 'openspec-propose',
-  'apply': 'openspec-apply-change',
-  'verify': 'openspec-verify-change',
-  'archive': 'openspec-archive-change',
+  'propose': 'ratchet-propose',
+  'apply': 'ratchet-apply-change',
+  'verify': 'ratchet-verify-change',
+  'archive': 'ratchet-archive-change',
 };
 
 function toKnownWorkflows(workflows: readonly string[]): WorkflowId[] {
@@ -26,7 +26,7 @@ function toKnownWorkflows(workflows: readonly string[]): WorkflowId[] {
 }
 
 /**
- * Checks whether a tool has at least one generated OpenSpec command file.
+ * Checks whether a tool has at least one generated Ratchet command file.
  */
 export function toolHasAnyConfiguredCommand(projectPath: string, toolId: string): boolean {
   const adapter = CommandAdapterRegistry.get(toolId);

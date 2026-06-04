@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { RATCHET_DIR_NAME } from './config.js';
 import path from 'path';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
 import { readFileSync } from 'fs';
@@ -79,13 +80,13 @@ export class ListCommand {
     const { sort = 'recent', json = false } = options;
 
     if (mode === 'changes') {
-      const changesDir = path.join(targetPath, 'openspec', 'changes');
+      const changesDir = path.join(targetPath, RATCHET_DIR_NAME, 'changes');
 
       // Check if changes directory exists
       try {
         await fs.access(changesDir);
       } catch {
-        throw new Error("No OpenSpec changes directory found. Run 'openspec init' first.");
+        throw new Error("No Ratchet changes directory found. Run 'ratchet init' first.");
       }
 
       // Get all directories in changes (excluding archive)
@@ -152,7 +153,7 @@ export class ListCommand {
     }
 
     // specs mode
-    const specsDir = path.join(targetPath, 'openspec', 'specs');
+    const specsDir = path.join(targetPath, RATCHET_DIR_NAME, 'specs');
     try {
       await fs.access(specsDir);
     } catch {

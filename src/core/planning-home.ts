@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import { RATCHET_DIR_NAME, DEFAULT_SCHEMA_NAME } from './config.js';
 import * as path from 'node:path';
 
 import { FileSystemUtils } from '../utils/file-system.js';
@@ -17,7 +18,7 @@ export interface ResolvePlanningHomeOptions {
   allowImplicitRepoRoot?: boolean;
 }
 
-const REPO_DEFAULT_SCHEMA = 'spec-driven';
+const REPO_DEFAULT_SCHEMA = DEFAULT_SCHEMA_NAME;
 
 function pathExistsAsDirectory(candidatePath: string): boolean {
   try {
@@ -58,7 +59,7 @@ function findNearestAncestor(startPath: string, predicate: (dirPath: string) => 
 
 export function findRepoPlanningRootSync(startPath = process.cwd()): string | null {
   return findNearestAncestor(startPath, (dirPath) =>
-    pathExistsAsDirectory(path.join(dirPath, 'openspec'))
+    pathExistsAsDirectory(path.join(dirPath, RATCHET_DIR_NAME))
   );
 }
 
@@ -78,7 +79,7 @@ function repoPlanningHome(repoRoot: string): PlanningHome {
   return {
     kind: 'repo',
     root: repoRoot,
-    changesDir: path.join(repoRoot, 'openspec', 'changes'),
+    changesDir: path.join(repoRoot, RATCHET_DIR_NAME, 'changes'),
     defaultSchema: REPO_DEFAULT_SCHEMA,
   };
 }
@@ -95,7 +96,7 @@ export function resolveCurrentPlanningHomeSync(
   }
 
   if (options.allowImplicitRepoRoot === false) {
-    throw new Error('No OpenSpec planning home found from the current directory.');
+    throw new Error('No Ratchet planning home found from the current directory.');
   }
 
   return repoPlanningHome(FileSystemUtils.canonicalizeExistingPath(searchStart));

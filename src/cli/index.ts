@@ -4,7 +4,7 @@ import ora from 'ora';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { promises as fs } from 'fs';
-import { AI_TOOLS, OPENSPEC_DIR_NAME } from '../core/config.js';
+import { AI_TOOLS, RATCHET_DIR_NAME } from '../core/config.js';
 import { UpdateCommand } from '../core/update.js';
 import { ListCommand } from '../core/list.js';
 import { ArchiveCommand } from '../core/archive.js';
@@ -36,18 +36,18 @@ function getCommandPath(command: Command): string {
 
   while (current) {
     const name = current.name();
-    // Skip the root 'openspec' command
-    if (name && name !== 'openspec') {
+    // Skip the root 'ratchet' command
+    if (name && name !== 'ratchet') {
       names.unshift(name);
     }
     current = current.parent;
   }
 
-  return names.join(':') || 'openspec';
+  return names.join(':') || 'ratchet';
 }
 
 program
-  .name('openspec')
+  .name('ratchet')
   .description('AI-native system for spec-driven development')
   .version(version);
 
@@ -80,9 +80,9 @@ program.hook('postAction', async () => {
 const availableToolIds = AI_TOOLS.filter((tool) => tool.skillsDir).map((tool) => tool.value);
 const toolsOptionDescription = `Configure AI tools non-interactively. Use "all", "none", or a comma-separated list of: ${availableToolIds.join(', ')}`;
 
-async function hasRepoLocalOpenSpecProject(projectPath: string): Promise<boolean> {
+async function hasRepoLocalRatchetProject(projectPath: string): Promise<boolean> {
   try {
-    const stats = await fs.stat(path.join(projectPath, OPENSPEC_DIR_NAME));
+    const stats = await fs.stat(path.join(projectPath, RATCHET_DIR_NAME));
     return stats.isDirectory();
   } catch (error) {
     const code =
@@ -98,7 +98,7 @@ async function hasRepoLocalOpenSpecProject(projectPath: string): Promise<boolean
 
 program
   .command('init [path]')
-  .description('Initialize OpenSpec in your project')
+  .description('Initialize Ratchet in your project')
   .option('--tools <tools>', toolsOptionDescription)
   .option('--force', 'Auto-cleanup legacy files without prompting')
   .option('--profile <profile>', 'Override global config profile (core or custom)')
@@ -145,7 +145,7 @@ program
   .option('--no-interactive', 'Disable interactive prompts')
   .action(async (options?: { tool?: string; noInteractive?: boolean }) => {
     try {
-      console.log('Note: "openspec experimental" is deprecated. Use "openspec init" instead.');
+      console.log('Note: "ratchet experimental" is deprecated. Use "ratchet init" instead.');
       const { InitCommand } = await import('../core/init.js');
       const initCommand = new InitCommand({
         tools: options?.tool,
@@ -161,7 +161,7 @@ program
 
 program
   .command('update [path]')
-  .description('Update OpenSpec instruction files')
+  .description('Update Ratchet instruction files')
   .option('--force', 'Force update even when tools are up to date')
   .action(async (targetPath = '.', options?: { force?: boolean }) => {
     try {
@@ -236,7 +236,7 @@ program
   .option('--type <type>', 'Specify item type when ambiguous: change|spec')
   .option('--strict', 'Enable strict validation mode')
   .option('--json', 'Output validation results as JSON')
-  .option('--concurrency <n>', 'Max concurrent validations (defaults to env OPENSPEC_CONCURRENCY or 6)')
+  .option('--concurrency <n>', 'Max concurrent validations (defaults to env RATCHET_CONCURRENCY or 6)')
   .option('--no-interactive', 'Disable interactive prompts')
   .action(async (itemName?: string, options?: { all?: boolean; changes?: boolean; specs?: boolean; type?: string; strict?: boolean; json?: boolean; noInteractive?: boolean; concurrency?: string }) => {
     try {

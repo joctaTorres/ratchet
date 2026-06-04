@@ -4,8 +4,9 @@ import * as yaml from 'yaml';
 import { ChangeMetadataSchema, type ChangeMetadata } from '../core/change-metadata/index.js';
 import { listSchemas } from '../core/artifact-graph/resolver.js';
 import { readProjectConfig } from '../core/project-config.js';
+import { DEFAULT_SCHEMA_NAME } from '../core/config.js';
 
-const METADATA_FILENAME = '.openspec.yaml';
+const METADATA_FILENAME = '.ratchet.yaml';
 
 /**
  * Error thrown when change metadata validation fails.
@@ -43,7 +44,7 @@ export function validateSchemaName(
 }
 
 /**
- * Writes change metadata to .openspec.yaml in the change directory.
+ * Writes change metadata to .ratchet.yaml in the change directory.
  *
  * @param changeDir - The path to the change directory
  * @param metadata - The metadata to write
@@ -84,7 +85,7 @@ export function writeChangeMetadata(
 }
 
 /**
- * Reads change metadata from .openspec.yaml in the change directory.
+ * Reads change metadata from .ratchet.yaml in the change directory.
  *
  * @param changeDir - The path to the change directory
  * @param projectRoot - Optional project root for project-local schema resolution
@@ -155,8 +156,8 @@ export interface ResolveSchemaForChangeOptions {
  *
  * Resolution order:
  * 1. Explicit schema (if provided)
- * 2. Schema from .openspec.yaml metadata (if exists)
- * 3. Schema from openspec/config.yaml (if exists)
+ * 2. Schema from .ratchet.yaml metadata (if exists)
+ * 3. Schema from ratchet/config.yaml (if exists)
  * 4. Default 'spec-driven'
  *
  * @param changeDir - The path to the change directory
@@ -169,7 +170,7 @@ export function resolveSchemaForChange(
   projectRootOverride?: string,
   options: ResolveSchemaForChangeOptions = {}
 ): string {
-  // Derive project root from changeDir (changeDir is typically projectRoot/openspec/changes/change-name)
+  // Derive project root from changeDir (changeDir is typically projectRoot/ratchet/changes/change-name)
   const projectRoot = projectRootOverride ?? path.resolve(changeDir, '../../..');
 
   // 1. Explicit override wins
@@ -194,5 +195,5 @@ export function resolveSchemaForChange(
   }
 
   // 4. Default
-  return 'spec-driven';
+  return DEFAULT_SCHEMA_NAME;
 }

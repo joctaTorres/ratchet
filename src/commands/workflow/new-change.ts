@@ -57,7 +57,7 @@ function outputForCreatedChange(
     change: {
       id,
       path: changeDir,
-      metadataPath: path.join(changeDir, '.openspec.yaml'),
+      metadataPath: path.join(changeDir, '.ratchet.yaml'),
       schema,
     },
   };

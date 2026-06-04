@@ -1,11 +1,14 @@
-export const OPENSPEC_DIR_NAME = 'openspec';
+export const RATCHET_DIR_NAME = '.ratchet';
 
-export const OPENSPEC_MARKERS = {
-  start: '<!-- OPENSPEC:START -->',
-  end: '<!-- OPENSPEC:END -->'
+/** Single source of truth for the default built-in workflow schema name. */
+export const DEFAULT_SCHEMA_NAME = 'ratchet';
+
+export const RATCHET_MARKERS = {
+  start: '<!-- RATCHET:START -->',
+  end: '<!-- RATCHET:END -->'
 };
 
-export interface OpenSpecConfig {
+export interface RatchetConfig {
   aiTools: string[];
 }
 

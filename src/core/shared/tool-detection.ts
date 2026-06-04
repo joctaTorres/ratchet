@@ -12,11 +12,10 @@ import { AI_TOOLS } from '../config.js';
  * Names of skill directories created by ratchet init.
  */
 export const SKILL_NAMES = [
-  'ratchet-explore',
-  'ratchet-apply-change',
-  'ratchet-archive-change',
-  'ratchet-verify-change',
   'ratchet-propose',
+  'ratchet-apply-change',
+  'ratchet-verify-change',
+  'ratchet-archive-change',
 ] as const;
 
 export type SkillName = (typeof SKILL_NAMES)[number];

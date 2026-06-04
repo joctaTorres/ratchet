@@ -825,9 +825,8 @@ metadata:
       await initCommand.execute(testDir);
 
       // Make Claude stale to force a version update. The version check reads the
-      // first generated skill in SKILL_NAMES order (apply-change, since explore
-      // is internal-only and not generated), so stale that file.
-      const claudeSkillFile = path.join(testDir, '.claude', 'skills', 'ratchet-apply-change', 'SKILL.md');
+      // first generated skill in SKILL_NAMES order (propose), so stale that file.
+      const claudeSkillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
       const claudeContent = await fs.readFile(claudeSkillFile, 'utf-8');
       await fs.writeFile(
         claudeSkillFile,

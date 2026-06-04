@@ -27,13 +27,13 @@ describe('tool-detection', () => {
   });
 
   describe('SKILL_NAMES', () => {
-    it('should contain the five generated skill names', () => {
-      expect(SKILL_NAMES).toHaveLength(5);
-      expect(SKILL_NAMES).toContain('ratchet-explore');
-      expect(SKILL_NAMES).toContain('ratchet-apply-change');
-      expect(SKILL_NAMES).toContain('ratchet-archive-change');
-      expect(SKILL_NAMES).toContain('ratchet-verify-change');
+    it('should contain the four generated skill names', () => {
+      expect(SKILL_NAMES).toHaveLength(4);
       expect(SKILL_NAMES).toContain('ratchet-propose');
+      expect(SKILL_NAMES).toContain('ratchet-apply-change');
+      expect(SKILL_NAMES).toContain('ratchet-verify-change');
+      expect(SKILL_NAMES).toContain('ratchet-archive-change');
+      expect(SKILL_NAMES).not.toContain('ratchet-explore');
     });
   });
 
@@ -63,7 +63,7 @@ describe('tool-detection', () => {
     });
 
     it('should detect when one skill exists', async () => {
-      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), 'test content');
 
@@ -98,7 +98,7 @@ describe('tool-detection', () => {
     });
 
     it('should detect configured tools', async () => {
-      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), 'test content');
 
@@ -194,7 +194,7 @@ Content here
     });
 
     it('should detect needsUpdate when generatedBy is missing', async () => {
-      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), `---
 name: ratchet-explore
@@ -213,7 +213,7 @@ Content here
     });
 
     it('should detect needsUpdate when version differs', async () => {
-      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), `---
 name: ratchet-explore
@@ -233,7 +233,7 @@ Content here
     });
 
     it('should not need update when version matches', async () => {
-      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), `---
 name: ratchet-explore
@@ -253,7 +253,7 @@ Content here
     });
 
     it('should include tool name in status', async () => {
-      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+      const skillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), 'content');
 
@@ -271,12 +271,12 @@ Content here
 
     it('should return configured tools', async () => {
       // Setup Claude
-      const claudeSkillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+      const claudeSkillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
       await fs.mkdir(claudeSkillDir, { recursive: true });
       await fs.writeFile(path.join(claudeSkillDir, 'SKILL.md'), 'content');
 
       // Setup Cursor
-      const cursorSkillDir = path.join(testDir, '.cursor', 'skills', 'ratchet-explore');
+      const cursorSkillDir = path.join(testDir, '.cursor', 'skills', 'ratchet-propose');
       await fs.mkdir(cursorSkillDir, { recursive: true });
       await fs.writeFile(path.join(cursorSkillDir, 'SKILL.md'), 'content');
 
@@ -295,7 +295,7 @@ Content here
 
     it('should return version status for all configured tools', async () => {
       // Setup Claude with old version
-      const claudeSkillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+      const claudeSkillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
       await fs.mkdir(claudeSkillDir, { recursive: true });
       await fs.writeFile(path.join(claudeSkillDir, 'SKILL.md'), `---
 metadata:
@@ -304,7 +304,7 @@ metadata:
 `);
 
       // Setup Cursor with current version
-      const cursorSkillDir = path.join(testDir, '.cursor', 'skills', 'ratchet-explore');
+      const cursorSkillDir = path.join(testDir, '.cursor', 'skills', 'ratchet-propose');
       await fs.mkdir(cursorSkillDir, { recursive: true });
       await fs.writeFile(path.join(cursorSkillDir, 'SKILL.md'), `---
 metadata:

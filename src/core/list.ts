@@ -2,9 +2,7 @@ import { promises as fs } from 'fs';
 import { RATCHET_DIR_NAME } from './config.js';
 import path from 'path';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import { MarkdownParser } from './parsers/markdown-parser.js';
+import fg from 'fast-glob';
 
 interface ChangeInfo {
   name: string;
@@ -152,44 +150,42 @@ export class ListCommand {
       return;
     }
 
-    // specs mode
-    const specsDir = path.join(targetPath, RATCHET_DIR_NAME, 'specs');
+    // specs mode → feature store, grouped by capability
+    const featuresDir = path.join(targetPath, RATCHET_DIR_NAME, 'features');
     try {
-      await fs.access(specsDir);
+      await fs.access(featuresDir);
     } catch {
-      console.log('No specs found.');
+      console.log('No features found.');
       return;
     }
 
-    const entries = await fs.readdir(specsDir, { withFileTypes: true });
-    const specDirs = entries.filter(e => e.isDirectory()).map(e => e.name);
-    if (specDirs.length === 0) {
-      console.log('No specs found.');
+    let rels: string[] = [];
+    try {
+      rels = await fg('**/*.feature', { cwd: featuresDir, onlyFiles: true });
+    } catch {
+      rels = [];
+    }
+    if (rels.length === 0) {
+      console.log('No features found.');
       return;
     }
 
-    type SpecInfo = { id: string; requirementCount: number };
-    const specs: SpecInfo[] = [];
-    for (const id of specDirs) {
-      const specPath = join(specsDir, id, 'spec.md');
-      try {
-        const content = readFileSync(specPath, 'utf-8');
-        const parser = new MarkdownParser(content);
-        const spec = parser.parseSpec(id);
-        specs.push({ id, requirementCount: spec.requirements.length });
-      } catch {
-        // If spec cannot be read or parsed, include with 0 count
-        specs.push({ id, requirementCount: 0 });
-      }
+    const counts = new Map<string, number>();
+    for (const rel of rels) {
+      const capability = rel.split('/')[0] || '(root)';
+      counts.set(capability, (counts.get(capability) ?? 0) + 1);
     }
+
+    type FeatureInfo = { id: string; featureCount: number };
+    const specs: FeatureInfo[] = [...counts.entries()].map(([id, featureCount]) => ({ id, featureCount }));
 
     specs.sort((a, b) => a.id.localeCompare(b.id));
-    console.log('Specs:');
+    console.log('Features:');
     const padding = '  ';
     const nameWidth = Math.max(...specs.map(s => s.id.length));
     for (const spec of specs) {
       const padded = spec.id.padEnd(nameWidth);
-      console.log(`${padding}${padded}     requirements ${spec.requirementCount}`);
+      console.log(`${padding}${padded}     features ${spec.featureCount}`);
     }
   }
 }

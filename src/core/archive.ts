@@ -4,12 +4,7 @@ import path from 'path';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
 import { Validator } from './validation/validator.js';
 import chalk from 'chalk';
-import {
-  findSpecUpdates,
-  buildUpdatedSpec,
-  writeUpdatedSpec,
-  type SpecUpdate,
-} from './specs-apply.js';
+import { applyFeatures } from './features-apply.js';
 
 /**
  * Recursively copy a directory. Used when fs.rename fails (e.g. EPERM on Windows).
@@ -51,12 +46,11 @@ async function moveDirectory(src: string, dest: string): Promise<void> {
 export class ArchiveCommand {
   async execute(
     changeName?: string,
-    options: { yes?: boolean; skipSpecs?: boolean; noValidate?: boolean; validate?: boolean } = {}
+    options: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean } = {}
   ): Promise<void> {
     const targetPath = '.';
     const changesDir = path.join(targetPath, RATCHET_DIR_NAME, 'changes');
     const archiveDir = path.join(changesDir, 'archive');
-    const mainSpecsDir = path.join(targetPath, RATCHET_DIR_NAME, 'specs');
 
     // Check if changes directory exists
     try {
@@ -89,53 +83,44 @@ export class ArchiveCommand {
 
     const skipValidation = options.validate === false || options.noValidate === true;
 
-    // Validate specs and change before archiving
+    // Validate plan and features before archiving
     if (!skipValidation) {
       const validator = new Validator();
       let hasValidationErrors = false;
 
-      // Validate proposal.md (non-blocking unless strict mode desired in future)
-      const changeFile = path.join(changeDir, 'proposal.md');
+      // Validate plan.md (informative only; does not block archive)
+      const planFile = path.join(changeDir, 'plan.md');
       try {
-        await fs.access(changeFile);
-        const changeReport = await validator.validateChange(changeFile);
-        // Proposal validation is informative only (do not block archive)
-        if (!changeReport.valid) {
-          console.log(chalk.yellow(`\nProposal warnings in proposal.md (non-blocking):`));
-          for (const issue of changeReport.issues) {
-            const symbol = issue.level === 'ERROR' ? '⚠' : (issue.level === 'WARNING' ? '⚠' : 'ℹ');
-            console.log(chalk.yellow(`  ${symbol} ${issue.message}`));
+        await fs.access(planFile);
+        const planReport = await validator.validatePlan(planFile);
+        if (!planReport.valid || planReport.issues.length > 0) {
+          if (planReport.issues.length > 0) {
+            console.log(chalk.yellow(`\nPlan warnings in plan.md (non-blocking):`));
+            for (const issue of planReport.issues) {
+              const symbol = issue.level === 'ERROR' ? '⚠' : issue.level === 'WARNING' ? '⚠' : 'ℹ';
+              console.log(chalk.yellow(`  ${symbol} ${issue.message}`));
+            }
           }
         }
       } catch {
-        // Change file doesn't exist, skip validation
+        // plan.md doesn't exist, skip plan validation
       }
 
-      // Validate delta-formatted spec files under the change directory if present
-      const changeSpecsDir = path.join(changeDir, 'specs');
-      let hasDeltaSpecs = false;
+      // Validate feature files under the change directory if present (blocking on ERROR)
+      const changeFeaturesDir = path.join(changeDir, 'features');
+      let hasFeatureDir = false;
       try {
-        const candidates = await fs.readdir(changeSpecsDir, { withFileTypes: true });
-        for (const c of candidates) {
-          if (c.isDirectory()) {
-            try {
-              const candidatePath = path.join(changeSpecsDir, c.name, 'spec.md');
-              await fs.access(candidatePath);
-              const content = await fs.readFile(candidatePath, 'utf-8');
-              if (/^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements/m.test(content)) {
-                hasDeltaSpecs = true;
-                break;
-              }
-            } catch {}
-          }
-        }
-      } catch {}
-      if (hasDeltaSpecs) {
-        const deltaReport = await validator.validateChangeDeltaSpecs(changeDir);
-        if (!deltaReport.valid) {
+        const stat = await fs.stat(changeFeaturesDir);
+        hasFeatureDir = stat.isDirectory();
+      } catch {
+        hasFeatureDir = false;
+      }
+      if (hasFeatureDir) {
+        const featureReport = await validator.validateFeatures(changeFeaturesDir);
+        if (!featureReport.valid) {
           hasValidationErrors = true;
-          console.log(chalk.red(`\nValidation errors in change delta specs:`));
-          for (const issue of deltaReport.issues) {
+          console.log(chalk.red(`\nValidation errors in change features:`));
+          for (const issue of featureReport.issues) {
             if (issue.level === 'ERROR') {
               console.log(chalk.red(`  ✗ ${issue.message}`));
             } else if (issue.level === 'WARNING') {
@@ -157,7 +142,7 @@ export class ArchiveCommand {
       if (!options.yes) {
         const { confirm } = await import('@inquirer/prompts');
         const proceed = await confirm({
-          message: chalk.yellow('⚠️  WARNING: Skipping validation may archive invalid specs. Continue? (y/N)'),
+          message: chalk.yellow('⚠️  WARNING: Skipping validation may archive invalid features. Continue? (y/N)'),
           default: false
         });
         if (!proceed) {
@@ -165,7 +150,7 @@ export class ArchiveCommand {
           return;
         }
       } else {
-        console.log(chalk.yellow(`\n⚠️  WARNING: Skipping validation may archive invalid specs.`));
+        console.log(chalk.yellow(`\n⚠️  WARNING: Skipping validation may archive invalid features.`));
       }
       
       console.log(chalk.yellow(`[${timestamp}] Validation skipped for change: ${changeName}`));
@@ -194,73 +179,40 @@ export class ArchiveCommand {
       }
     }
 
-    // Handle spec updates unless skipSpecs flag is set
-    if (options.skipSpecs) {
-      console.log('Skipping spec updates (--skip-specs flag provided).');
+    // Apply feature files to the permanent store unless skipFeatures flag is set
+    if (options.skipFeatures) {
+      console.log('Skipping feature store update (--skip-features flag provided).');
     } else {
-      // Find specs to update
-      const specUpdates = await findSpecUpdates(changeDir, mainSpecsDir);
-      
-      if (specUpdates.length > 0) {
-        console.log('\nSpecs to update:');
-        for (const update of specUpdates) {
-          const status = update.exists ? 'update' : 'create';
-          const capability = path.basename(path.dirname(update.target));
-          console.log(`  ${capability}: ${status}`);
+      let shouldUpdateFeatures = true;
+      if (!options.yes) {
+        const { confirm } = await import('@inquirer/prompts');
+        shouldUpdateFeatures = await confirm({
+          message: 'Proceed with feature store update?',
+          default: true
+        });
+        if (!shouldUpdateFeatures) {
+          console.log('Skipping feature store update. Proceeding with archive.');
         }
+      }
 
-        let shouldUpdateSpecs = true;
-        if (!options.yes) {
-          const { confirm } = await import('@inquirer/prompts');
-          shouldUpdateSpecs = await confirm({
-            message: 'Proceed with spec updates?',
-            default: true
-          });
-          if (!shouldUpdateSpecs) {
-            console.log('Skipping spec updates. Proceeding with archive.');
-          }
-        }
-
-        if (shouldUpdateSpecs) {
-          // Prepare all updates first (validation pass, no writes)
-          const prepared: Array<{ update: SpecUpdate; rebuilt: string; counts: { added: number; modified: number; removed: number; renamed: number } }> = [];
-          try {
-            for (const update of specUpdates) {
-              const built = await buildUpdatedSpec(update, changeName!);
-              prepared.push({ update, rebuilt: built.rebuilt, counts: built.counts });
-            }
-          } catch (err: any) {
-            console.log(String(err.message || err));
-            console.log('Aborted. No files were changed.');
-            return;
-          }
-
-          // All validations passed; pre-validate rebuilt full spec and then write files and display counts
-          let totals = { added: 0, modified: 0, removed: 0, renamed: 0 };
-          for (const p of prepared) {
-            const specName = path.basename(path.dirname(p.update.target));
-            if (!skipValidation) {
-              const report = await new Validator().validateSpecContent(specName, p.rebuilt);
-              if (!report.valid) {
-                console.log(chalk.red(`\nValidation errors in rebuilt spec for ${specName} (will not write changes):`));
-                for (const issue of report.issues) {
-                  if (issue.level === 'ERROR') console.log(chalk.red(`  ✗ ${issue.message}`));
-                  else if (issue.level === 'WARNING') console.log(chalk.yellow(`  ⚠ ${issue.message}`));
-                }
-                console.log('Aborted. No files were changed.');
-                return;
-              }
-            }
-            await writeUpdatedSpec(p.update, p.rebuilt, p.counts);
-            totals.added += p.counts.added;
-            totals.modified += p.counts.modified;
-            totals.removed += p.counts.removed;
-            totals.renamed += p.counts.renamed;
+      if (shouldUpdateFeatures) {
+        const result = await applyFeatures(targetPath, changeName, {});
+        if (result.noChanges) {
+          console.log('\nNo feature changes to apply.');
+        } else {
+          console.log('\nFeature store updates:');
+          for (const cap of result.byCapability) {
+            const parts: string[] = [];
+            if (cap.added) parts.push(`+${cap.added} added`);
+            if (cap.overwritten) parts.push(`~${cap.overwritten} overwritten`);
+            if (cap.deleted) parts.push(`-${cap.deleted} deleted`);
+            if (cap.unchanged) parts.push(`${cap.unchanged} unchanged`);
+            console.log(`  ${cap.capability}: ${parts.join(', ')}`);
           }
           console.log(
-            `Totals: + ${totals.added}, ~ ${totals.modified}, - ${totals.removed}, → ${totals.renamed}`
+            `Totals: +${result.added} added, ~${result.overwritten} overwritten, -${result.deleted} deleted`
           );
-          console.log('Specs updated successfully.');
+          console.log('Feature store updated successfully.');
         }
       }
     }

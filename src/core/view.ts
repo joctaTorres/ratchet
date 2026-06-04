@@ -3,7 +3,7 @@ import { RATCHET_DIR_NAME } from './config.js';
 import * as path from 'path';
 import chalk from 'chalk';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
-import { MarkdownParser } from './parsers/markdown-parser.js';
+import fg from 'fast-glob';
 
 export class ViewCommand {
   async execute(targetPath: string = '.'): Promise<void> {
@@ -17,9 +17,9 @@ export class ViewCommand {
     console.log(chalk.bold('\nRatchet Dashboard\n'));
     console.log('═'.repeat(60));
 
-    // Get changes and specs data
+    // Get changes and feature-store data
     const changesData = await this.getChangesData(ratchetDir);
-    const specsData = await this.getSpecsData(ratchetDir);
+    const specsData = await this.getFeaturesData(ratchetDir);
 
     // Display summary metrics
     this.displaySummary(changesData, specsData);
@@ -59,18 +59,18 @@ export class ViewCommand {
       });
     }
 
-    // Display specifications
+    // Display feature store (grouped by capability)
     if (specsData.length > 0) {
-      console.log(chalk.bold.blue('\nSpecifications'));
+      console.log(chalk.bold.blue('\nFeatures'));
       console.log('─'.repeat(60));
-      
-      // Sort specs by requirement count (descending)
+
+      // Sort capabilities by feature count (descending)
       specsData.sort((a, b) => b.requirementCount - a.requirementCount);
-      
+
       specsData.forEach(spec => {
-        const reqLabel = spec.requirementCount === 1 ? 'requirement' : 'requirements';
+        const label = spec.requirementCount === 1 ? 'feature' : 'features';
         console.log(
-          `  ${chalk.blue('▪')} ${chalk.bold(spec.name.padEnd(30))} ${chalk.dim(`${spec.requirementCount} ${reqLabel}`)}`
+          `  ${chalk.blue('▪')} ${chalk.bold(spec.name.padEnd(30))} ${chalk.dim(`${spec.requirementCount} ${label}`)}`
         );
       });
     }
@@ -130,36 +130,28 @@ export class ViewCommand {
     return { draft, active, completed };
   }
 
-  private async getSpecsData(ratchetDir: string): Promise<Array<{ name: string; requirementCount: number }>> {
-    const specsDir = path.join(ratchetDir, 'specs');
-    
-    if (!fs.existsSync(specsDir)) {
+  private async getFeaturesData(ratchetDir: string): Promise<Array<{ name: string; requirementCount: number }>> {
+    const featuresDir = path.join(ratchetDir, 'features');
+
+    if (!fs.existsSync(featuresDir)) {
       return [];
     }
 
-    const specs: Array<{ name: string; requirementCount: number }> = [];
-    const entries = fs.readdirSync(specsDir, { withFileTypes: true });
-    
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const specFile = path.join(specsDir, entry.name, 'spec.md');
-        
-        if (fs.existsSync(specFile)) {
-          try {
-            const content = fs.readFileSync(specFile, 'utf-8');
-            const parser = new MarkdownParser(content);
-            const spec = parser.parseSpec(entry.name);
-            const requirementCount = spec.requirements.length;
-            specs.push({ name: entry.name, requirementCount });
-          } catch (error) {
-            // If spec cannot be parsed, include with 0 count
-            specs.push({ name: entry.name, requirementCount: 0 });
-          }
-        }
-      }
+    // Count `.feature` files grouped by capability (first path segment).
+    let rels: string[] = [];
+    try {
+      rels = await fg('**/*.feature', { cwd: featuresDir, onlyFiles: true });
+    } catch {
+      rels = [];
     }
 
-    return specs;
+    const counts = new Map<string, number>();
+    for (const rel of rels) {
+      const capability = rel.split('/')[0] || '(root)';
+      counts.set(capability, (counts.get(capability) ?? 0) + 1);
+    }
+
+    return [...counts.entries()].map(([name, requirementCount]) => ({ name, requirementCount }));
   }
 
   private displaySummary(
@@ -187,7 +179,7 @@ export class ViewCommand {
 
     console.log(chalk.bold('Summary:'));
     console.log(
-      `  ${chalk.cyan('●')} Specifications: ${chalk.bold(totalSpecs)} specs, ${chalk.bold(totalRequirements)} requirements`
+      `  ${chalk.cyan('●')} Features: ${chalk.bold(totalSpecs)} capabilities, ${chalk.bold(totalRequirements)} features`
     );
     if (changesData.draft.length > 0) {
       console.log(`  ${chalk.gray('●')} Draft Changes: ${chalk.bold(changesData.draft.length)}`);

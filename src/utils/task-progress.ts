@@ -25,7 +25,7 @@ export function countTasksFromContent(content: string): TaskProgress {
 }
 
 export async function getTaskProgressForChange(changesDir: string, changeName: string): Promise<TaskProgress> {
-  const tasksPath = path.join(changesDir, changeName, 'tasks.md');
+  const tasksPath = path.join(changesDir, changeName, 'plan.md');
   try {
     const content = await fs.readFile(tasksPath, 'utf-8');
     return countTasksFromContent(content);

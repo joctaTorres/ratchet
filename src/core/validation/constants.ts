@@ -29,7 +29,17 @@ export const VALIDATION_MESSAGES = {
   CHANGE_TOO_MANY_DELTAS: `Consider splitting changes with more than ${MAX_DELTAS_PER_CHANGE} deltas`,
   DELTA_SPEC_EMPTY: 'Spec name cannot be empty',
   DELTA_DESCRIPTION_EMPTY: 'Delta description cannot be empty',
-  
+
+  // Feature (Gherkin) rules
+  FEATURE_NO_HEADER: 'Feature file must start with a "Feature:" line',
+  FEATURE_NO_SCENARIOS: 'Feature must have at least one scenario',
+  SCENARIO_NO_STEPS: 'Scenario must have at least one step',
+  SCENARIO_MISSING_GWT: 'Scenario must include at least one Given, one When, and one Then step',
+
+  // Plan rules
+  PLAN_MISSING_SECTIONS: 'Plan is missing required sections (## Why, ## What Changes, ## Design, ## Tasks)',
+  PLAN_NO_TASKS: 'Plan ## Tasks section must contain at least one "- [ ]" checkbox',
+
   // Warnings
   PURPOSE_TOO_BRIEF: `Purpose section is too brief (less than ${MIN_PURPOSE_LENGTH} characters)`,
   REQUIREMENT_TOO_LONG: `Requirement text is very long (>${MAX_REQUIREMENT_TEXT_LENGTH} characters). Consider breaking it down.`,

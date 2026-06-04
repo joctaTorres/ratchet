@@ -279,19 +279,18 @@ ${RATCHET_MARKERS.end}`);
       expect(result.files).toContain('.cursor/commands/ratchet-apply.md');
     });
 
-    it('should detect legacy Windsurf workflow files', async () => {
-      const dirPath = path.join(testDir, '.windsurf', 'workflows');
+    it('should detect legacy Codex prompt files', async () => {
+      const dirPath = path.join(testDir, '.codex', 'prompts');
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(path.join(dirPath, 'ratchet-archive.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.windsurf/workflows/ratchet-archive.md');
+      expect(result.files).toContain('.codex/prompts/ratchet-archive.md');
     });
 
     it('should detect multiple tool directories and files', async () => {
       // Create directory-based
       await fs.mkdir(path.join(testDir, '.claude', 'commands', 'ratchet'), { recursive: true });
-      await fs.mkdir(path.join(testDir, '.qoder', 'commands', 'ratchet'), { recursive: true });
 
       // Create file-based
       await fs.mkdir(path.join(testDir, '.cursor', 'commands'), { recursive: true });
@@ -299,7 +298,6 @@ ${RATCHET_MARKERS.end}`);
 
       const result = await detectLegacySlashCommands(testDir);
       expect(result.directories).toContain('.claude/commands/ratchet');
-      expect(result.directories).toContain('.qoder/commands/ratchet');
       expect(result.files).toContain('.cursor/commands/ratchet-proposal.md');
     });
 
@@ -318,22 +316,13 @@ ${RATCHET_MARKERS.end}`);
       expect(result.files).toHaveLength(0);
     });
 
-    it('should detect TOML-based slash commands for Qwen', async () => {
-      const dirPath = path.join(testDir, '.qwen', 'commands');
+    it('should detect GitHub Copilot prompt files', async () => {
+      const dirPath = path.join(testDir, '.github', 'prompts');
       await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(path.join(dirPath, 'ratchet-proposal.toml'), 'content');
+      await fs.writeFile(path.join(dirPath, 'ratchet-proposal.prompt.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.qwen/commands/ratchet-proposal.toml');
-    });
-
-    it('should detect Continue prompt files', async () => {
-      const dirPath = path.join(testDir, '.continue', 'prompts');
-      await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(path.join(dirPath, 'ratchet-apply.prompt'), 'content');
-
-      const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.continue/prompts/ratchet-apply.prompt');
+      expect(result.files).toContain('.github/prompts/ratchet-proposal.prompt.md');
     });
 
     it('should detect legacy OpenCode opsx-* command files', async () => {
@@ -925,9 +914,9 @@ ${RATCHET_MARKERS.end}`);
         pattern: '.cursor/commands/ratchet-*.md',
       });
 
-      expect(LEGACY_SLASH_COMMAND_PATHS['windsurf']).toEqual({
+      expect(LEGACY_SLASH_COMMAND_PATHS['codex']).toEqual({
         type: 'files',
-        pattern: '.windsurf/workflows/ratchet-*.md',
+        pattern: '.codex/prompts/ratchet-*.md',
       });
     });
 
@@ -983,8 +972,8 @@ ${RATCHET_MARKERS.end}`);
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
-        slashCommandDirs: ['.claude/commands/ratchet', '.qoder/commands/ratchet'],
-        slashCommandFiles: ['.cursor/commands/ratchet-apply.md', '.windsurf/workflows/ratchet-archive.md'],
+        slashCommandDirs: ['.claude/commands/ratchet'],
+        slashCommandFiles: ['.cursor/commands/ratchet-apply.md', '.codex/prompts/ratchet-archive.md'],
         hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
@@ -993,10 +982,9 @@ ${RATCHET_MARKERS.end}`);
 
       const tools = getToolsFromLegacyArtifacts(detection);
       expect(tools).toContain('claude');
-      expect(tools).toContain('qoder');
       expect(tools).toContain('cursor');
-      expect(tools).toContain('windsurf');
-      expect(tools).toHaveLength(4);
+      expect(tools).toContain('codex');
+      expect(tools).toHaveLength(3);
     });
 
     it('should deduplicate tools when multiple files match same tool', () => {
@@ -1036,12 +1024,12 @@ ${RATCHET_MARKERS.end}`);
       expect(tools).toHaveLength(0);
     });
 
-    it('should handle qwen TOML-based legacy files', () => {
+    it('should handle codex prompt legacy files', () => {
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
-        slashCommandFiles: ['.qwen/commands/ratchet-proposal.toml'],
+        slashCommandFiles: ['.codex/prompts/ratchet-proposal.md'],
         hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
@@ -1049,24 +1037,7 @@ ${RATCHET_MARKERS.end}`);
       };
 
       const tools = getToolsFromLegacyArtifacts(detection);
-      expect(tools).toContain('qwen');
-      expect(tools).toHaveLength(1);
-    });
-
-    it('should handle continue prompt files', () => {
-      const detection = {
-        configFiles: [],
-        configFilesToUpdate: [],
-        slashCommandDirs: [],
-        slashCommandFiles: ['.continue/prompts/ratchet-apply.prompt'],
-        hasRatchetAgents: false,
-        hasProjectMd: false,
-        hasRootAgentsWithMarkers: false,
-        hasLegacyArtifacts: true,
-      };
-
-      const tools = getToolsFromLegacyArtifacts(detection);
-      expect(tools).toContain('continue');
+      expect(tools).toContain('codex');
       expect(tools).toHaveLength(1);
     });
 

@@ -66,7 +66,8 @@ describe('profile sync drift detection', () => {
   });
 
   it('detects drift when required profile workflow files are missing', () => {
-    writeSkill(tempDir, 'explore');
+    // Only one core workflow present; the rest are missing.
+    writeSkill(tempDir, 'propose');
 
     const hasDrift = hasProjectConfigDrift(tempDir, CORE_WORKFLOWS, 'both');
     expect(hasDrift).toBe(true);
@@ -80,13 +81,18 @@ describe('profile sync drift detection', () => {
     expect(hasDrift).toBe(false);
   });
 
-  it('detects drift when extra workflows are installed for both delivery', () => {
-    setupCoreSkills(tempDir);
-    setupCoreCommands(tempDir);
-    writeSkill(tempDir, 'new');
-    writeCommand(tempDir, 'new');
+  it('detects drift when a workflow outside the desired profile is installed', () => {
+    // Desired custom profile selects only propose+apply; verify is extra.
+    const desired = ['propose', 'apply'] as const;
+    writeSkill(tempDir, 'propose');
+    writeCommand(tempDir, 'propose');
+    writeSkill(tempDir, 'apply');
+    writeCommand(tempDir, 'apply');
+    // Install an extra known workflow outside the desired set.
+    writeSkill(tempDir, 'verify');
+    writeCommand(tempDir, 'verify');
 
-    const hasDrift = hasProjectConfigDrift(tempDir, CORE_WORKFLOWS, 'both');
+    const hasDrift = hasProjectConfigDrift(tempDir, desired, 'both');
     expect(hasDrift).toBe(true);
   });
 });

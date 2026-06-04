@@ -43,7 +43,7 @@ Then they are authenticated`;
       expect(parsed.requirements).toHaveLength(1);
       expect(parsed.requirements[0].scenarios).toHaveLength(1);
       expect(parsed.metadata).toBeDefined();
-      expect(parsed.metadata.format).toBe('.ratchet');
+      expect(parsed.metadata.format).toBe('ratchet');
       expect(parsed.metadata.sourcePath).toBe(specPath);
     });
 

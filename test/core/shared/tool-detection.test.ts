@@ -27,18 +27,12 @@ describe('tool-detection', () => {
   });
 
   describe('SKILL_NAMES', () => {
-    it('should contain all skill names matching COMMAND_IDS', () => {
-      expect(SKILL_NAMES).toHaveLength(11);
+    it('should contain the five generated skill names', () => {
+      expect(SKILL_NAMES).toHaveLength(5);
       expect(SKILL_NAMES).toContain('ratchet-explore');
-      expect(SKILL_NAMES).toContain('ratchet-new-change');
-      expect(SKILL_NAMES).toContain('ratchet-continue-change');
       expect(SKILL_NAMES).toContain('ratchet-apply-change');
-      expect(SKILL_NAMES).toContain('ratchet-ff-change');
-      expect(SKILL_NAMES).toContain('ratchet-sync-specs');
       expect(SKILL_NAMES).toContain('ratchet-archive-change');
-      expect(SKILL_NAMES).toContain('ratchet-bulk-archive-change');
       expect(SKILL_NAMES).toContain('ratchet-verify-change');
-      expect(SKILL_NAMES).toContain('ratchet-onboard');
       expect(SKILL_NAMES).toContain('ratchet-propose');
     });
   });
@@ -48,7 +42,7 @@ describe('tool-detection', () => {
       const tools = getToolsWithSkillsDir();
       expect(tools).toContain('claude');
       expect(tools).toContain('cursor');
-      expect(tools).toContain('windsurf');
+      expect(tools).toContain('opencode');
       expect(tools.length).toBeGreaterThan(0);
     });
   });

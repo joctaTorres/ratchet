@@ -543,9 +543,9 @@ rules:
     ];
 
     it('should suggest close matches using fuzzy matching', () => {
-      const message = suggestSchemas('spec-drven', availableSchemas); // Missing 'i'
+      const message = suggestSchemas('ratcht', availableSchemas); // Missing 'e'
 
-      expect(message).toContain("Schema 'spec-drven' not found");
+      expect(message).toContain("Schema 'ratcht' not found");
       expect(message).toContain('Did you mean one of these?');
       expect(message).toContain('ratchet (built-in)');
     });

@@ -32,30 +32,11 @@ export const LEGACY_CONFIG_FILES = [
 export const LEGACY_SLASH_COMMAND_PATHS: Record<string, LegacySlashCommandPattern> = {
   // Directory-based: .tooldir/commands/ratchet/ or .tooldir/commands/ratchet/*.md
   'claude': { type: 'directory', path: '.claude/commands/ratchet' },
-  'codebuddy': { type: 'directory', path: '.codebuddy/commands/ratchet' },
-  'qoder': { type: 'directory', path: '.qoder/commands/ratchet' },
-  'lingma': { type: 'directory', path: '.lingma/commands/ratchet' },
-  'crush': { type: 'directory', path: '.crush/commands/ratchet' },
-  'gemini': { type: 'directory', path: '.gemini/commands/ratchet' },
-  'costrict': { type: 'directory', path: '.cospec/ratchet/commands' },
 
   // File-based: individual ratchet-*.md files in a commands/workflows/prompts folder
   'cursor': { type: 'files', pattern: '.cursor/commands/ratchet-*.md' },
-  'windsurf': { type: 'files', pattern: '.windsurf/workflows/ratchet-*.md' },
-  'kilocode': { type: 'files', pattern: '.kilocode/workflows/ratchet-*.md' },
-  'kiro': { type: 'files', pattern: '.kiro/prompts/ratchet-*.prompt.md' },
   'github-copilot': { type: 'files', pattern: '.github/prompts/ratchet-*.prompt.md' },
-  'amazon-q': { type: 'files', pattern: '.amazonq/prompts/ratchet-*.md' },
-  'cline': { type: 'files', pattern: '.clinerules/workflows/ratchet-*.md' },
-  'roocode': { type: 'files', pattern: '.roo/commands/ratchet-*.md' },
-  'auggie': { type: 'files', pattern: '.augment/commands/ratchet-*.md' },
-  'factory': { type: 'files', pattern: '.factory/commands/ratchet-*.md' },
   'opencode': { type: 'files', pattern: ['.opencode/command/opsx-*.md', '.opencode/command/ratchet-*.md'] },
-  'continue': { type: 'files', pattern: '.continue/prompts/ratchet-*.prompt' },
-  'antigravity': { type: 'files', pattern: '.agent/workflows/ratchet-*.md' },
-  'iflow': { type: 'files', pattern: '.iflow/commands/ratchet-*.md' },
-  'junie': { type: 'files', pattern: ['.junie/commands/opsx-*.md', '.junie/commands/ratchet-*.md'] },
-  'qwen': { type: 'files', pattern: '.qwen/commands/ratchet-*.toml' },
   'codex': { type: 'files', pattern: '.codex/prompts/ratchet-*.md' },
 };
 
@@ -639,7 +620,7 @@ export function getToolsFromLegacyArtifacts(detection: LegacyDetectionResult): s
 export function formatProjectMdMigrationHint(): string {
   const lines: string[] = [];
   lines.push(chalk.yellow.bold('Needs your attention'));
-  lines.push('  • ratchet/project.md');
+  lines.push(`  • ${RATCHET_DIR_NAME}/project.md`);
   lines.push(chalk.dim('    We won\'t delete this file. It may contain useful project context.'));
   lines.push('');
   lines.push(chalk.dim('    The new ratchet/config.yaml has a "context:" section for planning'));

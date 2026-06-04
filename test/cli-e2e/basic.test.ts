@@ -83,12 +83,6 @@ describe('ratchet CLI e2e basics', () => {
     expectJsonOnlyOutput(result);
   });
 
-  it('keeps schemas --json free of spinner output', async () => {
-    const projectDir = await prepareFixture('tmp-init');
-    const result = await runCLI(['schemas', '--json'], { cwd: projectDir });
-    expectJsonOnlyOutput(result);
-  });
-
   it('keeps status --json free of spinner output', async () => {
     const projectDir = await prepareFixture('tmp-init');
     const result = await runCLI(['status', '--change', 'c1', '--json'], { cwd: projectDir });
@@ -108,12 +102,6 @@ describe('ratchet CLI e2e basics', () => {
     const result = await runCLI(['instructions', 'apply', '--change', 'c1', '--json'], {
       cwd: projectDir,
     });
-    expectJsonOnlyOutput(result);
-  });
-
-  it('keeps templates --json free of spinner output', async () => {
-    const projectDir = await prepareFixture('tmp-init');
-    const result = await runCLI(['templates', '--json'], { cwd: projectDir });
     expectJsonOnlyOutput(result);
   });
 
@@ -141,8 +129,8 @@ describe('ratchet CLI e2e basics', () => {
       expect(result.stdout).toContain('Ratchet Setup Complete');
 
       // Check that skills were created for multiple tools
-      const claudeSkillPath = path.join(emptyProjectDir, '.claude/skills/ratchet-explore/SKILL.md');
-      const cursorSkillPath = path.join(emptyProjectDir, '.cursor/skills/ratchet-explore/SKILL.md');
+      const claudeSkillPath = path.join(emptyProjectDir, '.claude/skills/ratchet-propose/SKILL.md');
+      const cursorSkillPath = path.join(emptyProjectDir, '.cursor/skills/ratchet-propose/SKILL.md');
       expect(await fileExists(claudeSkillPath)).toBe(true);
       expect(await fileExists(cursorSkillPath)).toBe(true);
     }, 25000);
@@ -158,8 +146,8 @@ describe('ratchet CLI e2e basics', () => {
       expect(result.stdout).toContain('Claude Code');
 
       // New init creates skills, not CLAUDE.md
-      const claudeSkillPath = path.join(emptyProjectDir, '.claude/skills/ratchet-explore/SKILL.md');
-      const cursorSkillPath = path.join(emptyProjectDir, '.cursor/skills/ratchet-explore/SKILL.md');
+      const claudeSkillPath = path.join(emptyProjectDir, '.claude/skills/ratchet-propose/SKILL.md');
+      const cursorSkillPath = path.join(emptyProjectDir, '.cursor/skills/ratchet-propose/SKILL.md');
       expect(await fileExists(claudeSkillPath)).toBe(true);
       expect(await fileExists(cursorSkillPath)).toBe(false); // Not selected
     });
@@ -174,8 +162,8 @@ describe('ratchet CLI e2e basics', () => {
       expect(result.stdout).toContain('Ratchet Setup Complete');
 
       // With --tools none, no tool skills should be created
-      const claudeSkillPath = path.join(emptyProjectDir, '.claude/skills/ratchet-explore/SKILL.md');
-      const cursorSkillPath = path.join(emptyProjectDir, '.cursor/skills/ratchet-explore/SKILL.md');
+      const claudeSkillPath = path.join(emptyProjectDir, '.claude/skills/ratchet-propose/SKILL.md');
+      const cursorSkillPath = path.join(emptyProjectDir, '.cursor/skills/ratchet-propose/SKILL.md');
 
       expect(await fileExists(claudeSkillPath)).toBe(false);
       expect(await fileExists(cursorSkillPath)).toBe(false);

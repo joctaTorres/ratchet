@@ -36,13 +36,13 @@ describe('available-tools', () => {
     it('should detect multiple tool directories', async () => {
       await fs.mkdir(path.join(testDir, '.claude'), { recursive: true });
       await fs.mkdir(path.join(testDir, '.cursor'), { recursive: true });
-      await fs.mkdir(path.join(testDir, '.windsurf'), { recursive: true });
+      await fs.mkdir(path.join(testDir, '.opencode'), { recursive: true });
 
       const tools = getAvailableTools(testDir);
       const toolValues = tools.map((t) => t.value);
       expect(toolValues).toContain('claude');
       expect(toolValues).toContain('cursor');
-      expect(toolValues).toContain('windsurf');
+      expect(toolValues).toContain('opencode');
       expect(tools).toHaveLength(3);
     });
 
@@ -149,19 +149,19 @@ describe('available-tools', () => {
       expect(toolValues).toContain('claude');
     });
 
-    it('should detect Mistral Vibe when .vibe directory exists', async () => {
-      // Mistral Vibe uses skillsDir: '.vibe' without detectionPaths
-      // This test ensures path semantics do not drift for Vibe skill detection
-      await fs.mkdir(path.join(testDir, '.vibe'), { recursive: true });
+    it('should detect OpenCode when .opencode directory exists', async () => {
+      // OpenCode uses skillsDir: '.opencode' without detectionPaths
+      // This test ensures path semantics do not drift for skillsDir-only detection
+      await fs.mkdir(path.join(testDir, '.opencode'), { recursive: true });
 
       const tools = getAvailableTools(testDir);
       const toolValues = tools.map((t) => t.value);
-      expect(toolValues).toContain('vibe');
-      
-      const vibeTool = tools.find((t) => t.value === 'vibe');
-      expect(vibeTool).toBeDefined();
-      expect(vibeTool?.name).toBe('Mistral Vibe');
-      expect(vibeTool?.skillsDir).toBe('.vibe');
+      expect(toolValues).toContain('opencode');
+
+      const opencodeTool = tools.find((t) => t.value === 'opencode');
+      expect(opencodeTool).toBeDefined();
+      expect(opencodeTool?.name).toBe('OpenCode');
+      expect(opencodeTool?.skillsDir).toBe('.opencode');
     });
   });
 });

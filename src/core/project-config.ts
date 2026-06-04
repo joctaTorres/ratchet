@@ -46,7 +46,7 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 const MAX_CONTEXT_SIZE = 50 * 1024; // 50KB hard limit
 
 /**
- * Read and parse ratchet/config.yaml from project root.
+ * Read and parse .ratchet/config.yaml from project root.
  * Uses resilient parsing - validates each field independently using Zod safeParse.
  * Returns null if file doesn't exist.
  * Returns partial config if some fields are invalid (with warnings).
@@ -79,7 +79,7 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
     const raw = parseYaml(content);
 
     if (!raw || typeof raw !== 'object') {
-      console.warn(`ratchet/config.yaml is not a valid YAML object`);
+      console.warn(`.ratchet/config.yaml is not a valid YAML object`);
       return null;
     }
 
@@ -156,7 +156,7 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
     // Return partial config even if some fields failed
     return Object.keys(config).length > 0 ? (config as ProjectConfig) : null;
   } catch (error) {
-    console.warn(`Failed to parse ratchet/config.yaml:`, error);
+    console.warn(`Failed to parse .ratchet/config.yaml:`, error);
     return null;
   }
 }
@@ -238,7 +238,7 @@ export function suggestSchemas(
   const builtIn = availableSchemas.filter((s) => s.isBuiltIn).map((s) => s.name);
   const projectLocal = availableSchemas.filter((s) => !s.isBuiltIn).map((s) => s.name);
 
-  let message = `Schema '${invalidSchemaName}' not found in ratchet/config.yaml\n\n`;
+  let message = `Schema '${invalidSchemaName}' not found in .ratchet/config.yaml\n\n`;
 
   if (suggestions.length > 0) {
     message += `Did you mean one of these?\n`;
@@ -259,7 +259,7 @@ export function suggestSchemas(
     message += `  Project-local: (none found)\n`;
   }
 
-  message += `\nFix: Edit ratchet/config.yaml and change 'schema: ${invalidSchemaName}' to a valid schema name`;
+  message += `\nFix: Edit .ratchet/config.yaml and change 'schema: ${invalidSchemaName}' to a valid schema name`;
 
   return message;
 }

@@ -8,9 +8,9 @@ import {
 
 describe('skill-generation', () => {
   describe('getSkillTemplates', () => {
-    it('should return all 11 skill templates', () => {
+    it('should return all five skill templates', () => {
       const templates = getSkillTemplates();
-      expect(templates).toHaveLength(11);
+      expect(templates).toHaveLength(5);
     });
 
     it('should have unique directory names', () => {
@@ -25,15 +25,9 @@ describe('skill-generation', () => {
       const dirNames = templates.map(t => t.dirName);
 
       expect(dirNames).toContain('ratchet-explore');
-      expect(dirNames).toContain('ratchet-new-change');
-      expect(dirNames).toContain('ratchet-continue-change');
       expect(dirNames).toContain('ratchet-apply-change');
-      expect(dirNames).toContain('ratchet-ff-change');
-      expect(dirNames).toContain('ratchet-sync-specs');
       expect(dirNames).toContain('ratchet-archive-change');
-      expect(dirNames).toContain('ratchet-bulk-archive-change');
       expect(dirNames).toContain('ratchet-verify-change');
-      expect(dirNames).toContain('ratchet-onboard');
       expect(dirNames).toContain('ratchet-propose');
     });
 
@@ -88,9 +82,9 @@ describe('skill-generation', () => {
   });
 
   describe('getCommandTemplates', () => {
-    it('should return all 11 command templates', () => {
+    it('should return all five command templates', () => {
       const templates = getCommandTemplates();
-      expect(templates).toHaveLength(11);
+      expect(templates).toHaveLength(5);
     });
 
     it('should have unique IDs', () => {
@@ -105,15 +99,9 @@ describe('skill-generation', () => {
       const ids = templates.map(t => t.id);
 
       expect(ids).toContain('explore');
-      expect(ids).toContain('new');
-      expect(ids).toContain('continue');
       expect(ids).toContain('apply');
-      expect(ids).toContain('ff');
-      expect(ids).toContain('sync');
       expect(ids).toContain('archive');
-      expect(ids).toContain('bulk-archive');
       expect(ids).toContain('verify');
-      expect(ids).toContain('onboard');
       expect(ids).toContain('propose');
     });
 
@@ -142,9 +130,9 @@ describe('skill-generation', () => {
   });
 
   describe('getCommandContents', () => {
-    it('should return all 11 command contents', () => {
+    it('should return all five command contents', () => {
       const contents = getCommandContents();
-      expect(contents).toHaveLength(11);
+      expect(contents).toHaveLength(5);
     });
 
     it('should have valid content structure', () => {

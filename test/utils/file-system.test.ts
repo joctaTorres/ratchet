@@ -286,13 +286,13 @@ describe('FileSystemUtils', () => {
         '/home/dev/workspace/ratchet',
         '.cursor/commands/install.md'
       );
-      expect(result).toBe('/home/dev/workspace/.ratchet/.cursor/commands/install.md');
+      expect(result).toBe('/home/dev/workspace/ratchet/.cursor/commands/install.md');
     });
 
     it('should join Windows drive-letter paths with backslashes', () => {
       const result = FileSystemUtils.joinPath(
         'C:\\Users\\dev\\project',
-        '.claude/commands/.ratchet/proposal.md'
+        '.claude/commands/ratchet/proposal.md'
       );
       expect(result).toBe(
         'C:\\Users\\dev\\project\\.claude\\commands\\ratchet\\proposal.md'

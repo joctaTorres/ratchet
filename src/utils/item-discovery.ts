@@ -2,6 +2,9 @@ import { promises as fs } from 'fs';
 import { RATCHET_DIR_NAME } from '../core/config.js';
 import path from 'path';
 
+// A change directory is identified by its metadata file (written by `new change`).
+const CHANGE_METADATA_FILENAME = '.ratchet.yaml';
+
 export async function getActiveChangeIds(root: string = process.cwd()): Promise<string[]> {
   const changesPath = path.join(root, RATCHET_DIR_NAME, 'changes');
   try {
@@ -9,12 +12,12 @@ export async function getActiveChangeIds(root: string = process.cwd()): Promise<
     const result: string[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'archive') continue;
-      const proposalPath = path.join(changesPath, entry.name, 'proposal.md');
+      const metaPath = path.join(changesPath, entry.name, CHANGE_METADATA_FILENAME);
       try {
-        await fs.access(proposalPath);
+        await fs.access(metaPath);
         result.push(entry.name);
       } catch {
-        // skip directories without proposal.md
+        // skip directories without change metadata
       }
     }
     return result.sort();
@@ -23,20 +26,19 @@ export async function getActiveChangeIds(root: string = process.cwd()): Promise<
   }
 }
 
+/**
+ * Top-level feature-store capability ids (.ratchet/features/<capability>).
+ * A capability is the first path segment under features/. The store is only
+ * populated by archive (Wave 3); before then this returns [].
+ */
 export async function getSpecIds(root: string = process.cwd()): Promise<string[]> {
-  const specsPath = path.join(root, RATCHET_DIR_NAME, 'specs');
+  const featuresPath = path.join(root, RATCHET_DIR_NAME, 'features');
   const result: string[] = [];
   try {
-    const entries = await fs.readdir(specsPath, { withFileTypes: true });
+    const entries = await fs.readdir(featuresPath, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-      const specFile = path.join(specsPath, entry.name, 'spec.md');
-      try {
-        await fs.access(specFile);
-        result.push(entry.name);
-      } catch {
-        // ignore
-      }
+      result.push(entry.name);
     }
   } catch {
     // ignore
@@ -51,12 +53,12 @@ export async function getArchivedChangeIds(root: string = process.cwd()): Promis
     const result: string[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-      const proposalPath = path.join(archivePath, entry.name, 'proposal.md');
+      const metaPath = path.join(archivePath, entry.name, CHANGE_METADATA_FILENAME);
       try {
-        await fs.access(proposalPath);
+        await fs.access(metaPath);
         result.push(entry.name);
       } catch {
-        // skip directories without proposal.md
+        // skip directories without change metadata
       }
     }
     return result.sort();

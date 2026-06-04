@@ -133,16 +133,17 @@ export class ValidateCommand {
     if (type === 'change') {
       const changeDir = path.join(process.cwd(), RATCHET_DIR_NAME, 'changes', id);
       const start = Date.now();
-      const report = await validator.validateChangeDeltaSpecs(changeDir);
+      const report = await validateChangeArtifacts(validator, changeDir);
       const durationMs = Date.now() - start;
       this.printReport('change', id, report, durationMs, opts.json);
       // Non-zero exit if invalid (keeps enriched output test semantics)
       process.exitCode = report.valid ? 0 : 1;
       return;
     }
-    const file = path.join(process.cwd(), RATCHET_DIR_NAME, 'specs', id, 'spec.md');
+    // 'spec' type maps to the feature store (.ratchet/features/<id>).
+    const featuresDir = path.join(process.cwd(), RATCHET_DIR_NAME, 'features', id);
     const start = Date.now();
-    const report = await validator.validateSpec(file);
+    const report = await validator.validateFeatures(featuresDir);
     const durationMs = Date.now() - start;
     this.printReport('spec', id, report, durationMs, opts.json);
     process.exitCode = report.valid ? 0 : 1;
@@ -170,12 +171,12 @@ export class ValidateCommand {
   private printNextSteps(type: ItemType): void {
     const bullets: string[] = [];
     if (type === 'change') {
-      bullets.push('- Ensure change has deltas in specs/: use headers ## ADDED/MODIFIED/REMOVED/RENAMED Requirements');
-      bullets.push('- Each requirement MUST include at least one #### Scenario: block');
-      bullets.push('- Debug parsed deltas: ratchet change show <id> --json --deltas-only');
+      bullets.push('- Add Gherkin feature files under features/<capability>/<name>.feature');
+      bullets.push('- Each Scenario MUST include at least one Given, When, and Then step');
+      bullets.push('- Ensure plan.md has ## Why, ## What Changes, ## Design, and ## Tasks (with - [ ] checkboxes)');
     } else {
-      bullets.push('- Ensure spec includes ## Purpose and ## Requirements sections');
-      bullets.push('- Each requirement MUST include at least one #### Scenario: block');
+      bullets.push('- Ensure each .feature file starts with a Feature: line and has at least one Scenario');
+      bullets.push('- Each Scenario MUST include at least one Given, When, and Then step');
       bullets.push('- Re-run with --json to see structured report');
     }
     console.error('Next steps:');
@@ -199,7 +200,7 @@ export class ValidateCommand {
       queue.push(async () => {
         const start = Date.now();
         const changeDir = path.join(process.cwd(), RATCHET_DIR_NAME, 'changes', id);
-        const report = await validator.validateChangeDeltaSpecs(changeDir);
+        const report = await validateChangeArtifacts(validator, changeDir);
         const durationMs = Date.now() - start;
         return { id, type: 'change' as const, valid: report.valid, issues: report.issues, durationMs };
       });
@@ -207,8 +208,8 @@ export class ValidateCommand {
     for (const id of specIds) {
       queue.push(async () => {
         const start = Date.now();
-        const file = path.join(process.cwd(), RATCHET_DIR_NAME, 'specs', id, 'spec.md');
-        const report = await validator.validateSpec(file);
+        const featuresDir = path.join(process.cwd(), RATCHET_DIR_NAME, 'features', id);
+        const report = await validator.validateFeatures(featuresDir);
         const durationMs = Date.now() - start;
         return { id, type: 'spec' as const, valid: report.valid, issues: report.issues, durationMs };
       });
@@ -294,6 +295,28 @@ export class ValidateCommand {
 
     process.exitCode = failed > 0 ? 1 : 0;
   }
+}
+
+/**
+ * A change is valid iff its feature files (features/) AND its plan (plan.md)
+ * both validate. The combined report aggregates both sub-reports' issues.
+ */
+async function validateChangeArtifacts(validator: Validator, changeDir: string) {
+  const featuresDir = path.join(changeDir, 'features');
+  const planFile = path.join(changeDir, 'plan.md');
+
+  const [featuresReport, planReport] = await Promise.all([
+    validator.validateFeatures(featuresDir),
+    validator.validatePlan(planFile),
+  ]);
+
+  const issues = [...featuresReport.issues, ...planReport.issues];
+  const errors = issues.filter(i => i.level === 'ERROR').length;
+  const warnings = issues.filter(i => i.level === 'WARNING').length;
+  const info = issues.filter(i => i.level === 'INFO').length;
+  const valid = featuresReport.valid && planReport.valid;
+
+  return { valid, issues, summary: { errors, warnings, info } };
 }
 
 function summarizeType(results: BulkItemResult[], type: ItemType) {

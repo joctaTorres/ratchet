@@ -82,12 +82,11 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      // Core profile: propose, explore, apply, sync, archive
+      // Core profile: propose, apply, verify, archive
       const coreSkillNames = [
         'ratchet-propose',
-        'ratchet-explore',
         'ratchet-apply-change',
-        'ratchet-sync-specs',
+        'ratchet-verify-change',
         'ratchet-archive-change',
       ];
 
@@ -101,13 +100,13 @@ describe('InitCommand', () => {
         expect(content).toContain('description:');
       }
 
-      // Non-core skills should NOT be created
+      // Non-core / internal-only skills should NOT be created
       const nonCoreSkillNames = [
+        'ratchet-explore',
         'ratchet-new-change',
         'ratchet-continue-change',
         'ratchet-ff-change',
         'ratchet-bulk-archive-change',
-        'ratchet-verify-change',
       ];
 
       for (const skillName of nonCoreSkillNames) {
@@ -121,12 +120,11 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      // Core profile: propose, explore, apply, sync, archive
+      // Core profile: propose, apply, verify, archive
       const coreCommandNames = [
         'opsx/propose.md',
-        'opsx/explore.md',
         'opsx/apply.md',
-        'opsx/sync.md',
+        'opsx/verify.md',
         'opsx/archive.md',
       ];
 
@@ -135,13 +133,13 @@ describe('InitCommand', () => {
         expect(await fileExists(cmdFile)).toBe(true);
       }
 
-      // Non-core commands should NOT be created
+      // Non-core / internal-only commands should NOT be created
       const nonCoreCommandNames = [
+        'opsx/explore.md',
         'opsx/new.md',
         'opsx/continue.md',
         'opsx/ff.md',
         'opsx/bulk-archive.md',
-        'opsx/verify.md',
       ];
 
       for (const cmdName of nonCoreCommandNames) {
@@ -155,41 +153,17 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      const skillFile = path.join(testDir, '.cursor', 'skills', 'ratchet-explore', 'SKILL.md');
+      const skillFile = path.join(testDir, '.cursor', 'skills', 'ratchet-propose', 'SKILL.md');
       expect(await fileExists(skillFile)).toBe(true);
     });
 
-    it('should create skills in Windsurf skills directory', async () => {
-      const initCommand = new InitCommand({ tools: 'windsurf', force: true });
+    it('should create skills in OpenCode skills directory', async () => {
+      const initCommand = new InitCommand({ tools: 'opencode', force: true });
 
       await initCommand.execute(testDir);
 
-      const skillFile = path.join(testDir, '.windsurf', 'skills', 'ratchet-explore', 'SKILL.md');
+      const skillFile = path.join(testDir, '.opencode', 'skills', 'ratchet-propose', 'SKILL.md');
       expect(await fileExists(skillFile)).toBe(true);
-    });
-
-    it('should support Kimi CLI as an adapterless skills-only tool', async () => {
-      saveGlobalConfig({
-        featureFlags: {},
-        profile: 'core',
-        delivery: 'both',
-      });
-
-      const initCommand = new InitCommand({ tools: 'kimi', force: true });
-      await initCommand.execute(testDir);
-
-      const skillFile = path.join(testDir, '.kimi', 'skills', 'ratchet-explore', 'SKILL.md');
-      expect(await fileExists(skillFile)).toBe(true);
-
-      const commandsDir = path.join(testDir, '.kimi', 'commands');
-      expect(await directoryExists(commandsDir)).toBe(false);
-
-      const logCalls = (console.log as unknown as { mock: { calls: unknown[][] } }).mock.calls.flat().map(String);
-      expect(
-        logCalls.some(
-          (entry) => entry.includes('Commands skipped for: kimi') && entry.includes('(no adapter)'),
-        ),
-      ).toBe(true);
     });
 
     it('should create skills for multiple tools at once', async () => {
@@ -197,8 +171,8 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      const claudeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
-      const cursorSkill = path.join(testDir, '.cursor', 'skills', 'ratchet-explore', 'SKILL.md');
+      const claudeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
+      const cursorSkill = path.join(testDir, '.cursor', 'skills', 'ratchet-propose', 'SKILL.md');
 
       expect(await fileExists(claudeSkill)).toBe(true);
       expect(await fileExists(cursorSkill)).toBe(true);
@@ -210,13 +184,13 @@ describe('InitCommand', () => {
       await initCommand.execute(testDir);
 
       // Check a few representative tools
-      const claudeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
-      const cursorSkill = path.join(testDir, '.cursor', 'skills', 'ratchet-explore', 'SKILL.md');
-      const windsurfSkill = path.join(testDir, '.windsurf', 'skills', 'ratchet-explore', 'SKILL.md');
+      const claudeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
+      const cursorSkill = path.join(testDir, '.cursor', 'skills', 'ratchet-propose', 'SKILL.md');
+      const opencodeSkill = path.join(testDir, '.opencode', 'skills', 'ratchet-propose', 'SKILL.md');
 
       expect(await fileExists(claudeSkill)).toBe(true);
       expect(await fileExists(cursorSkill)).toBe(true);
-      expect(await fileExists(windsurfSkill)).toBe(true);
+      expect(await fileExists(opencodeSkill)).toBe(true);
     });
 
     it('should skip tool configuration with --tools none option', async () => {
@@ -244,8 +218,8 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      const claudeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
-      const cursorSkill = path.join(testDir, '.cursor', 'skills', 'ratchet-explore', 'SKILL.md');
+      const claudeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
+      const cursorSkill = path.join(testDir, '.cursor', 'skills', 'ratchet-propose', 'SKILL.md');
 
       expect(await fileExists(claudeSkill)).toBe(true);
       expect(await fileExists(cursorSkill)).toBe(true);
@@ -293,8 +267,8 @@ describe('InitCommand', () => {
       await initCommand2.execute(testDir);
 
       // Both tools should have skills
-      const claudeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
-      const cursorSkill = path.join(testDir, '.cursor', 'skills', 'ratchet-explore', 'SKILL.md');
+      const claudeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
+      const cursorSkill = path.join(testDir, '.cursor', 'skills', 'ratchet-propose', 'SKILL.md');
 
       expect(await fileExists(claudeSkill)).toBe(true);
       expect(await fileExists(cursorSkill)).toBe(true);
@@ -304,7 +278,7 @@ describe('InitCommand', () => {
       const initCommand1 = new InitCommand({ tools: 'claude', force: true });
       await initCommand1.execute(testDir);
 
-      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
       const originalContent = await fs.readFile(skillFile, 'utf-8');
 
       // Modify the file
@@ -324,12 +298,12 @@ describe('InitCommand', () => {
       const initCommand = new InitCommand({ tools: 'claude', force: true });
       await initCommand.execute(testDir);
 
-      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
       const content = await fs.readFile(skillFile, 'utf-8');
 
       // Should have YAML frontmatter
       expect(content).toMatch(/^---\n/);
-      expect(content).toContain('name: ratchet-explore');
+      expect(content).toContain('name: ratchet-propose');
       expect(content).toContain('description:');
       expect(content).toContain('license:');
       expect(content).toContain('compatibility:');
@@ -337,15 +311,14 @@ describe('InitCommand', () => {
       expect(content).toMatch(/---\n\n/); // End of frontmatter
     });
 
-    it('should include explore mode instructions', async () => {
+    it('should include propose skill description', async () => {
       const initCommand = new InitCommand({ tools: 'claude', force: true });
       await initCommand.execute(testDir);
 
-      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
       const content = await fs.readFile(skillFile, 'utf-8');
 
-      expect(content).toContain('Enter explore mode');
-      expect(content).toContain('thinking partner');
+      expect(content).toContain('Propose a new change');
     });
 
     it('should include propose skill instructions', async () => {
@@ -372,7 +345,7 @@ describe('InitCommand', () => {
       const initCommand = new InitCommand({ tools: 'claude', force: true });
       await initCommand.execute(testDir);
 
-      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
       const content = await fs.readFile(skillFile, 'utf-8');
 
       // Should contain generatedBy field with a version string
@@ -385,7 +358,7 @@ describe('InitCommand', () => {
       const initCommand = new InitCommand({ tools: 'claude', force: true });
       await initCommand.execute(testDir);
 
-      const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'explore.md');
+      const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
       const content = await fs.readFile(cmdFile, 'utf-8');
 
       // Claude commands use YAML frontmatter
@@ -398,7 +371,7 @@ describe('InitCommand', () => {
       const initCommand = new InitCommand({ tools: 'cursor', force: true });
       await initCommand.execute(testDir);
 
-      const cmdFile = path.join(testDir, '.cursor', 'commands', 'opsx-explore.md');
+      const cmdFile = path.join(testDir, '.cursor', 'commands', 'opsx-propose.md');
       expect(await fileExists(cmdFile)).toBe(true);
 
       const content = await fs.readFile(cmdFile, 'utf-8');
@@ -437,43 +410,11 @@ describe('InitCommand', () => {
   });
 
   describe('tool-specific adapters', () => {
-    it('should generate Gemini CLI commands as TOML files', async () => {
-      const initCommand = new InitCommand({ tools: 'gemini', force: true });
+    it('should generate OpenCode command files', async () => {
+      const initCommand = new InitCommand({ tools: 'opencode', force: true });
       await initCommand.execute(testDir);
 
-      const cmdFile = path.join(testDir, '.gemini', 'commands', 'opsx', 'explore.toml');
-      expect(await fileExists(cmdFile)).toBe(true);
-
-      const content = await fs.readFile(cmdFile, 'utf-8');
-      expect(content).toContain('description =');
-      expect(content).toContain('prompt =');
-    });
-
-    it('should generate Windsurf commands', async () => {
-      const initCommand = new InitCommand({ tools: 'windsurf', force: true });
-      await initCommand.execute(testDir);
-
-      const cmdFile = path.join(testDir, '.windsurf', 'workflows', 'opsx-explore.md');
-      expect(await fileExists(cmdFile)).toBe(true);
-    });
-
-    it('should generate Continue prompt files', async () => {
-      const initCommand = new InitCommand({ tools: 'continue', force: true });
-      await initCommand.execute(testDir);
-
-      const cmdFile = path.join(testDir, '.continue', 'prompts', 'opsx-explore.prompt');
-      expect(await fileExists(cmdFile)).toBe(true);
-
-      const content = await fs.readFile(cmdFile, 'utf-8');
-      expect(content).toContain('name: opsx-explore');
-      expect(content).toContain('invokable: true');
-    });
-
-    it('should generate Cline workflow files', async () => {
-      const initCommand = new InitCommand({ tools: 'cline', force: true });
-      await initCommand.execute(testDir);
-
-      const cmdFile = path.join(testDir, '.clinerules', 'workflows', 'opsx-explore.md');
+      const cmdFile = path.join(testDir, '.opencode', 'commands', 'opsx-propose.md');
       expect(await fileExists(cmdFile)).toBe(true);
     });
 
@@ -481,7 +422,7 @@ describe('InitCommand', () => {
       const initCommand = new InitCommand({ tools: 'github-copilot', force: true });
       await initCommand.execute(testDir);
 
-      const cmdFile = path.join(testDir, '.github', 'prompts', 'opsx-explore.prompt.md');
+      const cmdFile = path.join(testDir, '.github', 'prompts', 'opsx-propose.prompt.md');
       expect(await fileExists(cmdFile)).toBe(true);
     });
   });
@@ -556,7 +497,7 @@ describe('InitCommand - profile and detection features', () => {
     await initCommand.execute(testDir);
 
     // Should have used claude (detected)
-    const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+    const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
     expect(await fileExists(skillFile)).toBe(true);
   });
 
@@ -583,7 +524,7 @@ describe('InitCommand - profile and detection features', () => {
     await fs.mkdir(path.join(testDir, '.ratchet'), { recursive: true });
 
     // Configured with Ratchet
-    const claudeSkillDir = path.join(testDir, '.claude', 'skills', 'ratchet-explore');
+    const claudeSkillDir = path.join(testDir, '.claude', 'skills', 'ratchet-propose');
     await fs.mkdir(claudeSkillDir, { recursive: true });
     await fs.writeFile(path.join(claudeSkillDir, 'SKILL.md'), 'configured');
 
@@ -633,17 +574,17 @@ describe('InitCommand - profile and detection features', () => {
       featureFlags: {},
       profile: 'custom',
       delivery: 'both',
-      workflows: ['explore', 'new'],
+      workflows: ['apply', 'verify'],
     });
 
     const initCommand = new InitCommand({ tools: 'claude', force: true });
     await initCommand.execute(testDir);
 
     // Custom profile skills should be created
-    const exploreSkill = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
-    const newChangeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-new-change', 'SKILL.md');
-    expect(await fileExists(exploreSkill)).toBe(true);
-    expect(await fileExists(newChangeSkill)).toBe(true);
+    const applySkill = path.join(testDir, '.claude', 'skills', 'ratchet-apply-change', 'SKILL.md');
+    const verifySkill = path.join(testDir, '.claude', 'skills', 'ratchet-verify-change', 'SKILL.md');
+    expect(await fileExists(applySkill)).toBe(true);
+    expect(await fileExists(verifySkill)).toBe(true);
 
     // Non-selected skills should NOT be created
     const proposeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
@@ -653,7 +594,7 @@ describe('InitCommand - profile and detection features', () => {
   it('should migrate commands-only extend mode to custom profile without injecting propose', async () => {
     await fs.mkdir(path.join(testDir, '.ratchet'), { recursive: true });
     await fs.mkdir(path.join(testDir, '.claude', 'commands', 'opsx'), { recursive: true });
-    await fs.writeFile(path.join(testDir, '.claude', 'commands', 'opsx', 'explore.md'), '# explore\n');
+    await fs.writeFile(path.join(testDir, '.claude', 'commands', 'opsx', 'apply.md'), '# apply\n');
 
     const initCommand = new InitCommand({ tools: 'claude', force: true });
     await initCommand.execute(testDir);
@@ -661,16 +602,14 @@ describe('InitCommand - profile and detection features', () => {
     const config = getGlobalConfig();
     expect(config.profile).toBe('custom');
     expect(config.delivery).toBe('commands');
-    expect(config.workflows).toEqual(['explore']);
+    expect(config.workflows).toEqual(['apply']);
 
-    const exploreCommand = path.join(testDir, '.claude', 'commands', 'opsx', 'explore.md');
+    const applyCommand = path.join(testDir, '.claude', 'commands', 'opsx', 'apply.md');
     const proposeCommand = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
-    expect(await fileExists(exploreCommand)).toBe(true);
+    expect(await fileExists(applyCommand)).toBe(true);
     expect(await fileExists(proposeCommand)).toBe(false);
 
-    const exploreSkill = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
     const proposeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
-    expect(await fileExists(exploreSkill)).toBe(false);
     expect(await fileExists(proposeSkill)).toBe(false);
   });
 
@@ -679,7 +618,7 @@ describe('InitCommand - profile and detection features', () => {
       featureFlags: {},
       profile: 'custom',
       delivery: 'both',
-      workflows: ['explore', 'new'],
+      workflows: ['apply', 'verify'],
     });
 
     const initCommand = new InitCommand({ force: true });
@@ -691,10 +630,10 @@ describe('InitCommand - profile and detection features', () => {
     expect(showWelcomeScreenMock).toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
 
-    const exploreSkill = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
-    const newChangeSkill = path.join(testDir, '.claude', 'skills', 'ratchet-new-change', 'SKILL.md');
-    expect(await fileExists(exploreSkill)).toBe(true);
-    expect(await fileExists(newChangeSkill)).toBe(true);
+    const applySkill = path.join(testDir, '.claude', 'skills', 'ratchet-apply-change', 'SKILL.md');
+    const verifySkill = path.join(testDir, '.claude', 'skills', 'ratchet-verify-change', 'SKILL.md');
+    expect(await fileExists(applySkill)).toBe(true);
+    expect(await fileExists(verifySkill)).toBe(true);
 
     const logCalls = (console.log as unknown as { mock: { calls: unknown[][] } }).mock.calls.flat().map(String);
     expect(logCalls.some((entry) => entry.includes('Applying custom profile'))).toBe(false);
@@ -711,11 +650,11 @@ describe('InitCommand - profile and detection features', () => {
     await initCommand.execute(testDir);
 
     // Skills should exist
-    const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+    const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
     expect(await fileExists(skillFile)).toBe(true);
 
     // Commands should NOT exist
-    const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'explore.md');
+    const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
     expect(await fileExists(cmdFile)).toBe(false);
   });
 
@@ -730,11 +669,11 @@ describe('InitCommand - profile and detection features', () => {
     await initCommand.execute(testDir);
 
     // Skills should NOT exist
-    const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+    const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
     expect(await fileExists(skillFile)).toBe(false);
 
     // Commands should exist
-    const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'explore.md');
+    const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
     expect(await fileExists(cmdFile)).toBe(true);
   });
 
@@ -748,7 +687,7 @@ describe('InitCommand - profile and detection features', () => {
     const initCommand1 = new InitCommand({ tools: 'claude', force: true });
     await initCommand1.execute(testDir);
 
-    const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'explore.md');
+    const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
     expect(await fileExists(cmdFile)).toBe(true);
 
     saveGlobalConfig({
@@ -762,7 +701,7 @@ describe('InitCommand - profile and detection features', () => {
 
     expect(await fileExists(cmdFile)).toBe(false);
 
-    const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-explore', 'SKILL.md');
+    const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
     expect(await fileExists(skillFile)).toBe(true);
   });
 });

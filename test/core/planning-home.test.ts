@@ -20,94 +20,29 @@ describe('planning home paths', () => {
     }
   });
 
-  it('builds workspace change paths with the planning home path style', () => {
-    const workspacePlanningHome: PlanningHome = {
-      kind: 'workspace',
-      root: 'D:\\repos\\platform-workspace',
-      changesDir: 'D:\\repos\\platform-workspace\\changes',
-      defaultSchema: 'workspace-planning',
-      workspace: {
-        name: 'platform',
-        links: ['api', 'web'],
-      },
+  it('builds repo change paths with the planning home path style', () => {
+    const repoPlanningHome: PlanningHome = {
+      kind: 'repo',
+      root: 'D:\\repos\\service',
+      changesDir: 'D:\\repos\\service\\.ratchet\\changes',
+      defaultSchema: 'ratchet',
     };
 
-    expect(getChangeDir(workspacePlanningHome, 'cross-repo-login')).toBe(
-      'D:\\repos\\platform-workspace\\changes\\cross-repo-login'
+    expect(getChangeDir(repoPlanningHome, 'add-login')).toBe(
+      'D:\\repos\\service\\.ratchet\\changes\\add-login'
     );
-    expect(formatChangeLocation(workspacePlanningHome, 'cross-repo-login')).toBe(
-      'changes\\cross-repo-login'
+    expect(formatChangeLocation(repoPlanningHome, 'add-login')).toBe(
+      '.ratchet\\changes\\add-login'
     );
   });
 
-  it('keeps a canonical workspace root comparable with an aliased start path', () => {
+  it('resolves repo-local projects with a .ratchet directory as repo planning homes', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-planning-home-'));
     tempDirs.push(tempDir);
-    const realWorkspaceRoot = path.join(tempDir, 'real-workspace');
-    const aliasWorkspaceRoot = path.join(tempDir, 'alias-workspace');
-
-    fs.mkdirSync(path.join(realWorkspaceRoot, '.ratchet-workspace'), { recursive: true });
-    fs.writeFileSync(
-      path.join(realWorkspaceRoot, '.ratchet-workspace', 'view.yaml'),
-      'version: 1\nname: platform\ncontext: null\nlinks: {}\n',
-      'utf-8'
-    );
-    fs.symlinkSync(
-      realWorkspaceRoot,
-      aliasWorkspaceRoot,
-      process.platform === 'win32' ? 'junction' : 'dir'
-    );
-
-    const planningHome = resolveCurrentPlanningHomeSync({
-      startPath: aliasWorkspaceRoot,
-      allowImplicitRepoRoot: false,
-    });
-
-    expect(planningHome.kind).toBe('workspace');
-    expect(planningHome.root).toBe(fs.realpathSync.native(realWorkspaceRoot));
-  });
-
-  it('surfaces invalid current workspace state instead of falling back to legacy state', () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-planning-home-'));
-    tempDirs.push(tempDir);
-    const workspaceRoot = path.join(tempDir, 'workspace');
-
-    fs.mkdirSync(path.join(workspaceRoot, '.ratchet-workspace'), { recursive: true });
-    fs.writeFileSync(
-      path.join(workspaceRoot, '.ratchet-workspace', 'view.yaml'),
-      'version: 1\nname: bad/name\ncontext: null\nlinks: {}\n',
-      'utf-8'
-    );
-    fs.writeFileSync(
-      path.join(workspaceRoot, '.ratchet-workspace', 'workspace.yaml'),
-      'version: 1\nname: legacy-platform\nlinks: {}\n',
-      'utf-8'
-    );
-
-    expect(() =>
-      resolveCurrentPlanningHomeSync({
-        startPath: workspaceRoot,
-        allowImplicitRepoRoot: false,
-      })
-    ).toThrow(/Workspace name/u);
-  });
-
-  it('resolves repo-local projects with foreign workspace.yaml as repo planning homes', () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-planning-home-'));
-    tempDirs.push(tempDir);
-    const repoRoot = path.join(tempDir, 'foreign-tool-repo');
+    const repoRoot = path.join(tempDir, 'service-repo');
     const changesDir = path.join(repoRoot, '.ratchet', 'changes');
 
     fs.mkdirSync(changesDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(repoRoot, 'workspace.yaml'),
-      `tool_workspace:
-  projects:
-    - name: example
-      path: ./service
-`,
-      'utf-8'
-    );
 
     const planningHome = resolveCurrentPlanningHomeSync({
       startPath: changesDir,
@@ -116,5 +51,20 @@ describe('planning home paths', () => {
 
     expect(planningHome.kind).toBe('repo');
     expect(planningHome.root).toBe(fs.realpathSync.native(repoRoot));
+    expect(planningHome.defaultSchema).toBe('ratchet');
+  });
+
+  it('throws when no planning home is found and implicit repo root is disallowed', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-planning-home-'));
+    tempDirs.push(tempDir);
+    const bareDir = path.join(tempDir, 'no-ratchet-here');
+    fs.mkdirSync(bareDir, { recursive: true });
+
+    expect(() =>
+      resolveCurrentPlanningHomeSync({
+        startPath: bareDir,
+        allowImplicitRepoRoot: false,
+      })
+    ).toThrow(/planning home/u);
   });
 });

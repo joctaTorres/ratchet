@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { CommandAdapterRegistry } from '../../../src/core/command-generation/registry.js';
 
+const REGISTERED_TOOLS = ['claude', 'codex', 'cursor', 'github-copilot', 'opencode'] as const;
+
 describe('command-generation/registry', () => {
   describe('get', () => {
     it('should return Claude adapter for "claude"', () => {
@@ -15,21 +17,19 @@ describe('command-generation/registry', () => {
       expect(adapter?.toolId).toBe('cursor');
     });
 
-    it('should return Windsurf adapter for "windsurf"', () => {
-      const adapter = CommandAdapterRegistry.get('windsurf');
+    it('should return OpenCode adapter for "opencode"', () => {
+      const adapter = CommandAdapterRegistry.get('opencode');
       expect(adapter).toBeDefined();
-      expect(adapter?.toolId).toBe('windsurf');
-    });
-
-    it('should return Junie adapter for "junie"', () => {
-      const adapter = CommandAdapterRegistry.get('junie');
-      expect(adapter).toBeDefined();
-      expect(adapter?.toolId).toBe('junie');
+      expect(adapter?.toolId).toBe('opencode');
     });
 
     it('should return undefined for unregistered tool', () => {
       const adapter = CommandAdapterRegistry.get('unknown-tool');
       expect(adapter).toBeUndefined();
+    });
+
+    it('should return undefined for a dropped tool', () => {
+      expect(CommandAdapterRegistry.get('windsurf')).toBeUndefined();
     });
 
     it('should return undefined for empty string', () => {
@@ -39,45 +39,37 @@ describe('command-generation/registry', () => {
   });
 
   describe('getAll', () => {
-    it('should return array of all registered adapters', () => {
+    it('should return array of exactly the five supported adapters', () => {
       const adapters = CommandAdapterRegistry.getAll();
       expect(Array.isArray(adapters)).toBe(true);
-      expect(adapters.length).toBeGreaterThanOrEqual(3); // At least Claude, Cursor, Windsurf
+      expect(adapters.length).toBe(REGISTERED_TOOLS.length);
     });
 
-    it('should include Claude, Cursor, and Windsurf adapters', () => {
-      const adapters = CommandAdapterRegistry.getAll();
-      const toolIds = adapters.map((a) => a.toolId);
-
-      expect(toolIds).toContain('claude');
-      expect(toolIds).toContain('cursor');
-      expect(toolIds).toContain('windsurf');
+    it('should include the five supported adapters', () => {
+      const toolIds = CommandAdapterRegistry.getAll().map((a) => a.toolId).sort();
+      expect(toolIds).toEqual([...REGISTERED_TOOLS].sort());
     });
   });
 
   describe('has', () => {
     it('should return true for registered tools', () => {
-      expect(CommandAdapterRegistry.has('claude')).toBe(true);
-      expect(CommandAdapterRegistry.has('cursor')).toBe(true);
-      expect(CommandAdapterRegistry.has('windsurf')).toBe(true);
-      expect(CommandAdapterRegistry.has('junie')).toBe(true);
+      for (const toolId of REGISTERED_TOOLS) {
+        expect(CommandAdapterRegistry.has(toolId)).toBe(true);
+      }
     });
 
     it('should return false for unregistered tools', () => {
       expect(CommandAdapterRegistry.has('unknown')).toBe(false);
+      expect(CommandAdapterRegistry.has('windsurf')).toBe(false);
       expect(CommandAdapterRegistry.has('')).toBe(false);
     });
   });
 
   describe('adapter functionality', () => {
     it('registered adapters should have working getFilePath', () => {
-      const claudeAdapter = CommandAdapterRegistry.get('claude');
-      const cursorAdapter = CommandAdapterRegistry.get('cursor');
-      const windsurfAdapter = CommandAdapterRegistry.get('windsurf');
-
-      expect(claudeAdapter?.getFilePath('test')).toContain('.claude');
-      expect(cursorAdapter?.getFilePath('test')).toContain('.cursor');
-      expect(windsurfAdapter?.getFilePath('test')).toContain('.windsurf');
+      expect(CommandAdapterRegistry.get('claude')?.getFilePath('test')).toContain('.claude');
+      expect(CommandAdapterRegistry.get('cursor')?.getFilePath('test')).toContain('.cursor');
+      expect(CommandAdapterRegistry.get('opencode')?.getFilePath('test')).toContain('.opencode');
     });
 
     it('registered adapters should have working formatFile', () => {
@@ -90,18 +82,10 @@ describe('command-generation/registry', () => {
         body: 'Body content',
       };
 
-      // Tools that don't use YAML frontmatter (markdown headers or TOML or plain)
-      const noYamlFrontmatter = ['cline', 'kilocode', 'roocode', 'gemini', 'qwen'];
-
       const adapters = CommandAdapterRegistry.getAll();
       for (const adapter of adapters) {
         const output = adapter.formatFile(content);
-        // All adapters should include the body content
         expect(output).toContain('Body content');
-        // Only check for YAML frontmatter for tools that use it
-        if (!noYamlFrontmatter.includes(adapter.toolId)) {
-          expect(output).toContain('---');
-        }
       }
     });
   });

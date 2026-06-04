@@ -1,0 +1,65 @@
+{
+  "name": "ratchet",
+  "version": "0.1.0",
+  "description": "AI-native system for BDD-flavored spec-driven development",
+  "keywords": [
+    "ratchet",
+    "bdd",
+    "gherkin",
+    "cli",
+    "ai",
+    "development"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "ratchet": "./bin/ratchet.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "schemas",
+    "!dist/**/*.test.js",
+    "!dist/**/__tests__",
+    "!dist/**/*.map"
+  ],
+  "scripts": {
+    "lint": "eslint src/",
+    "build": "node build.js",
+    "dev": "tsc --watch",
+    "dev:cli": "pnpm build && node bin/ratchet.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.0",
+    "@vitest/ui": "^3.2.4",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.50.1",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@inquirer/core": "^10.2.2",
+    "@inquirer/prompts": "^7.8.0",
+    "chalk": "^5.5.0",
+    "commander": "^14.0.0",
+    "cross-spawn": "7.0.6",
+    "fast-glob": "^3.3.3",
+    "ora": "^8.2.0",
+    "posthog-node": "^5.20.0",
+    "yaml": "^2.8.2",
+    "zod": "^4.0.17"
+  }
+}

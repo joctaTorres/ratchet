@@ -744,8 +744,8 @@ export class Validator {
 /**
  * Thin subclass of MarkdownParser exposing top-level `##` section lookup for
  * plan.md validation. Reuses the inherited code-fence-aware section parsing so
- * the plan rules share OpenSpec's section-presence logic rather than reinventing
- * it.
+ * the plan rules share the existing section-presence logic rather than
+ * reinventing it.
  */
 class PlanSectionParser extends MarkdownParser {
   /**

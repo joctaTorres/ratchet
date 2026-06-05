@@ -123,7 +123,7 @@ export async function showWelcomeScreen(): Promise<void> {
 
   if (!canAnimate()) {
     // Fallback: show static welcome
-    const frame = WELCOME_ANIMATION.frames[3]; // Peak frame
+    const frame = WELCOME_ANIMATION.frames[3]; // Any frame is a complete gear
     process.stdout.write('\n' + renderFrame(frame, textLines) + '\n\n');
     return;
   }

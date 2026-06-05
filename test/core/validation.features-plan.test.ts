@@ -283,3 +283,67 @@ Single module.
     expect(messagesOf(features)).toContain(VALIDATION_MESSAGES.SCENARIO_MISSING_GWT);
   });
 });
+
+describe('Validator - file IO and edge paths', () => {
+  const validator = new Validator();
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-valid-io-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('validateFeatureFile returns an ERROR when the file cannot be read', async () => {
+    const report = await validator.validateFeatureFile(path.join(dir, 'missing.feature'));
+    expect(report.valid).toBe(false);
+    expect(report.summary.errors).toBeGreaterThanOrEqual(1);
+    expect(report.issues[0].path).toBe('file');
+  });
+
+  it('validateFeatureFile reads a real file and validates its content', async () => {
+    const file = path.join(dir, 'ok.feature');
+    await fs.writeFile(
+      file,
+      'Feature: F\n  Scenario: s\n    Given a\n    When b\n    Then c\n'
+    );
+    const report = await validator.validateFeatureFile(file);
+    expect(report.valid).toBe(true);
+  });
+
+  it('validatePlan returns an ERROR when the plan file cannot be read', async () => {
+    const report = await validator.validatePlan(path.join(dir, 'missing.md'));
+    expect(report.valid).toBe(false);
+    expect(report.issues[0].path).toBe('file');
+  });
+
+  it('warns when the Why section is too long', async () => {
+    const longWhy = 'x'.repeat(1001);
+    const plan = `# c\n\n## Why\n${longWhy}\n\n## What Changes\nstuff\n\n## Design\nd\n\n## Tasks\n- [ ] 1.1 do it\n`;
+    const report = await validator.validatePlanContent(plan);
+    expect(messagesOf(report)).toContain(VALIDATION_MESSAGES.CHANGE_WHY_TOO_LONG);
+  });
+
+  it('errors when the What Changes section is present but empty', async () => {
+    const plan = `# c\n\n## Why\n${'reason '.repeat(10)}\n\n## What Changes\n\n## Design\nd\n\n## Tasks\n- [ ] 1.1 do it\n`;
+    const report = await validator.validatePlanContent(plan);
+    expect(report.valid).toBe(false);
+    expect(messagesOf(report)).toContain(VALIDATION_MESSAGES.CHANGE_WHAT_EMPTY);
+  });
+
+  it('strict mode treats warnings as invalid; isValid mirrors report.valid', async () => {
+    const strict = new Validator(true);
+    // A valid feature but with a duplicate scenario name (WARNING only).
+    const content =
+      'Feature: F\n' +
+      '  Scenario: dup\n    Given a\n    When b\n    Then c\n' +
+      '  Scenario: dup\n    Given a\n    When b\n    Then c\n';
+    const report = await strict.validateFeatureContent(content);
+    expect(report.summary.errors).toBe(0);
+    expect(report.summary.warnings).toBeGreaterThanOrEqual(1);
+    expect(report.valid).toBe(false);
+    expect(strict.isValid(report)).toBe(false);
+  });
+});

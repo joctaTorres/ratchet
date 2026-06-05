@@ -156,4 +156,78 @@ describe('ArchiveCommand', () => {
     ).resolves.toBeUndefined();
     await expect(fs.access(archivePath('bad-feature'))).rejects.toThrow();
   });
+
+  it('throws when there is no Ratchet changes directory', async () => {
+    await expect(new ArchiveCommand().execute('whatever', { yes: true })).rejects.toThrow(
+      /No Ratchet changes directory/
+    );
+  });
+
+  it('throws when the named change does not exist', async () => {
+    // Create the changes dir but no matching change.
+    await fs.mkdir(path.join(root, RATCHET_DIR_NAME, 'changes'), { recursive: true });
+    await expect(new ArchiveCommand().execute('ghost', { yes: true })).rejects.toThrow(
+      /Change 'ghost' not found/
+    );
+  });
+
+  it('throws when an archive with the same date prefix already exists', async () => {
+    await scaffoldChange(root, 'dup');
+    // Pre-create the dated archive target so the existence check trips.
+    await fs.mkdir(archivePath('dup'), { recursive: true });
+
+    await expect(new ArchiveCommand().execute('dup', { yes: true })).rejects.toThrow(
+      /already exists/
+    );
+  });
+
+  it('emits non-blocking plan warnings but still archives (Why too short)', async () => {
+    const shortWhyPlan = VALID_PLAN.replace(
+      'We need authenticated access so that only registered users can reach the app.',
+      'short'
+    );
+    await scaffoldChange(root, 'warn-plan', { plan: shortWhyPlan });
+
+    await new ArchiveCommand().execute('warn-plan', { yes: true });
+
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/Plan warnings/);
+    // Plan warnings are non-blocking: the change is still archived.
+    await expect(fs.access(archivePath('warn-plan'))).resolves.toBeUndefined();
+  });
+
+  it('continues past incomplete tasks with --yes and reports it', async () => {
+    const incompletePlan = VALID_PLAN.replace('- [x] 1.1', '- [ ] 1.1');
+    await scaffoldChange(root, 'incomplete', { plan: incompletePlan });
+
+    await new ArchiveCommand().execute('incomplete', { yes: true });
+
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/incomplete task\(s\) found\. Continuing due to --yes/);
+    await expect(fs.access(archivePath('incomplete'))).resolves.toBeUndefined();
+  });
+
+  it('reports "No feature changes to apply" when the store already matches', async () => {
+    // Pre-populate the store with identical content so applyFeatures finds no diff.
+    await writeFile(storePath('user-auth/login.feature'), VALID_FEATURE);
+    await scaffoldChange(root, 'idempotent');
+
+    await new ArchiveCommand().execute('idempotent', { yes: true });
+
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/No feature changes to apply/);
+    await expect(fs.access(archivePath('idempotent'))).resolves.toBeUndefined();
+  });
+
+  it('warns and archives when validation is skipped with --no-validate and --yes', async () => {
+    const badFeature = `Feature: Login\n  Scenario: Broken\n    Given a user\n    When they act\n`;
+    await scaffoldChange(root, 'skip-validate', { feature: badFeature });
+
+    await new ArchiveCommand().execute('skip-validate', { yes: true, noValidate: true });
+
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/Skipping validation/);
+    // Even an invalid feature archives when validation is skipped.
+    await expect(fs.access(archivePath('skip-validate'))).resolves.toBeUndefined();
+  });
 });

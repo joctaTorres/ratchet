@@ -707,8 +707,8 @@ export class InitCommand {
 
     // Links
     console.log();
-    console.log(`Learn more: ${chalk.cyan('https://github.com/Fission-AI/Ratchet')}`);
-    console.log(`Feedback:   ${chalk.cyan('https://github.com/Fission-AI/Ratchet/issues')}`);
+    console.log(`Learn more: ${chalk.cyan('https://github.com/joctaTorres/ratchet')}`);
+    console.log(`Feedback:   ${chalk.cyan('https://github.com/joctaTorres/ratchet/issues')}`);
 
     // Restart instruction if any tools were configured
     if (results.createdTools.length > 0 || results.refreshedTools.length > 0) {

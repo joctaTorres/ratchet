@@ -48,7 +48,7 @@ function getCommandPath(command: Command): string {
 
 program
   .name('ratchet')
-  .description('AI-native system for spec-driven development')
+  .description('AI-native system for BDD-flavored spec-driven development')
   .version(version);
 
 // Global options

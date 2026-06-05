@@ -270,9 +270,8 @@ export class UpdateCommand {
     if (newlyConfiguredTools.length > 0) {
       console.log();
       console.log(chalk.bold('Getting started:'));
-      console.log('  /rct:new       Start a new change');
-      console.log('  /rct:continue  Create the next artifact');
-      console.log('  /rct:apply     Implement tasks');
+      console.log('  /rct:propose  Start a new change');
+      console.log('  /rct:apply    Implement tasks');
       console.log();
       console.log(`Learn more: ${chalk.cyan('https://github.com/joctaTorres/ratchet')}`);
     }

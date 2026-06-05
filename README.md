@@ -1,4 +1,8 @@
-# ratchet
+<p align="center">
+  <img src="ratchet.png" alt="ratchet logo" width="220">
+</p>
+
+<h1 align="center">ratchet</h1>
 
 **AI-native, BDD-flavored spec-driven development.** A lightweight CLI that lets you and your coding agent agree on *behavior* — written as executable [Gherkin](https://cucumber.io/docs/gherkin/) — before any code is written, then drive the change from proposal to merged spec.
 

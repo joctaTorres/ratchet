@@ -32,6 +32,9 @@
   "scripts": {
     "lint": "eslint src/",
     "build": "node build.js",
+    "prepack": "pnpm build",
+    "link": "pnpm build && npm link",
+    "unlink": "npm rm -g ratchet",
     "dev": "tsc --watch",
     "dev:cli": "pnpm build && node bin/ratchet.js",
     "test": "vitest run",

@@ -59,10 +59,18 @@ Requires **Node.js ≥ 20.19** and **pnpm**.
 git clone https://github.com/joctaTorres/ratchet.git
 cd ratchet
 pnpm install
-pnpm build
+make install          # build + link the `ratchet` command onto your PATH
 ```
 
-Then run the CLI via `node bin/ratchet.js …` (or link it: `npm link`).
+`make install` builds the project and globally links `ratchet` from the **currently checked-out branch** — switch branches and re-run it to install that version. Manage the local install with:
+
+| Command | What it does |
+|---|---|
+| `make install` | Build + globally link `ratchet` (prints the installed branch + commit) |
+| `make uninstall` | Remove the global `ratchet` link |
+| `make reinstall` | `uninstall` then `install` |
+
+These wrap the `link`/`unlink` package scripts plus a guarded `asdf reshim` (skipped automatically if you don't use asdf). Prefer no global install? After `pnpm build`, run directly with `node bin/ratchet.js …`.
 
 ## Quick start
 

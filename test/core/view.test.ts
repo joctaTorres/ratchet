@@ -125,5 +125,27 @@ describe('ViewCommand', () => {
       'gamma-change'
     ]);
   });
+
+  it('renders the feature store grouped by capability', async () => {
+    // changes dir must exist for the dashboard to render.
+    await fs.mkdir(path.join(tempDir, '.ratchet', 'changes'), { recursive: true });
+
+    const featuresDir = path.join(tempDir, '.ratchet', 'features');
+    await fs.mkdir(path.join(featuresDir, 'user-auth'), { recursive: true });
+    await fs.mkdir(path.join(featuresDir, 'billing'), { recursive: true });
+    await fs.writeFile(path.join(featuresDir, 'user-auth', 'login.feature'), 'Feature: Login\n');
+    await fs.writeFile(path.join(featuresDir, 'user-auth', 'logout.feature'), 'Feature: Logout\n');
+    await fs.writeFile(path.join(featuresDir, 'billing', 'invoice.feature'), 'Feature: Invoice\n');
+
+    const viewCommand = new ViewCommand();
+    await viewCommand.execute(tempDir);
+
+    const output = logOutput.map(stripAnsi).join('\n');
+    expect(output).toContain('Features');
+    expect(output).toContain('user-auth');
+    expect(output).toContain('2 features');
+    expect(output).toContain('billing');
+    expect(output).toContain('1 feature');
+  });
 });
 

@@ -162,4 +162,28 @@ Regular text that should be ignored
       expect(logOutput.some(line => line.includes('no-tasks') && line.includes('No tasks'))).toBe(true);
     });
   });
+
+  describe('specs mode (feature store)', () => {
+    it('reports no features when the store is missing', async () => {
+      const listCommand = new ListCommand();
+      await listCommand.execute(tempDir, 'specs');
+      expect(logOutput).toContain('No features found.');
+    });
+
+    it('lists feature counts grouped by capability', async () => {
+      const featuresDir = path.join(tempDir, '.ratchet', 'features');
+      await fs.mkdir(path.join(featuresDir, 'user-auth'), { recursive: true });
+      await fs.mkdir(path.join(featuresDir, 'billing'), { recursive: true });
+      await fs.writeFile(path.join(featuresDir, 'user-auth', 'login.feature'), 'Feature: Login\n');
+      await fs.writeFile(path.join(featuresDir, 'user-auth', 'logout.feature'), 'Feature: Logout\n');
+      await fs.writeFile(path.join(featuresDir, 'billing', 'invoice.feature'), 'Feature: Invoice\n');
+
+      const listCommand = new ListCommand();
+      await listCommand.execute(tempDir, 'specs');
+
+      expect(logOutput).toContain('Features:');
+      expect(logOutput.some(l => l.includes('user-auth') && l.includes('features 2'))).toBe(true);
+      expect(logOutput.some(l => l.includes('billing') && l.includes('features 1'))).toBe(true);
+    });
+  });
 });

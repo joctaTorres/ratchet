@@ -698,9 +698,6 @@ export class InitCommand {
     if (activeWorkflows.includes('propose')) {
       console.log(chalk.bold('Getting started:'));
       console.log('  Start your first change: /rct:propose "your idea"');
-    } else if (activeWorkflows.includes('new')) {
-      console.log(chalk.bold('Getting started:'));
-      console.log('  Start your first change: /rct:new "your idea"');
     } else {
       console.log("Done. Run 'ratchet config profile' to configure your workflows.");
     }

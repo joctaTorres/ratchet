@@ -12,7 +12,7 @@
  * @returns Text with command references transformed to hyphen format
  *
  * @example
- * transformToHyphenCommands('/rct:new') // returns '/rct-new'
+ * transformToHyphenCommands('/rct:propose') // returns '/rct-propose'
  * transformToHyphenCommands('Use /rct:apply to implement') // returns 'Use /rct-apply to implement'
  */
 export function transformToHyphenCommands(text: string): string {

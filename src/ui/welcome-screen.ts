@@ -25,9 +25,9 @@ function getWelcomeText(): string[] {
     chalk.dim('  • /rct:* slash commands'),
     '',
     chalk.white('Quick start after setup:'),
-    `  ${chalk.yellow('/rct:new')}      ${chalk.dim('Create a change')}`,
-    `  ${chalk.yellow('/rct:continue')} ${chalk.dim('Next artifact')}`,
-    `  ${chalk.yellow('/rct:apply')}    ${chalk.dim('Implement tasks')}`,
+    `  ${chalk.yellow('/rct:propose')} ${chalk.dim('Create a change')}`,
+    `  ${chalk.yellow('/rct:apply')}   ${chalk.dim('Implement tasks')}`,
+    `  ${chalk.yellow('/rct:archive')} ${chalk.dim('Archive when done')}`,
     '',
     chalk.cyan('Press Enter to select tools...'),
   ];

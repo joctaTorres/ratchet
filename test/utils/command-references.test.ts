@@ -4,24 +4,24 @@ import { transformToHyphenCommands } from '../../src/utils/command-references.js
 describe('transformToHyphenCommands', () => {
   describe('basic transformations', () => {
     it('should transform single command reference', () => {
-      expect(transformToHyphenCommands('/opsx:new')).toBe('/opsx-new');
+      expect(transformToHyphenCommands('/rct:new')).toBe('/rct-new');
     });
 
     it('should transform multiple command references', () => {
-      const input = '/opsx:new and /opsx:apply';
-      const expected = '/opsx-new and /opsx-apply';
+      const input = '/rct:new and /rct:apply';
+      const expected = '/rct-new and /rct-apply';
       expect(transformToHyphenCommands(input)).toBe(expected);
     });
 
     it('should transform command reference in context', () => {
-      const input = 'Use /opsx:apply to implement tasks';
-      const expected = 'Use /opsx-apply to implement tasks';
+      const input = 'Use /rct:apply to implement tasks';
+      const expected = 'Use /rct-apply to implement tasks';
       expect(transformToHyphenCommands(input)).toBe(expected);
     });
 
     it('should handle backtick-quoted commands', () => {
-      const input = 'Run `/opsx:continue` to proceed';
-      const expected = 'Run `/opsx-continue` to proceed';
+      const input = 'Run `/rct:continue` to proceed';
+      const expected = 'Run `/rct-continue` to proceed';
       expect(transformToHyphenCommands(input)).toBe(expected);
     });
   });
@@ -37,25 +37,25 @@ describe('transformToHyphenCommands', () => {
     });
 
     it('should not transform similar but non-matching patterns', () => {
-      const input = '/ops:new opsx: /other:command';
+      const input = '/ops:new rct: /other:command';
       expect(transformToHyphenCommands(input)).toBe(input);
     });
 
     it('should handle multiple occurrences on same line', () => {
-      const input = '/opsx:new /opsx:continue /opsx:apply';
-      const expected = '/opsx-new /opsx-continue /opsx-apply';
+      const input = '/rct:new /rct:continue /rct:apply';
+      const expected = '/rct-new /rct-continue /rct-apply';
       expect(transformToHyphenCommands(input)).toBe(expected);
     });
   });
 
   describe('multiline content', () => {
     it('should transform references across multiple lines', () => {
-      const input = `Use /opsx:new to start
-Then /opsx:continue to proceed
-Finally /opsx:apply to implement`;
-      const expected = `Use /opsx-new to start
-Then /opsx-continue to proceed
-Finally /opsx-apply to implement`;
+      const input = `Use /rct:new to start
+Then /rct:continue to proceed
+Finally /rct:apply to implement`;
+      const expected = `Use /rct-new to start
+Then /rct-continue to proceed
+Finally /rct-apply to implement`;
       expect(transformToHyphenCommands(input)).toBe(expected);
     });
   });
@@ -75,8 +75,8 @@ Finally /opsx-apply to implement`;
     ];
 
     for (const cmd of commands) {
-      it(`should transform /opsx:${cmd}`, () => {
-        expect(transformToHyphenCommands(`/opsx:${cmd}`)).toBe(`/opsx-${cmd}`);
+      it(`should transform /rct:${cmd}`, () => {
+        expect(transformToHyphenCommands(`/rct:${cmd}`)).toBe(`/rct-${cmd}`);
       });
     }
   });

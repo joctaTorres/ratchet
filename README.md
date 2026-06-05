@@ -6,21 +6,21 @@
 
 **AI-native, BDD-flavored spec-driven development.** A lightweight CLI that lets you and your coding agent agree on *behavior* — written as executable [Gherkin](https://cucumber.io/docs/gherkin/) — before any code is written, then drive the change from proposal to merged spec.
 
-ratchet is a fork of [OpenSpec](https://github.com/Fission-AI/OpenSpec) with a leaner, behavior-first model: every change is just **two artifacts** — feature files and a plan — and completed work ratchets forward into a permanent, living feature store.
+ratchet keeps a lean, behavior-first model: every change is just **two artifacts** — feature files and a plan — and completed work ratchets forward into a permanent, living feature store.
 
 ```
-You: /opsx:propose add dark mode
+You: /rct:propose add dark mode
 AI:  Created .ratchet/changes/add-dark-mode/
      ✓ features/theming/dark-mode.feature   — behavior as Given/When/Then
      ✓ plan.md                              — why, what, design, tasks
      Ready for implementation.
 
-You: /opsx:apply
+You: /rct:apply
 AI:  ✓ 1.1 Add theme context provider
      ✓ 1.2 Wire up the toggle + persistence
      All tasks complete.
 
-You: /opsx:archive
+You: /rct:archive
 AI:  Synced features → .ratchet/features/theming/dark-mode.feature
      Archived to .ratchet/changes/archive/2026-06-05-add-dark-mode/
 ```
@@ -71,7 +71,7 @@ cd your-project
 ratchet init --tools claude          # scaffold .ratchet/ + agent skills/commands
 ```
 
-Then tell your agent what to build: `/opsx:propose <your idea>`. Or drive it by hand:
+Then tell your agent what to build: `/rct:propose <your idea>`. Or drive it by hand:
 
 ```bash
 ratchet new change add-login                      # scaffold a change
@@ -95,7 +95,7 @@ ratchet archive add-login -y                      # sync features → store, arc
 
 .claude/                      # (per selected tool)
 ├── skills/ratchet-{propose,apply-change,verify-change,archive-change}/
-└── commands/opsx/{propose,apply,verify,archive}.md
+└── commands/rct/{propose,apply,verify,archive}.md
 ```
 
 **Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`.
@@ -114,7 +114,7 @@ ratchet archive add-login -y                      # sync features → store, arc
 | `view` | Interactive dashboard of changes and features |
 | `archive [name]` | Sync features into the store and archive the change |
 
-## Agent workflows (skills / `/opsx:` commands)
+## Agent workflows (skills / `/rct:` commands)
 
 | Workflow | What it does |
 |---|---|

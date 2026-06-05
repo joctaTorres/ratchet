@@ -158,9 +158,9 @@ export function getVerifyChangeSkillTemplate(): SkillTemplate {
   };
 }
 
-export function getOpsxVerifyCommandTemplate(): CommandTemplate {
+export function getRctVerifyCommandTemplate(): CommandTemplate {
   return {
-    name: 'OPSX: Verify',
+    name: 'RCT: Verify',
     description: 'Verify implementation matches change artifacts before archiving',
     category: 'Workflow',
     tags: ['workflow', 'verify', 'experimental'],

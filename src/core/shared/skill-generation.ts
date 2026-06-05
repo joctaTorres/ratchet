@@ -8,11 +8,11 @@ import {
   getApplyChangeSkillTemplate,
   getArchiveChangeSkillTemplate,
   getVerifyChangeSkillTemplate,
-  getOpsxProposeSkillTemplate,
-  getOpsxApplyCommandTemplate,
-  getOpsxArchiveCommandTemplate,
-  getOpsxVerifyCommandTemplate,
-  getOpsxProposeCommandTemplate,
+  getRctProposeSkillTemplate,
+  getRctApplyCommandTemplate,
+  getRctArchiveCommandTemplate,
+  getRctVerifyCommandTemplate,
+  getRctProposeCommandTemplate,
   type SkillTemplate,
 } from '../templates/skill-templates.js';
 import type { CommandContent } from '../command-generation/index.js';
@@ -30,7 +30,7 @@ export interface SkillTemplateEntry {
  * Command template with ID mapping.
  */
 export interface CommandTemplateEntry {
-  template: ReturnType<typeof getOpsxProposeCommandTemplate>;
+  template: ReturnType<typeof getRctProposeCommandTemplate>;
   id: string;
 }
 
@@ -46,7 +46,7 @@ export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemp
     { template: getApplyChangeSkillTemplate(), dirName: 'ratchet-apply-change', workflowId: 'apply' },
     { template: getArchiveChangeSkillTemplate(), dirName: 'ratchet-archive-change', workflowId: 'archive' },
     { template: getVerifyChangeSkillTemplate(), dirName: 'ratchet-verify-change', workflowId: 'verify' },
-    { template: getOpsxProposeSkillTemplate(), dirName: 'ratchet-propose', workflowId: 'propose' },
+    { template: getRctProposeSkillTemplate(), dirName: 'ratchet-propose', workflowId: 'propose' },
   ];
 
   if (!workflowFilter) return all;
@@ -63,10 +63,10 @@ export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemp
 export function getCommandTemplates(workflowFilter?: readonly string[]): CommandTemplateEntry[] {
   // explore is internal-only and is never emitted as a command.
   const all: CommandTemplateEntry[] = [
-    { template: getOpsxApplyCommandTemplate(), id: 'apply' },
-    { template: getOpsxArchiveCommandTemplate(), id: 'archive' },
-    { template: getOpsxVerifyCommandTemplate(), id: 'verify' },
-    { template: getOpsxProposeCommandTemplate(), id: 'propose' },
+    { template: getRctApplyCommandTemplate(), id: 'apply' },
+    { template: getRctArchiveCommandTemplate(), id: 'archive' },
+    { template: getRctVerifyCommandTemplate(), id: 'verify' },
+    { template: getRctProposeCommandTemplate(), id: 'propose' },
   ];
 
   if (!workflowFilter) return all;

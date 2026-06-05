@@ -36,7 +36,7 @@ export const LEGACY_SLASH_COMMAND_PATHS: Record<string, LegacySlashCommandPatter
   // File-based: individual ratchet-*.md files in a commands/workflows/prompts folder
   'cursor': { type: 'files', pattern: '.cursor/commands/ratchet-*.md' },
   'github-copilot': { type: 'files', pattern: '.github/prompts/ratchet-*.prompt.md' },
-  'opencode': { type: 'files', pattern: ['.opencode/command/opsx-*.md', '.opencode/command/ratchet-*.md'] },
+  'opencode': { type: 'files', pattern: ['.opencode/command/rct-*.md', '.opencode/command/ratchet-*.md'] },
   'codex': { type: 'files', pattern: '.codex/prompts/ratchet-*.md' },
 };
 
@@ -428,7 +428,7 @@ export function formatCleanupSummary(result: CleanupResult): string {
     }
 
     for (const dir of result.deletedDirs) {
-      lines.push(`  ✓ Removed ${dir}/ (replaced by /opsx:*)`);
+      lines.push(`  ✓ Removed ${dir}/ (replaced by /rct:*)`);
     }
 
     for (const file of result.modifiedFiles) {

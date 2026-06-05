@@ -68,11 +68,11 @@ describe('command-generation/types', () => {
   describe('GeneratedCommand interface', () => {
     it('should represent generated command output', () => {
       const generated: GeneratedCommand = {
-        path: '.claude/commands/opsx/explore.md',
+        path: '.claude/commands/rct/explore.md',
         fileContent: '---\nname: Test\n---\n\nBody\n',
       };
 
-      expect(generated.path).toBe('.claude/commands/opsx/explore.md');
+      expect(generated.path).toBe('.claude/commands/rct/explore.md');
       expect(generated.fileContent).toContain('name: Test');
     });
   });

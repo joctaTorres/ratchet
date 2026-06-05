@@ -6,7 +6,7 @@
  */
 import type { SkillTemplate, CommandTemplate } from '../types.js';
 
-export function getOpsxProposeSkillTemplate(): SkillTemplate {
+export function getRctProposeSkillTemplate(): SkillTemplate {
   return {
     name: 'ratchet-propose',
     description: 'Propose a new change with all artifacts generated in one step. Use when the user wants to describe what they want to build and get executable Gherkin features plus a plan ready for implementation.',
@@ -16,7 +16,7 @@ I'll create a change with two artifacts:
 - features/<capability>/*.feature (executable Gherkin: Feature / Scenario / Given-When-Then)
 - plan.md (## Why, ## What Changes, ## Design, ## Tasks)
 
-When ready to implement, run /opsx:apply
+When ready to implement, run /rct:apply
 
 ---
 
@@ -95,7 +95,7 @@ After completing all artifacts, summarize:
 - Change name and location
 - List of artifacts created with brief descriptions
 - What's ready: "All artifacts created! Ready for implementation."
-- Prompt: "Run \`/opsx:apply\` or ask me to implement to start working on the tasks."
+- Prompt: "Run \`/rct:apply\` or ask me to implement to start working on the tasks."
 
 **Artifact Creation Guidelines**
 
@@ -119,9 +119,9 @@ After completing all artifacts, summarize:
   };
 }
 
-export function getOpsxProposeCommandTemplate(): CommandTemplate {
+export function getRctProposeCommandTemplate(): CommandTemplate {
   return {
-    name: 'OPSX: Propose',
+    name: 'RCT: Propose',
     description: 'Propose a new change - create it and generate all artifacts in one step',
     category: 'Workflow',
     tags: ['workflow', 'artifacts', 'experimental'],
@@ -131,11 +131,11 @@ I'll create a change with two artifacts:
 - features/<capability>/*.feature (executable Gherkin: Feature / Scenario / Given-When-Then)
 - plan.md (## Why, ## What Changes, ## Design, ## Tasks)
 
-When ready to implement, run /opsx:apply
+When ready to implement, run /rct:apply
 
 ---
 
-**Input**: The argument after \`/opsx:propose\` is the change name (kebab-case), OR a description of what the user wants to build.
+**Input**: The argument after \`/rct:propose\` is the change name (kebab-case), OR a description of what the user wants to build.
 
 **Steps**
 
@@ -210,7 +210,7 @@ After completing all artifacts, summarize:
 - Change name and location
 - List of artifacts created with brief descriptions
 - What's ready: "All artifacts created! Ready for implementation."
-- Prompt: "Run \`/opsx:apply\` to start implementing."
+- Prompt: "Run \`/rct:apply\` to start implementing."
 
 **Artifact Creation Guidelines**
 

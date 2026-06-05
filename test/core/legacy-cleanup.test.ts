@@ -325,13 +325,13 @@ ${RATCHET_MARKERS.end}`);
       expect(result.files).toContain('.github/prompts/ratchet-proposal.prompt.md');
     });
 
-    it('should detect legacy OpenCode opsx-* command files', async () => {
+    it('should detect legacy OpenCode rct-* command files', async () => {
       const dirPath = path.join(testDir, '.opencode', 'command');
       await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(path.join(dirPath, 'opsx-propose.md'), 'content');
+      await fs.writeFile(path.join(dirPath, 'rct-propose.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.opencode/command/opsx-propose.md');
+      expect(result.files).toContain('.opencode/command/rct-propose.md');
     });
 
     it('should detect legacy OpenCode ratchet-* command files', async () => {
@@ -343,14 +343,14 @@ ${RATCHET_MARKERS.end}`);
       expect(result.files).toContain('.opencode/command/ratchet-new.md');
     });
 
-    it('should detect both opsx-* and ratchet-* OpenCode command files', async () => {
+    it('should detect both rct-* and ratchet-* OpenCode command files', async () => {
       const dirPath = path.join(testDir, '.opencode', 'command');
       await fs.mkdir(dirPath, { recursive: true });
-      await fs.writeFile(path.join(dirPath, 'opsx-propose.md'), 'content');
+      await fs.writeFile(path.join(dirPath, 'rct-propose.md'), 'content');
       await fs.writeFile(path.join(dirPath, 'ratchet-new.md'), 'content');
 
       const result = await detectLegacySlashCommands(testDir);
-      expect(result.files).toContain('.opencode/command/opsx-propose.md');
+      expect(result.files).toContain('.opencode/command/rct-propose.md');
       expect(result.files).toContain('.opencode/command/ratchet-new.md');
     });
   });
@@ -617,7 +617,7 @@ ${RATCHET_MARKERS.end}`);
       };
 
       const summary = formatCleanupSummary(result);
-      expect(summary).toContain('✓ Removed .claude/commands/ratchet/ (replaced by /opsx:*)');
+      expect(summary).toContain('✓ Removed .claude/commands/ratchet/ (replaced by /rct:*)');
     });
 
     it('should format modified files', () => {
@@ -1058,12 +1058,12 @@ ${RATCHET_MARKERS.end}`);
       expect(tools).toHaveLength(1);
     });
 
-    it('should handle opencode opsx-* legacy files', () => {
+    it('should handle opencode rct-* legacy files', () => {
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
-        slashCommandFiles: ['.opencode/command/opsx-propose.md'],
+        slashCommandFiles: ['.opencode/command/rct-propose.md'],
         hasRatchetAgents: false,
         hasProjectMd: false,
         hasRootAgentsWithMarkers: false,
@@ -1092,13 +1092,13 @@ ${RATCHET_MARKERS.end}`);
       expect(tools).toHaveLength(1);
     });
 
-    it('should deduplicate opencode when both opsx-* and ratchet-* files exist', () => {
+    it('should deduplicate opencode when both rct-* and ratchet-* files exist', () => {
       const detection = {
         configFiles: [],
         configFilesToUpdate: [],
         slashCommandDirs: [],
         slashCommandFiles: [
-          '.opencode/command/opsx-propose.md',
+          '.opencode/command/rct-propose.md',
           '.opencode/command/ratchet-new.md',
         ],
         hasRatchetAgents: false,

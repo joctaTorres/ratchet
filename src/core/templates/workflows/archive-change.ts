@@ -110,9 +110,9 @@ export function getArchiveChangeSkillTemplate(): SkillTemplate {
   };
 }
 
-export function getOpsxArchiveCommandTemplate(): CommandTemplate {
+export function getRctArchiveCommandTemplate(): CommandTemplate {
   return {
-    name: 'OPSX: Archive',
+    name: 'RCT: Archive',
     description: 'Archive a completed change: update the feature store and move it to the archive',
     category: 'Workflow',
     tags: ['workflow', 'archive', 'experimental'],

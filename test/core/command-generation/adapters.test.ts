@@ -25,12 +25,12 @@ describe('command-generation/adapters', () => {
 
     it('should generate correct file path', () => {
       const filePath = claudeAdapter.getFilePath('explore');
-      expect(filePath).toBe(path.join('.claude', 'commands', 'opsx', 'explore.md'));
+      expect(filePath).toBe(path.join('.claude', 'commands', 'rct', 'explore.md'));
     });
 
     it('should generate correct file path for different command IDs', () => {
-      expect(claudeAdapter.getFilePath('propose')).toBe(path.join('.claude', 'commands', 'opsx', 'propose.md'));
-      expect(claudeAdapter.getFilePath('archive')).toBe(path.join('.claude', 'commands', 'opsx', 'archive.md'));
+      expect(claudeAdapter.getFilePath('propose')).toBe(path.join('.claude', 'commands', 'rct', 'propose.md'));
+      expect(claudeAdapter.getFilePath('archive')).toBe(path.join('.claude', 'commands', 'rct', 'archive.md'));
     });
 
     it('should format file with correct YAML frontmatter', () => {
@@ -57,22 +57,22 @@ describe('command-generation/adapters', () => {
       expect(cursorAdapter.toolId).toBe('cursor');
     });
 
-    it('should generate correct file path with opsx- prefix', () => {
+    it('should generate correct file path with rct- prefix', () => {
       const filePath = cursorAdapter.getFilePath('explore');
-      expect(filePath).toBe(path.join('.cursor', 'commands', 'opsx-explore.md'));
+      expect(filePath).toBe(path.join('.cursor', 'commands', 'rct-explore.md'));
     });
 
     it('should generate correct file paths for different commands', () => {
-      expect(cursorAdapter.getFilePath('propose')).toBe(path.join('.cursor', 'commands', 'opsx-propose.md'));
-      expect(cursorAdapter.getFilePath('archive')).toBe(path.join('.cursor', 'commands', 'opsx-archive.md'));
+      expect(cursorAdapter.getFilePath('propose')).toBe(path.join('.cursor', 'commands', 'rct-propose.md'));
+      expect(cursorAdapter.getFilePath('archive')).toBe(path.join('.cursor', 'commands', 'rct-archive.md'));
     });
 
     it('should format file with Cursor-specific frontmatter', () => {
       const output = cursorAdapter.formatFile(sampleContent);
 
       expect(output).toContain('---\n');
-      expect(output).toContain('name: /opsx-explore');
-      expect(output).toContain('id: opsx-explore');
+      expect(output).toContain('name: /rct-explore');
+      expect(output).toContain('id: rct-explore');
       expect(output).toContain('category: Workflow');
       expect(output).toContain('description: Enter explore mode for thinking');
       expect(output).toContain('---\n\n');
@@ -97,7 +97,7 @@ describe('command-generation/adapters', () => {
 
     it('should generate path ending with correct structure', () => {
       const filePath = codexAdapter.getFilePath('explore');
-      expect(filePath).toMatch(/prompts[/\\]opsx-explore\.md$/);
+      expect(filePath).toMatch(/prompts[/\\]rct-explore\.md$/);
     });
 
     it('should default to homedir/.codex', () => {
@@ -105,7 +105,7 @@ describe('command-generation/adapters', () => {
       delete process.env.CODEX_HOME;
       try {
         const filePath = codexAdapter.getFilePath('explore');
-        const expected = path.join(os.homedir(), '.codex', 'prompts', 'opsx-explore.md');
+        const expected = path.join(os.homedir(), '.codex', 'prompts', 'rct-explore.md');
         expect(filePath).toBe(expected);
       } finally {
         if (original !== undefined) {
@@ -119,7 +119,7 @@ describe('command-generation/adapters', () => {
       process.env.CODEX_HOME = '/custom/codex-home';
       try {
         const filePath = codexAdapter.getFilePath('explore');
-        expect(filePath).toBe(path.join(path.resolve('/custom/codex-home'), 'prompts', 'opsx-explore.md'));
+        expect(filePath).toBe(path.join(path.resolve('/custom/codex-home'), 'prompts', 'rct-explore.md'));
       } finally {
         if (original !== undefined) {
           process.env.CODEX_HOME = original;
@@ -146,7 +146,7 @@ describe('command-generation/adapters', () => {
 
     it('should generate correct file path with .prompt.md extension', () => {
       const filePath = githubCopilotAdapter.getFilePath('explore');
-      expect(filePath).toBe(path.join('.github', 'prompts', 'opsx-explore.prompt.md'));
+      expect(filePath).toBe(path.join('.github', 'prompts', 'rct-explore.prompt.md'));
     });
 
     it('should format file with description frontmatter', () => {
@@ -165,7 +165,7 @@ describe('command-generation/adapters', () => {
 
     it('should generate correct file path', () => {
       const filePath = opencodeAdapter.getFilePath('explore');
-      expect(filePath).toBe(path.join('.opencode', 'commands', 'opsx-explore.md'));
+      expect(filePath).toBe(path.join('.opencode', 'commands', 'rct-explore.md'));
     });
 
     it('should format file with description frontmatter', () => {
@@ -179,40 +179,40 @@ describe('command-generation/adapters', () => {
     it('should transform colon-based command references to hyphen-based', () => {
       const contentWithCommands: CommandContent = {
         ...sampleContent,
-        body: 'Use /opsx:propose to start, then /opsx:apply to implement.',
+        body: 'Use /rct:propose to start, then /rct:apply to implement.',
       };
       const output = opencodeAdapter.formatFile(contentWithCommands);
-      expect(output).toContain('/opsx-propose');
-      expect(output).toContain('/opsx-apply');
-      expect(output).not.toContain('/opsx:propose');
-      expect(output).not.toContain('/opsx:apply');
+      expect(output).toContain('/rct-propose');
+      expect(output).toContain('/rct-apply');
+      expect(output).not.toContain('/rct:propose');
+      expect(output).not.toContain('/rct:apply');
     });
 
     it('should handle multiple command references in body', () => {
       const contentWithMultipleCommands: CommandContent = {
         ...sampleContent,
-        body: `/opsx:explore for ideas
-/opsx:propose to create
-/opsx:verify to check
-/opsx:apply to implement`,
+        body: `/rct:explore for ideas
+/rct:propose to create
+/rct:verify to check
+/rct:apply to implement`,
       };
       const output = opencodeAdapter.formatFile(contentWithMultipleCommands);
-      expect(output).toContain('/opsx-explore');
-      expect(output).toContain('/opsx-propose');
-      expect(output).toContain('/opsx-verify');
-      expect(output).toContain('/opsx-apply');
+      expect(output).toContain('/rct-explore');
+      expect(output).toContain('/rct-propose');
+      expect(output).toContain('/rct-verify');
+      expect(output).toContain('/rct-apply');
     });
   });
 
   describe('cross-platform path handling', () => {
     it('Claude adapter uses path.join for paths', () => {
       const filePath = claudeAdapter.getFilePath('test');
-      expect(filePath.split(path.sep)).toEqual(['.claude', 'commands', 'opsx', 'test.md']);
+      expect(filePath.split(path.sep)).toEqual(['.claude', 'commands', 'rct', 'test.md']);
     });
 
     it('Cursor adapter uses path.join for paths', () => {
       const filePath = cursorAdapter.getFilePath('test');
-      expect(filePath.split(path.sep)).toEqual(['.cursor', 'commands', 'opsx-test.md']);
+      expect(filePath.split(path.sep)).toEqual(['.cursor', 'commands', 'rct-test.md']);
     });
 
     it('All supported adapters produce valid paths', () => {

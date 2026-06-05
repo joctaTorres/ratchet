@@ -122,10 +122,10 @@ describe('InitCommand', () => {
 
       // Core profile: propose, apply, verify, archive
       const coreCommandNames = [
-        'opsx/propose.md',
-        'opsx/apply.md',
-        'opsx/verify.md',
-        'opsx/archive.md',
+        'rct/propose.md',
+        'rct/apply.md',
+        'rct/verify.md',
+        'rct/archive.md',
       ];
 
       for (const cmdName of coreCommandNames) {
@@ -135,11 +135,11 @@ describe('InitCommand', () => {
 
       // Non-core / internal-only commands should NOT be created
       const nonCoreCommandNames = [
-        'opsx/explore.md',
-        'opsx/new.md',
-        'opsx/continue.md',
-        'opsx/ff.md',
-        'opsx/bulk-archive.md',
+        'rct/explore.md',
+        'rct/new.md',
+        'rct/continue.md',
+        'rct/ff.md',
+        'rct/bulk-archive.md',
       ];
 
       for (const cmdName of nonCoreCommandNames) {
@@ -358,7 +358,7 @@ describe('InitCommand', () => {
       const initCommand = new InitCommand({ tools: 'claude', force: true });
       await initCommand.execute(testDir);
 
-      const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
+      const cmdFile = path.join(testDir, '.claude', 'commands', 'rct', 'propose.md');
       const content = await fs.readFile(cmdFile, 'utf-8');
 
       // Claude commands use YAML frontmatter
@@ -371,7 +371,7 @@ describe('InitCommand', () => {
       const initCommand = new InitCommand({ tools: 'cursor', force: true });
       await initCommand.execute(testDir);
 
-      const cmdFile = path.join(testDir, '.cursor', 'commands', 'opsx-propose.md');
+      const cmdFile = path.join(testDir, '.cursor', 'commands', 'rct-propose.md');
       expect(await fileExists(cmdFile)).toBe(true);
 
       const content = await fs.readFile(cmdFile, 'utf-8');
@@ -414,7 +414,7 @@ describe('InitCommand', () => {
       const initCommand = new InitCommand({ tools: 'opencode', force: true });
       await initCommand.execute(testDir);
 
-      const cmdFile = path.join(testDir, '.opencode', 'commands', 'opsx-propose.md');
+      const cmdFile = path.join(testDir, '.opencode', 'commands', 'rct-propose.md');
       expect(await fileExists(cmdFile)).toBe(true);
     });
 
@@ -422,7 +422,7 @@ describe('InitCommand', () => {
       const initCommand = new InitCommand({ tools: 'github-copilot', force: true });
       await initCommand.execute(testDir);
 
-      const cmdFile = path.join(testDir, '.github', 'prompts', 'opsx-propose.prompt.md');
+      const cmdFile = path.join(testDir, '.github', 'prompts', 'rct-propose.prompt.md');
       expect(await fileExists(cmdFile)).toBe(true);
     });
   });
@@ -505,14 +505,14 @@ describe('InitCommand - profile and detection features', () => {
     // Create legacy OpenCode command files (singular 'command' path)
     const legacyDir = path.join(testDir, '.opencode', 'command');
     await fs.mkdir(legacyDir, { recursive: true });
-    await fs.writeFile(path.join(legacyDir, 'opsx-propose.md'), 'legacy content');
+    await fs.writeFile(path.join(legacyDir, 'rct-propose.md'), 'legacy content');
 
     // Run init in non-interactive mode without --force
     const initCommand = new InitCommand({ tools: 'opencode' });
     await initCommand.execute(testDir);
 
     // Legacy files should be cleaned up automatically
-    expect(await fileExists(path.join(legacyDir, 'opsx-propose.md'))).toBe(false);
+    expect(await fileExists(path.join(legacyDir, 'rct-propose.md'))).toBe(false);
 
     // New commands should be at the correct plural path
     const newCommandsDir = path.join(testDir, '.opencode', 'commands');
@@ -593,8 +593,8 @@ describe('InitCommand - profile and detection features', () => {
 
   it('should migrate commands-only extend mode to custom profile without injecting propose', async () => {
     await fs.mkdir(path.join(testDir, '.ratchet'), { recursive: true });
-    await fs.mkdir(path.join(testDir, '.claude', 'commands', 'opsx'), { recursive: true });
-    await fs.writeFile(path.join(testDir, '.claude', 'commands', 'opsx', 'apply.md'), '# apply\n');
+    await fs.mkdir(path.join(testDir, '.claude', 'commands', 'rct'), { recursive: true });
+    await fs.writeFile(path.join(testDir, '.claude', 'commands', 'rct', 'apply.md'), '# apply\n');
 
     const initCommand = new InitCommand({ tools: 'claude', force: true });
     await initCommand.execute(testDir);
@@ -604,8 +604,8 @@ describe('InitCommand - profile and detection features', () => {
     expect(config.delivery).toBe('commands');
     expect(config.workflows).toEqual(['apply']);
 
-    const applyCommand = path.join(testDir, '.claude', 'commands', 'opsx', 'apply.md');
-    const proposeCommand = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
+    const applyCommand = path.join(testDir, '.claude', 'commands', 'rct', 'apply.md');
+    const proposeCommand = path.join(testDir, '.claude', 'commands', 'rct', 'propose.md');
     expect(await fileExists(applyCommand)).toBe(true);
     expect(await fileExists(proposeCommand)).toBe(false);
 
@@ -654,7 +654,7 @@ describe('InitCommand - profile and detection features', () => {
     expect(await fileExists(skillFile)).toBe(true);
 
     // Commands should NOT exist
-    const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
+    const cmdFile = path.join(testDir, '.claude', 'commands', 'rct', 'propose.md');
     expect(await fileExists(cmdFile)).toBe(false);
   });
 
@@ -673,7 +673,7 @@ describe('InitCommand - profile and detection features', () => {
     expect(await fileExists(skillFile)).toBe(false);
 
     // Commands should exist
-    const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
+    const cmdFile = path.join(testDir, '.claude', 'commands', 'rct', 'propose.md');
     expect(await fileExists(cmdFile)).toBe(true);
   });
 
@@ -687,7 +687,7 @@ describe('InitCommand - profile and detection features', () => {
     const initCommand1 = new InitCommand({ tools: 'claude', force: true });
     await initCommand1.execute(testDir);
 
-    const cmdFile = path.join(testDir, '.claude', 'commands', 'opsx', 'propose.md');
+    const cmdFile = path.join(testDir, '.claude', 'commands', 'rct', 'propose.md');
     expect(await fileExists(cmdFile)).toBe(true);
 
     saveGlobalConfig({

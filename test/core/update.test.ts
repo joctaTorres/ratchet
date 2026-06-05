@@ -192,7 +192,7 @@ Old instructions content
   });
 
   describe('command updates', () => {
-    it('should update opsx commands for configured Claude tool', async () => {
+    it('should update rct commands for configured Claude tool', async () => {
       // Set up a configured Claude tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
       await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
@@ -205,8 +205,8 @@ Old instructions content
 
       await updateCommand.execute(testDir);
 
-      // Check opsx command files were created
-      const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
+      // Check rct command files were created
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
       const exploreCmd = path.join(commandsDir, 'propose.md');
       const exists = await FileSystemUtils.fileExists(exploreCmd);
       expect(exists).toBe(true);
@@ -219,7 +219,7 @@ Old instructions content
       expect(content).toContain('tags:');
     });
 
-    it('should update core profile opsx commands when tool is configured', async () => {
+    it('should update core profile rct commands when tool is configured', async () => {
       // Set up a configured tool
       const skillsDir = path.join(testDir, '.claude', 'skills');
       await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
@@ -234,7 +234,7 @@ Old instructions content
 
       // Verify core profile commands were created (propose, apply, verify, archive)
       const coreCommandIds = ['propose', 'apply', 'verify', 'archive'];
-      const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
       for (const cmdId of coreCommandIds) {
         const cmdFile = path.join(commandsDir, `${cmdId}.md`);
         const exists = await FileSystemUtils.fileExists(cmdFile);
@@ -317,7 +317,7 @@ Old instructions content
         testDir,
         '.opencode',
         'commands',
-        'opsx-propose.md'
+        'rct-propose.md'
       );
       const exists = await FileSystemUtils.fileExists(opencodeCmd);
       expect(exists).toBe(true);
@@ -343,7 +343,7 @@ Old instructions content
         testDir,
         '.github',
         'prompts',
-        'opsx-propose.prompt.md'
+        'rct-propose.prompt.md'
       );
       const exists = await FileSystemUtils.fileExists(ghCmd);
       expect(exists).toBe(true);
@@ -1139,7 +1139,7 @@ More user content after markers.
         expect.stringContaining('Getting started')
       );
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('/opsx:new')
+        expect.stringContaining('/rct:new')
       );
 
       // Skills should be created
@@ -1347,8 +1347,8 @@ More user content after markers.
       const forceUpdateCommand = new UpdateCommand({ force: true });
       await forceUpdateCommand.execute(testDir);
 
-      // New opsx commands should be created
-      const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
+      // New rct commands should be created
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
       const exploreCmd = path.join(commandsDir, 'propose.md');
       const exists = await FileSystemUtils.fileExists(exploreCmd);
       expect(exists).toBe(true);
@@ -1379,7 +1379,7 @@ More user content after markers.
         path.join(skillsDir, 'ratchet-propose', 'SKILL.md')
       )).toBe(false);
 
-      const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
       expect(await FileSystemUtils.fileExists(
         path.join(commandsDir, 'apply.md')
       )).toBe(true);
@@ -1439,7 +1439,7 @@ More user content after markers.
       )).toBe(true);
 
       // Commands should NOT be created
-      const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
       expect(await FileSystemUtils.fileExists(
         path.join(commandsDir, 'propose.md')
       )).toBe(false);
@@ -1459,7 +1459,7 @@ More user content after markers.
       await updateCommand.execute(testDir);
 
       // Commands should be created
-      const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
       expect(await FileSystemUtils.fileExists(
         path.join(commandsDir, 'propose.md')
       )).toBe(true);
@@ -1492,7 +1492,7 @@ content
 `
       );
 
-      const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
       await fs.mkdir(commandsDir, { recursive: true });
       await fs.writeFile(path.join(commandsDir, 'propose.md'), 'old command');
 
@@ -1511,7 +1511,7 @@ content
         delivery: 'commands',
       });
 
-      const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
       await fs.mkdir(commandsDir, { recursive: true });
       await fs.writeFile(path.join(commandsDir, 'propose.md'), 'existing command');
 
@@ -1553,7 +1553,7 @@ content
       // Add a deselected workflow (verify) that is still a known workflow
       await fs.mkdir(path.join(skillsDir, 'ratchet-verify-change'), { recursive: true });
       await fs.writeFile(path.join(skillsDir, 'ratchet-verify-change', 'SKILL.md'), 'old');
-      const extraCommandFile = path.join(testDir, '.claude', 'commands', 'opsx', 'verify.md');
+      const extraCommandFile = path.join(testDir, '.claude', 'commands', 'rct', 'verify.md');
       await fs.mkdir(path.dirname(extraCommandFile), { recursive: true });
       await fs.writeFile(extraCommandFile, 'old');
 
@@ -1710,7 +1710,7 @@ content
     });
 
     it('should detect installed workflows from managed command files', async () => {
-      const commandsDir = path.join(testDir, '.claude', 'commands', 'opsx');
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
       await fs.mkdir(commandsDir, { recursive: true });
       await fs.writeFile(path.join(commandsDir, 'propose.md'), 'content');
 

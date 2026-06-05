@@ -6,8 +6,8 @@
 
 export type { SkillTemplate, CommandTemplate } from './types.js';
 
-export { getExploreSkillTemplate, getOpsxExploreCommandTemplate } from './workflows/explore.js';
-export { getApplyChangeSkillTemplate, getOpsxApplyCommandTemplate } from './workflows/apply-change.js';
-export { getArchiveChangeSkillTemplate, getOpsxArchiveCommandTemplate } from './workflows/archive-change.js';
-export { getVerifyChangeSkillTemplate, getOpsxVerifyCommandTemplate } from './workflows/verify-change.js';
-export { getOpsxProposeSkillTemplate, getOpsxProposeCommandTemplate } from './workflows/propose.js';
+export { getExploreSkillTemplate, getRctExploreCommandTemplate } from './workflows/explore.js';
+export { getApplyChangeSkillTemplate, getRctApplyCommandTemplate } from './workflows/apply-change.js';
+export { getArchiveChangeSkillTemplate, getRctArchiveCommandTemplate } from './workflows/archive-change.js';
+export { getVerifyChangeSkillTemplate, getRctVerifyCommandTemplate } from './workflows/verify-change.js';
+export { getRctProposeSkillTemplate, getRctProposeCommandTemplate } from './workflows/propose.js';

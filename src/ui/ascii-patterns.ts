@@ -21,6 +21,16 @@ const _ = CHARS.empty;
 const F = CHARS.full;
 const D = CHARS.dim;
 
+// Canvas dimensions, in cells (each cell renders as two chars). The hub, bore,
+// and teeth coordinates below are all expressed against this grid, so a resize
+// means changing these two numbers and the coordinates together.
+const GRID_ROWS = 10;
+const GRID_COLS = 8;
+
+// Number of teeth around the rim; also the number of rotation frames, which is
+// what makes the loop seamless (one full revolution returns to the start).
+const TOOTH_COUNT = 8;
+
 /**
  * Build one gear frame.
  *
@@ -39,8 +49,8 @@ const D = CHARS.dim;
  */
 function gearFrame(lead: number): string[] {
   // Start every cell empty.
-  const grid: string[][] = Array.from({ length: 10 }, () =>
-    Array.from({ length: 8 }, () => _)
+  const grid: string[][] = Array.from({ length: GRID_ROWS }, () =>
+    Array.from({ length: GRID_COLS }, () => _)
   );
 
   // --- Gear hub: an octagonal core (rows 3..6, cols 2..5 with the four
@@ -98,16 +108,15 @@ function gearFrame(lead: number): string[] {
  * Grid: 8 cells × 2 chars = 16 visible chars wide, 10 rows tall (uniform).
  * interval ≈ 120 ms × 8 frames ≈ 1 s per full revolution.
  */
-export const WELCOME_ANIMATION = {
+interface AnimationSpec {
+  /** Milliseconds between frames. */
+  interval: number;
+  /** Each frame is an array of rows (strings of whole 2-char glyph cells). */
+  frames: string[][];
+}
+
+export const WELCOME_ANIMATION: AnimationSpec = {
   interval: 120,
-  frames: [
-    gearFrame(0), // lead tooth at N
-    gearFrame(1), // lead tooth at NE
-    gearFrame(2), // lead tooth at E
-    gearFrame(3), // lead tooth at SE
-    gearFrame(4), // lead tooth at S
-    gearFrame(5), // lead tooth at SW
-    gearFrame(6), // lead tooth at W
-    gearFrame(7), // lead tooth at NW
-  ],
+  // One frame per tooth, lead tooth sweeping clockwise from N (0) round to NW.
+  frames: Array.from({ length: TOOTH_COUNT }, (_unused, lead) => gearFrame(lead)),
 };

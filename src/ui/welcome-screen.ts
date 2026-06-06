@@ -10,7 +10,7 @@ import { WELCOME_ANIMATION } from './ascii-patterns.js';
 const MIN_WIDTH = 60;
 
 // Width of the ASCII art column (with padding)
-const ART_COLUMN_WIDTH = 24;
+export const ART_COLUMN_WIDTH = 24;
 
 /**
  * Welcome text content (right column)
@@ -123,7 +123,7 @@ export async function showWelcomeScreen(): Promise<void> {
 
   if (!canAnimate()) {
     // Fallback: show static welcome
-    const frame = WELCOME_ANIMATION.frames[3]; // Peak frame
+    const frame = WELCOME_ANIMATION.frames[0]; // Any frame is a complete gear
     process.stdout.write('\n' + renderFrame(frame, textLines) + '\n\n');
     return;
   }

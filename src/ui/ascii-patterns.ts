@@ -1,122 +1,182 @@
 /**
  * ASCII art animation patterns for the welcome screen.
- * Spinning gear animation - a fully-formed gear that rotates one step per
- * frame and loops seamlessly, reinforcing Ratchet's mechanical "ratchet/gear"
- * identity.
+ *
+ * A procedural cogwheel rendered with Braille sub-pixels (a 2×4 dot grid per
+ * cell, U+2800–U+28FF) that spins anti-clockwise one step per frame and loops
+ * seamlessly. Braille gives ~8× the resolution of block characters in the same
+ * space, so a smooth, round gear with crisp squared teeth fits the welcome
+ * column. The maths are ported from `scripts/braille-demo.mjs` (the agreed look).
  */
 
-// Detect if full Unicode is supported
+// Detect if full Unicode is supported. Braille code points need a font/terminal
+// that can render them; when that's unlikely, fall back to a plain ASCII gear.
 const supportsUnicode =
   process.platform !== 'win32' ||
   !!process.env.WT_SESSION || // Windows Terminal
   !!process.env.TERM_PROGRAM; // Modern terminal
 
-// Character set based on Unicode support
-// Block characters for pixel-art aesthetic
-const CHARS = supportsUnicode
-  ? { full: '██', dim: '░░', empty: '  ' }
-  : { full: '##', dim: '++', empty: '  ' };
+// --- Tunable gear parameters ------------------------------------------------
+// Dot bitmap size. Braille packs 2 dots wide × 4 dots tall per cell, so the
+// rendered art is DOT_W/2 × DOT_H/4 cells (here 17 × 8 chars).
+const DOT_W = 34; // dots wide  → 17 Braille columns
+const DOT_H = 32; // dots tall  → 8 Braille rows
+const SS = 3; // supersample per axis (anti-aliasing)
+const DIRECTION = -1; // -1 = anti-clockwise (screen y points down)
 
-const _ = CHARS.empty;
-const F = CHARS.full;
-const D = CHARS.dim;
+const N_TEETH = 8; // number of teeth around the rim
+const DUTY = 0.55; // tooth angular width fraction (square wave → squared tips)
+const TOOTH_H = 3.0; // tooth height in dots (stubby = squarer)
 
-// Canvas dimensions, in cells (each cell renders as two chars). The hub, bore,
-// and teeth coordinates below are all expressed against this grid, so a resize
-// means changing these two numbers and the coordinates together.
-const GRID_ROWS = 10;
-const GRID_COLS = 8;
+// Frames sweep exactly ONE tooth pitch (2π/N_TEETH). The gear field is
+// 2π/N_TEETH-periodic (see solid() below), so the wrap rotation maps bit-for-bit
+// onto frame 0 — the loop is pixel-exact, not merely visually seamless. 12 steps
+// across one 45° pitch gives ~3.75° per frame, a smooth spin.
+const FRAME_COUNT = 12;
 
-// Number of teeth around the rim; also the number of rotation frames, which is
-// what makes the loop seamless (one full revolution returns to the start).
-const TOOTH_COUNT = 8;
+// Derived geometry, in dot units, centred on the bitmap.
+const CX = (DOT_W - 1) / 2;
+const CY = (DOT_H - 1) / 2;
+const R_OUTER = Math.min(DOT_W, DOT_H) / 2 - 1; // tooth tip radius
+const R_INNER = R_OUTER - TOOTH_H; // rim (tooth base / ring outer edge)
+const R_HOLLOW = R_OUTER * 0.42; // bore radius (hollow centre)
+const TWO_PI = Math.PI * 2;
 
 /**
- * Build one gear frame.
+ * Is the point (x, y) — in dot units, relative to the gear centre — inside the
+ * gear rotated by `rot` radians?
  *
- * The gear is drawn on an 8-cell-wide × 10-row block canvas (each cell is two
- * chars, so ≤16 visible chars, comfortably under the renderer's
- * ART_COLUMN_WIDTH = 24). It is a fixed body: an octagonal hub with a hollow
- * center, plus a ring of 8 teeth at the compass positions (N, NE, E, SE, S, SW,
- * W, NW). Each tooth sits on the rim — orthogonally adjacent to the hub with
- * empty background on its outward side — so the teeth read as distinct nubs
- * rather than melting into the body. Every tooth is drawn dim except the single
- * "lead" tooth, which is full. Advancing the lead tooth one position per frame
- * makes the gear appear to rotate; because there are 8 tooth positions and 8
- * frames, the sequence loops seamlessly (frame 7 → frame 0) by construction.
+ * - r < R_HOLLOW            → empty bore (hollow centre)
+ * - R_HOLLOW ≤ r ≤ R_INNER  → solid ring
+ * - R_INNER < r ≤ R_OUTER   → tooth band: a square wave of the angle with
+ *                             N_TEETH periods and a DUTY cycle gives each tooth
+ *                             a flat (squared) tip rather than a pointed taper.
+ * - r > R_OUTER             → outside the gear
  *
- * @param lead - index 0..7 of the highlighted tooth (0 = N, going clockwise)
+ * The ring/bore depend only on r, and the tooth band is exactly
+ * 2π/N_TEETH-periodic in `rot`, which is what makes a one-pitch sweep wrap
+ * exactly onto frame 0.
  */
-function gearFrame(lead: number): string[] {
-  // Start every cell empty.
-  const grid: string[][] = Array.from({ length: GRID_ROWS }, () =>
-    Array.from({ length: GRID_COLS }, () => _)
-  );
+function solid(x: number, y: number, rot: number): boolean {
+  const r = Math.hypot(x, y);
+  if (r < R_HOLLOW) return false;
+  if (r <= R_INNER) return true;
+  if (r > R_OUTER) return false;
+  let a = (Math.atan2(y, x) - rot) / TWO_PI; // turns
+  a -= Math.floor(a);
+  return (a * N_TEETH) % 1 < DUTY;
+}
 
-  // --- Gear hub: an octagonal core (rows 3..6, cols 2..5 with the four
-  // corner cells trimmed) and a hollow 2×2 center bore. ---
-  const hub: Array<[number, number]> = [];
-  for (let r = 3; r <= 6; r++) {
-    for (let c = 2; c <= 5; c++) {
-      hub.push([r, c]);
+// Standard Braille dot-bit layout: BITS[row][col] for a 2×4 (col × row) cell.
+//   dots 1,4 / 2,5 / 3,6 / 7,8  →  bits 0x01,0x08 / 0x02,0x10 / 0x04,0x20 / 0x40,0x80
+const BITS = [
+  [0x01, 0x08],
+  [0x02, 0x10],
+  [0x04, 0x20],
+  [0x40, 0x80],
+];
+
+/**
+ * Render one gear frame as Braille rows.
+ *
+ * Each dot is the average of an SS×SS grid of sub-samples of `solid()`
+ * (≥ 0.5 lit → dot on), which keeps the tooth edges smooth across rotation
+ * instead of shimmering. The DOT_W×DOT_H dot bitmap is then packed into
+ * DOT_W/2 × DOT_H/4 Braille glyphs (`0x2800 + bits`).
+ */
+function gearFrame(rot: number): string[] {
+  // Supersampled dot bitmap.
+  const bmp: number[][] = [];
+  for (let dr = 0; dr < DOT_H; dr++) {
+    const row = new Array<number>(DOT_W);
+    for (let dc = 0; dc < DOT_W; dc++) {
+      let hits = 0;
+      for (let sj = 0; sj < SS; sj++) {
+        for (let si = 0; si < SS; si++) {
+          const x = dc + (si + 0.5) / SS - 0.5 - CX;
+          const y = dr + (sj + 0.5) / SS - 0.5 - CY;
+          if (solid(x, y, rot)) hits++;
+        }
+      }
+      row[dc] = hits / (SS * SS) >= 0.5 ? 1 : 0;
     }
+    bmp.push(row);
   }
-  // Trim the 4 corners to round the hub into an octagon.
-  const corners = new Set(['3,2', '3,5', '6,2', '6,5']);
-  for (const [r, c] of hub) {
-    if (!corners.has(`${r},${c}`)) grid[r][c] = F;
-  }
-  // Hollow center (the gear's bore).
-  for (let r = 4; r <= 5; r++) {
-    for (let c = 3; c <= 4; c++) {
-      grid[r][c] = _;
+
+  // Pack the dot bitmap into Braille glyphs.
+  const rows: string[] = [];
+  for (let cr = 0; cr < DOT_H; cr += 4) {
+    let line = '';
+    for (let cc = 0; cc < DOT_W; cc += 2) {
+      let b = 0;
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 2; x++) {
+          if (bmp[cr + y]?.[cc + x]) b |= BITS[y][x];
+        }
+      }
+      line += String.fromCharCode(0x2800 + b);
     }
+    rows.push(line);
   }
-
-  // Tooth cells keyed by compass index. Each entry is the [row, col] of the
-  // tooth cell that sits on the rim: touching the hub, with empty background
-  // on the outward side (and never flush inside a solid run).
-  // 0:N 1:NE 2:E 3:SE 4:S 5:SW 6:W 7:NW
-  const teeth: Array<[number, number]> = [
-    [2, 3], // N   above the hub top (row1 above is empty)
-    [2, 6], // NE  upper-right diagonal nub
-    [4, 6], // E   right of the hub (col7 to the right is empty)
-    [7, 6], // SE  lower-right diagonal nub
-    [7, 4], // S   below the hub bottom (row8 below is empty)
-    [7, 1], // SW  lower-left diagonal nub
-    [5, 1], // W   left of the hub (col0 to the left is empty)
-    [2, 1], // NW  upper-left diagonal nub
-  ];
-
-  // --- Teeth: all dim, except the single lead tooth which is full ---
-  for (let i = 0; i < teeth.length; i++) {
-    const [r, c] = teeth[i];
-    grid[r][c] = i === lead ? F : D;
-  }
-
-  return grid.map((row) => row.join(''));
+  return rows;
 }
 
 /**
- * Welcome animation: a spinning gear.
- *
- * 8 frames, one per tooth position. The gear body (hollow-centered ring) holds
- * still while the highlighted "lead" tooth sweeps clockwise around the 8 teeth,
- * one step per frame, so the last frame flows seamlessly back into the first.
- * Each frame is a complete, recognizable gear at a different rotation.
- *
- * Grid: 8 cells × 2 chars = 16 visible chars wide, 10 rows tall (uniform).
- * interval ≈ 120 ms × 8 frames ≈ 1 s per full revolution.
+ * Generate the full set of Braille frames: one tooth pitch swept over
+ * FRAME_COUNT steps in the anti-clockwise direction. The final wrap rotation
+ * (`DIRECTION · 2π/N_TEETH`) maps exactly onto frame 0, so the loop is seamless.
  */
-interface AnimationSpec {
+function generateBrailleFrames(): string[][] {
+  return Array.from({ length: FRAME_COUNT }, (_unused, f) =>
+    gearFrame((DIRECTION * f * (TWO_PI / N_TEETH)) / FRAME_COUNT)
+  );
+}
+
+/**
+ * The rotation one full sweep past the last frame — equals frame 0 by the
+ * field's N_TEETH periodicity. Exposed so tests can assert the loop is
+ * pixel-exact.
+ */
+export const WRAP_ROTATION = DIRECTION * (TWO_PI / N_TEETH);
+
+/**
+ * Render the gear at an arbitrary rotation. Exposed for tests (e.g. to confirm
+ * the wrap rotation deep-equals frame 0).
+ */
+export function renderGearFrame(rot: number): string[] {
+  return gearFrame(rot);
+}
+
+/**
+ * Static ASCII cogwheel for terminals without Unicode support — no Braille code
+ * points, just plain ASCII. A single recognizable frame (the screen is static
+ * in this mode), 8 rows tall to match the Braille frame height.
+ */
+const ASCII_GEAR: string[] = [
+  '    _   __   _    ',
+  "   / |_|  |_| \\   ",
+  '  |  .-====-.  |  ',
+  ' _|  | (  ) |  |_ ',
+  ' \\|  | (  ) |  |/ ',
+  '  |  `-====-`  |  ',
+  "   \\_|-|  |-|_/   ",
+  '     `-`  `-`     ',
+];
+
+/** Animation specification consumed by the welcome screen. */
+export interface AnimationSpec {
   /** Milliseconds between frames. */
   interval: number;
-  /** Each frame is an array of rows (strings of whole 2-char glyph cells). */
+  /** Each frame is an array of rows (one character per Braille cell). */
   frames: string[][];
 }
 
-export const WELCOME_ANIMATION: AnimationSpec = {
-  interval: 120,
-  // One frame per tooth, lead tooth sweeping clockwise from N (0) round to NW.
-  frames: Array.from({ length: TOOTH_COUNT }, (_unused, lead) => gearFrame(lead)),
-};
+/**
+ * Welcome animation: a procedural cogwheel spinning anti-clockwise.
+ *
+ * When Unicode is available, frames are Braille (1 char/cell, 17×8). Otherwise
+ * a single static ASCII gear is used. interval ≈ 70 ms × 12 frames ≈ 0.84 s per
+ * visual revolution (one tooth pitch).
+ */
+export const WELCOME_ANIMATION: AnimationSpec = supportsUnicode
+  ? { interval: 70, frames: generateBrailleFrames() }
+  : { interval: 70, frames: [ASCII_GEAR] };

@@ -162,3 +162,7 @@ opencode.json
 
 # Vendored reference source (local only)
 .agents/
+
+# Generated animation preview images (scripts/preview-*.mjs)
+*-preview.png
+side-*.png

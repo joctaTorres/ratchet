@@ -51,6 +51,16 @@ features/**/*.feature  ──▶  plan.md  ──▶  apply  ──▶  archive
 - **`apply`** requires `plan`; it implements against the scenarios and checks off tasks.
 - **`archive`** validates, copies the change's features into the permanent store (add / overwrite by path, or remove via a `features/.deleted` tombstone), and moves the change into `changes/archive/<date>-<name>/`.
 
+### Standards
+
+Standards are project-level guidelines kept at `.ratchet/standards/*.md` — a sibling of the feature store, **not** a per-change artifact. A standard can cover any concern (testing, security, architecture, design, …). `ratchet init` creates the directory empty; author standards with `/rct:propose-standard`.
+
+Standards are loaded automatically where the agent has discretion:
+
+- **propose** reads the active standards and bakes the applicable ones into `plan.md` (Design + Tasks) and the features.
+- **verify** reads them back to check the implementation against each standard.
+- **apply** never reads standards — the plan already embedded them, so it just follows the plan.
+
 ## Install
 
 Requires **Node.js ≥ 20.19** and **pnpm**.
@@ -97,13 +107,14 @@ ratchet archive add-login -y                      # sync features → store, arc
 ```
 .ratchet/
 ├── features/                 # permanent, living feature store (the spec)
+├── standards/                # project guidelines, loaded by propose + verify (starts empty)
 ├── changes/
 │   └── archive/              # completed changes land here, date-prefixed
 └── config.yaml               # schema + project context/rules
 
 .claude/                      # (per selected tool)
-├── skills/ratchet-{propose,apply-change,verify-change,archive-change}/
-└── commands/rct/{propose,apply,verify,archive}.md
+├── skills/ratchet-{propose,apply-change,verify-change,archive-change,propose-standard}/
+└── commands/rct/{propose,apply,verify,archive,propose-standard}.md
 ```
 
 **Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`.
@@ -130,6 +141,7 @@ ratchet archive add-login -y                      # sync features → store, arc
 | **apply** | Implements against each scenario's `Given/When/Then`, checking off plan tasks |
 | **verify** | Confirms the implementation satisfies every scenario and all tasks are done |
 | **archive** | Runs `ratchet archive` to ratchet features into the permanent store |
+| **propose-standard** | Authors a new standard into `.ratchet/standards/` for propose + verify to apply |
 
 > `explore` exists as an internal stance used by **propose** — it is not a standalone command.
 

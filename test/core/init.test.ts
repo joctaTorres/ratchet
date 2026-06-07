@@ -61,8 +61,35 @@ describe('InitCommand', () => {
       const ratchetPath = path.join(testDir, '.ratchet');
       expect(await directoryExists(ratchetPath)).toBe(true);
       expect(await directoryExists(path.join(ratchetPath, 'features'))).toBe(true);
+      expect(await directoryExists(path.join(ratchetPath, 'standards'))).toBe(true);
       expect(await directoryExists(path.join(ratchetPath, 'changes'))).toBe(true);
       expect(await directoryExists(path.join(ratchetPath, 'changes', 'archive'))).toBe(true);
+    });
+
+    it('should create an empty standards directory', async () => {
+      const initCommand = new InitCommand({ tools: 'claude', force: true });
+
+      await initCommand.execute(testDir);
+
+      const standardsPath = path.join(testDir, '.ratchet', 'standards');
+      expect(await directoryExists(standardsPath)).toBe(true);
+      expect(await fs.readdir(standardsPath)).toEqual([]);
+    });
+
+    it('should backfill the standards directory and preserve authored standards on re-init', async () => {
+      const initCommand = new InitCommand({ tools: 'claude', force: true });
+      await initCommand.execute(testDir);
+
+      // Simulate an authored standard, then re-run init (extend mode)
+      const standardsPath = path.join(testDir, '.ratchet', 'standards');
+      const standardFile = path.join(standardsPath, 'testing.md');
+      await fs.writeFile(standardFile, '# Testing\n\nEvery change has tests.');
+
+      await new InitCommand({ tools: 'claude', force: true }).execute(testDir);
+
+      expect(await directoryExists(standardsPath)).toBe(true);
+      expect(await fileExists(standardFile)).toBe(true);
+      expect(await fs.readFile(standardFile, 'utf-8')).toContain('Every change has tests.');
     });
 
     it('should create config.yaml with default schema', async () => {
@@ -82,12 +109,13 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      // Core profile: propose, apply, verify, archive
+      // Core profile: propose, apply, verify, archive, propose-standard
       const coreSkillNames = [
         'ratchet-propose',
         'ratchet-apply-change',
         'ratchet-verify-change',
         'ratchet-archive-change',
+        'ratchet-propose-standard',
       ];
 
       for (const skillName of coreSkillNames) {
@@ -120,12 +148,13 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      // Core profile: propose, apply, verify, archive
+      // Core profile: propose, apply, verify, archive, propose-standard
       const coreCommandNames = [
         'rct/propose.md',
         'rct/apply.md',
         'rct/verify.md',
         'rct/archive.md',
+        'rct/propose-standard.md',
       ];
 
       for (const cmdName of coreCommandNames) {

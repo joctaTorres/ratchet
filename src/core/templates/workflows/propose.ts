@@ -66,6 +66,7 @@ When ready to implement, run /rct:apply
       - The instructions JSON includes:
         - \`context\`: Project background (constraints for you - do NOT include in output)
         - \`rules\`: Artifact-specific rules (constraints for you - do NOT include in output)
+        - \`standards\`: Active project standards (array of \`{ name, fileName, content }\`) the change must follow
         - \`template\`: The structure to use for your output file
         - \`instruction\`: Schema-specific guidance for this artifact type
         - \`resolvedOutputPath\`: Resolved path or pattern to write the artifact
@@ -73,6 +74,10 @@ When ready to implement, run /rct:apply
       - Read any completed dependency files for context
       - Create the artifact file using \`template\` as the structure and write it to \`resolvedOutputPath\`
       - Apply \`context\` and \`rules\` as constraints - but do NOT copy them into the file
+      - Embed the applicable \`standards\` into the artifact: the plan's \`## Design\` and
+        \`## Tasks\` should reflect what each relevant standard requires, and the features
+        should cover behavior the standards demand. Apply (which never reads standards)
+        relies on the plan already encoding them, so make them concrete here.
       - Show brief progress: "Created <artifact-id>"
 
    b. **Continue until all \`applyRequires\` artifacts are complete**
@@ -181,6 +186,7 @@ When ready to implement, run /rct:apply
       - The instructions JSON includes:
         - \`context\`: Project background (constraints for you - do NOT include in output)
         - \`rules\`: Artifact-specific rules (constraints for you - do NOT include in output)
+        - \`standards\`: Active project standards (array of \`{ name, fileName, content }\`) the change must follow
         - \`template\`: The structure to use for your output file
         - \`instruction\`: Schema-specific guidance for this artifact type
         - \`resolvedOutputPath\`: Resolved path or pattern to write the artifact
@@ -188,6 +194,10 @@ When ready to implement, run /rct:apply
       - Read any completed dependency files for context
       - Create the artifact file using \`template\` as the structure and write it to \`resolvedOutputPath\`
       - Apply \`context\` and \`rules\` as constraints - but do NOT copy them into the file
+      - Embed the applicable \`standards\` into the artifact: the plan's \`## Design\` and
+        \`## Tasks\` should reflect what each relevant standard requires, and the features
+        should cover behavior the standards demand. Apply (which never reads standards)
+        relies on the plan already encoding them, so make them concrete here.
       - Show brief progress: "Created <artifact-id>"
 
    b. **Continue until all \`applyRequires\` artifacts are complete**

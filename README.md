@@ -55,11 +55,20 @@ features/**/*.feature  ──▶  plan.md  ──▶  apply  ──▶  archive
 
 Standards are project-level guidelines kept at `.ratchet/standards/*.md` — a sibling of the feature store, **not** a per-change artifact. A standard can cover any concern (testing, security, architecture, design, …). `ratchet init` creates the directory empty; author standards with `/rct:propose-standard`.
 
+Each standard carries a stable **`tag`** in its frontmatter (`tag: security`); the tag falls back to the file name when omitted. The tag — not the file name — is how changes and features reference a standard, so a standard can be renamed without breaking links. Tags must be unique across the library (`validate` errors on a duplicate).
+
 Standards are loaded automatically where the agent has discretion:
 
-- **propose** reads the active standards and bakes the applicable ones into `plan.md` (Design + Tasks) and the features.
-- **verify** reads them back to check the implementation against each standard.
+- **propose** reads the active standards, bakes the applicable ones into `plan.md` (Design + Tasks) and the features, and records the tags the change follows as `standards: [<tag>…]` in the change's `.ratchet.yaml`.
+- **verify** scopes its check to the change's declared tags (falling back to all standards when none are declared).
 - **apply** never reads standards — the plan already embedded them, so it just follows the plan.
+
+**Bidirectional links, materialized on archive.** A change declares which standards it follows; `validate` errors if it references an unknown tag. On **archive** that link is written into the permanent store in both directions:
+
+- **Forward** — a per-capability sidecar `.ratchet/features/<capability>/.ratchet.yaml` maps each feature file to the change's standard tags.
+- **Reverse** — a generated `## Implemented by` block in each `.ratchet/standards/<tag>.md` lists the features that satisfy it.
+
+The reverse block is a pure projection of the forward sidecars: it is **regenerated from the store on every archive, never hand-edited or appended**. Rename or tombstone a feature and its entry drops out on the next archive, so a standard's implementing-features list can't go stale. A change that declares no standards changes nothing.
 
 ## Install
 

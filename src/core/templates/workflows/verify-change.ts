@@ -39,16 +39,22 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
 
    This returns the change directory and \`contextFiles\` (artifact ID -> array of concrete file paths). For the ratchet schema these are the \`features/**/*.feature\` files and \`plan.md\`. Read all of them.
 
-4. **Load the active standards**
+4. **Load the standards the change declared**
 
    Standards are a project-level library at \`.ratchet/standards/\`, a sibling of
    \`.ratchet/changes/\`. The change directory paths from step 3 contain
    \`.../.ratchet/changes/<name>/...\`, so the standards live at the sibling
-   \`.../.ratchet/standards/\`. Read every \`*.md\` file there.
+   \`.../.ratchet/standards/\`. Each standard file carries a \`tag\` in its frontmatter
+   (falling back to the file-name stem when absent).
 
-   These are the standards the change was proposed under; you will check the
-   implementation against them. If the directory is absent or empty, there are no
-   standards to check — skip the Standards dimension below.
+   Read the change's \`.ratchet.yaml\` \`standards\` list — these are the tags the change
+   was proposed under. Scope this verification to exactly those standards:
+   - If \`standards\` lists one or more tags, read only the matching \`*.md\` files and
+     check the implementation against them. Do NOT require standards the change never
+     declared.
+   - If \`standards\` is absent or empty, fall back to reading every \`*.md\` file in
+     \`.ratchet/standards/\` (preserving today's behavior).
+   - If there are no standards to check at all, skip the Standards dimension below.
 
 5. **Initialize verification report structure**
 
@@ -56,7 +62,7 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
    - **Completeness**: every \`## Tasks\` checkbox in plan.md is checked; every feature file is accounted for
    - **Correctness**: every Scenario's Given/When/Then is satisfied by the implementation
    - **Coherence**: the implementation follows the \`## Design\` decisions in plan.md and project patterns
-   - **Standards**: the implementation honors each active standard from \`.ratchet/standards/\`
+   - **Standards**: the implementation honors each standard the change declared (step 4)
 
    Each dimension can have CRITICAL, WARNING, or SUGGESTION issues.
 

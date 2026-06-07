@@ -13,6 +13,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as yaml from 'yaml';
 import { RATCHET_DIR_NAME } from './config.js';
 
 /**
@@ -23,8 +24,38 @@ export interface StandardDoc {
   name: string;
   /** File name within the standards directory, e.g. "testing.md". */
   fileName: string;
-  /** Raw markdown content of the standard. */
+  /**
+   * Stable identifier for the standard, taken from the `tag` frontmatter field.
+   * Falls back to `name` (the file-name stem) when no `tag` is declared, so a
+   * standard can be renamed without breaking references that key on the tag.
+   */
+  tag: string;
+  /** Markdown content of the standard, with the YAML frontmatter block stripped. */
   content: string;
+}
+
+/**
+ * Splits an optional leading YAML frontmatter block (delimited by `---` lines)
+ * from a markdown document. Returns the parsed frontmatter (or `null` when
+ * absent/unparseable) and the body with the block removed.
+ */
+function parseFrontmatter(raw: string): {
+  data: Record<string, unknown> | null;
+  body: string;
+} {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(raw);
+  if (!match) {
+    return { data: null, body: raw };
+  }
+  const body = raw.slice(match[0].length);
+  let data: Record<string, unknown> | null = null;
+  try {
+    const parsed = yaml.parse(match[1]);
+    data = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    data = null;
+  }
+  return { data, body };
 }
 
 /**
@@ -59,16 +90,23 @@ export function loadStandards(projectRoot: string): StandardDoc[] {
     .sort()
     .map((fileName) => {
       const fullPath = path.join(dir, fileName);
-      let content = '';
+      let raw = '';
       try {
-        content = fs.readFileSync(fullPath, 'utf-8');
+        raw = fs.readFileSync(fullPath, 'utf-8');
       } catch {
-        content = '';
+        raw = '';
       }
+      const name = fileName.replace(/\.md$/i, '');
+      const { data, body } = parseFrontmatter(raw);
+      const declaredTag =
+        data && typeof data.tag === 'string' && data.tag.trim().length > 0
+          ? data.tag.trim()
+          : undefined;
       return {
-        name: fileName.replace(/\.md$/i, ''),
+        name,
         fileName,
-        content,
+        tag: declaredTag ?? name,
+        content: body,
       };
     });
 }

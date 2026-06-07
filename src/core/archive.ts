@@ -4,7 +4,8 @@ import path from 'path';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
 import { Validator } from './validation/validator.js';
 import chalk from 'chalk';
-import { applyFeatures } from './features-apply.js';
+import { applyFeatures, materializeStandardLinks } from './features-apply.js';
+import { readChangeMetadata } from '../utils/change-metadata.js';
 
 /**
  * Recursively copy a directory. Used when fs.rename fails (e.g. EPERM on Windows).
@@ -130,6 +131,20 @@ export class ArchiveCommand {
         }
       }
 
+      // Validate the standards link (duplicate tags, unknown references) — blocking on ERROR.
+      const standardsReport = validator.validateStandards(changeDir);
+      if (!standardsReport.valid) {
+        hasValidationErrors = true;
+        console.log(chalk.red(`\nValidation errors in standards links:`));
+        for (const issue of standardsReport.issues) {
+          if (issue.level === 'ERROR') {
+            console.log(chalk.red(`  ✗ ${issue.message}`));
+          } else if (issue.level === 'WARNING') {
+            console.log(chalk.yellow(`  ⚠ ${issue.message}`));
+          }
+        }
+      }
+
       if (hasValidationErrors) {
         console.log(chalk.red('\nValidation failed. Please fix the errors before archiving.'));
         console.log(chalk.yellow('To skip validation (not recommended), use --no-validate flag.'));
@@ -214,6 +229,15 @@ export class ArchiveCommand {
           );
           console.log('Feature store updated successfully.');
         }
+
+        // Materialize the change's standard links into the store: forward links
+        // into the per-capability sidecars and the regenerated reverse blocks on
+        // the standards. A change that declares no standards is a no-op here.
+        const tags = this.readDeclaredStandards(changeDir);
+        if (tags.length > 0) {
+          await materializeStandardLinks(targetPath, changeName, tags);
+          console.log(`Standard links materialized for: ${tags.join(', ')}`);
+        }
       }
     }
 
@@ -288,5 +312,19 @@ export class ArchiveCommand {
   private getArchiveDate(): string {
     // Returns date in YYYY-MM-DD format
     return new Date().toISOString().split('T')[0];
+  }
+
+  /**
+   * Read the change's declared standard tags from its `.ratchet.yaml`. Returns
+   * an empty list when none are declared or the metadata cannot be read, so a
+   * standards-less change cleanly materializes nothing.
+   */
+  private readDeclaredStandards(changeDir: string): string[] {
+    try {
+      const metadata = readChangeMetadata(changeDir);
+      return metadata?.standards ?? [];
+    } catch {
+      return [];
+    }
   }
 }

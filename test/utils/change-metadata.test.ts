@@ -37,6 +37,25 @@ describe('ChangeMetadataSchema', () => {
       }
     });
 
+    it('should accept a standards list of tags', () => {
+      const result = ChangeMetadataSchema.safeParse({
+        schema: 'ratchet',
+        standards: ['security', 'testing'],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.standards).toEqual(['security', 'testing']);
+      }
+    });
+
+    it('should treat standards as optional', () => {
+      const result = ChangeMetadataSchema.safeParse({ schema: 'ratchet' });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.standards).toBeUndefined();
+      }
+    });
+
   });
 
   describe('invalid metadata', () => {
@@ -107,6 +126,16 @@ describe('writeChangeMetadata', () => {
         created: '2025-01-05',
       })
     ).toThrow(/Unknown schema 'unknown-schema'/);
+  });
+
+  it('should round-trip a standards list through write and read', () => {
+    writeChangeMetadata(changeDir, {
+      schema: 'ratchet',
+      standards: ['security', 'testing'],
+    });
+
+    const result = readChangeMetadata(changeDir);
+    expect(result?.standards).toEqual(['security', 'testing']);
   });
 });
 

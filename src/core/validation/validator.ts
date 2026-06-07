@@ -1,7 +1,8 @@
 import { ZodError } from 'zod';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import fg from 'fast-glob';
+import * as yaml from 'yaml';
 import {
   FeatureSchema,
   Feature,
@@ -15,6 +16,7 @@ import {
   MAX_WHY_SECTION_LENGTH,
   VALIDATION_MESSAGES
 } from './constants.js';
+import { loadStandards } from '../standards.js';
 
 export class Validator {
   private strictMode: boolean;
@@ -275,6 +277,82 @@ export class Validator {
     }
 
     return this.createReport(issues);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Standards validation
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Validate the standards link for a change. Two ERROR-level checks:
+   *
+   * 1. Standard `tag` uniqueness across `.ratchet/standards/` — duplicate tags
+   *    (after file-name fallback) are reported once per offending tag.
+   * 2. Every tag in the change's `standards` list resolves to an existing
+   *    standard; unresolved tags are reported.
+   *
+   * The change's `standards` list is read raw (via `yaml.parse`) so a malformed
+   * or unknown-schema `.ratchet.yaml` surfaces as a missing list rather than an
+   * exception — validation reports issues, it does not throw.
+   *
+   * @param changeDir - The change directory (containing `.ratchet.yaml`)
+   * @param projectRoot - Project root (defaults to `changeDir/../../..`)
+   */
+  validateStandards(changeDir: string, projectRoot?: string): ValidationReport {
+    const root = projectRoot ?? path.resolve(changeDir, '../../..');
+    const issues: ValidationIssue[] = [];
+
+    // Resolve every standard's tag (explicit or file-name fallback).
+    const standards = loadStandards(root);
+    const seenTags = new Set<string>();
+    const reportedDuplicates = new Set<string>();
+    for (const standard of standards) {
+      if (seenTags.has(standard.tag)) {
+        if (!reportedDuplicates.has(standard.tag)) {
+          issues.push({
+            level: 'ERROR',
+            path: 'standards',
+            message: VALIDATION_MESSAGES.STANDARD_DUPLICATE_TAG(standard.tag),
+          });
+          reportedDuplicates.add(standard.tag);
+        }
+      } else {
+        seenTags.add(standard.tag);
+      }
+    }
+
+    // Check that every tag the change references resolves to a standard.
+    for (const tag of this.readDeclaredStandardTags(changeDir)) {
+      if (!seenTags.has(tag)) {
+        issues.push({
+          level: 'ERROR',
+          path: 'standards',
+          message: VALIDATION_MESSAGES.STANDARD_UNKNOWN_TAG(tag),
+        });
+      }
+    }
+
+    return this.createReport(issues);
+  }
+
+  /**
+   * Read the change's declared standard tags from `.ratchet.yaml`. Returns an
+   * empty list when the file is absent, unreadable, malformed, or carries no
+   * `standards` array — link validation never throws on a bad metadata file.
+   */
+  private readDeclaredStandardTags(changeDir: string): string[] {
+    const metaPath = path.join(changeDir, '.ratchet.yaml');
+    if (!existsSync(metaPath)) return [];
+    let parsed: unknown;
+    try {
+      parsed = yaml.parse(readFileSync(metaPath, 'utf-8'));
+    } catch {
+      return [];
+    }
+    if (!parsed || typeof parsed !== 'object') return [];
+    const value = (parsed as Record<string, unknown>).standards;
+    if (!Array.isArray(value)) return [];
+    return value.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0);
   }
 
 

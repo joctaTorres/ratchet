@@ -79,7 +79,7 @@ describe('apply instructions and standards', () => {
 
     const output = logged.join('\n');
     expect(output).toContain('<standards>');
-    expect(output).toContain('<standard name="security" file="security.md">');
+    expect(output).toContain('<standard name="security" tag="security" file="security.md">');
     expect(output).toContain(STANDARD_MARKER);
   });
 });

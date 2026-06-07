@@ -73,5 +73,53 @@ describe('standards', () => {
       const names = loadStandards(tempDir).map((s) => s.name);
       expect(names).toEqual(['testing']);
     });
+
+    it('uses the explicit tag from frontmatter', () => {
+      writeStandard(
+        'security.md',
+        '---\ntag: appsec\n---\n\n# Security\n\nValidate all input.\n'
+      );
+
+      const [standard] = loadStandards(tempDir);
+      expect(standard.name).toBe('security');
+      expect(standard.tag).toBe('appsec');
+    });
+
+    it('falls back to the file-name stem when no tag is declared', () => {
+      writeStandard('testing.md', '# Testing\n\nEvery change has tests.\n');
+
+      const [standard] = loadStandards(tempDir);
+      expect(standard.tag).toBe('testing');
+    });
+
+    it('falls back to the file name when frontmatter has no tag field', () => {
+      writeStandard(
+        'testing.md',
+        '---\nconcern: testing\n---\n\n# Testing\n'
+      );
+
+      const [standard] = loadStandards(tempDir);
+      expect(standard.tag).toBe('testing');
+    });
+
+    it('returns content without the frontmatter block', () => {
+      writeStandard(
+        'security.md',
+        '---\ntag: security\n---\n\n# Security\n\nValidate all input.\n'
+      );
+
+      const [standard] = loadStandards(tempDir);
+      expect(standard.content).not.toContain('tag: security');
+      expect(standard.content).not.toMatch(/^---/);
+      expect(standard.content).toContain('# Security');
+      expect(standard.content).toContain('Validate all input.');
+    });
+
+    it('keeps the full content when there is no frontmatter', () => {
+      writeStandard('testing.md', '# Testing\n\nEvery change has tests.');
+
+      const [standard] = loadStandards(tempDir);
+      expect(standard.content).toBe('# Testing\n\nEvery change has tests.');
+    });
   });
 });

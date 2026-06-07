@@ -10,6 +10,10 @@ export const ChangeMetadataSchema = z.object({
       message: 'created must be YYYY-MM-DD format',
     })
     .optional(),
+  // Standard tags the change follows. Each tag resolves to a standard in
+  // `.ratchet/standards/`; validation reports any tag that does not. Optional so
+  // a change may follow no particular standard.
+  standards: z.array(z.string().min(1)).optional(),
 });
 
 export type ChangeMetadata = z.infer<typeof ChangeMetadataSchema>;

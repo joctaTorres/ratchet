@@ -309,12 +309,13 @@ async function validateChangeArtifacts(validator: Validator, changeDir: string) 
     validator.validateFeatures(featuresDir),
     validator.validatePlan(planFile),
   ]);
+  const standardsReport = validator.validateStandards(changeDir);
 
-  const issues = [...featuresReport.issues, ...planReport.issues];
+  const issues = [...featuresReport.issues, ...planReport.issues, ...standardsReport.issues];
   const errors = issues.filter(i => i.level === 'ERROR').length;
   const warnings = issues.filter(i => i.level === 'WARNING').length;
   const info = issues.filter(i => i.level === 'INFO').length;
-  const valid = featuresReport.valid && planReport.valid;
+  const valid = featuresReport.valid && planReport.valid && standardsReport.valid;
 
   return { valid, issues, summary: { errors, warnings, info } };
 }

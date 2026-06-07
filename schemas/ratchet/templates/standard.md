@@ -1,3 +1,7 @@
+---
+tag: [unique-kebab-tag]
+---
+
 # [Standard name]
 
 > Concern: [testing | security | architecture | design | …]

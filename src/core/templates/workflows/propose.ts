@@ -66,7 +66,7 @@ When ready to implement, run /rct:apply
       - The instructions JSON includes:
         - \`context\`: Project background (constraints for you - do NOT include in output)
         - \`rules\`: Artifact-specific rules (constraints for you - do NOT include in output)
-        - \`standards\`: Active project standards (array of \`{ name, fileName, content }\`) the change must follow
+        - \`standards\`: Active project standards (array of \`{ name, tag, fileName, content }\`) the change must follow
         - \`template\`: The structure to use for your output file
         - \`instruction\`: Schema-specific guidance for this artifact type
         - \`resolvedOutputPath\`: Resolved path or pattern to write the artifact
@@ -78,6 +78,11 @@ When ready to implement, run /rct:apply
         \`## Tasks\` should reflect what each relevant standard requires, and the features
         should cover behavior the standards demand. Apply (which never reads standards)
         relies on the plan already encoding them, so make them concrete here.
+      - Record which standards the change follows: collect the \`tag\` of every standard
+        you embedded and write them to the change's \`.ratchet.yaml\` as a
+        \`standards: [<tag>…]\` list (omit the field entirely when the change follows no
+        particular standard). These tags are validated against \`.ratchet/standards/\` and
+        are materialized into the feature store on archive.
       - Show brief progress: "Created <artifact-id>"
 
    b. **Continue until all \`applyRequires\` artifacts are complete**
@@ -186,7 +191,7 @@ When ready to implement, run /rct:apply
       - The instructions JSON includes:
         - \`context\`: Project background (constraints for you - do NOT include in output)
         - \`rules\`: Artifact-specific rules (constraints for you - do NOT include in output)
-        - \`standards\`: Active project standards (array of \`{ name, fileName, content }\`) the change must follow
+        - \`standards\`: Active project standards (array of \`{ name, tag, fileName, content }\`) the change must follow
         - \`template\`: The structure to use for your output file
         - \`instruction\`: Schema-specific guidance for this artifact type
         - \`resolvedOutputPath\`: Resolved path or pattern to write the artifact
@@ -198,6 +203,11 @@ When ready to implement, run /rct:apply
         \`## Tasks\` should reflect what each relevant standard requires, and the features
         should cover behavior the standards demand. Apply (which never reads standards)
         relies on the plan already encoding them, so make them concrete here.
+      - Record which standards the change follows: collect the \`tag\` of every standard
+        you embedded and write them to the change's \`.ratchet.yaml\` as a
+        \`standards: [<tag>…]\` list (omit the field entirely when the change follows no
+        particular standard). These tags are validated against \`.ratchet/standards/\` and
+        are materialized into the feature store on archive.
       - Show brief progress: "Created <artifact-id>"
 
    b. **Continue until all \`applyRequires\` artifacts are complete**

@@ -48,9 +48,17 @@ what the standard should enforce, ask before writing.
 
 5. **Write the standard**
 
-   Create \`.ratchet/standards/<name>.md\` following this structure:
+   Create \`.ratchet/standards/<name>.md\` following this structure. The \`tag\` in the
+   frontmatter is the standard's stable identifier — pick a short, unique kebab-case
+   tag (usually the same as the file name) that no other standard in
+   \`.ratchet/standards/\` already uses. Changes reference a standard by this tag, so it
+   must stay unique across the library.
 
    \`\`\`markdown
+   ---
+   tag: <unique-kebab-tag>
+   ---
+
    # <Standard name>
 
    > Concern: <testing | security | architecture | design | …>

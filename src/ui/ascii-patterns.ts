@@ -66,6 +66,10 @@ function solid(x: number, y: number, rot: number): boolean {
   return (a * N_TEETH) % 1 < DUTY;
 }
 
+// Braille glyphs occupy U+2800–U+28FF; the low 8 bits select which of the cell's
+// 8 dots are lit. Exported so tests classify/decode glyphs against one source.
+export const BRAILLE_BASE = 0x2800;
+
 // Standard Braille dot-bit layout: BITS[row][col] for a 2×4 (col × row) cell.
 //   dots 1,4 / 2,5 / 3,6 / 7,8  →  bits 0x01,0x08 / 0x02,0x10 / 0x04,0x20 / 0x40,0x80
 const BITS = [
@@ -76,15 +80,11 @@ const BITS = [
 ];
 
 /**
- * Render one gear frame as Braille rows.
- *
- * Each dot is the average of an SS×SS grid of sub-samples of `solid()`
- * (≥ 0.5 lit → dot on), which keeps the tooth edges smooth across rotation
- * instead of shimmering. The DOT_W×DOT_H dot bitmap is then packed into
- * DOT_W/2 × DOT_H/4 Braille glyphs (`0x2800 + bits`).
+ * Supersampled dot bitmap of the gear at rotation `rot`. Each dot is the average
+ * of an SS×SS grid of sub-samples of `solid()` (≥ 0.5 lit → dot on), which keeps
+ * the tooth edges smooth across rotation instead of shimmering.
  */
-function gearFrame(rot: number): string[] {
-  // Supersampled dot bitmap.
+function sampleBitmap(rot: number): number[][] {
   const bmp: number[][] = [];
   for (let dr = 0; dr < DOT_H; dr++) {
     const row = new Array<number>(DOT_W);
@@ -101,8 +101,14 @@ function gearFrame(rot: number): string[] {
     }
     bmp.push(row);
   }
+  return bmp;
+}
 
-  // Pack the dot bitmap into Braille glyphs.
+/**
+ * Pack a DOT_W×DOT_H dot bitmap into DOT_W/2 × DOT_H/4 Braille glyphs
+ * (`BRAILLE_BASE + bits`), one glyph per 2×4 dot block.
+ */
+function packBraille(bmp: number[][]): string[] {
   const rows: string[] = [];
   for (let cr = 0; cr < DOT_H; cr += 4) {
     let line = '';
@@ -113,11 +119,19 @@ function gearFrame(rot: number): string[] {
           if (bmp[cr + y]?.[cc + x]) b |= BITS[y][x];
         }
       }
-      line += String.fromCharCode(0x2800 + b);
+      line += String.fromCharCode(BRAILLE_BASE + b);
     }
     rows.push(line);
   }
   return rows;
+}
+
+/**
+ * Render one gear frame, rotated by `rot` radians, as Braille rows: sample the
+ * gear field into a dot bitmap, then pack the dots into glyphs.
+ */
+function gearFrame(rot: number): string[] {
+  return packBraille(sampleBitmap(rot));
 }
 
 /**

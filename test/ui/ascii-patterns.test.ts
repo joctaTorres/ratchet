@@ -3,6 +3,7 @@ import {
   WELCOME_ANIMATION,
   WRAP_ROTATION,
   renderGearFrame,
+  BRAILLE_BASE,
 } from '../../src/ui/ascii-patterns.js';
 import { ART_COLUMN_WIDTH } from '../../src/ui/welcome-screen.js';
 
@@ -10,8 +11,7 @@ import { ART_COLUMN_WIDTH } from '../../src/ui/welcome-screen.js';
 // string length is its true visible width — directly comparable to the
 // renderer's ART_COLUMN_WIDTH.
 
-const BRAILLE_BASE = 0x2800;
-const BRAILLE_MAX = 0x28ff;
+const BRAILLE_MAX = BRAILLE_BASE + 0xff;
 
 // Count the lit dots in a frame by popcounting each Braille glyph's bits.
 function dotMass(frame: string[]): number {

@@ -1,8 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { generateApplyInstructions } from '../../../src/commands/workflow/instructions.js';
+import {
+  generateApplyInstructions,
+  printInstructionsText,
+} from '../../../src/commands/workflow/instructions.js';
+import {
+  loadChangeContext,
+  generateInstructions,
+} from '../../../src/core/artifact-graph/instruction-loader.js';
 import { resolveCurrentPlanningHomeSync, getChangeDir } from '../../../src/core/planning-home.js';
 
 const STANDARD_MARKER = 'INPUT_VALIDATION_IS_REQUIRED';
@@ -54,5 +61,25 @@ describe('apply instructions and standards', () => {
 
     // Sanity: the change really does resolve under this planning home.
     expect(instructions.changeDir).toBe(getChangeDir(planningHome, changeName));
+  });
+
+  it('renders the standards block in the text instructions for propose', () => {
+    const context = loadChangeContext(tempDir, changeName);
+    const instructions = generateInstructions(context, 'plan', tempDir);
+
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logged.push(args.join(' '));
+    });
+    try {
+      printInstructionsText(instructions, /* isBlocked */ false);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const output = logged.join('\n');
+    expect(output).toContain('<standards>');
+    expect(output).toContain('<standard name="security" file="security.md">');
+    expect(output).toContain(STANDARD_MARKER);
   });
 });

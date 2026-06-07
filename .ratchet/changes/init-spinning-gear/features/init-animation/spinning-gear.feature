@@ -1,23 +1,29 @@
 Feature: Spinning gear init animation
   As a user running `ratchet init`
-  I want the animated welcome screen to show a continuously spinning gear
-  So that the setup feels alive and reinforces Ratchet's mechanical "ratchet/gear" identity
+  I want the welcome screen to show a smooth cogwheel spinning anti-clockwise
+  So that the setup feels alive and reinforces Ratchet's mechanical gear identity
 
   Background:
-    Given the welcome screen renders ASCII art side-by-side with the welcome text
+    Given the welcome screen renders the gear art side-by-side with the welcome text
 
-  Scenario: Gear spins continuously while waiting for the user
-    Given a terminal that supports animation
+  Scenario: Gear spins anti-clockwise while waiting for the user
+    Given a terminal that supports animation and Unicode
     When the welcome screen is displayed during init
-    Then the ASCII art shows a gear that rotates one step on every frame
-    And the rotation loops seamlessly so the last frame flows back into the first
+    Then a cogwheel rendered with Braille sub-pixels rotates one step per frame
+    And the rotation is anti-clockwise
     And the gear keeps spinning until the user presses Enter
 
-  Scenario: Every frame depicts a complete gear at a different rotation
+  Scenario: Every frame is a complete cogwheel with squared teeth
     Given the welcome animation frame set
     When any single frame is rendered
-    Then that frame shows a recognizable, fully-formed gear
-    But the gear's teeth are offset from the previous frame to convey rotation
+    Then that frame shows a recognizable, fully-formed gear with a hollow centre
+    And the teeth have flat (squared) tips rather than pointed ones
+    But the teeth are offset from the previous frame to convey rotation
+
+  Scenario: The rotation loops seamlessly
+    Given the gear has evenly spaced teeth
+    When the frames sweep a whole number of tooth pitches
+    Then the last frame flows back into the first with no visible jump
 
   Scenario: Frames keep uniform dimensions for clean redraw
     Given the welcome animation frame set
@@ -26,14 +32,14 @@ Feature: Spinning gear init animation
     And every row fits within the fixed art column width used by the renderer
     So that the cursor-up redraw overwrites each frame without leaving residue
 
-  Scenario: Static fallback shows a complete gear in non-animating terminals
-    Given a terminal that does not support animation
+  Scenario: Static fallback when the terminal cannot animate
+    Given a terminal that is not a TTY, has NO_COLOR set, or is too narrow
     When the welcome screen is displayed during init
-    Then a single static frame is printed once
+    Then a single static gear frame is printed once
     And that frame shows a complete gear rather than a partial or empty shape
 
-  Scenario: Gear art respects Unicode capability
+  Scenario: Graceful degrade without Unicode support
     Given a terminal without full Unicode support
-    When the gear animation is rendered
-    Then the gear is drawn using the ASCII fallback character set
+    When the welcome screen is displayed during init
+    Then the gear is drawn without Braille code points
     And no characters outside the supported set are emitted

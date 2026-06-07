@@ -6,14 +6,13 @@
  * seamlessly. Braille gives ~8× the resolution of block characters in the same
  * space, so a smooth, round gear with crisp squared teeth fits the welcome
  * column. The maths are ported from `scripts/braille-demo.mjs` (the agreed look).
+ *
+ * Braille is rendered unconditionally: it is well supported by modern terminal
+ * fonts, and there is no reliable runtime way to detect a terminal's font glyph
+ * coverage anyway, so a capability heuristic would guess wrong as often as it
+ * helped. The welcome screen is cosmetic, so a rare font without Braille glyphs
+ * degrades to harmless boxes rather than a broken UI.
  */
-
-// Detect if full Unicode is supported. Braille code points need a font/terminal
-// that can render them; when that's unlikely, fall back to a plain ASCII gear.
-const supportsUnicode =
-  process.platform !== 'win32' ||
-  !!process.env.WT_SESSION || // Windows Terminal
-  !!process.env.TERM_PROGRAM; // Modern terminal
 
 // --- Tunable gear parameters ------------------------------------------------
 // Dot bitmap size. Braille packs 2 dots wide × 4 dots tall per cell, so the
@@ -160,22 +159,6 @@ export function renderGearFrame(rot: number): string[] {
   return gearFrame(rot);
 }
 
-/**
- * Static ASCII cogwheel for terminals without Unicode support — no Braille code
- * points, just plain ASCII. A single recognizable frame (the screen is static
- * in this mode), 8 rows tall to match the Braille frame height.
- */
-const ASCII_GEAR: string[] = [
-  '    _   __   _    ',
-  "   / |_|  |_| \\   ",
-  '  |  .-====-.  |  ',
-  ' _|  | (  ) |  |_ ',
-  ' \\|  | (  ) |  |/ ',
-  '  |  `-====-`  |  ',
-  "   \\_|-|  |-|_/   ",
-  '     `-`  `-`     ',
-];
-
 /** Animation specification consumed by the welcome screen. */
 export interface AnimationSpec {
   /** Milliseconds between frames. */
@@ -185,12 +168,11 @@ export interface AnimationSpec {
 }
 
 /**
- * Welcome animation: a procedural cogwheel spinning anti-clockwise.
- *
- * When Unicode is available, frames are Braille (1 char/cell, 17×8). Otherwise
- * a single static ASCII gear is used. interval ≈ 70 ms × 12 frames ≈ 0.84 s per
- * visual revolution (one tooth pitch).
+ * Welcome animation: a procedural cogwheel spinning anti-clockwise, rendered as
+ * Braille (1 char/cell, 17×8) on every platform. interval ≈ 70 ms × 12 frames
+ * ≈ 0.84 s per visual revolution (one tooth pitch).
  */
-export const WELCOME_ANIMATION: AnimationSpec = supportsUnicode
-  ? { interval: 70, frames: generateBrailleFrames() }
-  : { interval: 70, frames: [ASCII_GEAR] };
+export const WELCOME_ANIMATION: AnimationSpec = {
+  interval: 70,
+  frames: generateBrailleFrames(),
+};

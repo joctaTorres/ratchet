@@ -25,10 +25,12 @@ the prototype in `scripts/braille-demo.mjs`, which is the agreed look.
 - Keep the existing animation loop, static fallback, and Enter-to-continue logic
   in `welcome-screen.ts` (it is a generic frame cycler) — only the frame data and
   the column-width constants change.
-- Graceful degrade: when the terminal lacks Unicode support (`supportsUnicode`
-  false), emit a small static **ASCII** gear instead of Braille code points. When
-  the terminal cannot animate (non-TTY, `NO_COLOR`, too narrow), print a single
-  static gear frame (Braille frame 0 where Unicode is available).
+- Render Braille **unconditionally** — no platform/Unicode capability branch. A
+  terminal's font-glyph coverage can't be reliably detected at runtime, so a
+  capability heuristic would misfire; and the welcome screen is cosmetic, so a
+  rare font lacking Braille glyphs degrades to harmless boxes, not a broken UI.
+  When the terminal cannot animate (non-TTY, `NO_COLOR`, too narrow), print a
+  single static Braille frame (frame 0).
 - Update `test/ui/ascii-patterns.test.ts` for the new frames; keep the Braille
   preview/demo scripts under `scripts/` for regeneration and font checks.
 - Implements `features/init-animation/spinning-gear.feature`.
@@ -60,17 +62,20 @@ a grid-preserving rotation (a multiple of 90°) — e.g. for `N_TEETH = 8`, swee
 The exact pitch/frame-count is settled in implementation and locked by a test
 (`gearFrame(0)` deep-equals the wrap-around frame; all frames distinct).
 
-**Sizing & fallback.** `GRID_W×GRID_H ≈ 34×32` dots → 17×8 Braille cells. Set
+**Sizing & rendering.** `GRID_W×GRID_H ≈ 34×32` dots → 17×8 Braille cells. Set
 `ART_COLUMN_WIDTH` to ~20 and re-check `MIN_WIDTH` (art + ~36 cols of welcome
 text ≈ 58–60). Uniform row counts across frames keep the cursor-up redraw clean.
-Non-Unicode terminals get a small static ASCII gear; non-animating terminals get
-a single static frame.
+Braille is rendered on every platform; non-animating terminals (non-TTY,
+`NO_COLOR`, too narrow) print a single static Braille frame.
 
 **Why Braille (trade-off).** Braille is the only portable way to get sub-cell
 resolution — a glyph cannot be scaled or rotated, and Unicode has no rotated gear
 glyphs. The cost is a font dependency: most modern monospace/terminal fonts draw
 Braille dots cleanly (it is what `btop`/`drawille`/`plotille` rely on), but a few
-render them unevenly, hence the manual font check and the ASCII degrade path.
+render them unevenly. We render Braille unconditionally rather than guarding it
+with a capability check: font-glyph coverage isn't reliably detectable at
+runtime, so the guard would misfire, and the worst case is harmless boxes on a
+cosmetic splash. Hence a manual font check rather than a code fallback.
 
 ## Tasks
 
@@ -81,8 +86,8 @@ render them unevenly, hence the manual font check and the ASCII degrade path.
       `FRAME_COUNT`, `DIRECTION`) and generate `WELCOME_ANIMATION.frames` at load
 - [x] 1.3 Choose the rotation sweep so the loop is exactly seamless (a 90°-aligned
       whole number of tooth pitches) and set `interval` for a smooth spin
-- [x] 2.1 Add the non-Unicode static ASCII gear fallback and confirm no Braille
-      code points are emitted when `supportsUnicode` is false
+- [x] 2.1 Render Braille unconditionally (no Unicode-capability branch / ASCII
+      fallback); confirm every frame is composed only of Braille glyphs and spaces
 - [x] 2.2 Update `ART_COLUMN_WIDTH` and `MIN_WIDTH` in `src/ui/welcome-screen.ts`
       to fit the ~17-char-wide Braille gear; keep the static-fallback path
 - [x] 3.1 Rewrite `test/ui/ascii-patterns.test.ts`: uniform row counts, rows ≤

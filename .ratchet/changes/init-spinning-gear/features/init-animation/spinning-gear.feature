@@ -7,7 +7,7 @@ Feature: Spinning gear init animation
     Given the welcome screen renders the gear art side-by-side with the welcome text
 
   Scenario: Gear spins anti-clockwise while waiting for the user
-    Given a terminal that supports animation and Unicode
+    Given a terminal that supports animation
     When the welcome screen is displayed during init
     Then a cogwheel rendered with Braille sub-pixels rotates one step per frame
     And the rotation is anti-clockwise
@@ -38,8 +38,8 @@ Feature: Spinning gear init animation
     Then a single static gear frame is printed once
     And that frame shows a complete gear rather than a partial or empty shape
 
-  Scenario: Graceful degrade without Unicode support
-    Given a terminal without full Unicode support
-    When the welcome screen is displayed during init
-    Then the gear is drawn without Braille code points
-    And no characters outside the supported set are emitted
+  Scenario: The gear is rendered with Braille on every platform
+    Given any terminal
+    When the welcome animation frame set is built
+    Then every frame is composed only of Braille glyphs and spaces
+    And no platform-specific ASCII fallback is substituted

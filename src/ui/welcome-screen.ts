@@ -6,11 +6,13 @@
 import chalk from 'chalk';
 import { WELCOME_ANIMATION } from './ascii-patterns.js';
 
-// Minimum terminal width for side-by-side layout
-const MIN_WIDTH = 60;
+// Width of the ASCII art column (with padding). The Braille gear is 17 chars
+// wide (1 char per Braille cell); 20 leaves a small gutter before the text.
+export const ART_COLUMN_WIDTH = 20;
 
-// Width of the ASCII art column (with padding)
-export const ART_COLUMN_WIDTH = 24;
+// Minimum terminal width for side-by-side layout: art column (20) + ~36 cols of
+// welcome text.
+const MIN_WIDTH = 58;
 
 /**
  * Welcome text content (right column)
@@ -134,7 +136,7 @@ export async function showWelcomeScreen(): Promise<void> {
 
   // Content height for cursor movement between frames
   const numContentLines = Math.max(WELCOME_ANIMATION.frames[0].length, textLines.length);
-  const frameHeight = numContentLines + 1; // internal newlines (11) + trailing newlines (2) = 13
+  const frameHeight = numContentLines + 1; // content lines + the blank line after the gear/text
 
   // Total height including initial newline (for cleanup)
   const totalHeight = frameHeight + 1; // 14

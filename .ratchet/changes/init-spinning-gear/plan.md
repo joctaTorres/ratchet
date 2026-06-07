@@ -2,88 +2,101 @@
 
 ## Why
 
-The `ratchet init` welcome screen currently animates the Ratchet logo *building*
-from the center and then holding — it plays once and stops moving. A
-continuously spinning gear reads as "working/alive," loops naturally while the
-user reads the welcome text, and reinforces Ratchet's mechanical gear/ratchet
-identity.
+The `ratchet init` welcome screen animates a gear, but the block-character (`██`)
+versions read as coarse and the teeth look pointy at the terminal's low cell
+resolution. Rendering the gear with **Braille sub-pixels** (a 2×4 dot grid per
+cell, U+2800–28FF) gives ~8× the effective resolution in the same space, so a
+smooth, round cogwheel with crisp squared teeth can spin in place. This matches
+the prototype in `scripts/braille-demo.mjs`, which is the agreed look.
 
 ## What Changes
 
-- Replace the `WELCOME_ANIMATION` frame set in `src/ui/ascii-patterns.ts` with
-  frames depicting a **fully-formed gear that rotates one step per frame** and
-  loops seamlessly, instead of the current empty→build-up→hold sequence.
-- Keep the existing block/ASCII aesthetic and the Unicode/ASCII fallback
-  (`CHARS`) so the gear degrades cleanly on terminals without full Unicode.
-- Preserve uniform frame dimensions (same row count across all frames, rows
-  within the renderer's fixed art column width) so the cursor-up redraw in
-  `welcome-screen.ts` overwrites cleanly with no residue.
-- Ensure the non-TTY/no-animation static fallback (`frames[3]` in
-  `showWelcomeScreen`) lands on a complete gear.
-- No changes to the animation loop, render, or input handling in
-  `src/ui/welcome-screen.ts` — the existing modulo loop already cycles frames.
-- Add `test/ui/ascii-patterns.test.ts` (none exists today) to lock the frame
-  invariants the feature relies on — uniform row count, art-column width fit,
-  and ASCII-fallback character safety.
+- Replace the gear generator in `src/ui/ascii-patterns.ts` with a **procedural
+  Braille cogwheel**: a geometric gear (square-wave teeth → flat/squared tips,
+  hollow bore) rasterized to a dot bitmap, anti-aliased by supersampling, packed
+  into Braille glyphs, and rotated **anti-clockwise** one step per frame. Port
+  the maths from `scripts/braille-demo.mjs` / `scripts/preview-gear2.mjs`.
+- Generate the frames at runtime (once, at module load) from a few tunable
+  constants (teeth count, tooth duty/height, dot grid size, frame count) — no
+  hand-drawn art, no `logo.txt` dependency in shipped code.
+- Size the gear to the welcome column: ~34×32 dots → 17×8 Braille cells (17 chars
+  wide), so `ART_COLUMN_WIDTH` and `MIN_WIDTH` in `src/ui/welcome-screen.ts` come
+  back **down** (Braille is 1 char/cell, far denser than the 32-char block gear).
+- Keep the existing animation loop, static fallback, and Enter-to-continue logic
+  in `welcome-screen.ts` (it is a generic frame cycler) — only the frame data and
+  the column-width constants change.
+- Render Braille **unconditionally** — no platform/Unicode capability branch. A
+  terminal's font-glyph coverage can't be reliably detected at runtime, so a
+  capability heuristic would misfire; and the welcome screen is cosmetic, so a
+  rare font lacking Braille glyphs degrades to harmless boxes, not a broken UI.
+  When the terminal cannot animate (non-TTY, `NO_COLOR`, too narrow), print a
+  single static Braille frame (frame 0).
+- Update `test/ui/ascii-patterns.test.ts` for the new frames; keep the Braille
+  preview/demo scripts under `scripts/` for regeneration and font checks.
 - Implements `features/init-animation/spinning-gear.feature`.
 
 ## Design
 
-The animation engine in `welcome-screen.ts` is already a generic frame cycler:
-`setInterval` advances `frameIndex = (frameIndex + 1) % frames.length`, redraws
-by moving the cursor up `frameHeight` rows, and `frameHeight` is derived from
-`frames[0].length`. This means the change is **data-only** — we only swap the
-contents of `WELCOME_ANIMATION` and tune `interval`. The loop, render, fallback,
-and Enter-to-continue behavior stay untouched.
+**Geometry (squared teeth).** Work in a square dot grid (dots are ~square, so the
+gear renders round). A point at radius `r`, angle `θ` is solid when it is in the
+ring (`R_HOLLOW ≤ r ≤ R_INNER`) or in a tooth (`R_INNER < r ≤ R_OUTER` **and** the
+tooth is present at `θ`). Tooth presence is a **square wave** of `θ` with
+`N_TEETH` periods and a duty cycle — a square wave gives each tooth a flat top
+(squared), not a taper. The bore (`r < R_HOLLOW`) is empty. The gear is evaluated
+analytically per rotation `rot` (subtract `rot` from `θ`), so every frame is a
+clean gear with no source-bitmap aliasing.
 
-Gear depiction: the art grid is an 8-cell-wide × 10-row block canvas (each cell
-two chars, ≤16 visible chars, comfortably under `ART_COLUMN_WIDTH = 24`). Render
-the gear as a solid hub with a hollow center plus a ring of teeth around it. To
-spin it, hold the hub fixed and rotate which spokes/teeth are "extended" by one
-position each frame. Because the gear has rotational symmetry, a frame count
-equal to one tooth-pitch (e.g. 6–8 frames) loops seamlessly: the last frame's
-teeth align with the first frame's after one pitch of rotation. Every frame is a
-complete gear (different angle), satisfying the "no partial/empty frame"
-scenarios — including the static fallback, which can use any frame.
+**Anti-aliasing.** Each dot averages an `SS×SS` grid of sub-samples (≥0.5 on →
+dot lit). This keeps tooth edges smooth across rotation instead of shimmering.
 
-Keep all frames the same row count as today (10 rows) so `frameHeight` math is
-unchanged. Tune `interval` (currently 120 ms) for a smooth-but-not-frantic spin;
-choose so one full visual revolution takes ~1 second.
+**Braille packing.** Every 2×4 block of dots becomes one glyph `0x2800 + bits`,
+using the standard Braille dot-bit layout. A `GRID_W×GRID_H` dot bitmap yields
+`GRID_W/2 × GRID_H/4` Braille characters per frame.
 
-Trade-offs: a blocky gear at this small resolution can't show fine teeth, so we
-favor a few bold, clearly-offset teeth that read as motion over photorealism.
-Frame count is kept modest (6–8) to keep the file readable and the loop seamless.
+**Anti-clockwise + seamless loop.** Rotation advances by `DIRECTION·step` with
+`DIRECTION = -1` (anti-clockwise; screen y is down). The gear is `N_TEETH`-fold
+symmetric, so one tooth pitch (`2π/N_TEETH`) is a full visual revolution. To make
+the loop *exactly* seamless, sweep a rotation that is **both** a gear symmetry and
+a grid-preserving rotation (a multiple of 90°) — e.g. for `N_TEETH = 8`, sweep 90°
+(two pitches) so the final frame maps onto frame 0 on the dot grid with no jump.
+The exact pitch/frame-count is settled in implementation and locked by a test
+(`gearFrame(0)` deep-equals the wrap-around frame; all frames distinct).
 
-Testing: the animation has no tests today. The visual spin can't be asserted
-without a TTY, but the feature's data invariants can — so we add a unit test
-over `WELCOME_ANIMATION` (frame-count > 1, uniform row counts, rows within
-`ART_COLUMN_WIDTH`, and ASCII-fallback frames containing only `CHARS` glyphs).
-`canAnimate`/`renderFrame` logic stays manual since it depends on terminal
-state. These invariants guard against future frame edits silently breaking the
-cursor-up redraw.
+**Sizing & rendering.** `GRID_W×GRID_H ≈ 34×32` dots → 17×8 Braille cells. Set
+`ART_COLUMN_WIDTH` to ~20 and re-check `MIN_WIDTH` (art + ~36 cols of welcome
+text ≈ 58–60). Uniform row counts across frames keep the cursor-up redraw clean.
+Braille is rendered on every platform; non-animating terminals (non-TTY,
+`NO_COLOR`, too narrow) print a single static Braille frame.
+
+**Why Braille (trade-off).** Braille is the only portable way to get sub-cell
+resolution — a glyph cannot be scaled or rotated, and Unicode has no rotated gear
+glyphs. The cost is a font dependency: most modern monospace/terminal fonts draw
+Braille dots cleanly (it is what `btop`/`drawille`/`plotille` rely on), but a few
+render them unevenly. We render Braille unconditionally rather than guarding it
+with a capability check: font-glyph coverage isn't reliably detectable at
+runtime, so the guard would misfire, and the worst case is harmless boxes on a
+cosmetic splash. Hence a manual font check rather than a code fallback.
 
 ## Tasks
 
-- [x] 1.1 Design the gear glyph: a fixed hub with hollow center and a ring of
-      teeth on the existing 8-cell × 10-row canvas, using `CHARS`
-      (full/dim/empty) for the Unicode and ASCII fallback variants
-- [x] 1.2 Produce the rotation frames (6–8) by stepping the teeth one position
-      per frame so the sequence loops seamlessly back to frame 0
-- [x] 1.3 Replace the `frames` array in `WELCOME_ANIMATION`
-      (`src/ui/ascii-patterns.ts`) with the gear frames and verify every frame
-      has the same row count as `frames[0]` and rows fit within `ART_COLUMN_WIDTH`
-- [x] 1.4 Set `WELCOME_ANIMATION.interval` for a smooth spin (~1s per revolution)
-      and update the file's header/frame comments to describe a spinning gear
-- [x] 2.1 Confirm the static fallback frame (`frames[3]` in
-      `showWelcomeScreen`) renders a complete gear; adjust the index/comment if
-      a different frame reads better as a still
-- [x] 2.2 Add `test/ui/ascii-patterns.test.ts` asserting the frame invariants:
-      more than one frame, every frame has the same row count as `frames[0]`,
-      every row's visible width fits within `ART_COLUMN_WIDTH` (24), and the
-      ASCII-fallback frames contain only the `CHARS` glyphs
-- [x] 2.3 Run `pnpm test` and confirm the new test plus `test/core/init.test.ts`
-      pass
-- [ ] 3.1 Manually run `ratchet init` in a TTY to verify the gear spins
-      continuously, loops without flicker or residue, and stops on Enter
-- [x] 3.2 Verify non-TTY (piped) and `NO_COLOR` paths print a single complete
-      gear
+- [x] 1.1 Port the procedural gear from `scripts/braille-demo.mjs` into
+      `src/ui/ascii-patterns.ts`: `solid(x,y,rot)` (square-wave squared teeth +
+      hollow bore), supersampled dot rasteriser, and Braille packing
+- [x] 1.2 Expose tuning constants (`N_TEETH`, `DUTY`, `TOOTH_H`, dot grid size,
+      `FRAME_COUNT`, `DIRECTION`) and generate `WELCOME_ANIMATION.frames` at load
+- [x] 1.3 Choose the rotation sweep so the loop is exactly seamless (a 90°-aligned
+      whole number of tooth pitches) and set `interval` for a smooth spin
+- [x] 2.1 Render Braille unconditionally (no Unicode-capability branch / ASCII
+      fallback); confirm every frame is composed only of Braille glyphs and spaces
+- [x] 2.2 Update `ART_COLUMN_WIDTH` and `MIN_WIDTH` in `src/ui/welcome-screen.ts`
+      to fit the ~17-char-wide Braille gear; keep the static-fallback path
+- [x] 3.1 Rewrite `test/ui/ascii-patterns.test.ts`: uniform row counts, rows ≤
+      `ART_COLUMN_WIDTH`, frames distinct, substantial gear of roughly constant
+      mass, and the seamless-loop wrap-around (last→first) holds
+- [x] 3.2 Point `scripts/preview-welcome.mjs` at the shipped frames (Braille
+      rendering) so preview == shipped output, and keep `braille-demo.mjs` for
+      live font checks
+- [x] 4.1 Run `pnpm build`, `pnpm test`, `pnpm lint` until green
+- [ ] 4.2 Manually run `ratchet init` in a TTY: confirm the gear spins
+      anti-clockwise, teeth are squared, the loop has no jump, and it stops on
+      Enter; spot-check the non-Unicode and non-TTY fallbacks

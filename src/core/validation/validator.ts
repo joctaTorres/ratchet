@@ -15,6 +15,8 @@ import {
   MAX_WHY_SECTION_LENGTH,
   VALIDATION_MESSAGES
 } from './constants.js';
+import { loadStandards } from '../standards.js';
+import { readDeclaredStandardTags } from '../../utils/change-metadata.js';
 
 export class Validator {
   private strictMode: boolean;
@@ -277,6 +279,61 @@ export class Validator {
     return this.createReport(issues);
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // Standards validation
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Validate the standards link for a change. Two ERROR-level checks:
+   *
+   * 1. Standard `tag` uniqueness across `.ratchet/standards/` — duplicate tags
+   *    (after file-name fallback) are reported once per offending tag.
+   * 2. Every tag in the change's `standards` list resolves to an existing
+   *    standard; unresolved tags are reported.
+   *
+   * The change's `standards` list is read raw (via `yaml.parse`) so a malformed
+   * or unknown-schema `.ratchet.yaml` surfaces as a missing list rather than an
+   * exception — validation reports issues, it does not throw.
+   *
+   * @param changeDir - The change directory (containing `.ratchet.yaml`)
+   * @param projectRoot - Project root (defaults to `changeDir/../../..`)
+   */
+  validateStandards(changeDir: string, projectRoot?: string): ValidationReport {
+    const root = projectRoot ?? path.resolve(changeDir, '../../..');
+    const issues: ValidationIssue[] = [];
+
+    // Resolve every standard's tag (explicit or file-name fallback).
+    const standards = loadStandards(root);
+    const seenTags = new Set<string>();
+    const reportedDuplicates = new Set<string>();
+    for (const standard of standards) {
+      if (seenTags.has(standard.tag)) {
+        if (!reportedDuplicates.has(standard.tag)) {
+          issues.push({
+            level: 'ERROR',
+            path: 'standards',
+            message: VALIDATION_MESSAGES.STANDARD_DUPLICATE_TAG(standard.tag),
+          });
+          reportedDuplicates.add(standard.tag);
+        }
+      } else {
+        seenTags.add(standard.tag);
+      }
+    }
+
+    // Check that every tag the change references resolves to a standard.
+    for (const tag of readDeclaredStandardTags(changeDir)) {
+      if (!seenTags.has(tag)) {
+        issues.push({
+          level: 'ERROR',
+          path: 'standards',
+          message: VALIDATION_MESSAGES.STANDARD_UNKNOWN_TAG(tag),
+        });
+      }
+    }
+
+    return this.createReport(issues);
+  }
 
   private createReport(issues: ValidationIssue[]): ValidationReport {
     const errors = issues.filter(i => i.level === 'ERROR').length;

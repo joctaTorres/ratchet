@@ -22,4 +22,10 @@ export const VALIDATION_MESSAGES = {
   FEATURE_NO_SCENARIOS: 'Feature must have at least one scenario',
   SCENARIO_NO_STEPS: 'Scenario must have at least one step',
   SCENARIO_MISSING_GWT: 'Scenario must include at least one Given, one When, and one Then step',
+
+  // Standards rules
+  STANDARD_DUPLICATE_TAG: (tag: string): string =>
+    `Duplicate standard tag "${tag}". Each standard in .ratchet/standards/ must have a unique tag.`,
+  STANDARD_UNKNOWN_TAG: (tag: string): string =>
+    `Unknown standard tag "${tag}". No standard in .ratchet/standards/ declares this tag.`,
 } as const;

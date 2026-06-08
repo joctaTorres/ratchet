@@ -116,6 +116,7 @@ export function printInstructionsText(instructions: ArtifactInstructions, isBloc
     context,
     rules,
     template,
+    standards,
     dependencies,
     unlocks,
   } = instructions;
@@ -158,6 +159,20 @@ export function printInstructionsText(instructions: ArtifactInstructions, isBloc
       console.log(`- ${rule}`);
     }
     console.log('</rules>');
+    console.log();
+  }
+
+  // Standards (project guidelines to embed into the artifact)
+  if (standards && standards.length > 0) {
+    console.log('<standards>');
+    console.log('<!-- Active project standards. Embed the applicable ones into this artifact. -->');
+    console.log('<!-- Record the tag of each standard the change follows in its .ratchet.yaml `standards` list. -->');
+    for (const standard of standards) {
+      console.log(`<standard name="${standard.name}" tag="${standard.tag}" file="${standard.fileName}">`);
+      console.log(standard.content.trim());
+      console.log('</standard>');
+    }
+    console.log('</standards>');
     console.log();
   }
 

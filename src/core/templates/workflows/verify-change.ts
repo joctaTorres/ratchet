@@ -14,7 +14,7 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
 
 1. **If no change name provided, prompt for selection**
 
-   Run \`ratchet list --json\` to get available changes. Use the **AskUserQuestion tool** to let the user select.
+   Run \`ratchet list --json\` to get available changes. Ask the user to select one — use a structured-question tool such as AskUserQuestion if your agent has one, otherwise ask in plain prose.
 
    Mark changes with incomplete tasks as "(In Progress)".
 
@@ -39,16 +39,34 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
 
    This returns the change directory and \`contextFiles\` (artifact ID -> array of concrete file paths). For the ratchet schema these are the \`features/**/*.feature\` files and \`plan.md\`. Read all of them.
 
-4. **Initialize verification report structure**
+4. **Load the standards the change declared**
 
-   Create a report structure with three dimensions:
+   Standards are a project-level library at \`.ratchet/standards/\`, a sibling of
+   \`.ratchet/changes/\`. The change directory paths from step 3 contain
+   \`.../.ratchet/changes/<name>/...\`, so the standards live at the sibling
+   \`.../.ratchet/standards/\`. Each standard file carries a \`tag\` in its frontmatter
+   (falling back to the file-name stem when absent).
+
+   Read the change's \`.ratchet.yaml\` \`standards\` list — these are the tags the change
+   was proposed under. Scope this verification to exactly those standards:
+   - If \`standards\` lists one or more tags, read only the matching \`*.md\` files and
+     check the implementation against them. Do NOT require standards the change never
+     declared.
+   - If \`standards\` is absent or empty, fall back to reading every \`*.md\` file in
+     \`.ratchet/standards/\` (preserving today's behavior).
+   - If there are no standards to check at all, skip the Standards dimension below.
+
+5. **Initialize verification report structure**
+
+   Create a report structure with four dimensions:
    - **Completeness**: every \`## Tasks\` checkbox in plan.md is checked; every feature file is accounted for
    - **Correctness**: every Scenario's Given/When/Then is satisfied by the implementation
    - **Coherence**: the implementation follows the \`## Design\` decisions in plan.md and project patterns
+   - **Standards**: the implementation honors each standard the change declared (step 4)
 
    Each dimension can have CRITICAL, WARNING, or SUGGESTION issues.
 
-5. **Verify Completeness**
+6. **Verify Completeness**
 
    **Task Completion**:
    - Read \`plan.md\` and parse the \`## Tasks\` checkboxes: \`- [ ]\` (incomplete) vs \`- [x]\` (complete)
@@ -63,7 +81,7 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
      - Add CRITICAL issue: "Feature not found: <feature name>"
      - Recommendation: "Implement the behavior described in <feature path>"
 
-6. **Verify Correctness (Scenario by Scenario)**
+7. **Verify Correctness (Scenario by Scenario)**
 
    For each Scenario in each feature file:
    - Read the Given/When/Then steps - this is the behavior contract
@@ -79,7 +97,7 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
      - Add WARNING: "Scenario not covered: <scenario name>"
      - Recommendation: "Add test or implementation for: <Given/When/Then>"
 
-7. **Verify Coherence**
+8. **Verify Coherence**
 
    **Design Adherence**:
    - Read the \`## Design\` section of plan.md
@@ -94,7 +112,17 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
      - Add SUGGESTION: "Code pattern deviation: <details>"
      - Recommendation: "Consider following project pattern: <example>"
 
-8. **Generate Verification Report**
+9. **Verify Standards**
+
+   For each standard loaded in step 4:
+   - Read its guidelines (the concrete, checkable rules it enforces)
+   - Check the implementation and tests for evidence each guideline is honored
+   - If a guideline is not met:
+     - Add WARNING (or CRITICAL when the standard is a hard requirement): "Standard not met: <standard> - <guideline>"
+     - Recommendation: "Bring <file>:<lines> in line with <standard> guideline: <guideline>"
+   - If there are no standards, skip this dimension.
+
+10. **Generate Verification Report**
 
    **Summary Scorecard**:
    \`\`\`
@@ -106,6 +134,7 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
    | Completeness | X/Y tasks complete     |
    | Correctness  | M/N scenarios satisfied|
    | Coherence    | Followed/Issues        |
+   | Standards    | K/L standards met      |
    \`\`\`
 
    **Issues by Priority**:

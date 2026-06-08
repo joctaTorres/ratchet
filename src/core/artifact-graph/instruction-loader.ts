@@ -17,6 +17,7 @@ import {
   type PlanningHomeSummary,
 } from '../change-status-policy.js';
 import { readProjectConfig, validateConfigRules } from '../project-config.js';
+import { loadStandards, type StandardDoc } from '../standards.js';
 import type { PlanningHome } from '../planning-home.js';
 import type { ChangeMetadata } from '../change-metadata/index.js';
 import type { Artifact, CompletedSet } from './types.js';
@@ -94,6 +95,8 @@ export interface ArtifactInstructions {
   rules: string[] | undefined;
   /** Template content (structure to follow - this IS the output format) */
   template: string;
+  /** Active project standards to embed into the artifact (propose path only) */
+  standards: StandardDoc[] | undefined;
   /** Dependencies with completion status and paths */
   dependencies: DependencyInfo[];
   /** Artifacts that become available after completing this one */
@@ -314,6 +317,13 @@ export function generateInstructions(
   const rulesForArtifact = projectConfig?.rules?.[artifactId];
   const configRules = rulesForArtifact && rulesForArtifact.length > 0 ? rulesForArtifact : undefined;
 
+  // Surface the project's standards library so propose can embed the applicable
+  // standards into the artifact. This is the per-artifact path that only propose
+  // consumes; the shared apply/verify path (generateApplyInstructions) never carries
+  // standards, so apply's payload provably stays free of them.
+  const loadedStandards = effectiveProjectRoot ? loadStandards(effectiveProjectRoot) : [];
+  const standards = loadedStandards.length > 0 ? loadedStandards : undefined;
+
   return {
     changeName: context.changeName,
     artifactId: artifact.id,
@@ -328,6 +338,7 @@ export function generateInstructions(
     context: configContext,
     rules: configRules,
     template: templateContent,
+    standards,
     dependencies,
     unlocks,
   };

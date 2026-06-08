@@ -66,6 +66,7 @@ const WORKFLOW_TO_SKILL_DIR: Record<string, string> = {
   'apply': 'ratchet-apply-change',
   'verify': 'ratchet-verify-change',
   'archive': 'ratchet-archive-change',
+  'propose-standard': 'ratchet-propose-standard',
 };
 
 // -----------------------------------------------------------------------------
@@ -452,6 +453,7 @@ export class InitCommand {
       const directories = [
         ratchetPath,
         path.join(ratchetPath, 'features'),
+        path.join(ratchetPath, 'standards'),
         path.join(ratchetPath, 'changes'),
         path.join(ratchetPath, 'changes', 'archive'),
       ];
@@ -467,6 +469,7 @@ export class InitCommand {
     const directories = [
       ratchetPath,
       path.join(ratchetPath, 'features'),
+      path.join(ratchetPath, 'standards'),
       path.join(ratchetPath, 'changes'),
       path.join(ratchetPath, 'changes', 'archive'),
     ];

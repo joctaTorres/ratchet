@@ -11,3 +11,4 @@ export { getApplyChangeSkillTemplate, getRctApplyCommandTemplate } from './workf
 export { getArchiveChangeSkillTemplate, getRctArchiveCommandTemplate } from './workflows/archive-change.js';
 export { getVerifyChangeSkillTemplate, getRctVerifyCommandTemplate } from './workflows/verify-change.js';
 export { getRctProposeSkillTemplate, getRctProposeCommandTemplate } from './workflows/propose.js';
+export { getRctProposeStandardSkillTemplate, getRctProposeStandardCommandTemplate } from './workflows/propose-standard.js';

@@ -8,9 +8,9 @@ import {
 
 describe('skill-generation', () => {
   describe('getSkillTemplates', () => {
-    it('should return the four generated skill templates', () => {
+    it('should return the generated skill templates', () => {
       const templates = getSkillTemplates();
-      expect(templates).toHaveLength(4);
+      expect(templates).toHaveLength(5);
     });
 
     it('should have unique directory names', () => {
@@ -28,6 +28,7 @@ describe('skill-generation', () => {
       expect(dirNames).toContain('ratchet-archive-change');
       expect(dirNames).toContain('ratchet-verify-change');
       expect(dirNames).toContain('ratchet-propose');
+      expect(dirNames).toContain('ratchet-propose-standard');
       // explore is internal-only and is never generated
       expect(dirNames).not.toContain('ratchet-explore');
     });
@@ -84,9 +85,9 @@ describe('skill-generation', () => {
   });
 
   describe('getCommandTemplates', () => {
-    it('should return the four generated command templates', () => {
+    it('should return the generated command templates', () => {
       const templates = getCommandTemplates();
-      expect(templates).toHaveLength(4);
+      expect(templates).toHaveLength(5);
     });
 
     it('should have unique IDs', () => {
@@ -104,6 +105,7 @@ describe('skill-generation', () => {
       expect(ids).toContain('archive');
       expect(ids).toContain('verify');
       expect(ids).toContain('propose');
+      expect(ids).toContain('propose-standard');
       // explore is internal-only and is never generated
       expect(ids).not.toContain('explore');
     });
@@ -134,9 +136,9 @@ describe('skill-generation', () => {
   });
 
   describe('getCommandContents', () => {
-    it('should return the four generated command contents', () => {
+    it('should return the generated command contents', () => {
       const contents = getCommandContents();
-      expect(contents).toHaveLength(4);
+      expect(contents).toHaveLength(5);
     });
 
     it('should have valid content structure', () => {

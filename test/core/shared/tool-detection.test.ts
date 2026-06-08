@@ -27,12 +27,13 @@ describe('tool-detection', () => {
   });
 
   describe('SKILL_NAMES', () => {
-    it('should contain the four generated skill names', () => {
-      expect(SKILL_NAMES).toHaveLength(4);
+    it('should contain the generated skill names', () => {
+      expect(SKILL_NAMES).toHaveLength(5);
       expect(SKILL_NAMES).toContain('ratchet-propose');
       expect(SKILL_NAMES).toContain('ratchet-apply-change');
       expect(SKILL_NAMES).toContain('ratchet-verify-change');
       expect(SKILL_NAMES).toContain('ratchet-archive-change');
+      expect(SKILL_NAMES).toContain('ratchet-propose-standard');
       expect(SKILL_NAMES).not.toContain('ratchet-explore');
     });
   });

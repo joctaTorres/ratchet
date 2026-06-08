@@ -10,6 +10,7 @@ import { ListCommand } from '../core/list.js';
 import { ArchiveCommand } from '../core/archive.js';
 import { ViewCommand } from '../core/view.js';
 import { ValidateCommand } from '../commands/validate.js';
+import { templateCommand, type TemplateOptions } from '../commands/template.js';
 import {
   statusCommand,
   instructionsCommand,
@@ -285,6 +286,20 @@ program
       } else {
         await instructionsCommand(artifactId, options);
       }
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('template <name>')
+  .description('Print a schema template (e.g. "standard") from the canonical templates dir')
+  .option('--schema <name>', `Schema to read the template from (default: ${DEFAULT_SCHEMA})`)
+  .action(async (name: string, options: TemplateOptions) => {
+    try {
+      await templateCommand(name, options);
     } catch (error) {
       console.log();
       ora().fail(`Error: ${(error as Error).message}`);

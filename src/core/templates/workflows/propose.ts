@@ -27,8 +27,9 @@ When ready to implement, run /rct:apply
 1. **Explore first when the request is unclear, then derive a name**
 
    If the request is vague or you cannot confidently describe the behavior as
-   Gherkin scenarios, use the **AskUserQuestion tool** (open-ended, no preset
-   options) to clarify before scaffolding:
+   Gherkin scenarios, ask the user to clarify before scaffolding — use a
+   structured-question tool such as AskUserQuestion (open-ended, no preset
+   options) if your agent has one, otherwise ask in plain prose:
    > "What change do you want to work on? Describe the behavior you want - who does what, and what should happen."
 
    Ask follow-ups until you can name the capability and sketch at least one
@@ -66,6 +67,7 @@ When ready to implement, run /rct:apply
       - The instructions JSON includes:
         - \`context\`: Project background (constraints for you - do NOT include in output)
         - \`rules\`: Artifact-specific rules (constraints for you - do NOT include in output)
+        - \`standards\`: Active project standards (array of \`{ name, tag, fileName, content }\`) the change must follow
         - \`template\`: The structure to use for your output file
         - \`instruction\`: Schema-specific guidance for this artifact type
         - \`resolvedOutputPath\`: Resolved path or pattern to write the artifact
@@ -73,6 +75,15 @@ When ready to implement, run /rct:apply
       - Read any completed dependency files for context
       - Create the artifact file using \`template\` as the structure and write it to \`resolvedOutputPath\`
       - Apply \`context\` and \`rules\` as constraints - but do NOT copy them into the file
+      - Embed the applicable \`standards\` into the artifact: the plan's \`## Design\` and
+        \`## Tasks\` should reflect what each relevant standard requires, and the features
+        should cover behavior the standards demand. Apply (which never reads standards)
+        relies on the plan already encoding them, so make them concrete here.
+      - Record which standards the change follows: collect the \`tag\` of every standard
+        you embedded and write them to the change's \`.ratchet.yaml\` as a
+        \`standards: [<tag>…]\` list (omit the field entirely when the change follows no
+        particular standard). These tags are validated against \`.ratchet/standards/\` and
+        are materialized into the feature store on archive.
       - Show brief progress: "Created <artifact-id>"
 
    b. **Continue until all \`applyRequires\` artifacts are complete**
@@ -81,7 +92,7 @@ When ready to implement, run /rct:apply
       - Stop when all \`applyRequires\` artifacts are done
 
    c. **If an artifact requires user input** (unclear context):
-      - Use **AskUserQuestion tool** to clarify
+      - Ask the user to clarify (use a structured-question tool such as AskUserQuestion if your agent has one)
       - Then continue with creation
 
 5. **Show final status**
@@ -142,8 +153,9 @@ When ready to implement, run /rct:apply
 1. **Explore first when the request is unclear, then derive a name**
 
    If the request is vague or you cannot confidently describe the behavior as
-   Gherkin scenarios, use the **AskUserQuestion tool** (open-ended, no preset
-   options) to clarify before scaffolding:
+   Gherkin scenarios, ask the user to clarify before scaffolding — use a
+   structured-question tool such as AskUserQuestion (open-ended, no preset
+   options) if your agent has one, otherwise ask in plain prose:
    > "What change do you want to work on? Describe the behavior you want - who does what, and what should happen."
 
    Ask follow-ups until you can name the capability and sketch at least one
@@ -181,6 +193,7 @@ When ready to implement, run /rct:apply
       - The instructions JSON includes:
         - \`context\`: Project background (constraints for you - do NOT include in output)
         - \`rules\`: Artifact-specific rules (constraints for you - do NOT include in output)
+        - \`standards\`: Active project standards (array of \`{ name, tag, fileName, content }\`) the change must follow
         - \`template\`: The structure to use for your output file
         - \`instruction\`: Schema-specific guidance for this artifact type
         - \`resolvedOutputPath\`: Resolved path or pattern to write the artifact
@@ -188,6 +201,15 @@ When ready to implement, run /rct:apply
       - Read any completed dependency files for context
       - Create the artifact file using \`template\` as the structure and write it to \`resolvedOutputPath\`
       - Apply \`context\` and \`rules\` as constraints - but do NOT copy them into the file
+      - Embed the applicable \`standards\` into the artifact: the plan's \`## Design\` and
+        \`## Tasks\` should reflect what each relevant standard requires, and the features
+        should cover behavior the standards demand. Apply (which never reads standards)
+        relies on the plan already encoding them, so make them concrete here.
+      - Record which standards the change follows: collect the \`tag\` of every standard
+        you embedded and write them to the change's \`.ratchet.yaml\` as a
+        \`standards: [<tag>…]\` list (omit the field entirely when the change follows no
+        particular standard). These tags are validated against \`.ratchet/standards/\` and
+        are materialized into the feature store on archive.
       - Show brief progress: "Created <artifact-id>"
 
    b. **Continue until all \`applyRequires\` artifacts are complete**
@@ -196,7 +218,7 @@ When ready to implement, run /rct:apply
       - Stop when all \`applyRequires\` artifacts are done
 
    c. **If an artifact requires user input** (unclear context):
-      - Use **AskUserQuestion tool** to clarify
+      - Ask the user to clarify (use a structured-question tool such as AskUserQuestion if your agent has one)
       - Then continue with creation
 
 5. **Show final status**

@@ -4,7 +4,8 @@ import path from 'path';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
 import { Validator } from './validation/validator.js';
 import chalk from 'chalk';
-import { applyFeatures } from './features-apply.js';
+import { applyFeatures, materializeStandardLinks } from './features-apply.js';
+import { readDeclaredStandardTags } from '../utils/change-metadata.js';
 
 /**
  * Recursively copy a directory. Used when fs.rename fails (e.g. EPERM on Windows).
@@ -130,6 +131,20 @@ export class ArchiveCommand {
         }
       }
 
+      // Validate the standards link (duplicate tags, unknown references) — blocking on ERROR.
+      const standardsReport = validator.validateStandards(changeDir);
+      if (!standardsReport.valid) {
+        hasValidationErrors = true;
+        console.log(chalk.red(`\nValidation errors in standards links:`));
+        for (const issue of standardsReport.issues) {
+          if (issue.level === 'ERROR') {
+            console.log(chalk.red(`  ✗ ${issue.message}`));
+          } else if (issue.level === 'WARNING') {
+            console.log(chalk.yellow(`  ⚠ ${issue.message}`));
+          }
+        }
+      }
+
       if (hasValidationErrors) {
         console.log(chalk.red('\nValidation failed. Please fix the errors before archiving.'));
         console.log(chalk.yellow('To skip validation (not recommended), use --no-validate flag.'));
@@ -213,6 +228,15 @@ export class ArchiveCommand {
             `Totals: +${result.added} added, ~${result.overwritten} overwritten, -${result.deleted} deleted`
           );
           console.log('Feature store updated successfully.');
+        }
+
+        // Materialize the change's standard links into the store: forward links
+        // into the per-capability sidecars and the regenerated reverse blocks on
+        // the standards. A change that declares no standards is a no-op here.
+        const tags = readDeclaredStandardTags(changeDir);
+        if (tags.length > 0) {
+          await materializeStandardLinks(targetPath, changeName, tags);
+          console.log(`Standard links materialized for: ${tags.join(', ')}`);
         }
       }
     }

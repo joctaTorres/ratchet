@@ -420,6 +420,56 @@ rules:
       });
     });
 
+    describe('standards integration', () => {
+      function writeStandard(name: string, content: string): void {
+        const dir = path.join(tempDir, '.ratchet', 'standards');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, name), content);
+      }
+
+      it('surfaces the active standards for the plan artifact', () => {
+        writeStandard('testing.md', '# Testing\n\nEvery change has tests.');
+        writeStandard('security.md', '# Security\n\nValidate all input.');
+
+        const context = loadChangeContext(tempDir, 'my-change');
+        const instructions = generateInstructions(context, 'plan', tempDir);
+
+        expect(instructions.standards).toBeDefined();
+        expect(instructions.standards).toHaveLength(2);
+        const names = instructions.standards!.map((s) => s.name);
+        expect(names).toContain('testing');
+        expect(names).toContain('security');
+        // Standards are a separate field, never folded into the template
+        expect(instructions.template).not.toContain('Every change has tests.');
+      });
+
+      it('surfaces the active standards for the features artifact', () => {
+        writeStandard('testing.md', '# Testing\n\nEvery change has tests.');
+
+        const context = loadChangeContext(tempDir, 'my-change');
+        const instructions = generateInstructions(context, 'features', tempDir);
+
+        expect(instructions.standards).toBeDefined();
+        expect(instructions.standards!.map((s) => s.name)).toEqual(['testing']);
+      });
+
+      it('returns undefined standards when the library is empty', () => {
+        fs.mkdirSync(path.join(tempDir, '.ratchet', 'standards'), { recursive: true });
+
+        const context = loadChangeContext(tempDir, 'my-change');
+        const instructions = generateInstructions(context, 'plan', tempDir);
+
+        expect(instructions.standards).toBeUndefined();
+      });
+
+      it('returns undefined standards when the library is absent', () => {
+        const context = loadChangeContext(tempDir, 'my-change');
+        const instructions = generateInstructions(context, 'plan', tempDir);
+
+        expect(instructions.standards).toBeUndefined();
+      });
+    });
+
     describe('validation and warnings', () => {
       let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
 

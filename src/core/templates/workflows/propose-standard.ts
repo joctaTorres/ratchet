@@ -23,7 +23,7 @@ what the standard should enforce, ask before writing.
 
 1. **Understand the standard**
 
-   If the concern or its rules are unclear, use the **AskUserQuestion tool** to clarify:
+   If the concern or its rules are unclear, ask the user to clarify — use a structured-question tool such as AskUserQuestion if your agent has one, otherwise ask in plain prose:
    > "What should this standard enforce? Name the concern (testing, security,
    > architecture, design, …) and the concrete guidelines it should require."
 
@@ -48,34 +48,18 @@ what the standard should enforce, ask before writing.
 
 5. **Write the standard**
 
-   Create \`.ratchet/standards/<name>.md\` following this structure. The \`tag\` in the
-   frontmatter is the standard's stable identifier — pick a short, unique kebab-case
-   tag (usually the same as the file name) that no other standard in
-   \`.ratchet/standards/\` already uses. Changes reference a standard by this tag, so it
-   must stay unique across the library.
-
-   \`\`\`markdown
-   ---
-   tag: <unique-kebab-tag>
-   ---
-
-   # <Standard name>
-
-   > Concern: <testing | security | architecture | design | …>
-
-   ## Intent
-
-   <1-2 sentences: what this standard ensures and why it matters.>
-
-   ## Guidelines
-
-   - <A concrete, checkable rule this standard enforces>
-   - <Another guideline — prefer specifics over generalities>
-
-   ## Applies to
-
-   <When this standard is relevant — e.g. every change, API endpoints, UI components.>
+   Get the canonical template — do not hand-write its structure:
+   \`\`\`bash
+   ratchet template standard
    \`\`\`
+   Create \`.ratchet/standards/<name>.md\` following exactly the structure it prints
+   (the same templates dir the other artifacts use, so the standard stays in sync with
+   the schema).
+
+   Fill in the \`tag\` frontmatter field with the standard's stable identifier — pick a
+   short, unique kebab-case tag (usually the same as the file name) that no other
+   standard in \`.ratchet/standards/\` already uses. Changes reference a standard by this
+   tag, so it must stay unique across the library.
 
    Keep guidelines concrete and checkable: propose and verify reason over this prose,
    so vague aspirations ("write good code") are far less useful than specific rules

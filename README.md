@@ -138,6 +138,7 @@ ratchet archive add-login -y                      # sync features → store, arc
 | `validate [item]` | Validate a change's features + plan (`--all`, `--changes`, `--specs`) |
 | `status --change <name>` | Artifact completion status + what apply requires (`--json`) |
 | `instructions [artifact\|apply]` | Enriched, schema-driven guidance for an agent (`--json`) |
+| `template <name>` | Print a canonical schema template (e.g. `standard`) so authoring follows the schema |
 | `list` | List active changes (or `--specs` for the feature store) |
 | `view` | Interactive dashboard of changes and features |
 | `archive [name]` | Sync features into the store and archive the change |

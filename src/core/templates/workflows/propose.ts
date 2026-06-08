@@ -27,8 +27,9 @@ When ready to implement, run /rct:apply
 1. **Explore first when the request is unclear, then derive a name**
 
    If the request is vague or you cannot confidently describe the behavior as
-   Gherkin scenarios, use the **AskUserQuestion tool** (open-ended, no preset
-   options) to clarify before scaffolding:
+   Gherkin scenarios, ask the user to clarify before scaffolding — use a
+   structured-question tool such as AskUserQuestion (open-ended, no preset
+   options) if your agent has one, otherwise ask in plain prose:
    > "What change do you want to work on? Describe the behavior you want - who does what, and what should happen."
 
    Ask follow-ups until you can name the capability and sketch at least one
@@ -91,7 +92,7 @@ When ready to implement, run /rct:apply
       - Stop when all \`applyRequires\` artifacts are done
 
    c. **If an artifact requires user input** (unclear context):
-      - Use **AskUserQuestion tool** to clarify
+      - Ask the user to clarify (use a structured-question tool such as AskUserQuestion if your agent has one)
       - Then continue with creation
 
 5. **Show final status**
@@ -152,8 +153,9 @@ When ready to implement, run /rct:apply
 1. **Explore first when the request is unclear, then derive a name**
 
    If the request is vague or you cannot confidently describe the behavior as
-   Gherkin scenarios, use the **AskUserQuestion tool** (open-ended, no preset
-   options) to clarify before scaffolding:
+   Gherkin scenarios, ask the user to clarify before scaffolding — use a
+   structured-question tool such as AskUserQuestion (open-ended, no preset
+   options) if your agent has one, otherwise ask in plain prose:
    > "What change do you want to work on? Describe the behavior you want - who does what, and what should happen."
 
    Ask follow-ups until you can name the capability and sketch at least one
@@ -216,7 +218,7 @@ When ready to implement, run /rct:apply
       - Stop when all \`applyRequires\` artifacts are done
 
    c. **If an artifact requires user input** (unclear context):
-      - Use **AskUserQuestion tool** to clarify
+      - Ask the user to clarify (use a structured-question tool such as AskUserQuestion if your agent has one)
       - Then continue with creation
 
 5. **Show final status**

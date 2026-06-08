@@ -14,6 +14,10 @@ describe('propose-standard workflow templates', () => {
     expect(skill.instructions).toContain('.ratchet/standards/');
     // ...and never creates a change.
     expect(skill.instructions).toMatch(/do not create a change/i);
+    // Fetches the canonical template at runtime instead of embedding a copy
+    // (single source of truth = schemas/ratchet/templates/standard.md).
+    expect(skill.instructions).toContain('ratchet template standard');
+    expect(skill.instructions).not.toContain('> Concern:');
   });
 
   it('exposes a command template sharing the same authoring body', () => {

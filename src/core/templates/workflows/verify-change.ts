@@ -14,7 +14,7 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
 
 1. **If no change name provided, prompt for selection**
 
-   Run \`ratchet list --json\` to get available changes. Use the **AskUserQuestion tool** to let the user select.
+   Run \`ratchet list --json\` to get available changes. Ask the user to select one — use a structured-question tool such as AskUserQuestion if your agent has one, otherwise ask in plain prose.
 
    Mark changes with incomplete tasks as "(In Progress)".
 

@@ -9,6 +9,37 @@ import { DEFAULT_SCHEMA_NAME } from '../core/config.js';
 const METADATA_FILENAME = '.ratchet.yaml';
 
 /**
+ * Reads the change's declared standard tags from `.ratchet.yaml` WITHOUT validating
+ * the `schema` field. Returns an empty list when the file is absent, malformed, or
+ * carries no `standards` array.
+ *
+ * This is the single reader shared by validation and archive so the two can never
+ * diverge: standard links are derived purely from the declared `standards` list,
+ * independent of whether the change's `schema` resolves. (Going through
+ * `readChangeMetadata` here would throw on an unknown schema and silently drop the
+ * declared tags.) Never throws.
+ *
+ * @param changeDir - The change directory containing `.ratchet.yaml`
+ * @returns The declared standard tags, or `[]` when none can be read
+ */
+export function readDeclaredStandardTags(changeDir: string): string[] {
+  const metaPath = path.join(changeDir, METADATA_FILENAME);
+  if (!fs.existsSync(metaPath)) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = yaml.parse(fs.readFileSync(metaPath, 'utf-8'));
+  } catch {
+    return [];
+  }
+
+  if (!parsed || typeof parsed !== 'object') return [];
+  const value = (parsed as Record<string, unknown>).standards;
+  if (!Array.isArray(value)) return [];
+  return value.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0);
+}
+
+/**
  * Error thrown when change metadata validation fails.
  */
 export class ChangeMetadataError extends Error {

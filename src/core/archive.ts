@@ -5,7 +5,7 @@ import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progre
 import { Validator } from './validation/validator.js';
 import chalk from 'chalk';
 import { applyFeatures, materializeStandardLinks } from './features-apply.js';
-import { readChangeMetadata } from '../utils/change-metadata.js';
+import { readDeclaredStandardTags } from '../utils/change-metadata.js';
 
 /**
  * Recursively copy a directory. Used when fs.rename fails (e.g. EPERM on Windows).
@@ -233,7 +233,7 @@ export class ArchiveCommand {
         // Materialize the change's standard links into the store: forward links
         // into the per-capability sidecars and the regenerated reverse blocks on
         // the standards. A change that declares no standards is a no-op here.
-        const tags = this.readDeclaredStandards(changeDir);
+        const tags = readDeclaredStandardTags(changeDir);
         if (tags.length > 0) {
           await materializeStandardLinks(targetPath, changeName, tags);
           console.log(`Standard links materialized for: ${tags.join(', ')}`);
@@ -312,19 +312,5 @@ export class ArchiveCommand {
   private getArchiveDate(): string {
     // Returns date in YYYY-MM-DD format
     return new Date().toISOString().split('T')[0];
-  }
-
-  /**
-   * Read the change's declared standard tags from its `.ratchet.yaml`. Returns
-   * an empty list when none are declared or the metadata cannot be read, so a
-   * standards-less change cleanly materializes nothing.
-   */
-  private readDeclaredStandards(changeDir: string): string[] {
-    try {
-      const metadata = readChangeMetadata(changeDir);
-      return metadata?.standards ?? [];
-    } catch {
-      return [];
-    }
   }
 }

@@ -1,8 +1,7 @@
 import { ZodError } from 'zod';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import path from 'path';
 import fg from 'fast-glob';
-import * as yaml from 'yaml';
 import {
   FeatureSchema,
   Feature,
@@ -17,6 +16,7 @@ import {
   VALIDATION_MESSAGES
 } from './constants.js';
 import { loadStandards } from '../standards.js';
+import { readDeclaredStandardTags } from '../../utils/change-metadata.js';
 
 export class Validator {
   private strictMode: boolean;
@@ -322,7 +322,7 @@ export class Validator {
     }
 
     // Check that every tag the change references resolves to a standard.
-    for (const tag of this.readDeclaredStandardTags(changeDir)) {
+    for (const tag of readDeclaredStandardTags(changeDir)) {
       if (!seenTags.has(tag)) {
         issues.push({
           level: 'ERROR',
@@ -334,27 +334,6 @@ export class Validator {
 
     return this.createReport(issues);
   }
-
-  /**
-   * Read the change's declared standard tags from `.ratchet.yaml`. Returns an
-   * empty list when the file is absent, unreadable, malformed, or carries no
-   * `standards` array — link validation never throws on a bad metadata file.
-   */
-  private readDeclaredStandardTags(changeDir: string): string[] {
-    const metaPath = path.join(changeDir, '.ratchet.yaml');
-    if (!existsSync(metaPath)) return [];
-    let parsed: unknown;
-    try {
-      parsed = yaml.parse(readFileSync(metaPath, 'utf-8'));
-    } catch {
-      return [];
-    }
-    if (!parsed || typeof parsed !== 'object') return [];
-    const value = (parsed as Record<string, unknown>).standards;
-    if (!Array.isArray(value)) return [];
-    return value.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0);
-  }
-
 
   private createReport(issues: ValidationIssue[]): ValidationReport {
     const errors = issues.filter(i => i.level === 'ERROR').length;

@@ -55,13 +55,14 @@ describe('standard links on archive', () => {
   /** Scaffold an active change with one or more features + optional standards/tombstone. */
   async function scaffoldChange(
     name: string,
-    opts: { features: string[]; standards?: string[]; deleted?: string[] }
+    opts: { features: string[]; standards?: string[]; deleted?: string[]; schema?: string }
   ): Promise<void> {
     const changeDir = path.join(root, RATCHET_DIR_NAME, 'changes', name);
+    const schema = opts.schema ?? 'ratchet';
     const meta =
       opts.standards && opts.standards.length > 0
-        ? `schema: ratchet\nstandards:\n${opts.standards.map((s) => `  - ${s}`).join('\n')}\n`
-        : 'schema: ratchet\n';
+        ? `schema: ${schema}\nstandards:\n${opts.standards.map((s) => `  - ${s}`).join('\n')}\n`
+        : `schema: ${schema}\n`;
     await writeFile(path.join(changeDir, '.ratchet.yaml'), meta);
     await writeFile(path.join(changeDir, 'plan.md'), PLAN(name));
     for (const rel of opts.features) {
@@ -92,6 +93,28 @@ describe('standard links on archive', () => {
     const sidecar = await readYaml(sidecarPath('auth'));
     expect(sidecar.features['login.feature']).toEqual(['security']);
     expect(sidecar.features['logout.feature']).toEqual(['security']);
+  });
+
+  it('materializes links even when the change declares an unknown schema', async () => {
+    // Regression: archive read the declared tags via readChangeMetadata, which
+    // throws on an unknown schema and was silently caught → no links materialized.
+    // The declared standards must drive materialization independent of the schema.
+    await writeStandard('security.md', 'security');
+    await scaffoldChange('add-auth', {
+      features: ['auth/login.feature'],
+      standards: ['security'],
+      schema: 'not-a-real-schema',
+    });
+
+    // Validation stays ON: the change passes validateStandards (the tag resolves),
+    // exactly the reviewer's scenario — it must then archive WITH links, not silently
+    // drop them.
+    await new ArchiveCommand().execute('add-auth', { yes: true });
+
+    const sidecar = await readYaml(sidecarPath('auth'));
+    expect(sidecar.features['login.feature']).toEqual(['security']);
+    const standard = await fs.readFile(standardPath('security.md'), 'utf-8');
+    expect(standard).toContain('- auth/login.feature');
   });
 
   it('materializes the generated reverse block on the standard', async () => {

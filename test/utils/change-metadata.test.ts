@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import {
   writeChangeMetadata,
   readChangeMetadata,
+  readDeclaredStandardTags,
   resolveSchemaForChange,
   validateSchemaName,
   ChangeMetadataError,
@@ -343,5 +344,55 @@ describe('validateSchemaName', () => {
     expect(() => validateSchemaName('unknown-schema')).toThrow(
       /Unknown schema 'unknown-schema'/
     );
+  });
+});
+
+describe('readDeclaredStandardTags', () => {
+  let changeDir: string;
+
+  beforeEach(async () => {
+    changeDir = path.join(os.tmpdir(), `ratchet-stdtags-${randomUUID()}`);
+    await fs.mkdir(changeDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(changeDir, { recursive: true, force: true });
+  });
+
+  async function writeMeta(content: string): Promise<void> {
+    await fs.writeFile(path.join(changeDir, '.ratchet.yaml'), content, 'utf-8');
+  }
+
+  it('returns the declared tags', async () => {
+    await writeMeta('schema: ratchet\nstandards:\n  - security\n  - testing\n');
+    expect(readDeclaredStandardTags(changeDir)).toEqual(['security', 'testing']);
+  });
+
+  it('returns the tags even when the schema is unknown (does not validate schema)', async () => {
+    // Regression: the archive reader previously went through readChangeMetadata,
+    // which throws on an unknown schema and silently dropped the declared tags —
+    // so links never materialized. This reader must surface the tags regardless.
+    await writeMeta('schema: not-a-real-schema\nstandards:\n  - security\n');
+    expect(() => readChangeMetadata(changeDir)).toThrow(); // the divergent reader throws
+    expect(readDeclaredStandardTags(changeDir)).toEqual(['security']); // this one does not
+  });
+
+  it('returns [] when no standards are declared', async () => {
+    await writeMeta('schema: ratchet\n');
+    expect(readDeclaredStandardTags(changeDir)).toEqual([]);
+  });
+
+  it('returns [] when the metadata file is absent', () => {
+    expect(readDeclaredStandardTags(changeDir)).toEqual([]);
+  });
+
+  it('returns [] for malformed YAML rather than throwing', async () => {
+    await writeMeta('schema: ratchet\nstandards: [unterminated\n');
+    expect(readDeclaredStandardTags(changeDir)).toEqual([]);
+  });
+
+  it('ignores non-string entries in the standards list', async () => {
+    await writeMeta('schema: ratchet\nstandards:\n  - security\n  - 42\n  - ""\n');
+    expect(readDeclaredStandardTags(changeDir)).toEqual(['security']);
   });
 });

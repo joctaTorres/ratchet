@@ -1,0 +1,134 @@
+/**
+ * `ratchet batch status [name]`
+ *
+ * Renders batch status derived live from change state on disk, as text or
+ * `--json`. JSON includes each phase and change with status, task progress,
+ * after edges, the next step, and whether it is gated or blocked.
+ */
+
+import chalk from 'chalk';
+import { resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
+import { loadBatchManifest } from '../../core/batch/manifest.js';
+import { computeBatchStatus, type BatchStatusInfo } from '../../core/batch/status.js';
+import { resolveBatchSettings } from '../../core/batch/config.js';
+import { resolveBatchName } from './shared.js';
+
+export interface BatchStatusOptions {
+  json?: boolean;
+}
+
+export async function batchStatusCommand(
+  name: string | undefined,
+  options: BatchStatusOptions = {}
+): Promise<void> {
+  const planningHome = resolveCurrentPlanningHomeSync();
+  const batchName = resolveBatchName(planningHome.root, name);
+  const manifest = loadBatchManifest(planningHome.root, batchName);
+  const status = await computeBatchStatus(planningHome.root, manifest);
+  const { settings } = resolveBatchSettings(planningHome.root, manifest);
+
+  if (options.json) {
+    console.log(JSON.stringify(toJson(status, settings.gate), null, 2));
+    return;
+  }
+
+  printText(status);
+}
+
+function toJson(status: BatchStatusInfo, gate: string): unknown {
+  return {
+    name: status.name,
+    status: status.status,
+    progress: status.progress,
+    changeCount: status.changeCount,
+    doneCount: status.doneCount,
+    gate,
+    next: status.next
+      ? {
+          ...status.next,
+          gated: false,
+          blocked: false,
+        }
+      : null,
+    phases: status.phases.map((phase) => ({
+      name: phase.name,
+      goal: phase.goal,
+      success: phase.success,
+      status: phase.status,
+      gated: phase.gated,
+      gatedBy: phase.gatedBy ?? null,
+      changes: phase.changes.map((change) => ({
+        name: change.name,
+        status: change.status,
+        progress: change.progress,
+        after: change.after,
+        blockedBy: change.blockedBy,
+        exists: change.exists,
+        archived: change.archived,
+      })),
+    })),
+  };
+}
+
+function symbolFor(statusValue: string): string {
+  switch (statusValue) {
+    case 'done':
+      return chalk.green('✓');
+    case 'in-progress':
+      return chalk.yellow('◉');
+    case 'ready':
+      return chalk.cyan('○');
+    case 'blocked':
+      return chalk.red('✗');
+    default:
+      return chalk.gray('·');
+  }
+}
+
+function printText(status: BatchStatusInfo): void {
+  console.log(chalk.bold(`\nBatch: ${status.name}`));
+  const pct =
+    status.progress.total > 0
+      ? Math.round((status.progress.completed / status.progress.total) * 100)
+      : 0;
+  console.log(
+    chalk.dim(
+      `Status: ${status.status} · ${status.doneCount}/${status.changeCount} changes done · ${status.progress.completed}/${status.progress.total} tasks (${pct}%)`
+    )
+  );
+
+  if (status.changeCount === 0) {
+    console.log(chalk.dim('\nNo changes yet. Add change intents to the manifest to begin.'));
+    return;
+  }
+
+  for (const phase of status.phases) {
+    const gate = phase.gated ? chalk.red(` (gated by ${phase.gatedBy})`) : '';
+    console.log(`\n${chalk.bold(phase.name)} ${chalk.dim(`— ${phase.goal}`)}${gate}`);
+    for (const change of phase.changes) {
+      const after =
+        change.after.length > 0 ? chalk.dim(` after: ${change.after.join(', ')}`) : '';
+      const progress =
+        change.progress.total > 0
+          ? chalk.dim(` [${change.progress.completed}/${change.progress.total}]`)
+          : '';
+      const blocked =
+        change.status === 'blocked'
+          ? chalk.red(` blocked by ${change.blockedBy.join(', ')}`)
+          : '';
+      console.log(
+        `  ${symbolFor(change.status)} ${change.name}${progress}${after}${blocked}`
+      );
+    }
+  }
+
+  if (status.next) {
+    console.log(
+      chalk.bold(`\nNext: ${status.next.change} (phase ${status.next.phase})`)
+    );
+  } else if (status.status === 'done') {
+    console.log(chalk.green('\nAll changes done.'));
+  } else {
+    console.log(chalk.dim('\nNo ready step (blocked or gated).'));
+  }
+}

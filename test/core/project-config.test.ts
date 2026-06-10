@@ -6,6 +6,8 @@ import {
   readProjectConfig,
   validateConfigRules,
   suggestSchemas,
+  readModuleName,
+  readModuleRegistry,
 } from '../../src/core/project-config.js';
 
 describe('project-config', () => {
@@ -605,6 +607,50 @@ rules:
       // 'abcdefghijk' has large Levenshtein distance from all schemas
       expect(message).not.toContain('Did you mean');
       expect(message).toContain('Available schemas:');
+    });
+  });
+
+  describe('nested-planning-home fields', () => {
+    function writeConfig(root: string, body: string): void {
+      fs.mkdirSync(path.join(root, '.ratchet'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.ratchet', 'config.yaml'), body, 'utf-8');
+    }
+
+    it('parses a modules registry', () => {
+      writeConfig(tempDir, 'schema: ratchet\nmodules:\n  - packages/api\n  - packages/web\n');
+      const config = readProjectConfig(tempDir);
+      expect(config?.modules).toEqual(['packages/api', 'packages/web']);
+    });
+
+    it('parses a module name override', () => {
+      writeConfig(tempDir, 'schema: ratchet\nname: api\n');
+      const config = readProjectConfig(tempDir);
+      expect(config?.name).toBe('api');
+    });
+
+    it('warns and ignores a non-array modules field', () => {
+      writeConfig(tempDir, 'schema: ratchet\nmodules: packages/api\n');
+      const config = readProjectConfig(tempDir);
+      expect(config?.modules).toBeUndefined();
+      expect(consoleWarnSpy).toHaveBeenCalled();
+    });
+
+    it('readModuleName returns the override or undefined', () => {
+      writeConfig(tempDir, 'schema: ratchet\nname: api\n');
+      expect(readModuleName(tempDir)).toBe('api');
+    });
+
+    it('readModuleName returns undefined when no name is set', () => {
+      writeConfig(tempDir, 'schema: ratchet\n');
+      expect(readModuleName(tempDir)).toBeUndefined();
+    });
+
+    it('readModuleRegistry distinguishes no-registry from declared', () => {
+      writeConfig(tempDir, 'schema: ratchet\n');
+      expect(readModuleRegistry(tempDir)).toBeUndefined();
+
+      writeConfig(tempDir, 'schema: ratchet\nmodules:\n  - packages/api/\n');
+      expect(readModuleRegistry(tempDir)).toEqual(['packages/api']);
     });
   });
 });

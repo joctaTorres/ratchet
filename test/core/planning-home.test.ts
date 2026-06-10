@@ -8,6 +8,10 @@ import {
   type PlanningHome,
   formatChangeLocation,
   getChangeDir,
+  getModuleName,
+  getParentPlanningHome,
+  getRootPlanningHome,
+  isModulePlanningHome,
   resolveCurrentPlanningHomeSync,
 } from '../../src/core/planning-home.js';
 
@@ -66,5 +70,64 @@ describe('planning home paths', () => {
         allowImplicitRepoRoot: false,
       })
     ).toThrow(/planning home/u);
+  });
+});
+
+describe('nested planning homes', () => {
+  const tempDirs: string[] = [];
+
+  function makeRepo(): string {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-nested-'));
+    tempDirs.push(tempDir);
+    return fs.realpathSync.native(tempDir);
+  }
+
+  afterEach(() => {
+    for (const tempDir of tempDirs.splice(0)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('a single-home repo resolves to a parent-less root with no module name', () => {
+    const root = makeRepo();
+    fs.mkdirSync(path.join(root, '.ratchet', 'changes'), { recursive: true });
+
+    const home = resolveCurrentPlanningHomeSync({ startPath: root, allowImplicitRepoRoot: false });
+
+    expect(isModulePlanningHome(home)).toBe(false);
+    expect(getParentPlanningHome(home)).toBeNull();
+    expect(getModuleName(home)).toBeUndefined();
+    expect(getRootPlanningHome(home)).toBe(home);
+  });
+
+  it('a nested .ratchet resolves as a module whose parent is the root', () => {
+    const root = makeRepo();
+    fs.mkdirSync(path.join(root, '.ratchet', 'changes'), { recursive: true });
+    const moduleRoot = path.join(root, 'packages', 'api');
+    fs.mkdirSync(path.join(moduleRoot, '.ratchet', 'changes'), { recursive: true });
+
+    const home = resolveCurrentPlanningHomeSync({
+      startPath: path.join(moduleRoot, 'src'),
+      allowImplicitRepoRoot: false,
+    });
+
+    expect(home.root).toBe(moduleRoot);
+    expect(isModulePlanningHome(home)).toBe(true);
+    const parent = getParentPlanningHome(home);
+    expect(parent?.root).toBe(root);
+    expect(getModuleName(home)).toBe('packages/api');
+    expect(getRootPlanningHome(home).root).toBe(root);
+  });
+
+  it('memoizes parent resolution on the home object', () => {
+    const root = makeRepo();
+    fs.mkdirSync(path.join(root, '.ratchet', 'changes'), { recursive: true });
+    const moduleRoot = path.join(root, 'mod');
+    fs.mkdirSync(path.join(moduleRoot, '.ratchet', 'changes'), { recursive: true });
+
+    const home = resolveCurrentPlanningHomeSync({ startPath: moduleRoot, allowImplicitRepoRoot: false });
+    const first = getParentPlanningHome(home);
+    expect(home.parent).toBe(first);
+    expect(getParentPlanningHome(home)).toBe(first);
   });
 });

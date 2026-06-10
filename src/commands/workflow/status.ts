@@ -6,7 +6,8 @@
 
 import ora from 'ora';
 import chalk from 'chalk';
-import { resolveCurrentPlanningHomeSync, getChangeDir } from '../../core/planning-home.js';
+import { getChangeDir } from '../../core/planning-home.js';
+import { resolvePlanningHomeForCommand } from '../../core/module-discovery.js';
 import {
   loadChangeContext,
   formatChangeStatus,
@@ -28,6 +29,7 @@ export interface StatusOptions {
   change?: string;
   schema?: string;
   json?: boolean;
+  module?: string;
 }
 
 // -----------------------------------------------------------------------------
@@ -38,7 +40,7 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   const spinner = options.json ? undefined : ora('Loading change status...').start();
 
   try {
-    const planningHome = resolveCurrentPlanningHomeSync();
+    const planningHome = await resolvePlanningHomeForCommand({ module: options.module });
     const projectRoot = planningHome.root;
 
     // Handle no-changes case gracefully — status is informational,

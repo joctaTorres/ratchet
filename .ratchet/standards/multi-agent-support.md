@@ -8,14 +8,19 @@ tag: multi-agent-support
 
 ## Intent
 
-Ratchet integrates with every coding agent supported by `ratchet init` — Claude Code,
-Cursor, Codex, GitHub Copilot, and OpenCode (the registry in `src/core/config.ts`).
-Every change must serve all of these agents equally; nothing ratchet generates or
-documents may be tuned for only one agent (e.g. only Claude).
+Ratchet is tool-agnostic by design: it integrates with every coding agent supported
+by `ratchet init` — Claude Code, Cursor, Codex, GitHub Copilot, and OpenCode (the
+registry in `src/core/config.ts`). Every change to this repo must assume and preserve
+that tool-agnosticism; nothing ratchet does, generates, or documents may be tuned for
+only one agent (e.g. only Claude).
 
 ## Guidelines
 
-- Any change that adds or modifies a skill, command, or other init-generated artifact
+- Every change to this repo must treat ratchet as tool-agnostic. Core logic, CLI
+  behavior, generated artifacts, and documentation must work the same regardless of
+  which coding agent drives ratchet — never special-case one agent in shared code
+  paths.
+- Any change that adds or modifies a skill, command, or other generated artifact
   must produce it for **every** agent in the supported-tools registry
   (`src/core/config.ts`), not just one. A new skill that only lands in `.claude/` is
   incomplete.
@@ -35,15 +40,15 @@ documents may be tuned for only one agent (e.g. only Claude).
   registry (`src/core/config.ts`), a `ToolCommandAdapter` registered in
   `src/core/command-generation/registry.ts`, and skills/commands rendered into that
   agent's directory by `ratchet init` — no changes to shared template logic.
-- At proposal time, any change touching init-generated artifacts must enumerate the
-  per-agent outputs (file paths per agent) in its plan, so the multi-agent surface is
-  explicit before implementation starts.
+- At proposal time, any change with an agent-facing surface (skills, commands,
+  templates, docs, CLI output an agent consumes) must enumerate the per-agent
+  outputs (file paths per agent) in its plan, so the multi-agent surface is explicit
+  before implementation starts.
 - Tests for skill/command generation must assert output for all registered agents
   (or iterate the registry), not just a single hard-coded agent.
 
 ## Applies to
 
-Every change that touches `ratchet init`, skill or command generation, shared
-templates, adapters, or any documentation describing how agents drive ratchet.
-Changes to unrelated core logic (parsing, storage, etc.) are exempt unless they alter
-what init generates.
+Every change that alters ratchet — core logic, CLI, `ratchet init`, skill or command
+generation, shared templates, adapters, and any documentation describing how agents
+drive ratchet. All changes in this repo must assume ratchet is tool-agnostic.

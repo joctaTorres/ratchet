@@ -50,4 +50,4 @@ Ratchet currently assumes exactly one `.ratchet` directory per repository, resol
 - [x] 4.2 Make archive fully home-local for features and change relocation (module store, module archive dir)
 - [x] 4.3 Update `materializeStandardLinks` to write reverse `## Implemented by` blocks into the standard's defining home with module-qualified entries; keep forward sidecars module-local
 - [x] 5.1 End-to-end test: monorepo fixture with root + two modules covering every scenario in `features/nested-planning-homes/` (resolution, discovery, addressing, aggregation, standards layering, feature store)
-- [ ] 5.2 Backward-compat test: single-home repo produces byte-identical command output to current behavior
+- [x] 5.2 Backward-compat test: single-home repo produces byte-identical command output to current behavior

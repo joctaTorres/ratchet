@@ -26,7 +26,7 @@ import {
   type PlanningHome,
   relativeModulePath,
 } from './planning-home.js';
-import { readModuleName } from './project-config.js';
+import { readModuleName, readModuleRegistry } from './project-config.js';
 
 const DEFAULT_IGNORE = ['**/node_modules/**', '**/.git/**'];
 
@@ -152,4 +152,47 @@ export async function discoverModules(rootHome: PlanningHome): Promise<Discovere
 
   modules.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
   return modules;
+}
+
+/**
+ * Compare discovered modules against the root `modules:` registry and return
+ * lint warnings. The registry is an optional allowlist — discovery is always
+ * the source of truth, so every warning here is non-fatal:
+ *
+ * - discovered-but-unregistered: a nested `.ratchet` exists on disk but is not
+ *   listed (only reported when a registry is declared at all).
+ * - registered-but-missing: a registry entry has no `.ratchet` on disk.
+ *
+ * Returns an empty list when no registry is declared, so single-home and
+ * unregistered monorepos produce no warnings.
+ */
+export function reconcileModuleRegistry(
+  rootHome: PlanningHome,
+  modules: DiscoveredModule[]
+): string[] {
+  const registry = readModuleRegistry(rootHome.root);
+  if (registry === undefined) {
+    // No registry declared — nothing to lint against.
+    return [];
+  }
+
+  const registered = new Set(registry);
+  const discoveredPaths = new Set(modules.map((m) => m.relativePath));
+  const warnings: string[] = [];
+
+  // Discovered but not registered.
+  for (const mod of modules) {
+    if (!registered.has(mod.relativePath)) {
+      warnings.push(`Module '${mod.relativePath}' is not registered in the root config 'modules:' list.`);
+    }
+  }
+
+  // Registered but missing on disk.
+  for (const entry of registry) {
+    if (!discoveredPaths.has(entry)) {
+      warnings.push(`Registered module '${entry}' has no .ratchet directory on disk.`);
+    }
+  }
+
+  return warnings;
 }

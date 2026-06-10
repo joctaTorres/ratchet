@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { discoverModules } from '../../src/core/module-discovery.js';
+import { discoverModules, reconcileModuleRegistry } from '../../src/core/module-discovery.js';
 import { resolveCurrentPlanningHomeSync } from '../../src/core/planning-home.js';
 import { RATCHET_DIR_NAME } from '../../src/core/config.js';
 
@@ -109,5 +109,53 @@ describe('discoverModules', () => {
 
     const modules = await discoverModules(rootHomeOf(root));
     expect(modules).toEqual([]);
+  });
+});
+
+describe('reconcileModuleRegistry', () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('produces no warnings when no registry is declared', async () => {
+    const root = makeRepo();
+    mkRatchet(root, '');
+    mkRatchet(root, 'packages/api');
+    mkRatchet(root, 'packages/web');
+
+    const home = rootHomeOf(root);
+    const modules = await discoverModules(home);
+    expect(reconcileModuleRegistry(home, modules)).toEqual([]);
+  });
+
+  it('warns about a discovered module missing from the registry', async () => {
+    const root = makeRepo();
+    mkRatchet(root, '', 'schema: ratchet\nmodules:\n  - packages/api\n');
+    mkRatchet(root, 'packages/api');
+    mkRatchet(root, 'packages/web');
+
+    const home = rootHomeOf(root);
+    const modules = await discoverModules(home);
+    const warnings = reconcileModuleRegistry(home, modules);
+
+    // packages/web is still discovered...
+    expect(modules.map((m) => m.relativePath)).toContain('packages/web');
+    // ...and a warning calls it out as unregistered.
+    expect(warnings.some((w) => w.includes('packages/web') && w.includes('not registered'))).toBe(true);
+    expect(warnings.some((w) => w.includes('packages/api'))).toBe(false);
+  });
+
+  it('warns about a registered module missing on disk', async () => {
+    const root = makeRepo();
+    mkRatchet(root, '', 'schema: ratchet\nmodules:\n  - packages/api\n  - packages/legacy\n');
+    mkRatchet(root, 'packages/api');
+
+    const home = rootHomeOf(root);
+    const modules = await discoverModules(home);
+    const warnings = reconcileModuleRegistry(home, modules);
+
+    expect(warnings.some((w) => w.includes('packages/legacy') && w.includes('no .ratchet'))).toBe(true);
   });
 });

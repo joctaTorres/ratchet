@@ -43,7 +43,7 @@ Ratchet currently assumes exactly one `.ratchet` directory per repository, resol
 - [x] 1.2 Extend `PlanningHome` with lazy `parent` resolution (continue walk-up past current root) and `moduleName`; keep single-home repos identical in behavior and output
 - [x] 2.1 Implement `discoverModules(rootHome)` with bounded fast-glob scan, ignore rules (`node_modules`, `.git`, gitignore), no descent past a found module, and module-name derivation from relative path
 - [x] 2.2 Parse optional `modules:` registry in root `config.yaml` and optional `name:` in module `config.yaml` (`src/core/project-config.ts`); error on duplicate module names
-- [ ] 2.3 Emit hybrid discover/verify warnings: discovered-but-unregistered and registered-but-missing, both non-fatal
+- [x] 2.3 Emit hybrid discover/verify warnings: discovered-but-unregistered and registered-but-missing, both non-fatal
 - [ ] 3.1 Add shared `--module <name>` option that resolves the named module's home and threads it through `new change`, `status`, `instructions`, `view`, and `archive`; unknown name errors with the discovered-name list
 - [ ] 3.2 Aggregate root-level `list` across root + discovered modules with module labels; catch per-module load failures as warnings; keep module-level `list` scoped
 - [ ] 4.1 Implement `loadLayeredStandards(home)` (root-first parent chain, module shadows root by tag) and use it for instructions output and `standards:` tag validation

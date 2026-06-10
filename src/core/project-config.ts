@@ -307,6 +307,34 @@ export function suggestSchemas(
 }
 
 /**
+ * Detect whether a home's `.ratchet/config.yaml` exists but cannot be parsed
+ * into a YAML object. Returns an error message in that case, else `undefined`.
+ * Used by root aggregation to degrade a broken module to a warning rather than
+ * failing the whole listing.
+ *
+ * @param homeRoot - The planning-home root (parent of `.ratchet`).
+ */
+export function configLoadError(homeRoot: string): string | undefined {
+  let configPath = path.join(homeRoot, RATCHET_DIR_NAME, 'config.yaml');
+  if (!existsSync(configPath)) {
+    configPath = path.join(homeRoot, RATCHET_DIR_NAME, 'config.yml');
+    if (!existsSync(configPath)) {
+      return undefined; // No config is fine.
+    }
+  }
+  try {
+    const content = readFileSync(configPath, 'utf-8');
+    const raw = parseYaml(content);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return 'config.yaml is not a valid YAML object';
+    }
+  } catch (error) {
+    return `config.yaml could not be parsed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return undefined;
+}
+
+/**
  * Read a module's `name:` override from its `.ratchet/config.yaml`. Returns
  * `undefined` when absent or unparseable, so callers fall back to the relative
  * path. Never throws.

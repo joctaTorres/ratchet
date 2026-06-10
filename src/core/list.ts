@@ -3,13 +3,17 @@ import { RATCHET_DIR_NAME } from './config.js';
 import path from 'path';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
 import fg from 'fast-glob';
-import { resolveCurrentPlanningHomeSync } from './planning-home.js';
+import { getParentPlanningHome, resolveCurrentPlanningHomeSync } from './planning-home.js';
+import { discoverModules, reconcileModuleRegistry } from './module-discovery.js';
+import { configLoadError } from './project-config.js';
 
 interface ChangeInfo {
   name: string;
   completedTasks: number;
   totalTasks: number;
   lastModified: Date;
+  /** Module name when the change belongs to a nested module; undefined for root. */
+  module?: string;
 }
 
 interface ListOptions {
@@ -74,6 +78,40 @@ function formatRelativeTime(date: Date): string {
   }
 }
 
+/**
+ * Collect active changes (excluding `archive`) for a single home's changes dir.
+ * `module` tags each row when listing a nested module. Returns `null` when the
+ * changes directory does not exist (so callers can distinguish missing from
+ * empty).
+ */
+async function collectChanges(changesDir: string, module?: string): Promise<ChangeInfo[] | null> {
+  try {
+    await fs.access(changesDir);
+  } catch {
+    return null;
+  }
+
+  const entries = await fs.readdir(changesDir, { withFileTypes: true });
+  const changeDirs = entries
+    .filter(entry => entry.isDirectory() && entry.name !== 'archive')
+    .map(entry => entry.name);
+
+  const changes: ChangeInfo[] = [];
+  for (const changeDir of changeDirs) {
+    const progress = await getTaskProgressForChange(changesDir, changeDir);
+    const changePath = path.join(changesDir, changeDir);
+    const lastModified = await getLastModified(changePath);
+    changes.push({
+      name: changeDir,
+      completedTasks: progress.completed,
+      totalTasks: progress.total,
+      lastModified,
+      ...(module ? { module } : {}),
+    });
+  }
+  return changes;
+}
+
 export class ListCommand {
   async execute(targetPath: string = '.', mode: 'changes' | 'specs' = 'changes', options: ListOptions = {}): Promise<void> {
     const { sort = 'recent', json = false } = options;
@@ -87,41 +125,57 @@ export class ListCommand {
     if (mode === 'changes') {
       const changesDir = path.join(homeRoot, RATCHET_DIR_NAME, 'changes');
 
-      // Check if changes directory exists
-      try {
-        await fs.access(changesDir);
-      } catch {
+      const rootChanges = await collectChanges(changesDir);
+      if (rootChanges === null) {
         throw new Error("No Ratchet changes directory found. Run 'ratchet init' first.");
       }
 
-      // Get all directories in changes (excluding archive)
-      const entries = await fs.readdir(changesDir, { withFileTypes: true });
-      const changeDirs = entries
-        .filter(entry => entry.isDirectory() && entry.name !== 'archive')
-        .map(entry => entry.name);
+      // Root-level aggregation: when this home is itself the root (no enclosing
+      // home), fold in changes from every discovered module, labeled by module.
+      // Module-level list (a home with a parent) stays scoped to itself.
+      const changes: ChangeInfo[] = [...rootChanges];
+      const isRootHome = getParentPlanningHome(planningHome) === null;
+      if (isRootHome) {
+        let modules: Awaited<ReturnType<typeof discoverModules>> = [];
+        try {
+          modules = await discoverModules(planningHome);
+        } catch (error) {
+          console.warn(`Module discovery failed: ${(error as Error).message}`);
+          modules = [];
+        }
 
-      if (changeDirs.length === 0) {
+        // Surface registry lint warnings (discovered-but-unregistered,
+        // registered-but-missing). Non-fatal.
+        for (const warning of reconcileModuleRegistry(planningHome, modules)) {
+          console.warn(warning);
+        }
+
+        for (const mod of modules) {
+          // A module with an unparseable config degrades to a warning; one
+          // broken module must not blind the whole repo.
+          const loadError = configLoadError(mod.home.root);
+          if (loadError) {
+            console.warn(`Module '${mod.moduleName}' could not be loaded: ${loadError}`);
+            continue;
+          }
+          try {
+            const moduleChanges = await collectChanges(mod.home.changesDir, mod.moduleName);
+            if (moduleChanges) {
+              changes.push(...moduleChanges);
+            }
+          } catch (error) {
+            console.warn(`Module '${mod.moduleName}' could not be loaded: ${(error as Error).message}`);
+          }
+        }
+      }
+
+      if (changes.length === 0) {
         if (json) {
           console.log(JSON.stringify({ changes: [] }));
         } else {
           console.log('No active changes found.');
         }
         return;
-      }
-
-      // Collect information about each change
-      const changes: ChangeInfo[] = [];
-
-      for (const changeDir of changeDirs) {
-        const progress = await getTaskProgressForChange(changesDir, changeDir);
-        const changePath = path.join(changesDir, changeDir);
-        const lastModified = await getLastModified(changePath);
-        changes.push({
-          name: changeDir,
-          completedTasks: progress.completed,
-          totalTasks: progress.total,
-          lastModified
-        });
       }
 
       // Sort by preference (default: recent first)
@@ -135,6 +189,7 @@ export class ListCommand {
       if (json) {
         const jsonOutput = changes.map(c => ({
           name: c.name,
+          ...(c.module ? { module: c.module } : {}),
           completedTasks: c.completedTasks,
           totalTasks: c.totalTasks,
           lastModified: c.lastModified.toISOString(),
@@ -152,7 +207,8 @@ export class ListCommand {
         const paddedName = change.name.padEnd(nameWidth);
         const status = formatTaskStatus({ total: change.totalTasks, completed: change.completedTasks });
         const timeAgo = formatRelativeTime(change.lastModified);
-        console.log(`${padding}${paddedName}     ${status.padEnd(12)}  ${timeAgo}`);
+        const label = change.module ? `  [${change.module}]` : '';
+        console.log(`${padding}${paddedName}     ${status.padEnd(12)}  ${timeAgo}${label}`);
       }
       return;
     }

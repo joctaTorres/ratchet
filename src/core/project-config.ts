@@ -39,6 +39,22 @@ export const ProjectConfigSchema = z.object({
     )
     .optional()
     .describe('Per-artifact rules, keyed by artifact ID'),
+
+  // Optional (root config only): registry of expected module paths, relative to
+  // the root. Filesystem discovery is the source of truth — this list only
+  // produces lint warnings for mismatches in either direction.
+  modules: z
+    .array(z.string())
+    .optional()
+    .describe('Expected module paths relative to the root planning home (lint allowlist)'),
+
+  // Optional (module config only): override for this module's name. Defaults to
+  // the module's path relative to the root.
+  name: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Override for this module's name (defaults to its relative path)"),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
@@ -153,6 +169,32 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
       }
     }
 
+    // Parse modules registry (root config). Expect an array of non-empty
+    // strings; ignore anything else with a warning.
+    if (raw.modules !== undefined) {
+      const modulesResult = z.array(z.string()).safeParse(raw.modules);
+      if (modulesResult.success) {
+        const validModules = modulesResult.data
+          .map((m) => m.trim())
+          .filter((m) => m.length > 0);
+        if (validModules.length > 0) {
+          config.modules = validModules;
+        }
+      } else {
+        console.warn(`Invalid 'modules' field in config (must be an array of strings)`);
+      }
+    }
+
+    // Parse module name override (module config).
+    if (raw.name !== undefined) {
+      const nameResult = z.string().min(1).safeParse(typeof raw.name === 'string' ? raw.name.trim() : raw.name);
+      if (nameResult.success) {
+        config.name = nameResult.data;
+      } else {
+        console.warn(`Invalid 'name' field in config (must be a non-empty string)`);
+      }
+    }
+
     // Return partial config even if some fields failed
     return Object.keys(config).length > 0 ? (config as ProjectConfig) : null;
   } catch (error) {
@@ -262,4 +304,32 @@ export function suggestSchemas(
   message += `\nFix: Edit .ratchet/config.yaml and change 'schema: ${invalidSchemaName}' to a valid schema name`;
 
   return message;
+}
+
+/**
+ * Read a module's `name:` override from its `.ratchet/config.yaml`. Returns
+ * `undefined` when absent or unparseable, so callers fall back to the relative
+ * path. Never throws.
+ *
+ * @param moduleRoot - The module's planning-home root (parent of `.ratchet`).
+ */
+export function readModuleName(moduleRoot: string): string | undefined {
+  const config = readProjectConfig(moduleRoot);
+  const name = config?.name;
+  return typeof name === 'string' && name.trim().length > 0 ? name.trim() : undefined;
+}
+
+/**
+ * Read the root config's `modules:` registry. Returns `undefined` when no
+ * registry is declared (so callers can distinguish "no registry" from "empty
+ * registry") and a normalized POSIX-style list otherwise.
+ *
+ * @param rootRoot - The root planning-home root (parent of `.ratchet`).
+ */
+export function readModuleRegistry(rootRoot: string): string[] | undefined {
+  const config = readProjectConfig(rootRoot);
+  if (!config?.modules) {
+    return undefined;
+  }
+  return config.modules.map((m) => m.split(path.sep).join('/').replace(/^\/+/, '').replace(/\/+$/, ''));
 }

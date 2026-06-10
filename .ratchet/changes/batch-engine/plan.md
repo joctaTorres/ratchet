@@ -114,7 +114,7 @@ Compiled-binary distribution for stronger blob protection is a later option.
 - [ ] 6.2 Implement resume with recorded answer and reject-with-feedback re-running propose without rollback
 - [x] 7.1 Implement the append-only journal and run-state reconstruction (ignore partial trailing entry)
 - [x] 7.2 Implement the per-batch single-flight lock
-- [ ] 8.1 Implement license authentication and per-run authorization with a signed offline-grace lease
-- [ ] 8.2 Refuse to spawn any agent without valid authorization; surface licensing errors clearly
+- [x] 8.1 Implement license authentication and per-run authorization with a signed offline-grace lease
+- [x] 8.2 Refuse to spawn any agent without valid authorization; surface licensing errors clearly
 - [ ] 8.3 Confirm the open CLI status/view/config paths remain fully functional with the engine absent or unlicensed
 - [ ] 9.1 Tests: step selection, transition order, proof-of-work pass/fail gating, gate parking/resume, journal resume, license-absent refusal

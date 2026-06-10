@@ -17,7 +17,7 @@ import {
   type PlanningHomeSummary,
 } from '../change-status-policy.js';
 import { readProjectConfig, validateConfigRules } from '../project-config.js';
-import { loadStandards, type StandardDoc } from '../standards.js';
+import { loadStandards, loadLayeredStandards, type StandardDoc } from '../standards.js';
 import type { PlanningHome } from '../planning-home.js';
 import type { ChangeMetadata } from '../change-metadata/index.js';
 import type { Artifact, CompletedSet } from './types.js';
@@ -321,7 +321,16 @@ export function generateInstructions(
   // standards into the artifact. This is the per-artifact path that only propose
   // consumes; the shared apply/verify path (generateApplyInstructions) never carries
   // standards, so apply's payload provably stays free of them.
-  const loadedStandards = effectiveProjectRoot ? loadStandards(effectiveProjectRoot) : [];
+  //
+  // When the change's planning home is a nested module, layer the parent chain
+  // root-first so module changes see inherited root standards plus their own
+  // (module wins on tag collision). A root home layers to exactly its own
+  // standards, keeping single-home behavior identical.
+  const loadedStandards = context.planningHome
+    ? loadLayeredStandards(context.planningHome)
+    : effectiveProjectRoot
+      ? loadStandards(effectiveProjectRoot)
+      : [];
   const standards = loadedStandards.length > 0 ? loadedStandards : undefined;
 
   return {

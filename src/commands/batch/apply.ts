@@ -29,6 +29,7 @@ import {
   parkStep,
   clearParkedStep,
 } from '../../core/batch/journal.js';
+import { bootstrapBatchEngine } from '../../core/batch/engine-bootstrap.js';
 import { resolveBatchName } from './shared.js';
 
 export interface BatchApplyOptions {
@@ -55,9 +56,11 @@ export async function batchApplyCommand(
   const { settings } = resolveBatchSettings(projectRoot, manifest);
   const status = await computeBatchStatus(projectRoot, manifest);
 
-  // Engine is required to run a step. Resolve it before doing any work so the
-  // error message is the first thing the user sees, and the open commands are
-  // unaffected.
+  // Engine is required to run a step. Attempt to bootstrap the licensed engine
+  // package (self-registers on import; absent is fine), then resolve it before
+  // doing any work so the error message is the first thing the user sees, and
+  // the open commands are unaffected.
+  await bootstrapBatchEngine();
   const resolution = loadBatchEngine();
   if (resolution.status === 'absent') {
     fail(ENGINE_ABSENT_MESSAGE, options);

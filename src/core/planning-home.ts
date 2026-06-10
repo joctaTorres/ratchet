@@ -10,6 +10,7 @@ export interface PlanningHome {
   kind: PlanningHomeKind;
   root: string;
   changesDir: string;
+  batchesDir: string;
   defaultSchema: string;
 }
 
@@ -80,6 +81,7 @@ function repoPlanningHome(repoRoot: string): PlanningHome {
     kind: 'repo',
     root: repoRoot,
     changesDir: path.join(repoRoot, RATCHET_DIR_NAME, 'changes'),
+    batchesDir: path.join(repoRoot, RATCHET_DIR_NAME, 'batches'),
     defaultSchema: REPO_DEFAULT_SCHEMA,
   };
 }

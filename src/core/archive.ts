@@ -6,6 +6,7 @@ import { Validator } from './validation/validator.js';
 import chalk from 'chalk';
 import { applyFeatures, materializeStandardLinks } from './features-apply.js';
 import { readDeclaredStandardTags } from '../utils/change-metadata.js';
+import { resolveCurrentPlanningHomeSync } from './planning-home.js';
 
 /**
  * Recursively copy a directory. Used when fs.rename fails (e.g. EPERM on Windows).
@@ -47,9 +48,13 @@ async function moveDirectory(src: string, dest: string): Promise<void> {
 export class ArchiveCommand {
   async execute(
     changeName?: string,
-    options: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean } = {}
+    options: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean; cwd?: string } = {}
   ): Promise<void> {
-    const targetPath = '.';
+    // Resolve the nearest planning home by walking up rather than assuming
+    // `.ratchet` sits directly under the cwd. This keeps archive consistent
+    // with the other commands when run inside a sub-module.
+    const planningHome = resolveCurrentPlanningHomeSync({ startPath: options.cwd ?? '.' });
+    const targetPath = planningHome.root;
     const changesDir = path.join(targetPath, RATCHET_DIR_NAME, 'changes');
     const archiveDir = path.join(changesDir, 'archive');
 

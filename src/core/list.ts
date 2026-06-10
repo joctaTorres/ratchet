@@ -3,6 +3,7 @@ import { RATCHET_DIR_NAME } from './config.js';
 import path from 'path';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
 import fg from 'fast-glob';
+import { resolveCurrentPlanningHomeSync } from './planning-home.js';
 
 interface ChangeInfo {
   name: string;
@@ -77,8 +78,14 @@ export class ListCommand {
   async execute(targetPath: string = '.', mode: 'changes' | 'specs' = 'changes', options: ListOptions = {}): Promise<void> {
     const { sort = 'recent', json = false } = options;
 
+    // Resolve the nearest planning home by walking up from the target path,
+    // rather than assuming `.ratchet` lives directly under the cwd. This keeps
+    // list consistent with status/instructions, which already walk up.
+    const planningHome = resolveCurrentPlanningHomeSync({ startPath: targetPath });
+    const homeRoot = planningHome.root;
+
     if (mode === 'changes') {
-      const changesDir = path.join(targetPath, RATCHET_DIR_NAME, 'changes');
+      const changesDir = path.join(homeRoot, RATCHET_DIR_NAME, 'changes');
 
       // Check if changes directory exists
       try {
@@ -151,7 +158,7 @@ export class ListCommand {
     }
 
     // specs mode → feature store, grouped by capability
-    const featuresDir = path.join(targetPath, RATCHET_DIR_NAME, 'features');
+    const featuresDir = path.join(homeRoot, RATCHET_DIR_NAME, 'features');
     try {
       await fs.access(featuresDir);
     } catch {

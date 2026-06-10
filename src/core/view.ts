@@ -4,10 +4,14 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
 import fg from 'fast-glob';
+import { resolveCurrentPlanningHomeSync } from './planning-home.js';
 
 export class ViewCommand {
   async execute(targetPath: string = '.'): Promise<void> {
-    const ratchetDir = path.join(targetPath, RATCHET_DIR_NAME);
+    // Walk up to the nearest planning home so the dashboard reflects the same
+    // `.ratchet` that status/list resolve, even from a subdirectory.
+    const planningHome = resolveCurrentPlanningHomeSync({ startPath: targetPath });
+    const ratchetDir = path.join(planningHome.root, RATCHET_DIR_NAME);
     
     if (!fs.existsSync(ratchetDir)) {
       console.error(chalk.red('No ratchet directory found'));

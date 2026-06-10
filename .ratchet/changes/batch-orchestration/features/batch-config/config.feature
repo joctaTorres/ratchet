@@ -28,11 +28,13 @@ Feature: Batch configuration
     Then the effective gate for "q3-auth" is "after-propose"
 
   Scenario: Reading effective settings for a specific batch
+    Given a batch "q3-auth" exists
     When I run "ratchet batch config q3-auth"
     Then the output shows the effective gate, strategy, proofOfWork, and agent for that batch
     And it indicates which values came from the manifest versus the project config
 
   Scenario: Invalid setting values are rejected
+    Given a project using the default gate
     When I run "ratchet batch config --set gate=whenever"
     Then the command fails listing the allowed gate values
     And the config file is left unchanged

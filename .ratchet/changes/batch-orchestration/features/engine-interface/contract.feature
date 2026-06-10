@@ -15,6 +15,7 @@ Feature: Engine interface contract
 
   Scenario: The engine returns a structured step result
     Given the engine has run one transition
+    When the engine reports the outcome to the CLI
     Then it returns a result naming the new state, any blocker or approval request, and a pointer to journal entries
     And the CLI persists that result without knowing how the engine produced it
 

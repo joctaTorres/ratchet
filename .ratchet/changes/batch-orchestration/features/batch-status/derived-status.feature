@@ -31,6 +31,7 @@ Feature: Batch status derived from change state on disk
     Then "add-user-model" is reported as in progress with task counts
 
   Scenario: Machine-readable status for agents and the engine
+    Given the batch "q3-auth" from the background
     When I run "ratchet batch status q3-auth --json"
     Then the output is JSON containing each phase and each change with its status, task progress, and after edges
     And the JSON lists which step is next to run and whether it is gated or blocked

@@ -5,12 +5,14 @@ Feature: Phases with proof-of-work
 
   Scenario: A phase declares a goal, success criteria, and a proof-of-work
     Given a batch manifest with a phase "foundation"
+    When I inspect that phase
     Then the phase declares a human-readable goal
     And the phase declares success criteria
     And the phase declares a proof-of-work with a kind, a runnable command, and a pass condition
 
   Scenario: Proof-of-work kinds are constrained to executable checks
     Given a phase proof-of-work
+    When I inspect its kind
     Then its kind is one of "integration", "blackbox", or "llm-judge"
     And each kind names something an agent can execute directly via bash or an MCP tool
 

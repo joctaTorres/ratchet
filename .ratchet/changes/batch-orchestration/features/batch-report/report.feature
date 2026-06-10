@@ -36,5 +36,6 @@ Feature: Agent reporting and voluntary halt channel
 
   Scenario: The report channel works for any agent that can run a shell command
     Given the configured agent adapter
+    When the agent needs to report
     Then reporting requires only invoking the "ratchet batch report" command
     And no interactive prompt inside the agent session is required

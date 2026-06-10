@@ -18,8 +18,32 @@ import { RATCHET_DIR_NAME } from '../config.js';
 import { getTaskProgressForChange, type TaskProgress } from '../../utils/task-progress.js';
 import { BatchDag } from './dag.js';
 import type { BatchManifest, Phase, ChangeIntent } from './manifest.js';
+import type { ParkedKind, RunState } from './journal.js';
 
-export type ChangeStatus = 'pending' | 'ready' | 'in-progress' | 'done' | 'blocked';
+export type ChangeStatus =
+  | 'pending'
+  | 'ready'
+  | 'in-progress'
+  | 'done'
+  | 'blocked'
+  | 'awaiting-approval';
+
+/**
+ * Parked overlay surfaced from the run journal/state onto a derived change.
+ * Mirrors the user-visible fields of a `ParkedStep` so status text, `--json`,
+ * and the rich view can all render the halt and its question/summary.
+ */
+export interface ParkedInfo {
+  kind: ParkedKind;
+  /** The blocker question or the awaiting-approval summary that parked it. */
+  reason: string;
+  /** User's recorded answer (blocked) — present once they responded. */
+  answer?: string;
+  /** User's reject feedback (awaiting-approval). */
+  feedback?: string;
+  /** True once an awaiting-approval step was approved. */
+  approved?: boolean;
+}
 
 export interface ChangeStatusInfo {
   name: string;
@@ -30,6 +54,8 @@ export interface ChangeStatusInfo {
   after: string[];
   /** When blocked, the unmet (not-done) dependency names. */
   blockedBy: string[];
+  /** Parked state overlaid from the run journal, if the step is halted. */
+  parked?: ParkedInfo;
 }
 
 export interface PhaseStatusInfo {
@@ -96,7 +122,8 @@ async function derivePhaseStatus(
   projectRoot: string,
   phase: Phase,
   gated: boolean,
-  gatedBy: string | undefined
+  gatedBy: string | undefined,
+  runState: RunState
 ): Promise<PhaseStatusInfo> {
   // First pass: derive each change's on-disk base + collect the done set.
   const bases = new Map<
@@ -132,6 +159,27 @@ async function derivePhaseStatus(
       status = base.exists ? 'in-progress' : 'ready';
     }
 
+    // Overlay parked state from the run journal: a step the agent halted (a
+    // voluntary blocker or an after-propose approval request) must surface as
+    // halted, not as ready/in-progress. A finished (done/archived) step's stale
+    // park is moot, so we leave it alone.
+    const parkedRaw = runState.parked[intent.name];
+    let parked: ParkedInfo | undefined;
+    if (parkedRaw && !base.done) {
+      parked = {
+        kind: parkedRaw.kind,
+        reason: parkedRaw.reason,
+        answer: parkedRaw.answer,
+        feedback: parkedRaw.feedback,
+        approved: parkedRaw.approved,
+      };
+      if (parkedRaw.kind === 'blocked') {
+        status = 'blocked';
+      } else if (parkedRaw.kind === 'awaiting-approval' && !parkedRaw.approved) {
+        status = 'awaiting-approval';
+      }
+    }
+
     return {
       name: intent.name,
       status,
@@ -140,6 +188,7 @@ async function derivePhaseStatus(
       progress: base.progress,
       after: intent.after,
       blockedBy,
+      parked,
     };
   });
 
@@ -179,7 +228,8 @@ async function derivePhaseStatus(
  */
 export async function computeBatchStatus(
   projectRoot: string,
-  manifest: BatchManifest
+  manifest: BatchManifest,
+  runState: RunState = { parked: {} }
 ): Promise<BatchStatusInfo> {
   const phases: PhaseStatusInfo[] = [];
   let priorPhaseDone = true;
@@ -191,7 +241,8 @@ export async function computeBatchStatus(
       projectRoot,
       phase,
       gated,
-      gated ? priorPhaseName : undefined
+      gated ? priorPhaseName : undefined,
+      runState
     );
     phases.push(phaseStatus);
     priorPhaseDone = phaseStatus.status === 'done';

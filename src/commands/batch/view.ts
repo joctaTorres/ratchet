@@ -16,7 +16,9 @@ import {
   computeBatchStatus,
   type BatchStatusInfo,
   type ChangeStatusInfo,
+  type ParkedInfo,
 } from '../../core/batch/status.js';
+import { readRunState } from '../../core/batch/journal.js';
 import { resolveBatchName, listBatchNames } from './shared.js';
 
 export interface BatchViewOptions {
@@ -41,8 +43,23 @@ function symbolFor(change: ChangeStatusInfo): string {
       return chalk.cyan('○');
     case 'blocked':
       return chalk.red('✗');
+    case 'awaiting-approval':
+      return chalk.cyan('⏸');
     default:
       return chalk.gray('·');
+  }
+}
+
+/** Render the parked halt (blocker question or approval request) under a step. */
+function renderParked(parked: ParkedInfo): void {
+  if (parked.kind === 'blocked') {
+    const tail = parked.answer ? chalk.dim('  (answered — resumes on next apply)') : '';
+    console.log(chalk.red(`      ⚠ blocked: ${parked.reason}`) + tail);
+  } else {
+    const tail = parked.feedback
+      ? chalk.dim('  (rejected — re-runs propose on next apply)')
+      : chalk.dim('  (approve or reject with feedback)');
+    console.log(chalk.cyan(`      ⏸ awaiting approval: ${parked.reason}`) + tail);
   }
 }
 
@@ -53,7 +70,8 @@ export async function batchViewCommand(
   const projectRoot = resolveCurrentPlanningHomeSync().root;
   const batchName = resolveBatchName(projectRoot, name);
   const manifest = loadBatchManifest(projectRoot, batchName);
-  const status = await computeBatchStatus(projectRoot, manifest);
+  const runState = readRunState(projectRoot, batchName);
+  const status = await computeBatchStatus(projectRoot, manifest, runState);
 
   if (options.json) {
     console.log(JSON.stringify(status, null, 2));
@@ -96,12 +114,15 @@ function renderSingleBatch(status: BatchStatusInfo): void {
       const after =
         change.after.length > 0 ? chalk.dim(`  after: ${change.after.join(', ')}`) : '';
       const blocked =
-        change.status === 'blocked'
+        change.status === 'blocked' && change.blockedBy.length > 0
           ? chalk.red(`  blocked by ${change.blockedBy.join(', ')}`)
           : '';
       console.log(
         `  ${symbolFor(change)} ${chalk.bold(change.name.padEnd(28))} ${bar}${after}${blocked}`
       );
+      if (change.parked) {
+        renderParked(change.parked);
+      }
     }
   }
 

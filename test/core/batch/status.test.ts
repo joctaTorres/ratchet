@@ -94,6 +94,74 @@ describe('computeBatchStatus', () => {
     expect(status.next).toEqual({ phase: 'foundation', change: 'add-user-model' });
   });
 
+  it('overlays a parked blocker, forcing blocked and dropping it from next', async () => {
+    const runState = {
+      parked: {
+        'add-user-model': {
+          change: 'add-user-model',
+          kind: 'blocked' as const,
+          reason: 'cookie or header sessions?',
+          parkedAt: '2026-06-10T00:00:00.000Z',
+        },
+      },
+    };
+    const status = await computeBatchStatus(
+      projectRoot,
+      parseBatchManifest(MANIFEST),
+      runState
+    );
+    const c = findChange(status, 'add-user-model');
+    expect(c.status).toBe('blocked');
+    expect(c.parked?.kind).toBe('blocked');
+    expect(c.parked?.reason).toBe('cookie or header sessions?');
+    // The only ready change is parked, so nothing is advertised as next.
+    expect(status.next).toBeUndefined();
+  });
+
+  it('overlays an awaiting-approval park as its own status', async () => {
+    const runState = {
+      parked: {
+        'add-user-model': {
+          change: 'add-user-model',
+          kind: 'awaiting-approval' as const,
+          reason: 'draft ready for review',
+          parkedAt: '2026-06-10T00:00:00.000Z',
+        },
+      },
+    };
+    const status = await computeBatchStatus(
+      projectRoot,
+      parseBatchManifest(MANIFEST),
+      runState
+    );
+    const c = findChange(status, 'add-user-model');
+    expect(c.status).toBe('awaiting-approval');
+    expect(c.parked?.kind).toBe('awaiting-approval');
+    expect(status.next).toBeUndefined();
+  });
+
+  it('ignores a stale park on a change that is already done', async () => {
+    await makeChange('add-user-model', '## Tasks\n- [x] one\n- [x] two\n');
+    const runState = {
+      parked: {
+        'add-user-model': {
+          change: 'add-user-model',
+          kind: 'blocked' as const,
+          reason: 'old question',
+          parkedAt: '2026-06-10T00:00:00.000Z',
+        },
+      },
+    };
+    const status = await computeBatchStatus(
+      projectRoot,
+      parseBatchManifest(MANIFEST),
+      runState
+    );
+    const c = findChange(status, 'add-user-model');
+    expect(c.status).toBe('done');
+    expect(c.parked).toBeUndefined();
+  });
+
   it('gates a later phase until the prior phase is done', async () => {
     const twoPhase = `
 name: q3-auth

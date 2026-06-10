@@ -192,4 +192,77 @@ describe('ratchet batch CLI e2e', () => {
     expect(journal).toContain('drafted 2 of 4');
     expect(journal).toContain('progress');
   });
+
+  it('surfaces a parked blocker question in batch view and status --json', async () => {
+    const cwd = await prepareProject();
+    await runCLI(['new', 'batch', 'q3-auth'], { cwd });
+
+    const blocker = 'cookie or header sessions? changes the whole API surface';
+    const report = await runCLI(
+      ['batch', 'report', 'q3-auth', '--change', 'add-first-change', '--blocker', blocker],
+      { cwd }
+    );
+    expect(report.exitCode).toBe(0);
+
+    // The view renders the step as blocked and shows the question.
+    const view = await runCLI(['--no-color', 'batch', 'view', 'q3-auth'], { cwd });
+    expect(view.exitCode).toBe(0);
+    expect(view.stdout).toContain('blocked:');
+    expect(view.stdout).toContain(blocker);
+    // ⏸ is the awaiting-approval marker; a blocker must not render as that.
+    expect(view.stdout).not.toContain('awaiting approval');
+
+    // status --json reports the change as blocked, not advertised as next-runnable.
+    const status = await runCLI(['batch', 'status', 'q3-auth', '--json'], { cwd });
+    expect(status.exitCode).toBe(0);
+    const parsed = JSON.parse(status.stdout);
+    const change = parsed.phases
+      .flatMap((p: { changes: unknown[] }) => p.changes)
+      .find((c: { name: string }) => c.name === 'add-first-change');
+    expect(change.status).toBe('blocked');
+    expect(change.blocked).toBe(true);
+    expect(change.parked.kind).toBe('blocked');
+    expect(change.parked.reason).toBe(blocker);
+    // The single change is parked, so there is no runnable next step.
+    expect(parsed.next).toBeNull();
+  });
+
+  it('renders an awaiting-approval step distinctly in view and status --json', async () => {
+    const cwd = await prepareProject();
+    await runCLI(['new', 'batch', 'q3-auth'], { cwd });
+
+    const summary = 'proposal drafted, ready for review';
+    const report = await runCLI(
+      [
+        'batch',
+        'report',
+        'q3-auth',
+        '--change',
+        'add-first-change',
+        '--complete',
+        summary,
+        '--awaiting-approval',
+      ],
+      { cwd }
+    );
+    expect(report.exitCode).toBe(0);
+
+    const view = await runCLI(['--no-color', 'batch', 'view', 'q3-auth'], { cwd });
+    expect(view.exitCode).toBe(0);
+    expect(view.stdout).toContain('awaiting approval:');
+    expect(view.stdout).toContain(summary);
+    // Distinct from a blocker: it must offer approve/reject context, not "blocked:".
+    expect(view.stdout).not.toContain('blocked:');
+
+    const status = await runCLI(['batch', 'status', 'q3-auth', '--json'], { cwd });
+    expect(status.exitCode).toBe(0);
+    const parsed = JSON.parse(status.stdout);
+    const change = parsed.phases
+      .flatMap((p: { changes: unknown[] }) => p.changes)
+      .find((c: { name: string }) => c.name === 'add-first-change');
+    expect(change.status).toBe('awaiting-approval');
+    expect(change.awaitingApproval).toBe(true);
+    expect(change.parked.kind).toBe('awaiting-approval');
+    expect(parsed.next).toBeNull();
+  });
 });

@@ -9,8 +9,13 @@
 import chalk from 'chalk';
 import { resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
 import { loadBatchManifest } from '../../core/batch/manifest.js';
-import { computeBatchStatus, type BatchStatusInfo } from '../../core/batch/status.js';
+import {
+  computeBatchStatus,
+  type BatchStatusInfo,
+  type ParkedInfo,
+} from '../../core/batch/status.js';
 import { resolveBatchSettings } from '../../core/batch/config.js';
+import { readRunState } from '../../core/batch/journal.js';
 import { resolveBatchName } from './shared.js';
 
 export interface BatchStatusOptions {
@@ -24,7 +29,8 @@ export async function batchStatusCommand(
   const planningHome = resolveCurrentPlanningHomeSync();
   const batchName = resolveBatchName(planningHome.root, name);
   const manifest = loadBatchManifest(planningHome.root, batchName);
-  const status = await computeBatchStatus(planningHome.root, manifest);
+  const runState = readRunState(planningHome.root, batchName);
+  const status = await computeBatchStatus(planningHome.root, manifest, runState);
   const { settings } = resolveBatchSettings(planningHome.root, manifest);
 
   if (options.json) {
@@ -65,6 +71,11 @@ function toJson(status: BatchStatusInfo, gate: string): unknown {
         blockedBy: change.blockedBy,
         exists: change.exists,
         archived: change.archived,
+        // A change is blocked when its dependencies are unmet OR an agent
+        // voluntarily parked it as a blocker awaiting input.
+        blocked: change.status === 'blocked',
+        awaitingApproval: change.status === 'awaiting-approval',
+        parked: change.parked ?? null,
       })),
     })),
   };
@@ -80,8 +91,23 @@ function symbolFor(statusValue: string): string {
       return chalk.cyan('○');
     case 'blocked':
       return chalk.red('✗');
+    case 'awaiting-approval':
+      return chalk.cyan('⏸');
     default:
       return chalk.gray('·');
+  }
+}
+
+/** Render the parked halt (blocker question or approval request) under a step. */
+function printParked(parked: ParkedInfo): void {
+  if (parked.kind === 'blocked') {
+    const tail = parked.answer ? chalk.dim(' (answered — resume on next apply)') : '';
+    console.log(chalk.red(`      ⚠ blocked: ${parked.reason}`) + tail);
+  } else {
+    const tail = parked.feedback
+      ? chalk.dim(' (rejected — re-runs propose on next apply)')
+      : chalk.dim(' (approve or reject from the batch view)');
+    console.log(chalk.cyan(`      ⏸ awaiting approval: ${parked.reason}`) + tail);
   }
 }
 
@@ -113,12 +139,15 @@ function printText(status: BatchStatusInfo): void {
           ? chalk.dim(` [${change.progress.completed}/${change.progress.total}]`)
           : '';
       const blocked =
-        change.status === 'blocked'
+        change.status === 'blocked' && change.blockedBy.length > 0
           ? chalk.red(` blocked by ${change.blockedBy.join(', ')}`)
           : '';
       console.log(
         `  ${symbolFor(change.status)} ${change.name}${progress}${after}${blocked}`
       );
+      if (change.parked) {
+        printParked(change.parked);
+      }
     }
   }
 

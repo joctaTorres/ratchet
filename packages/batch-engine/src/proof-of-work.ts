@@ -1,0 +1,229 @@
+/**
+ * Phase proof-of-work execution and gating.
+ *
+ * Once every change in a phase is done, the engine runs the phase's
+ * proof-of-work to decide whether the phase ships:
+ *
+ *   - `integration` / `blackbox` run a bash command and pass when the pass
+ *     condition holds against the command output/exit status.
+ *   - `llm-judge` spawns an agent that exercises the software directly (bash or
+ *     an MCP tool) and returns a pass/fail verdict against the success criteria.
+ *
+ * Policy gates the phase: under `hard-gate` (default) a failure blocks the phase
+ * and the next phase and is surfaced as a blocker; under `warn` the failure is
+ * recorded and the phase is allowed to complete.
+ *
+ * STUBBED BOUNDARY: the bash runner is injectable (`BashRunner`) so tests do not
+ * shell out; the default runner really executes the command via child_process.
+ */
+
+import { spawn } from 'node:child_process';
+import type { ProofOfWork, ProofOfWorkPolicy } from 'ratchet';
+
+export interface BashResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+export type BashRunner = (command: string, cwd: string) => Promise<BashResult>;
+
+export const realBashRunner: BashRunner = (command, cwd) =>
+  new Promise<BashResult>((resolve, reject) => {
+    const child = spawn('bash', ['-c', command], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (exitCode) => resolve({ exitCode, stdout, stderr }));
+  });
+
+/** A judge returns a verdict; spawned for `llm-judge` proof-of-work. */
+export interface JudgeRequest {
+  success: string;
+  run: string;
+  pass: string;
+  cwd: string;
+}
+export interface JudgeVerdict {
+  pass: boolean;
+  reason: string;
+}
+export type LlmJudge = (request: JudgeRequest) => Promise<JudgeVerdict>;
+
+export type ProofOfWorkPassReason = 'pass-condition-met' | 'judge-pass';
+export type ProofOfWorkFailReason =
+  | 'nonzero-exit'
+  | 'pass-condition-unmet'
+  | 'judge-fail'
+  | 'error';
+
+export interface ProofOfWorkResult {
+  kind: ProofOfWork['kind'];
+  passed: boolean;
+  /** True when the policy lets the phase complete despite a failure (warn). */
+  gatePassed: boolean;
+  policy: ProofOfWorkPolicy;
+  reason: ProofOfWorkPassReason | ProofOfWorkFailReason;
+  detail: string;
+}
+
+/**
+ * Evaluate whether a bash command's result meets the pass condition.
+ *
+ * Pass conditions are intentionally simple and declarative (the manifest author
+ * writes them):
+ *   - "exit 0" / "exit-zero" / "" -> passes when the command exits 0
+ *   - `contains:<text>`           -> passes when stdout contains <text>
+ *   - `regex:<pattern>`           -> passes when stdout matches the pattern
+ * Anything else is treated as substring-in-stdout, with exit 0 still required.
+ */
+export function evaluatePassCondition(
+  pass: string,
+  result: BashResult
+): { passed: boolean; reason: ProofOfWorkPassReason | ProofOfWorkFailReason } {
+  const exitedZero = result.exitCode === 0;
+  const condition = pass.trim();
+
+  if (condition === '' || /^exit[- ]?0$/i.test(condition) || /^exit-zero$/i.test(condition)) {
+    return exitedZero
+      ? { passed: true, reason: 'pass-condition-met' }
+      : { passed: false, reason: 'nonzero-exit' };
+  }
+
+  if (condition.startsWith('contains:')) {
+    const needle = condition.slice('contains:'.length);
+    const ok = exitedZero && result.stdout.includes(needle);
+    return ok
+      ? { passed: true, reason: 'pass-condition-met' }
+      : { passed: false, reason: exitedZero ? 'pass-condition-unmet' : 'nonzero-exit' };
+  }
+
+  if (condition.startsWith('regex:')) {
+    const pattern = condition.slice('regex:'.length);
+    let ok = false;
+    try {
+      ok = exitedZero && new RegExp(pattern).test(result.stdout);
+    } catch {
+      ok = false;
+    }
+    return ok
+      ? { passed: true, reason: 'pass-condition-met' }
+      : { passed: false, reason: exitedZero ? 'pass-condition-unmet' : 'nonzero-exit' };
+  }
+
+  // Default: substring match in stdout, exit 0 required.
+  const ok = exitedZero && result.stdout.includes(condition);
+  return ok
+    ? { passed: true, reason: 'pass-condition-met' }
+    : { passed: false, reason: exitedZero ? 'pass-condition-unmet' : 'nonzero-exit' };
+}
+
+function applyPolicy(
+  passed: boolean,
+  policy: ProofOfWorkPolicy
+): { gatePassed: boolean } {
+  // hard-gate: phase blocked unless passed. warn: phase always allowed.
+  return { gatePassed: passed || policy === 'warn' };
+}
+
+export interface RunProofOfWorkDeps {
+  bash?: BashRunner;
+  judge?: LlmJudge;
+}
+
+/**
+ * Run a phase's proof-of-work and apply the gating policy. The caller is
+ * responsible for only invoking this once the phase's changes are all done
+ * (proof-of-work never runs while a phase has in-progress changes).
+ */
+export async function runProofOfWork(
+  proofOfWork: ProofOfWork,
+  policy: ProofOfWorkPolicy,
+  cwd: string,
+  deps: RunProofOfWorkDeps = {}
+): Promise<ProofOfWorkResult> {
+  const bash = deps.bash ?? realBashRunner;
+
+  if (proofOfWork.kind === 'llm-judge') {
+    if (!deps.judge) {
+      // No judge wired: fail closed under hard-gate so a phase never silently
+      // passes an unrun judge.
+      const passed = false;
+      return {
+        kind: proofOfWork.kind,
+        passed,
+        ...applyPolicy(passed, policy),
+        policy,
+        reason: 'error',
+        detail: 'No llm-judge adapter configured for this run.',
+      };
+    }
+    let verdict: JudgeVerdict;
+    try {
+      verdict = await deps.judge({
+        success: proofOfWork.pass,
+        run: proofOfWork.run,
+        pass: proofOfWork.pass,
+        cwd,
+      });
+    } catch (err) {
+      const passed = false;
+      return {
+        kind: proofOfWork.kind,
+        passed,
+        ...applyPolicy(passed, policy),
+        policy,
+        reason: 'error',
+        detail: err instanceof Error ? err.message : String(err),
+      };
+    }
+    return {
+      kind: proofOfWork.kind,
+      passed: verdict.pass,
+      ...applyPolicy(verdict.pass, policy),
+      policy,
+      reason: verdict.pass ? 'judge-pass' : 'judge-fail',
+      detail: verdict.reason,
+    };
+  }
+
+  // integration / blackbox: run the command via bash and evaluate pass.
+  let result: BashResult;
+  try {
+    result = await bash(proofOfWork.run, cwd);
+  } catch (err) {
+    const passed = false;
+    return {
+      kind: proofOfWork.kind,
+      passed,
+      ...applyPolicy(passed, policy),
+      policy,
+      reason: 'error',
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const evaluation = evaluatePassCondition(proofOfWork.pass, result);
+  return {
+    kind: proofOfWork.kind,
+    passed: evaluation.passed,
+    ...applyPolicy(evaluation.passed, policy),
+    policy,
+    reason: evaluation.reason,
+    detail: evaluation.passed
+      ? `Proof-of-work passed (${proofOfWork.pass}).`
+      : `Proof-of-work failed: ${describeFail(evaluation.reason, result)}`,
+  };
+}
+
+function describeFail(reason: string, result: BashResult): string {
+  if (reason === 'nonzero-exit') return `command exited ${result.exitCode}`;
+  if (reason === 'pass-condition-unmet') return 'pass condition not satisfied by output';
+  return reason;
+}

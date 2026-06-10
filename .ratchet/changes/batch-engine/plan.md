@@ -107,9 +107,9 @@ Compiled-binary distribution for stronger blob protection is a later option.
 - [x] 3.3 Map run-journal entries written by the agent to a structured step result; treat non-zero-without-completion as failed
 - [x] 3.4 Reject unknown agent adapters before spawning, listing available adapters
 - [x] 4.1 Implement propose/apply/verify transition orchestration, including vertical-slice vs feature strategy in the propose instructions
-- [ ] 5.1 Implement proof-of-work execution for integration/blackbox (bash) kinds with pass-condition evaluation
-- [ ] 5.2 Implement the llm-judge proof-of-work (agent exercises software via bash/MCP, returns verdict)
-- [ ] 5.3 Implement phase gating on proof-of-work with hard-gate vs warn policy
+- [x] 5.1 Implement proof-of-work execution for integration/blackbox (bash) kinds with pass-condition evaluation
+- [x] 5.2 Implement the llm-judge proof-of-work (agent exercises software via bash/MCP, returns verdict)
+- [x] 5.3 Implement phase gating on proof-of-work with hard-gate vs warn policy
 - [ ] 6.1 Implement gate handling (voluntary, after-propose, every-phase, autonomous) and step parking
 - [ ] 6.2 Implement resume with recorded answer and reject-with-feedback re-running propose without rollback
 - [ ] 7.1 Implement the append-only journal and run-state reconstruction (ignore partial trailing entry)

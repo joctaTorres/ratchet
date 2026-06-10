@@ -17,6 +17,7 @@ export const SKILL_NAMES = [
   'ratchet-verify-change',
   'ratchet-archive-change',
   'ratchet-propose-standard',
+  'ratchet-batch',
 ] as const;
 
 export type SkillName = (typeof SKILL_NAMES)[number];
@@ -31,6 +32,7 @@ export const COMMAND_IDS = [
   'verify',
   'propose',
   'propose-standard',
+  'batch',
 ] as const;
 
 export type CommandId = (typeof COMMAND_IDS)[number];

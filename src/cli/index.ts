@@ -21,6 +21,21 @@ import {
   type InstructionsOptions,
   type NewChangeOptions,
 } from '../commands/workflow/index.js';
+import {
+  batchStatusCommand,
+  batchConfigCommand,
+  batchViewCommand,
+  batchListCommand,
+  batchReportCommand,
+  batchApplyCommand,
+  newBatchCommand,
+  type BatchStatusOptions,
+  type BatchConfigOptions,
+  type BatchViewOptions,
+  type BatchReportOptions,
+  type BatchApplyOptions,
+  type NewBatchOptions,
+} from '../commands/batch/index.js';
 import { maybeShowTelemetryNotice, trackCommand, shutdown } from '../telemetry/index.js';
 
 const program = new Command();
@@ -319,6 +334,135 @@ newCmd
   .action(async (name: string, options: NewChangeOptions) => {
     try {
       await newChangeCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+newCmd
+  .command('batch <name>')
+  .description('Scaffold a new batch manifest from the template')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, options: NewBatchOptions) => {
+    try {
+      await newBatchCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+// ═══════════════════════════════════════════════════════════
+// Batch Orchestration Commands
+// ═══════════════════════════════════════════════════════════
+
+const batchCmd = program
+  .command('batch')
+  .description('Coordinate related changes across phases (batch orchestration)');
+
+batchCmd
+  .command('new <name>')
+  .description('Scaffold a new batch manifest from the template')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, options: NewBatchOptions) => {
+    try {
+      await newBatchCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('status [name]')
+  .description('Show batch status derived live from change state on disk')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchStatusOptions) => {
+    try {
+      await batchStatusCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('view [name]')
+  .description('Rich terminal dashboard for a single batch')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchViewOptions) => {
+    try {
+      await batchViewCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('list')
+  .description('List all batches with change count and aggregate progress')
+  .option('--json', 'Output as JSON')
+  .action(async (options: BatchViewOptions) => {
+    try {
+      await batchListCommand(options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('config [name]')
+  .description('Resolve, get, or set batch settings')
+  .option('--set <key=value>', 'Set a project-level batch setting')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchConfigOptions) => {
+    try {
+      await batchConfigCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('report [name]')
+  .description('Report progress, raise a blocker, or request input on a step')
+  .option('--change <name>', 'Change the report is about')
+  .option('--status <message>', 'Record routine progress')
+  .option('--blocker <message>', 'Raise a blocker and park the step')
+  .option('--needs-input <message>', 'Request input and park the step')
+  .option('--complete <message>', 'Signal the step produced its output')
+  .option('--answer <message>', 'Record an answer to a parked blocker')
+  .option('--reject <message>', 'Reject an awaiting-approval step with feedback')
+  .option('--awaiting-approval', 'Mark a completion as awaiting approval (after-propose gate)')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchReportOptions) => {
+    try {
+      await batchReportCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('apply [name]')
+  .description('Advance the batch by one step via the execution engine')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchApplyOptions) => {
+    try {
+      await batchApplyCommand(name, options);
     } catch (error) {
       console.log();
       ora().fail(`Error: ${(error as Error).message}`);

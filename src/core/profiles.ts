@@ -15,8 +15,12 @@ export const CORE_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose
 
 /**
  * All available workflows in the system.
+ *
+ * 'batch' is an opt-in workflow (not part of the streamlined 'core' profile):
+ * it drives single-step batch apply and is only installed for custom profiles
+ * that request it.
  */
-export const ALL_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose-standard'] as const;
+export const ALL_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'batch'] as const;
 
 export type WorkflowId = (typeof ALL_WORKFLOWS)[number];
 export type CoreWorkflowId = (typeof CORE_WORKFLOWS)[number];

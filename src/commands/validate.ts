@@ -5,6 +5,13 @@ import { Validator } from '../core/validation/validator.js';
 import { isInteractive, resolveNoInteractive } from '../utils/interactive.js';
 import { getActiveChangeIds, getSpecIds } from '../utils/item-discovery.js';
 import { nearestMatches } from '../utils/match.js';
+import { resolveCurrentPlanningHomeSync } from '../core/planning-home.js';
+import {
+  batchExists,
+  loadBatchManifest,
+  BatchManifestError,
+} from '../core/batch/manifest.js';
+import { BatchDag, BatchDagError } from '../core/batch/dag.js';
 
 type ItemType = 'change' | 'spec';
 
@@ -108,6 +115,14 @@ export class ValidateCommand {
     const isChange = changes.includes(itemName);
     const isSpec = specs.includes(itemName);
 
+    // A batch manifest is a first-class validatable item. Only treat the name as
+    // a batch when it isn't already a change/spec and no explicit type override
+    // was given, so existing change/spec semantics are unaffected.
+    if (!opts.typeOverride && !isChange && !isSpec && this.isBatch(itemName)) {
+      this.validateBatch(itemName, opts.json);
+      return;
+    }
+
     const type = opts.typeOverride ?? (isChange ? 'change' : isSpec ? 'spec' : undefined);
 
     if (!type) {
@@ -126,6 +141,74 @@ export class ValidateCommand {
     }
 
     await this.validateByType(type, itemName, opts);
+  }
+
+  private isBatch(itemName: string): boolean {
+    try {
+      return batchExists(resolveCurrentPlanningHomeSync().root, itemName);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Validate a batch manifest, reporting malformed entries with their location.
+   * Valid entries in the same manifest are not reported as errors.
+   */
+  private validateBatch(id: string, json: boolean): void {
+    const projectRoot = resolveCurrentPlanningHomeSync().root;
+    const issues: { level: 'ERROR'; path: string; message: string }[] = [];
+
+    try {
+      const manifest = loadBatchManifest(projectRoot, id);
+      // Validate the per-phase DAG (cycles, unknown references).
+      for (const phase of manifest.phases) {
+        try {
+          BatchDag.fromIntents(phase.changes);
+        } catch (err) {
+          if (err instanceof BatchDagError) {
+            issues.push({ level: 'ERROR', path: `phases.${phase.name}`, message: err.message });
+          } else {
+            throw err;
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof BatchManifestError) {
+        issues.push({
+          level: 'ERROR',
+          path: err.location ?? 'batch.yaml',
+          message: err.message,
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    const valid = issues.length === 0;
+    if (json) {
+      console.log(
+        JSON.stringify(
+          {
+            items: [{ id, type: 'batch', valid, issues }],
+            summary: {
+              totals: { items: 1, passed: valid ? 1 : 0, failed: valid ? 0 : 1 },
+            },
+            version: '1.0',
+          },
+          null,
+          2
+        )
+      );
+    } else if (valid) {
+      console.log(`Batch '${id}' is valid`);
+    } else {
+      console.error(`Batch '${id}' has issues`);
+      for (const issue of issues) {
+        console.error(`✗ [ERROR] ${issue.path}: ${issue.message}`);
+      }
+    }
+    process.exitCode = valid ? 0 : 1;
   }
 
   private async validateByType(type: ItemType, id: string, opts: { strict: boolean; json: boolean }): Promise<void> {

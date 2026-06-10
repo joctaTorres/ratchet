@@ -108,18 +108,18 @@ chalk/symbol/progress-bar patterns.
 - [x] 1.3 Implement manifest load/parse/validate with clear errors for malformed entries
 - [x] 2.1 Implement the batch DAG: build ready/blocked/done over change intents, reusing the artifact-graph topological-sort logic
 - [x] 2.2 Add cycle detection and unknown-reference detection naming the offending entries
-- [ ] 2.3 Implement phase gating: phase blocked until prior phase proof-of-work passes
-- [ ] 3.1 Derive change status on disk (existence=pending, plan.md task counts, archive=done) and aggregate to phase and batch level
-- [ ] 3.2 Implement `ratchet batch status` text + `--json` output (phases, changes, next step, gated/blocked)
-- [ ] 4.1 Extend `ProjectConfigSchema` with an optional `batch` section (gate, strategy, proofOfWork, agent) and defaults
-- [ ] 4.2 Implement effective-settings resolution (project defaults ← manifest overrides)
-- [ ] 4.3 Implement `ratchet batch config [name]` get/set with enum validation and no-op on invalid input
-- [ ] 5.1 Create `schemas/ratchet/templates/batch.yaml` template and confirm `ratchet template batch` serves it
-- [ ] 5.2 Implement `ratchet new batch <name>` scaffolding from the template, with kebab-case name validation and exists-guard
-- [ ] 6.1 Implement `ratchet batch view [name]` rich dashboard (single batch + list) mirroring view.ts patterns, honoring `--no-color`
-- [ ] 7.1 Define the run journal model and the `ratchet batch report` command (status, blocker, needs-input, completion)
-- [ ] 7.2 Model parked states (blocked, awaiting-approval) and answer/reject-with-feedback recording
-- [ ] 8.1 Define the versioned `BatchEngine` interface: resolved step context in, structured step result out, engine-absent + version-mismatch as first-class states
-- [ ] 8.2 Implement `ratchet batch apply <name>`: pick next ready step, enforce gates/halts, hand off to the engine, persist result, render rich view; clean error when engine absent
-- [ ] 8.3 Add the `/rct:batch` skill that drives the same single-step apply
-- [ ] 9.1 Tests: manifest parsing/validation, DAG ready/blocked/cycle, status derivation, config layering, engine-absent path
+- [x] 2.3 Implement phase gating: phase blocked until prior phase proof-of-work passes
+- [x] 3.1 Derive change status on disk (existence=pending, plan.md task counts, archive=done) and aggregate to phase and batch level
+- [x] 3.2 Implement `ratchet batch status` text + `--json` output (phases, changes, next step, gated/blocked)
+- [x] 4.1 Extend `ProjectConfigSchema` with an optional `batch` section (gate, strategy, proofOfWork, agent) and defaults
+- [x] 4.2 Implement effective-settings resolution (project defaults ← manifest overrides)
+- [x] 4.3 Implement `ratchet batch config [name]` get/set with enum validation and no-op on invalid input
+- [x] 5.1 Create `schemas/ratchet/templates/batch.yaml` template and confirm `ratchet template batch` serves it
+- [x] 5.2 Implement `ratchet new batch <name>` scaffolding from the template, with kebab-case name validation and exists-guard
+- [x] 6.1 Implement `ratchet batch view [name]` rich dashboard (single batch + list) mirroring view.ts patterns, honoring `--no-color`
+- [x] 7.1 Define the run journal model and the `ratchet batch report` command (status, blocker, needs-input, completion)
+- [x] 7.2 Model parked states (blocked, awaiting-approval) and answer/reject-with-feedback recording
+- [x] 8.1 Define the versioned `BatchEngine` interface: resolved step context in, structured step result out, engine-absent + version-mismatch as first-class states
+- [x] 8.2 Implement `ratchet batch apply <name>`: pick next ready step, enforce gates/halts, hand off to the engine, persist result, render rich view; clean error when engine absent
+- [x] 8.3 Add the `/rct:batch` skill that drives the same single-step apply
+- [x] 9.1 Tests: manifest parsing/validation, DAG ready/blocked/cycle, status derivation, config layering, engine-absent path

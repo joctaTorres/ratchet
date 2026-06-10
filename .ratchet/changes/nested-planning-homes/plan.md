@@ -40,7 +40,7 @@ Ratchet currently assumes exactly one `.ratchet` directory per repository, resol
 ## Tasks
 
 - [x] 1.1 Route `archive`, `list`, and `view` through `resolveCurrentPlanningHomeSync()` (remove hardcoded `path.join('.', RATCHET_DIR_NAME, …)` in `src/core/archive.ts`, `src/core/list.ts`, `src/core/view.ts`); add regression tests that they resolve from a subdirectory
-- [ ] 1.2 Extend `PlanningHome` with lazy `parent` resolution (continue walk-up past current root) and `moduleName`; keep single-home repos identical in behavior and output
+- [x] 1.2 Extend `PlanningHome` with lazy `parent` resolution (continue walk-up past current root) and `moduleName`; keep single-home repos identical in behavior and output
 - [ ] 2.1 Implement `discoverModules(rootHome)` with bounded fast-glob scan, ignore rules (`node_modules`, `.git`, gitignore), no descent past a found module, and module-name derivation from relative path
 - [ ] 2.2 Parse optional `modules:` registry in root `config.yaml` and optional `name:` in module `config.yaml` (`src/core/project-config.ts`); error on duplicate module names
 - [ ] 2.3 Emit hybrid discover/verify warnings: discovered-but-unregistered and registered-but-missing, both non-fatal

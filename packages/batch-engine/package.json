@@ -1,0 +1,33 @@
+{
+  "name": "@ratchet/batch-engine",
+  "version": "0.1.0",
+  "description": "Licensed batch execution engine for ratchet. Spawns the configured coding agent to drive one transition, runs phase proof-of-work, honors gates/blockers, and persists resumable run state.",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "ratchet": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

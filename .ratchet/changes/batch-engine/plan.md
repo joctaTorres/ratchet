@@ -98,10 +98,10 @@ Compiled-binary distribution for stronger blob protection is a later option.
 
 ## Tasks
 
-- [ ] 1.1 Scaffold the engine package and register it against the `BatchEngine` contract version from `batch-orchestration`
-- [ ] 1.2 Implement the resolved-step-context input type and structured step-result output type
-- [ ] 2.1 Implement next-transition computation from on-disk change state (propose/apply/verify) and runnable-step selection
-- [ ] 2.2 Implement the single-step executor: run one transition, return, with a clean "nothing runnable" result
+- [x] 1.1 Scaffold the engine package and register it against the `BatchEngine` contract version from `batch-orchestration`
+- [x] 1.2 Implement the resolved-step-context input type and structured step-result output type
+- [x] 2.1 Implement next-transition computation from on-disk change state (propose/apply/verify) and runnable-step selection
+- [x] 2.2 Implement the single-step executor: run one transition, return, with a clean "nothing runnable" result
 - [ ] 3.1 Define the agent adapter interface and a default adapter for the configured coding agent
 - [ ] 3.2 Spawn the agent subprocess with step-context-derived instructions and capture exit status
 - [ ] 3.3 Map run-journal entries written by the agent to a structured step result; treat non-zero-without-completion as failed

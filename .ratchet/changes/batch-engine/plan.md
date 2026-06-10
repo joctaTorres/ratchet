@@ -102,11 +102,11 @@ Compiled-binary distribution for stronger blob protection is a later option.
 - [x] 1.2 Implement the resolved-step-context input type and structured step-result output type
 - [x] 2.1 Implement next-transition computation from on-disk change state (propose/apply/verify) and runnable-step selection
 - [x] 2.2 Implement the single-step executor: run one transition, return, with a clean "nothing runnable" result
-- [ ] 3.1 Define the agent adapter interface and a default adapter for the configured coding agent
-- [ ] 3.2 Spawn the agent subprocess with step-context-derived instructions and capture exit status
-- [ ] 3.3 Map run-journal entries written by the agent to a structured step result; treat non-zero-without-completion as failed
-- [ ] 3.4 Reject unknown agent adapters before spawning, listing available adapters
-- [ ] 4.1 Implement propose/apply/verify transition orchestration, including vertical-slice vs feature strategy in the propose instructions
+- [x] 3.1 Define the agent adapter interface and a default adapter for the configured coding agent
+- [x] 3.2 Spawn the agent subprocess with step-context-derived instructions and capture exit status
+- [x] 3.3 Map run-journal entries written by the agent to a structured step result; treat non-zero-without-completion as failed
+- [x] 3.4 Reject unknown agent adapters before spawning, listing available adapters
+- [x] 4.1 Implement propose/apply/verify transition orchestration, including vertical-slice vs feature strategy in the propose instructions
 - [ ] 5.1 Implement proof-of-work execution for integration/blackbox (bash) kinds with pass-condition evaluation
 - [ ] 5.2 Implement the llm-judge proof-of-work (agent exercises software via bash/MCP, returns verdict)
 - [ ] 5.3 Implement phase gating on proof-of-work with hard-gate vs warn policy

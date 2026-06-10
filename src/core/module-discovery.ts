@@ -24,7 +24,10 @@ import fg from 'fast-glob';
 import { RATCHET_DIR_NAME } from './config.js';
 import {
   type PlanningHome,
+  getRootPlanningHome,
   relativeModulePath,
+  resolveCurrentPlanningHomeSync,
+  type ResolvePlanningHomeOptions,
 } from './planning-home.js';
 import { readModuleName, readModuleRegistry } from './project-config.js';
 
@@ -195,4 +198,45 @@ export function reconcileModuleRegistry(
   }
 
   return warnings;
+}
+
+export interface ResolveCommandHomeOptions extends ResolvePlanningHomeOptions {
+  /** Module name to target (from the shared `--module` flag). */
+  module?: string;
+}
+
+/**
+ * Resolve the planning home a change-scoped command should operate on.
+ *
+ * Without `--module`, this is the nearest-wins home (today's behavior). With
+ * `--module <name>`, it resolves the *root* home from cwd, runs discovery, and
+ * substitutes the matched module's home — so a module can be addressed from
+ * anywhere in the repo. An unknown name throws with the discovered-name list.
+ */
+export async function resolvePlanningHomeForCommand(
+  options: ResolveCommandHomeOptions = {}
+): Promise<PlanningHome> {
+  const { module: moduleName, ...resolveOptions } = options;
+  const nearest = resolveCurrentPlanningHomeSync(resolveOptions);
+
+  if (!moduleName) {
+    return nearest;
+  }
+
+  // Address a module from the root: discovery is rooted at the topmost home.
+  const rootHome = getRootPlanningHome(nearest);
+  const modules = await discoverModules(rootHome);
+  const match = modules.find((m) => m.moduleName === moduleName);
+
+  if (!match) {
+    const known =
+      modules.length > 0
+        ? modules.map((m) => m.moduleName).join(', ')
+        : '(none discovered)';
+    throw new Error(
+      `Unknown module '${moduleName}'. Discovered modules: ${known}`
+    );
+  }
+
+  return match.home;
 }

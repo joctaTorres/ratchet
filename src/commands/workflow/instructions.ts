@@ -16,6 +16,7 @@ import {
   type ArtifactInstructions,
 } from '../../core/artifact-graph/index.js';
 import { getChangeDir, resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
+import { resolvePlanningHomeForCommand } from '../../core/module-discovery.js';
 import {
   validateChangeExists,
   validateSchemaExists,
@@ -31,12 +32,14 @@ export interface InstructionsOptions {
   change?: string;
   schema?: string;
   json?: boolean;
+  module?: string;
 }
 
 export interface ApplyInstructionsOptions {
   change?: string;
   schema?: string;
   json?: boolean;
+  module?: string;
 }
 
 // -----------------------------------------------------------------------------
@@ -50,7 +53,7 @@ export async function instructionsCommand(
   const spinner = options.json ? undefined : ora('Generating instructions...').start();
 
   try {
-    const planningHome = resolveCurrentPlanningHomeSync();
+    const planningHome = await resolvePlanningHomeForCommand({ module: options.module });
     const projectRoot = planningHome.root;
     const changeName = await validateChangeExists(
       options.change,
@@ -371,7 +374,7 @@ export async function applyInstructionsCommand(options: ApplyInstructionsOptions
   const spinner = options.json ? undefined : ora('Generating apply instructions...').start();
 
   try {
-    const planningHome = resolveCurrentPlanningHomeSync();
+    const planningHome = await resolvePlanningHomeForCommand({ module: options.module });
     const projectRoot = planningHome.root;
     const changeName = await validateChangeExists(
       options.change,

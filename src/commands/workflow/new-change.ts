@@ -9,9 +9,9 @@ import path from 'path';
 import { createChange, validateChangeName } from '../../utils/change-utils.js';
 import {
   formatChangeLocation,
-  resolveCurrentPlanningHomeSync,
   type PlanningHome,
 } from '../../core/planning-home.js';
+import { resolvePlanningHomeForCommand } from '../../core/module-discovery.js';
 import { validateSchemaExists } from './shared.js';
 
 // -----------------------------------------------------------------------------
@@ -22,6 +22,7 @@ export interface NewChangeOptions {
   description?: string;
   schema?: string;
   json?: boolean;
+  module?: string;
 }
 
 interface NewChangeOutput {
@@ -90,7 +91,7 @@ export async function newChangeCommand(name: string | undefined, options: NewCha
       throw new Error(validation.error);
     }
 
-    const planningHome = resolveCurrentPlanningHomeSync();
+    const planningHome = await resolvePlanningHomeForCommand({ module: options.module });
     const projectRoot = planningHome.root;
 
     // Validate schema if provided

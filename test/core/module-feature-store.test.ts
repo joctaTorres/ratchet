@@ -84,4 +84,63 @@ describe('module-local feature stores on archive', () => {
       fs.access(path.join(root, 'packages', 'api', RATCHET_DIR_NAME, 'features'))
     ).rejects.toThrow();
   });
+
+  it('writes an inherited standard reverse link into the root, qualified by module name', async () => {
+    const moduleRoot = path.join(root, 'packages', 'api');
+    // Root defines the "testing" standard.
+    await writeFile(
+      path.join(root, RATCHET_DIR_NAME, 'standards', 'testing.md'),
+      '---\ntag: testing\n---\n\n# Testing\n'
+    );
+    // Module change declares ["testing"].
+    await scaffoldChange(moduleRoot, 'add-auth', 'auth/login.feature');
+    await writeFile(
+      path.join(moduleRoot, RATCHET_DIR_NAME, 'changes', 'add-auth', '.ratchet.yaml'),
+      'schema: ratchet\nstandards:\n  - testing\n'
+    );
+
+    await new ArchiveCommand().execute('add-auth', { yes: true, module: 'api', cwd: root });
+
+    // Forward sidecar lives in the module store.
+    await expect(
+      fs.access(path.join(moduleRoot, RATCHET_DIR_NAME, 'features', 'auth', '.ratchet.yaml'))
+    ).resolves.toBeUndefined();
+
+    // Reverse link is regenerated in the root standard, qualified by module.
+    const rootStandard = await fs.readFile(
+      path.join(root, RATCHET_DIR_NAME, 'standards', 'testing.md'),
+      'utf-8'
+    );
+    expect(rootStandard).toContain('## Implemented by');
+    expect(rootStandard).toContain('api: auth/login.feature');
+  });
+
+  it('keeps a module-local standard reverse link within the module', async () => {
+    const moduleRoot = path.join(root, 'packages', 'api');
+    // Module defines its own "api-versioning" standard.
+    await writeFile(
+      path.join(moduleRoot, RATCHET_DIR_NAME, 'standards', 'api-versioning.md'),
+      '---\ntag: api-versioning\n---\n\n# API Versioning\n'
+    );
+    await scaffoldChange(moduleRoot, 'add-auth', 'auth/login.feature');
+    await writeFile(
+      path.join(moduleRoot, RATCHET_DIR_NAME, 'changes', 'add-auth', '.ratchet.yaml'),
+      'schema: ratchet\nstandards:\n  - api-versioning\n'
+    );
+
+    await new ArchiveCommand().execute('add-auth', { yes: true, module: 'api', cwd: root });
+
+    const moduleStandard = await fs.readFile(
+      path.join(moduleRoot, RATCHET_DIR_NAME, 'standards', 'api-versioning.md'),
+      'utf-8'
+    );
+    expect(moduleStandard).toContain('## Implemented by');
+    // Within the module the feature is not module-qualified.
+    expect(moduleStandard).toContain('auth/login.feature');
+
+    // No standard file exists or is created under the root .ratchet.
+    await expect(
+      fs.access(path.join(root, RATCHET_DIR_NAME, 'standards'))
+    ).rejects.toThrow();
+  });
 });

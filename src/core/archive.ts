@@ -243,7 +243,7 @@ export class ArchiveCommand {
         // the standards. A change that declares no standards is a no-op here.
         const tags = readDeclaredStandardTags(changeDir);
         if (tags.length > 0) {
-          await materializeStandardLinks(targetPath, changeName, tags);
+          await materializeStandardLinks(targetPath, changeName, tags, planningHome);
           console.log(`Standard links materialized for: ${tags.join(', ')}`);
         }
       }

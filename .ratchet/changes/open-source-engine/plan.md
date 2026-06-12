@@ -80,7 +80,7 @@ receives the phase success criteria.
 
 ## Tasks
 
-- [ ] 1.1 Add root `LICENSE` (MIT) and set `license: "MIT"` in the root package.json
+- [x] 1.1 Add root `LICENSE` (MIT) and set `license: "MIT"` in the root package.json
 - [ ] 2.1 Remove the licensing code: delete `license.ts`, the authorize-before-spawn call in the engine, and any license-key env reads/forwarding in the spawn path
 - [ ] 2.2 Delete license tests and any license-specific assertions in other tests
 - [ ] 3.1 Move the engine source from `packages/batch-engine/src/*` into the main package (`src/core/batch/engine/*`); rewire `ratchet`-specifier imports to relative paths

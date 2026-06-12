@@ -225,6 +225,13 @@ async function derivePhaseStatus(
  * Phase gating: phase N is gated until phase N-1 is `done` (all its changes
  * done — a stand-in for "prior phase proof-of-work passed", which the engine
  * actually executes; the CLI models the gate).
+ *
+ * DEFERRED (by design): this `priorPhaseDone` gate does NOT yet consult
+ * `runProofOfWork`'s `gatePassed`. Proof-of-work execution is implemented and
+ * unit-tested in `engine/proof-of-work.ts` but is wired in by the future
+ * host/internal loop, not by the single-step `batch apply` path. Until then a
+ * `hard-gate` proof-of-work cannot block a phase here; the gate is "prior phase
+ * all changes done". See the `runProofOfWork` docstring for the seam.
  */
 export async function computeBatchStatus(
   projectRoot: string,

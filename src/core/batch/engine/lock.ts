@@ -71,6 +71,15 @@ export interface BatchLock {
 /**
  * Acquire the per-batch lock. Throws `BatchLockedError` when a live process
  * already holds it; reclaims a stale lock left by a dead process.
+ *
+ * Concurrency: the check->reclaim->create sequence has a TOCTOU window, but the
+ * decisive step is the atomic `openSync(file, 'wx')` (exclusive create). A racer
+ * that wins `wx` owns the lock; the loser falls into the catch and degrades to a
+ * `BatchLockedError` — never silent corruption or a double-acquire. Stale locks
+ * from dead pids are reclaimed via `pidAlive`. This is sized for a LOCAL,
+ * single-host batch run: `process.kill(pid, 0)` and `wx` are NOT NFS- or
+ * multi-host-safe (pids are not comparable across hosts and `wx` exclusivity is
+ * unreliable over NFS). Do not rely on this lock across machines.
  */
 export function acquireBatchLock(projectRoot: string, batch: string): BatchLock {
   const dir = runDir(projectRoot, batch);

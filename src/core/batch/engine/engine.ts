@@ -22,7 +22,7 @@
  * single-transition semantics.
  */
 
-import { appendJournal } from '../journal.js';
+import { appendJournal, type JournalEntryKind } from '../journal.js';
 import type { ResolvedStepContext, StepResult, Transition } from './contract.js';
 import {
   resolveAdapter,
@@ -45,6 +45,20 @@ export interface EngineDeps {
   adapters?: Record<string, AgentAdapter>;
   /** Resolve the project root (defaults to planning-home). */
   projectRoot?: () => string;
+}
+
+/** Map a step outcome state to the journal entry kind recorded for it. */
+function outcomeKind(state: EngineStepOutcome['state']): JournalEntryKind {
+  switch (state) {
+    case 'advanced':
+    case 'awaiting-approval':
+      return 'completion';
+    case 'blocked':
+    case 'failed':
+      return 'blocker';
+    default:
+      return 'progress';
+  }
 }
 
 export class RatchetBatchEngine {
@@ -137,11 +151,7 @@ export class RatchetBatchEngine {
     //    have reported one, e.g. on failure), so resume sees this step.
     appendJournal(projectRoot, batch, {
       change,
-      kind: outcome.state === 'advanced' || outcome.state === 'awaiting-approval'
-        ? 'completion'
-        : outcome.state === 'blocked' || outcome.state === 'failed'
-          ? 'blocker'
-          : 'progress',
+      kind: outcomeKind(outcome.state),
       message:
         outcome.message ??
         outcome.blocker ??

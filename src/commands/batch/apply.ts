@@ -8,24 +8,22 @@
  */
 
 import chalk from 'chalk';
-import { existsSync } from 'fs';
-import path from 'path';
-import { RATCHET_DIR_NAME } from '../../core/config.js';
 import { resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
 import { loadBatchManifest, type Phase } from '../../core/batch/manifest.js';
 import { computeBatchStatus } from '../../core/batch/status.js';
 import { resolveBatchSettings } from '../../core/batch/config.js';
 import {
   RatchetBatchEngine,
+  computeNextTransition,
   type ResolvedStepContext,
   type StepResult,
-  type Transition,
 } from '../../core/batch/engine/index.js';
 import {
   getParkedStep,
   readJournalForChange,
   parkStep,
   clearParkedStep,
+  type ParkedStep,
 } from '../../core/batch/journal.js';
 import { resolveBatchName } from './shared.js';
 
@@ -33,14 +31,59 @@ export interface BatchApplyOptions {
   json?: boolean;
 }
 
-/** Compute the next transition for a change from its on-disk state. */
-function nextTransition(projectRoot: string, change: string, exists: boolean): Transition {
-  if (!exists) return 'propose';
-  // If the change exists with a plan, the propose step is done; assume apply.
-  // (The engine derives the precise transition from richer state; this is the
-  // CLI's coarse view for context-building.)
-  const planPath = path.join(projectRoot, RATCHET_DIR_NAME, 'changes', change, 'plan.md');
-  return existsSync(planPath) ? 'apply' : 'propose';
+/**
+ * If a parked step is unresolved, emit the "did not advance" notice and return
+ * true (the step must not advance). Lets the engine own transition derivation;
+ * the CLI only blocks on un-actioned halts before building context.
+ */
+function precheckPark(
+  parked: ParkedStep | undefined,
+  change: string,
+  options: BatchApplyOptions
+): boolean {
+  if (parked && parked.kind === 'blocked' && !parked.answer) {
+    notAdvanced(
+      change,
+      `blocked: ${parked.reason}`,
+      options,
+      'record an answer with `ratchet batch report --change ' + change + ' --answer "..."`'
+    );
+    return true;
+  }
+  if (parked && parked.kind === 'awaiting-approval' && !parked.approved && !parked.feedback) {
+    notAdvanced(
+      change,
+      `awaiting approval: ${parked.reason}`,
+      options,
+      'approve or reject from the batch view'
+    );
+    return true;
+  }
+  return false;
+}
+
+/** Persist parked / cleared state based on the engine's structured result. */
+function persistStepOutcome(
+  projectRoot: string,
+  batch: string,
+  change: string,
+  result: StepResult
+): void {
+  if (result.state === 'blocked') {
+    parkStep(projectRoot, batch, {
+      change,
+      kind: 'blocked',
+      reason: result.blocker ?? 'blocked',
+    });
+  } else if (result.state === 'awaiting-approval') {
+    parkStep(projectRoot, batch, {
+      change,
+      kind: 'awaiting-approval',
+      reason: result.approvalRequest ?? 'awaiting approval',
+    });
+  } else if (result.state === 'advanced') {
+    clearParkedStep(projectRoot, batch, change);
+  }
 }
 
 export async function batchApplyCommand(
@@ -71,23 +114,19 @@ export async function batchApplyCommand(
     return;
   }
 
-  const { phase, change, exists } = target;
+  const { phase, change } = target;
 
   // Respect halts: a parked step does not advance until input is recorded.
   const parked = getParkedStep(projectRoot, batch, change);
-  if (parked && parked.kind === 'blocked' && !parked.answer) {
-    notAdvanced(change, `blocked: ${parked.reason}`, options, 'record an answer with `ratchet batch report --change ' + change + ' --answer "..."`');
-    return;
-  }
-  if (parked && parked.kind === 'awaiting-approval' && !parked.approved && !parked.feedback) {
-    notAdvanced(change, `awaiting approval: ${parked.reason}`, options, 'approve or reject from the batch view');
-    return;
-  }
+  if (precheckPark(parked, change, options)) return;
 
   const context: ResolvedStepContext = {
     batch,
     change,
-    transition: nextTransition(projectRoot, change, exists),
+    // Coarse hint only; the engine derives the authoritative transition from
+    // richer on-disk state via the same `computeNextTransition` and overrides
+    // this. `propose` is the neutral default for a not-yet-created change.
+    transition: computeNextTransition(projectRoot, change) ?? 'propose',
     phase: {
       name: phase.name,
       goal: phase.goal,
@@ -108,22 +147,7 @@ export async function batchApplyCommand(
 
   const result = await engine.runStep(context);
 
-  // Persist parked/cleared state based on the structured result.
-  if (result.state === 'blocked') {
-    parkStep(projectRoot, batch, {
-      change,
-      kind: 'blocked',
-      reason: result.blocker ?? 'blocked',
-    });
-  } else if (result.state === 'awaiting-approval') {
-    parkStep(projectRoot, batch, {
-      change,
-      kind: 'awaiting-approval',
-      reason: result.approvalRequest ?? 'awaiting approval',
-    });
-  } else if (result.state === 'advanced') {
-    clearParkedStep(projectRoot, batch, change);
-  }
+  persistStepOutcome(projectRoot, batch, change, result);
 
   renderResult(projectRoot, batch, manifest.phases, result, options);
 }
@@ -131,14 +155,14 @@ export async function batchApplyCommand(
 function pickNextStep(
   status: Awaited<ReturnType<typeof computeBatchStatus>>,
   manifestPhases: Phase[]
-): { phase: Phase; change: string; exists: boolean } | undefined {
+): { phase: Phase; change: string } | undefined {
   for (const phaseStatus of status.phases) {
     if (phaseStatus.gated) continue;
     const phase = manifestPhases.find((p) => p.name === phaseStatus.name);
     if (!phase) continue;
     for (const change of phaseStatus.changes) {
       if (change.status === 'ready' || change.status === 'in-progress') {
-        return { phase, change: change.name, exists: change.exists };
+        return { phase, change: change.name };
       }
     }
   }

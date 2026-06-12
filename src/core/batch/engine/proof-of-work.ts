@@ -84,45 +84,50 @@ export interface ProofOfWorkResult {
  *   - `regex:<pattern>`           -> passes when stdout matches the pattern
  * Anything else is treated as substring-in-stdout, with exit 0 still required.
  */
-export function evaluatePassCondition(
-  pass: string,
-  result: BashResult
-): { passed: boolean; reason: ProofOfWorkPassReason | ProofOfWorkFailReason } {
+type PassEvaluation = { passed: boolean; reason: ProofOfWorkPassReason | ProofOfWorkFailReason };
+
+/** Pass when exit 0; otherwise fail as nonzero-exit. */
+function exitZeroHandler(exitedZero: boolean): PassEvaluation {
+  return exitedZero
+    ? { passed: true, reason: 'pass-condition-met' }
+    : { passed: false, reason: 'nonzero-exit' };
+}
+
+/**
+ * Pass when exit 0 AND `match` holds against stdout. A failed match while exit 0
+ * is `pass-condition-unmet`; a nonzero exit is `nonzero-exit`.
+ */
+function outputHandler(exitedZero: boolean, match: boolean): PassEvaluation {
+  return exitedZero && match
+    ? { passed: true, reason: 'pass-condition-met' }
+    : { passed: false, reason: exitedZero ? 'pass-condition-unmet' : 'nonzero-exit' };
+}
+
+function regexMatch(pattern: string, stdout: string): boolean {
+  try {
+    return new RegExp(pattern).test(stdout);
+  } catch {
+    return false;
+  }
+}
+
+export function evaluatePassCondition(pass: string, result: BashResult): PassEvaluation {
   const exitedZero = result.exitCode === 0;
   const condition = pass.trim();
 
   if (condition === '' || /^exit[- ]?0$/i.test(condition) || /^exit-zero$/i.test(condition)) {
-    return exitedZero
-      ? { passed: true, reason: 'pass-condition-met' }
-      : { passed: false, reason: 'nonzero-exit' };
+    return exitZeroHandler(exitedZero);
   }
-
   if (condition.startsWith('contains:')) {
     const needle = condition.slice('contains:'.length);
-    const ok = exitedZero && result.stdout.includes(needle);
-    return ok
-      ? { passed: true, reason: 'pass-condition-met' }
-      : { passed: false, reason: exitedZero ? 'pass-condition-unmet' : 'nonzero-exit' };
+    return outputHandler(exitedZero, result.stdout.includes(needle));
   }
-
   if (condition.startsWith('regex:')) {
     const pattern = condition.slice('regex:'.length);
-    let ok = false;
-    try {
-      ok = exitedZero && new RegExp(pattern).test(result.stdout);
-    } catch {
-      ok = false;
-    }
-    return ok
-      ? { passed: true, reason: 'pass-condition-met' }
-      : { passed: false, reason: exitedZero ? 'pass-condition-unmet' : 'nonzero-exit' };
+    return outputHandler(exitedZero, regexMatch(pattern, result.stdout));
   }
-
   // Default: substring match in stdout, exit 0 required.
-  const ok = exitedZero && result.stdout.includes(condition);
-  return ok
-    ? { passed: true, reason: 'pass-condition-met' }
-    : { passed: false, reason: exitedZero ? 'pass-condition-unmet' : 'nonzero-exit' };
+  return outputHandler(exitedZero, result.stdout.includes(condition));
 }
 
 function applyPolicy(
@@ -147,6 +152,13 @@ export interface RunProofOfWorkDeps {
  * `llm-judge` kind judges the running software against THAT criteria, not the
  * bash pass-condition (`proofOfWork.pass`) which only applies to the
  * integration/blackbox kinds.
+ *
+ * DEFERRED (by design): this function has no live caller yet. The single-step
+ * `batch apply` path advances changes only; phase gating in `computeBatchStatus`
+ * is currently modeled as "prior phase all changes done" and does not consult
+ * `gatePassed`. Wiring proof-of-work into the gate belongs to the future
+ * host/internal loop (the engine is single-step by design; looping is a separate
+ * planned change). See `status.ts` `computeBatchStatus` for the matching note.
  */
 export async function runProofOfWork(
   proofOfWork: ProofOfWork,

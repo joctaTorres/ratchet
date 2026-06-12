@@ -1,32 +1,29 @@
 /**
- * RatchetBatchEngine — the licensed implementation of the `BatchEngine` contract.
+ * RatchetBatchEngine — the bundled batch execution engine.
  *
  * One `runStep` drives exactly one transition forward:
  *   1. Acquire the per-batch single-flight lock (concurrency guard).
- *   2. Obtain run authorization from the license manager BEFORE spawning anything
- *      — without it the engine refuses to run.
- *   3. Honor gates/resume: an after-propose/every-phase gate or a recorded
+ *   2. Honor gates/resume: an after-propose/every-phase gate or a recorded
  *      answer/feedback shapes the agent instructions; an unresolved park does not
  *      advance.
- *   4. Resolve the agent adapter (reject unknown adapters before spawning).
- *   5. Spawn a fresh agent for the transition with context-derived instructions.
- *   6. Map the journal entries the agent wrote + exit status to a structured
+ *   3. Resolve the agent adapter (reject unknown adapters before spawning).
+ *   4. Spawn a fresh agent for the transition with context-derived instructions.
+ *   5. Map the journal entries the agent wrote + exit status to a structured
  *      result, parking on blockers / approval as configured.
+ *
+ * The engine's only failure modes are real execution errors (an unknown adapter,
+ * an agent crash, a non-zero exit without completion) which surface as
+ * blocked/failed and stay resumable. There is no license, authorization, or
+ * lease between the user and running a step.
  *
  * Proof-of-work gating lives in `proof-of-work.ts` and is invoked by the host
  * loop once a phase's changes are all done; `runStep` advances changes and never
- * runs proof-of-work while a phase still has work, matching the contract's
+ * runs proof-of-work while a phase still has work, matching the
  * single-transition semantics.
  */
 
-import type {
-  BatchEngine,
-  ResolvedStepContext,
-  StepResult,
-  Transition,
-} from 'ratchet';
-import { appendJournal } from 'ratchet';
-import { ENGINE_CONTRACT_VERSION } from 'ratchet';
+import { appendJournal } from '../journal.js';
+import type { ResolvedStepContext, StepResult, Transition } from './contract.js';
 import {
   resolveAdapter,
   realSpawner,
@@ -40,58 +37,32 @@ import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './cont
 import { computeNextTransition } from './transition.js';
 import { withBatchLock } from './lock.js';
 import { readChangeJournalTolerant } from './run-state.js';
-import {
-  LicenseManager,
-  LicenseError,
-  HttpAuthorizationService,
-  type AuthorizationService,
-} from './license.js';
 
 export interface EngineDeps {
   /** Process-spawn seam (defaults to the real cross-spawn spawner). */
   spawner?: Spawner;
   /** Extra/override agent adapters (e.g. for tests). */
   adapters?: Record<string, AgentAdapter>;
-  /** License manager; defaults to one backed by the HTTP authorization seam. */
-  license?: LicenseManager;
   /** Resolve the project root (defaults to planning-home). */
   projectRoot?: () => string;
 }
 
-const DEFAULT_LICENSE_ENDPOINT =
-  process.env.RATCHET_LICENSE_ENDPOINT ?? 'https://license.ratchet.dev/authorize';
-
-function defaultLicenseManager(): LicenseManager {
-  const service: AuthorizationService = new HttpAuthorizationService(
-    DEFAULT_LICENSE_ENDPOINT
-  );
-  return new LicenseManager({
-    service,
-    // In production this is the service's verification material; the HTTP seam
-    // throws until wired, so the manager fails closed regardless.
-    verifyingSecret: process.env.RATCHET_LICENSE_VERIFY_SECRET ?? '',
-  });
-}
-
-export class RatchetBatchEngine implements BatchEngine {
-  readonly contractVersion = ENGINE_CONTRACT_VERSION;
+export class RatchetBatchEngine {
   readonly name = 'ratchet-batch-engine';
 
   private readonly spawner: Spawner;
   private readonly adapters?: Record<string, AgentAdapter>;
-  private readonly license: LicenseManager;
   private readonly projectRoot: () => string;
 
   constructor(deps: EngineDeps = {}) {
     this.spawner = deps.spawner ?? realSpawner;
     this.adapters = deps.adapters;
-    this.license = deps.license ?? defaultLicenseManager();
     this.projectRoot = deps.projectRoot ?? resolveProjectRoot;
   }
 
   async runStep(context: ResolvedStepContext): Promise<StepResult> {
     const projectRoot = this.projectRoot();
-    const { batch, change } = context;
+    const { batch } = context;
 
     // 1. Single-flight: refuse a second concurrent step for the same batch.
     return withBatchLock(projectRoot, batch, async () => {
@@ -118,7 +89,7 @@ export class RatchetBatchEngine implements BatchEngine {
     const park = this.checkPark(context, transition);
     if (park) return park;
 
-    // 2. Reject unknown adapters BEFORE any spawn or license cost.
+    // 2. Reject unknown adapters BEFORE any spawn.
     let adapter: AgentAdapter;
     try {
       adapter = resolveAdapter(context.settings.agent, this.adapters);
@@ -135,24 +106,7 @@ export class RatchetBatchEngine implements BatchEngine {
       throw err;
     }
 
-    // 3. License: obtain run authorization BEFORE spawning any agent. Without a
-    //    valid, verifiable authorization the engine refuses to run.
-    try {
-      await this.license.authorizeRun(batch, change, transition);
-    } catch (err) {
-      if (err instanceof LicenseError) {
-        return {
-          state: 'failed',
-          change,
-          transition,
-          blocker: err.message,
-          message: err.message,
-        };
-      }
-      throw err;
-    }
-
-    // 4. Build instructions + spawn a fresh agent for this single transition.
+    // 3. Build instructions + spawn a fresh agent for this single transition.
     const stepContext: ResolvedStepContext = { ...context, transition };
     const instructions = buildAgentInstructions(stepContext);
     const env = { ...process.env };
@@ -163,7 +117,7 @@ export class RatchetBatchEngine implements BatchEngine {
 
     const spawnResult = await this.spawner(request);
 
-    // 5. Read the entries the agent wrote during this session and map them.
+    // 4. Read the entries the agent wrote during this session and map them.
     const afterAll = readChangeJournalTolerant(projectRoot, batch, change);
     const sessionEntries = afterAll.slice(before);
     const sessionIndices = sessionEntries.map((_, i) => before + i);
@@ -179,7 +133,7 @@ export class RatchetBatchEngine implements BatchEngine {
       parkForApproval,
     });
 
-    // 6. Record a journal entry for the transition outcome (the agent may not
+    // 5. Record a journal entry for the transition outcome (the agent may not
     //    have reported one, e.g. on failure), so resume sees this step.
     appendJournal(projectRoot, batch, {
       change,

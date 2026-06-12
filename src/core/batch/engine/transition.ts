@@ -17,7 +17,8 @@
 
 import { existsSync, readFileSync } from 'fs';
 import path from 'path';
-import type { JournalEntry, Transition } from 'ratchet';
+import type { JournalEntry } from '../journal.js';
+import type { Transition } from './contract.js';
 
 const RATCHET_DIR = '.ratchet';
 

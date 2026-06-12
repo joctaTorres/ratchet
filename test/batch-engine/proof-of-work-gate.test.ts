@@ -16,7 +16,7 @@ import {
   type BashRunner,
   type LlmJudge,
   type ProofOfWorkResult,
-} from '../../packages/batch-engine/src/proof-of-work.js';
+} from '../../src/core/batch/engine/proof-of-work.js';
 import type { ProofOfWork, ProofOfWorkPolicy } from 'ratchet';
 
 const integrationPow = (over: Partial<ProofOfWork> = {}): ProofOfWork => ({
@@ -45,6 +45,7 @@ describe('proof-of-work phase gate — bash/integration kinds', () => {
       integrationPow({ pass: 'contains:0 failing' }),
       'hard-gate',
       '/tmp',
+    'phase succeeds',
       { bash }
     );
     expect(result.passed).toBe(true);
@@ -64,6 +65,7 @@ describe('proof-of-work phase gate — bash/integration kinds', () => {
       integrationPow({ pass: 'regex:\\d+ passed' }),
       'hard-gate',
       '/tmp',
+    'phase succeeds',
       { bash }
     );
     expect(result.passed).toBe(true);
@@ -80,6 +82,7 @@ describe('proof-of-work phase gate — bash/integration kinds', () => {
       integrationPow({ pass: 'exit 0' }),
       'hard-gate',
       '/tmp',
+    'phase succeeds',
       { bash }
     );
     expect(result.passed).toBe(false);
@@ -99,6 +102,7 @@ describe('proof-of-work phase gate — bash/integration kinds', () => {
       integrationPow({ pass: 'contains:0 failing' }),
       'hard-gate',
       '/tmp',
+    'phase succeeds',
       { bash }
     );
     expect(result.passed).toBe(false);
@@ -109,7 +113,7 @@ describe('proof-of-work phase gate — bash/integration kinds', () => {
   it('FAIL under warn policy lets the next phase PROCEED (recorded, not blocking)', async () => {
     const bash: BashRunner = async () => ({ exitCode: 1, stdout: '', stderr: 'boom' });
     const policy: ProofOfWorkPolicy = 'warn';
-    const result = await runProofOfWork(integrationPow(), policy, '/tmp', { bash });
+    const result = await runProofOfWork(integrationPow(), policy, '/tmp', 'phase succeeds', { bash });
     expect(result.passed).toBe(false); // the check genuinely failed
     expect(result.gatePassed).toBe(true); // but warn lets the phase complete
     expect(result.policy).toBe('warn');
@@ -128,6 +132,7 @@ describe('proof-of-work phase gate — llm-judge kind', () => {
       integrationPow({ kind: 'llm-judge', run: 'exercise the slice', pass: 'works end to end' }),
       'hard-gate',
       '/tmp',
+    'phase succeeds',
       { judge }
     );
     expect(result.passed).toBe(true);
@@ -141,6 +146,7 @@ describe('proof-of-work phase gate — llm-judge kind', () => {
       integrationPow({ kind: 'llm-judge' }),
       'hard-gate',
       '/tmp',
+    'phase succeeds',
       { judge }
     );
     expect(result.passed).toBe(false);
@@ -157,6 +163,7 @@ describe('proof-of-work phase gate — llm-judge kind', () => {
       integrationPow({ kind: 'llm-judge' }),
       'hard-gate',
       '/tmp',
+    'phase succeeds',
       { judge }
     );
     expect(result.passed).toBe(false);

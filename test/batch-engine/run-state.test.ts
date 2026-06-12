@@ -3,11 +3,11 @@ import { promises as fs, appendFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { appendJournal } from 'ratchet';
-import { readJournalTolerant } from '../../packages/batch-engine/src/run-state.js';
+import { readJournalTolerant } from '../../src/core/batch/engine/run-state.js';
 import {
   acquireBatchLock,
   BatchLockedError,
-} from '../../packages/batch-engine/src/lock.js';
+} from '../../src/core/batch/engine/lock.js';
 
 let projectRoot: string;
 

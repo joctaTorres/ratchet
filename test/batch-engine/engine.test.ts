@@ -4,14 +4,8 @@ import path from 'path';
 import os from 'os';
 import { appendJournal } from 'ratchet';
 import type { ResolvedStepContext, BatchSettings, ProofOfWork } from 'ratchet';
-import { RatchetBatchEngine } from '../../packages/batch-engine/src/engine.js';
-import {
-  LicenseManager,
-  FakeAuthorizationService,
-} from '../../packages/batch-engine/src/license.js';
-import type { AgentAdapter, Spawner, AgentSpawnRequest } from '../../packages/batch-engine/src/agent.js';
-
-const SECRET = 'engine-test-secret';
+import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
+import type { AgentAdapter, Spawner, AgentSpawnRequest } from '../../src/core/batch/engine/agent.js';
 
 let projectRoot: string;
 
@@ -32,7 +26,6 @@ function settings(over: Partial<BatchSettings> = {}): BatchSettings {
 
 function context(over: Partial<ResolvedStepContext> = {}): ResolvedStepContext {
   return {
-    contractVersion: 1,
     batch: 'b',
     change: 'add-login-api',
     transition: 'propose',
@@ -41,14 +34,6 @@ function context(over: Partial<ResolvedStepContext> = {}): ResolvedStepContext {
     journal: [],
     ...over,
   };
-}
-
-function licensed(): LicenseManager {
-  return new LicenseManager({
-    licenseKey: 'valid',
-    service: new FakeAuthorizationService(SECRET),
-    verifyingSecret: SECRET,
-  });
 }
 
 /**
@@ -75,12 +60,11 @@ function fakeAgent(behavior: {
   return { adapter, spawner, calls };
 }
 
-function engineWith(behavior: Parameters<typeof fakeAgent>[0], license = licensed()) {
+function engineWith(behavior: Parameters<typeof fakeAgent>[0]) {
   const { adapter, spawner, calls } = fakeAgent(behavior);
   const engine = new RatchetBatchEngine({
     spawner,
     adapters: { fake: adapter },
-    license,
     projectRoot: () => projectRoot,
   });
   return { engine, calls };
@@ -173,22 +157,6 @@ describe('RatchetBatchEngine.runStep', () => {
     });
     const result = await engine.runStep(context({ settings: settings({ gate: 'autonomous' }) }));
     expect(result.state).toBe('advanced');
-  });
-
-  it('refuses to spawn any agent without a valid license', async () => {
-    const unlicensed = new LicenseManager({
-      licenseKey: '',
-      service: new FakeAuthorizationService(SECRET),
-      verifyingSecret: SECRET,
-    });
-    const { engine, calls } = engineWith(
-      { report: (root, batch, change) => appendJournal(root, batch, { change, kind: 'completion', message: 'x' }) },
-      unlicensed
-    );
-    const result = await engine.runStep(context());
-    expect(result.state).toBe('blocked'); // license refusal surfaced, not advanced
-    expect(result.blocker?.toLowerCase()).toContain('license');
-    expect(calls.length).toBe(0); // never spawned
   });
 
   it('rejects an unknown agent adapter before spawning, listing available ones', async () => {

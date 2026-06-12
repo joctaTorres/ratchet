@@ -4,15 +4,15 @@
  *
  * Happy: a full single-flow lifecycle (new -> status/--json -> view/list ->
  * config --set + read-back -> report status/blocker reflected in status/view ->
- * report --answer parked -> apply reaching the engine boundary).
+ * report --answer parked -> apply running the bundled engine).
  *
  * Sad: cyclic / unknown `after` edges rejected naming the offending entries;
  * invalid config enum + unknown key rejected listing allowed values with the
- * file unchanged; missing / ambiguous / nonexistent batch names; engine-absent
- * apply failing with exit 1 while the open commands keep working.
+ * file unchanged; missing / ambiguous / nonexistent batch names; apply running
+ * the bundled engine while the open commands keep working.
  *
  * These drive the real `bin/ratchet.js` over throwaway projects via runCLI; the
- * engine is ABSENT here (no install root), which is exactly the open-CLI default.
+ * engine is bundled into the CLI, so apply runs it in-process with no install.
  */
 
 import { afterAll, describe, it, expect } from 'vitest';
@@ -122,11 +122,16 @@ describe('batch CLI full lifecycle (happy path)', () => {
       .find((c: { name: string }) => c.name === 'add-first-change');
     expect(change3.parked.answer).toBe('redis');
 
-    // 7. apply reaches the engine boundary. The engine is absent in this project,
-    //    so apply fails with exit 1 naming the engine — proving the handoff fired.
+    // 7. apply runs the bundled engine in-process: it picks up the answered
+    //    change and drives it to adapter resolution, with no install gate. Pin an
+    //    absent agent so the engine parks instead of spawning a real coding agent.
+    await runCLI(['batch', 'config', '--set', 'agent=no-such-agent'], { cwd });
     const apply = await runCLI(['batch', 'apply', 'q3-auth'], { cwd });
-    expect(apply.exitCode).not.toBe(0);
-    expect(`${apply.stdout}${apply.stderr}`.toLowerCase()).toContain('engine');
+    const applyOut = `${apply.stdout}${apply.stderr}`;
+    expect(applyOut).not.toContain('not installed');
+    expect(applyOut.toLowerCase()).not.toContain('license');
+    expect(applyOut).toContain('add-first-change');
+    expect(applyOut).toContain("Unknown agent adapter 'no-such-agent'");
   });
 });
 
@@ -265,16 +270,19 @@ describe('batch name resolution (sad paths)', () => {
   });
 });
 
-describe('engine-absent apply does not break the open commands', () => {
-  it('apply exits 1 naming the engine, while status/view/list/config still work', async () => {
+describe('bundled-engine apply does not break the open commands', () => {
+  it('apply runs the bundled engine, while status/view/list/config still work', async () => {
     const cwd = await prepareProject();
     await runCLI(['new', 'batch', 'q3-auth'], { cwd });
+    // Pin an absent agent so apply parks at adapter resolution deterministically.
+    await runCLI(['batch', 'config', '--set', 'agent=no-such-agent'], { cwd });
 
     const apply = await runCLI(['batch', 'apply', 'q3-auth'], { cwd });
-    expect(apply.exitCode).toBe(1);
-    expect(`${apply.stdout}${apply.stderr}`.toLowerCase()).toContain('not installed');
+    const out = `${apply.stdout}${apply.stderr}`;
+    expect(out).not.toContain('not installed');
+    expect(out.toLowerCase()).not.toContain('license');
 
-    // The open commands are unaffected by the engine being absent.
+    // The open commands keep working alongside the bundled engine.
     for (const argv of [
       ['batch', 'status', 'q3-auth', '--json'],
       ['batch', 'view', 'q3-auth', '--json'],

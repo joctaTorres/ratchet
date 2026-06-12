@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   selectRunnableStep,
   type SelectablePhase,
-} from '../../packages/batch-engine/src/selection.js';
+} from '../../src/core/batch/engine/selection.js';
 
 function change(name: string, opts: Partial<{ after: string[]; done: boolean; parked: boolean }> = {}) {
   return { name, after: opts.after ?? [], done: opts.done ?? false, parked: opts.parked ?? false };

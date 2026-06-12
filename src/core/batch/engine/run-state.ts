@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import path from 'path';
-import type { JournalEntry } from 'ratchet';
+import type { JournalEntry } from '../journal.js';
 
 const RATCHET_DIR = '.ratchet';
 

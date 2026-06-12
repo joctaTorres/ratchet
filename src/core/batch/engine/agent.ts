@@ -14,7 +14,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import type { ResolvedStepContext } from 'ratchet';
+import type { ResolvedStepContext } from './contract.js';
 
 export interface AgentSpawnResult {
   /** Process exit code (null if killed by signal). */

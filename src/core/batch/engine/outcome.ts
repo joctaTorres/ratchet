@@ -14,7 +14,8 @@
  *                                           reporting; needs attention)
  */
 
-import type { JournalEntry, Transition } from 'ratchet';
+import type { JournalEntry } from '../journal.js';
+import type { Transition } from './contract.js';
 import type { AgentSpawnResult } from './agent.js';
 import type { EngineStepOutcome } from './context.js';
 

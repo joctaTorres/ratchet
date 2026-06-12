@@ -14,23 +14,17 @@ export {
 
 export * from './planning-home.js';
 
-// Batch engine contract (consumed by the separately-published `batch-engine`
-// package). The CLI re-exports the versioned interface and run-state helpers so
-// the engine can implement the contract without importing CLI internals.
+// Bundled batch execution engine. The engine lives inside this package and
+// `batch apply` runs it in-process; these are the shared step types and the
+// engine entry point.
 export {
-  ENGINE_CONTRACT_VERSION,
-  ENGINE_ABSENT_MESSAGE,
-  registerBatchEngine,
-  clearRegisteredBatchEngine,
-  loadBatchEngine,
-  engineVersionMismatchMessage,
-  type BatchEngine,
-  type EngineResolution,
+  RatchetBatchEngine,
+  type EngineDeps,
   type ResolvedStepContext,
   type StepResult,
   type StepState,
   type Transition,
-} from './batch/engine.js';
+} from './batch/engine/index.js';
 export {
   appendJournal,
   readJournal,

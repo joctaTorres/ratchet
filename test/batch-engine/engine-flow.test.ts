@@ -1,7 +1,6 @@
 /**
- * Engine integration flow: drives RatchetBatchEngine.runStep with injectable
- * fakes (Spawner, LicenseManager/AuthorizationService) through scenarios the
- * narrower unit suites don't cover:
+ * Engine integration flow: drives RatchetBatchEngine.runStep with an injectable
+ * fake Spawner through scenarios the narrower unit suites don't cover:
  *
  *  - a SUCCESS where the fake agent does real on-disk work toward the phase goal
  *    (creates the change directory + plan), proving the structured StepResult
@@ -10,8 +9,6 @@
  *    where the disk state the first step produced drives the second transition.
  *  - resume-after-blocker re-spawns with the recorded answer folded into the
  *    spawned prompt (asserted via the fake spawner's captured request).
- *  - a license whose lease has expired forces re-authorization, and a license
- *    that never authorizes refuses BEFORE any spawn.
  *  - the per-batch single-flight lock refuses a concurrent step on the same batch
  *    through the public runStep entry.
  *  - run-state reconstruction tolerates a partial trailing journal line.
@@ -23,21 +20,14 @@ import path from 'path';
 import os from 'os';
 import { appendJournal } from 'ratchet';
 import type { ResolvedStepContext, BatchSettings, ProofOfWork } from 'ratchet';
-import { RatchetBatchEngine } from '../../packages/batch-engine/src/engine.js';
-import {
-  LicenseManager,
-  FakeAuthorizationService,
-  type AuthorizationService,
-} from '../../packages/batch-engine/src/license.js';
-import { acquireBatchLock } from '../../packages/batch-engine/src/lock.js';
-import { readJournalTolerant } from '../../packages/batch-engine/src/run-state.js';
+import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
+import { acquireBatchLock } from '../../src/core/batch/engine/lock.js';
+import { readJournalTolerant } from '../../src/core/batch/engine/run-state.js';
 import type {
   AgentAdapter,
   Spawner,
   AgentSpawnRequest,
-} from '../../packages/batch-engine/src/agent.js';
-
-const SECRET = 'engine-flow-secret';
+} from '../../src/core/batch/engine/agent.js';
 
 let projectRoot: string;
 
@@ -64,7 +54,6 @@ function settings(over: Partial<BatchSettings> = {}): BatchSettings {
 
 function context(over: Partial<ResolvedStepContext> = {}): ResolvedStepContext {
   return {
-    contractVersion: 1,
     batch: 'b',
     change: 'add-login-api',
     transition: 'propose',
@@ -73,14 +62,6 @@ function context(over: Partial<ResolvedStepContext> = {}): ResolvedStepContext {
     journal: [],
     ...over,
   };
-}
-
-function licensed(): LicenseManager {
-  return new LicenseManager({
-    licenseKey: 'valid',
-    service: new FakeAuthorizationService(SECRET),
-    verifyingSecret: SECRET,
-  });
 }
 
 /**
@@ -108,14 +89,12 @@ function fakeAgent(behavior: {
 }
 
 function engineWith(
-  behavior: Parameters<typeof fakeAgent>[0],
-  license = licensed()
+  behavior: Parameters<typeof fakeAgent>[0]
 ): { engine: RatchetBatchEngine; calls: AgentSpawnRequest[] } {
   const { adapter, spawner, calls } = fakeAgent(behavior);
   const engine = new RatchetBatchEngine({
     spawner,
     adapters: { fake: adapter },
-    license,
     projectRoot: () => projectRoot,
   });
   return { engine, calls };
@@ -221,67 +200,6 @@ describe('RatchetBatchEngine.runStep — resume after a blocker', () => {
     expect(result.state).toBe('blocked');
     expect(result.blocker).toContain('which provider?');
     expect(calls).toHaveLength(0);
-  });
-});
-
-describe('RatchetBatchEngine.runStep — license lease lifecycle', () => {
-  it('reuses a valid lease offline, then re-authorizes once the lease expires', async () => {
-    let now = 2_000_000;
-    let authCalls = 0;
-    const service: AuthorizationService = {
-      async authorize(req) {
-        authCalls += 1;
-        return new FakeAuthorizationService(SECRET, 'iss', 10_000, () => now).authorize(req);
-      },
-    };
-    const license = new LicenseManager({
-      licenseKey: 'valid',
-      service,
-      verifyingSecret: SECRET,
-      now: () => now,
-    });
-    // The lease is keyed by (batch, change, transition); keep the transition
-    // stable across steps (no disk mutation) so we isolate lease reuse vs expiry.
-    const completeWithoutDiskChange = async (root: string) =>
-      appendJournal(root, 'b', {
-        change: 'add-login-api',
-        kind: 'completion',
-        message: 'proposed',
-        transition: 'propose',
-      });
-    const { engine } = engineWith({ effect: completeWithoutDiskChange }, license);
-
-    await engine.runStep(context());
-    expect(authCalls).toBe(1);
-
-    // Within the lease window, same run (propose): offline, no second round-trip.
-    now += 5_000;
-    await engine.runStep(context());
-    expect(authCalls).toBe(1);
-
-    // Past the lease window: re-authorization is required before this step runs.
-    now += 10_000;
-    await engine.runStep(context());
-    expect(authCalls).toBe(2);
-  });
-
-  it('refuses BEFORE any spawn when the license never authorizes (fail closed)', async () => {
-    const refusing: AuthorizationService = {
-      async authorize() {
-        throw new Error('license server unreachable');
-      },
-    };
-    const license = new LicenseManager({
-      licenseKey: 'valid',
-      service: refusing,
-      verifyingSecret: SECRET,
-    });
-    const { engine, calls } = engineWith({ effect: proposeEffect() }, license);
-
-    const result = await engine.runStep(context());
-    expect(result.state).toBe('blocked'); // license refusal surfaced as blocked
-    expect(result.blocker?.toLowerCase()).toContain('license');
-    expect(calls).toHaveLength(0); // never spawned an agent
   });
 });
 

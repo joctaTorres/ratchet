@@ -8,7 +8,7 @@
  * (the agent's single communication channel — no interactive prompt required).
  */
 
-import type { ResolvedStepContext } from 'ratchet';
+import type { ResolvedStepContext } from './contract.js';
 
 function reportChannel(batch: string, change: string): string {
   return [

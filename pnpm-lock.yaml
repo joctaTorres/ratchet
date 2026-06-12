@@ -61,19 +61,6 @@ importers:
         specifier: ^3.2.4
         version: 3.2.6(@types/node@24.12.4)(@vitest/ui@3.2.6)(yaml@2.9.0)
 
-  packages/batch-engine:
-    dependencies:
-      ratchet:
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      '@types/node':
-        specifier: ^24.2.0
-        version: 24.12.4
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-
 packages:
 
   '@ampproject/remapping@2.3.0':

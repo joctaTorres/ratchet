@@ -1,10 +1,10 @@
 /**
  * `ratchet batch apply [name]`
  *
- * Single step: pick the next ready DAG step, hand it to the engine for exactly
- * one transition (propose -> apply -> verify), persist the result, render a rich
- * view, and return. No internal loop. Fails cleanly when no engine is installed;
- * the open commands keep working without it.
+ * Single step: pick the next ready DAG step, hand it to the bundled engine for
+ * exactly one transition (propose -> apply -> verify), persist the result,
+ * render a rich view, and return. No internal loop. The engine ships inside this
+ * package, so apply runs it in-process with no separate install or activation.
  */
 
 import chalk from 'chalk';
@@ -16,20 +16,17 @@ import { loadBatchManifest, type Phase } from '../../core/batch/manifest.js';
 import { computeBatchStatus } from '../../core/batch/status.js';
 import { resolveBatchSettings } from '../../core/batch/config.js';
 import {
-  loadBatchEngine,
-  ENGINE_ABSENT_MESSAGE,
-  engineVersionMismatchMessage,
+  RatchetBatchEngine,
   type ResolvedStepContext,
+  type StepResult,
   type Transition,
-  ENGINE_CONTRACT_VERSION,
-} from '../../core/batch/engine.js';
+} from '../../core/batch/engine/index.js';
 import {
   getParkedStep,
   readJournalForChange,
   parkStep,
   clearParkedStep,
 } from '../../core/batch/journal.js';
-import { bootstrapBatchEngine } from '../../core/batch/engine-bootstrap.js';
 import { resolveBatchName } from './shared.js';
 
 export interface BatchApplyOptions {
@@ -56,24 +53,8 @@ export async function batchApplyCommand(
   const { settings } = resolveBatchSettings(projectRoot, manifest);
   const status = await computeBatchStatus(projectRoot, manifest);
 
-  // Engine is required to run a step. Attempt to bootstrap the licensed engine
-  // package (self-registers on import; absent is fine), then resolve it before
-  // doing any work so the error message is the first thing the user sees, and
-  // the open commands are unaffected.
-  await bootstrapBatchEngine();
-  const resolution = loadBatchEngine();
-  if (resolution.status === 'absent') {
-    fail(ENGINE_ABSENT_MESSAGE, options);
-    return;
-  }
-  if (resolution.status === 'version-mismatch') {
-    fail(
-      engineVersionMismatchMessage(resolution.engineVersion, resolution.cliVersion),
-      options
-    );
-    return;
-  }
-  const engine = resolution.engine;
+  // The engine is bundled into this package; construct it and run in-process.
+  const engine = new RatchetBatchEngine();
 
   // Find the next ready, ungated step.
   const target = pickNextStep(status, manifest.phases);
@@ -104,7 +85,6 @@ export async function batchApplyCommand(
   }
 
   const context: ResolvedStepContext = {
-    contractVersion: ENGINE_CONTRACT_VERSION,
     batch,
     change,
     transition: nextTransition(projectRoot, change, exists),
@@ -165,15 +145,6 @@ function pickNextStep(
   return undefined;
 }
 
-function fail(message: string, options: BatchApplyOptions): void {
-  if (options.json) {
-    console.log(JSON.stringify({ error: message }, null, 2));
-  } else {
-    console.error(chalk.red(message));
-  }
-  process.exitCode = 1;
-}
-
 function notAdvanced(
   change: string,
   reason: string,
@@ -194,7 +165,7 @@ async function renderResult(
   _projectRoot: string,
   _batch: string,
   _phases: Phase[],
-  result: Awaited<ReturnType<import('../../core/batch/engine.js').BatchEngine['runStep']>>,
+  result: StepResult,
   options: BatchApplyOptions
 ): Promise<void> {
   if (options.json) {

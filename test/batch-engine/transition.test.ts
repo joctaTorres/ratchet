@@ -5,7 +5,7 @@ import os from 'os';
 import {
   computeNextTransition,
   readChangeDiskState,
-} from '../../packages/batch-engine/src/transition.js';
+} from '../../src/core/batch/engine/transition.js';
 import type { JournalEntry } from 'ratchet';
 
 let projectRoot: string;

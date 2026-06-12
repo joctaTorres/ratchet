@@ -100,13 +100,21 @@ describe('ratchet batch CLI e2e', () => {
     expect(afterBad).toBe(afterValid);
   });
 
-  it('fails cleanly when the engine is absent but status still works', async () => {
+  it('runs the bundled engine on apply with no install, and status still works', async () => {
     const cwd = await prepareProject();
     await runCLI(['new', 'batch', 'q3-auth'], { cwd });
+    // Pin an absent agent so apply parks at adapter resolution rather than
+    // spawning a real coding agent (deterministic without an agent binary).
+    await runCLI(['batch', 'config', '--set', 'agent=no-such-agent'], { cwd });
 
     const apply = await runCLI(['batch', 'apply', 'q3-auth'], { cwd });
-    expect(apply.exitCode).not.toBe(0);
-    expect(`${apply.stdout}${apply.stderr}`.toLowerCase()).toContain('engine');
+    const out = `${apply.stdout}${apply.stderr}`;
+    // The engine is bundled: no install/activate/license gate stands in front of
+    // it. It runs in-process and reaches the ready change.
+    expect(out).not.toContain('not installed');
+    expect(out.toLowerCase()).not.toContain('license');
+    expect(out).toContain('add-first-change');
+    expect(out).toContain("Unknown agent adapter 'no-such-agent'");
 
     const status = await runCLI(['batch', 'status', 'q3-auth'], { cwd });
     expect(status.exitCode).toBe(0);

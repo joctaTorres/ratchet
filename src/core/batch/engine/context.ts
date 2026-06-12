@@ -1,22 +1,21 @@
 /**
  * Engine-internal step types.
  *
- * The public contract (`ResolvedStepContext` / `StepResult` from `ratchet`) is
- * the boundary the CLI sees. This module adds engine-internal detail the
- * contract deliberately keeps opaque:
+ * The shared step types (`ResolvedStepContext` / `StepResult`) are the boundary
+ * the CLI sees. This module adds engine-internal detail those types keep opaque:
  *
  *  - `EngineStepOutcome` carries the richer outcome the engine computes while
- *    running a transition (including `failed`, which the contract surfaces as
+ *    running a transition (including `failed`, which the result surfaces as
  *    `blocked` so the CLI re-prompts rather than corrupting batch state).
  *  - `resolveProjectRoot()` recovers the project root the engine needs to read
- *    on-disk change state and append to the journal. The contract intentionally
+ *    on-disk change state and append to the journal. The step result deliberately
  *    omits the root (the CLI resolves context; the engine returns a result), so
  *    the engine — which runs in-process inside the project — recovers it via the
- *    re-exported planning-home resolver, falling back to `process.cwd()`.
+ *    planning-home resolver, falling back to `process.cwd()`.
  */
 
-import { resolveCurrentPlanningHomeSync } from 'ratchet';
-import type { StepResult, StepState, Transition } from 'ratchet';
+import { resolveCurrentPlanningHomeSync } from '../../planning-home.js';
+import type { StepResult, StepState, Transition } from './contract.js';
 
 /** Richer outcome states the engine distinguishes internally. */
 export type EngineOutcomeState = StepState | 'failed';

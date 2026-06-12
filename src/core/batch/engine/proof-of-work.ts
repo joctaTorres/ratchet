@@ -18,7 +18,8 @@
  */
 
 import { spawn } from 'node:child_process';
-import type { ProofOfWork, ProofOfWorkPolicy } from 'ratchet';
+import type { ProofOfWork } from '../manifest.js';
+import type { ProofOfWorkPolicy } from '../config.js';
 
 export interface BashResult {
   exitCode: number | null;
@@ -141,11 +142,17 @@ export interface RunProofOfWorkDeps {
  * Run a phase's proof-of-work and apply the gating policy. The caller is
  * responsible for only invoking this once the phase's changes are all done
  * (proof-of-work never runs while a phase has in-progress changes).
+ *
+ * `success` is the phase's success criteria from the resolved step context. The
+ * `llm-judge` kind judges the running software against THAT criteria, not the
+ * bash pass-condition (`proofOfWork.pass`) which only applies to the
+ * integration/blackbox kinds.
  */
 export async function runProofOfWork(
   proofOfWork: ProofOfWork,
   policy: ProofOfWorkPolicy,
   cwd: string,
+  success: string,
   deps: RunProofOfWorkDeps = {}
 ): Promise<ProofOfWorkResult> {
   const bash = deps.bash ?? realBashRunner;
@@ -167,7 +174,7 @@ export async function runProofOfWork(
     let verdict: JudgeVerdict;
     try {
       verdict = await deps.judge({
-        success: proofOfWork.pass,
+        success,
         run: proofOfWork.run,
         pass: proofOfWork.pass,
         cwd,

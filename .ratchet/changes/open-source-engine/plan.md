@@ -81,15 +81,15 @@ receives the phase success criteria.
 ## Tasks
 
 - [x] 1.1 Add root `LICENSE` (MIT) and set `license: "MIT"` in the root package.json
-- [ ] 2.1 Remove the licensing code: delete `license.ts`, the authorize-before-spawn call in the engine, and any license-key env reads/forwarding in the spawn path
-- [ ] 2.2 Delete license tests and any license-specific assertions in other tests
-- [ ] 3.1 Move the engine source from `packages/batch-engine/src/*` into the main package (`src/core/batch/engine/*`); rewire `ratchet`-specifier imports to relative paths
-- [ ] 3.2 Remove the `packages/batch-engine` package (package.json, tsconfig, dist), its `pnpm-workspace.yaml` entry; regenerate `pnpm-lock.yaml`
-- [ ] 3.3 Revert the engine-package build step in `build.js` so the engine builds as part of the main `dist/`
-- [ ] 4.1 Collapse the `BatchEngine` contract into a direct internal entry point; remove `engine-bootstrap.ts`, the dynamic import, the register/load registry, and the contract-version-mismatch path
-- [ ] 4.2 Update `src/commands/batch/apply.ts` to call the engine directly; remove the engine-absent and install/activate messaging; simplify `src/core/index.ts` re-exports
-- [ ] 5.1 Remove `test/helpers/engine-install.ts` and the engine-present/absent e2e split; replace with a bundled-engine e2e asserting `batch apply` executes with no separate install
-- [ ] 5.2 Relocate remaining `test/batch-engine/*` to import the engine from its new in-package path; drop license-lease/refuse-before-spawn assertions, keep genuine behavior tests
-- [ ] 6.1 Fix the proof-of-work llm-judge request to use the phase `success` criteria from the step context (not `proofOfWork.pass`); add a test asserting it
+- [x] 2.1 Remove the licensing code: delete `license.ts`, the authorize-before-spawn call in the engine, and any license-key env reads/forwarding in the spawn path
+- [x] 2.2 Delete license tests and any license-specific assertions in other tests
+- [x] 3.1 Move the engine source from `packages/batch-engine/src/*` into the main package (`src/core/batch/engine/*`); rewire `ratchet`-specifier imports to relative paths
+- [x] 3.2 Remove the `packages/batch-engine` package (package.json, tsconfig, dist), its `pnpm-workspace.yaml` entry; regenerate `pnpm-lock.yaml`
+- [x] 3.3 Revert the engine-package build step in `build.js` so the engine builds as part of the main `dist/`
+- [x] 4.1 Collapse the `BatchEngine` contract into a direct internal entry point; remove `engine-bootstrap.ts`, the dynamic import, the register/load registry, and the contract-version-mismatch path
+- [x] 4.2 Update `src/commands/batch/apply.ts` to call the engine directly; remove the engine-absent and install/activate messaging; simplify `src/core/index.ts` re-exports
+- [x] 5.1 Remove `test/helpers/engine-install.ts` and the engine-present/absent e2e split; replace with a bundled-engine e2e asserting `batch apply` executes with no separate install
+- [x] 5.2 Relocate remaining `test/batch-engine/*` to import the engine from its new in-package path; drop license-lease/refuse-before-spawn assertions, keep genuine behavior tests
+- [x] 6.1 Fix the proof-of-work llm-judge request to use the phase `success` criteria from the step context (not `proofOfWork.pass`); add a test asserting it
 - [ ] 7.1 Update the PR #10 description / any README mention to reflect MIT + bundled engine (no licensing, no separate install)
 - [ ] 8.1 Confirm `pnpm build && pnpm test && pnpm lint` green; confirm no license/activation strings remain (grep) and no `@ratchet/batch-engine` references linger

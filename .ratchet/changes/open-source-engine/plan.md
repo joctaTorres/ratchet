@@ -91,5 +91,5 @@ receives the phase success criteria.
 - [x] 5.1 Remove `test/helpers/engine-install.ts` and the engine-present/absent e2e split; replace with a bundled-engine e2e asserting `batch apply` executes with no separate install
 - [x] 5.2 Relocate remaining `test/batch-engine/*` to import the engine from its new in-package path; drop license-lease/refuse-before-spawn assertions, keep genuine behavior tests
 - [x] 6.1 Fix the proof-of-work llm-judge request to use the phase `success` criteria from the step context (not `proofOfWork.pass`); add a test asserting it
-- [ ] 7.1 Update the PR #10 description / any README mention to reflect MIT + bundled engine (no licensing, no separate install)
-- [ ] 8.1 Confirm `pnpm build && pnpm test && pnpm lint` green; confirm no license/activation strings remain (grep) and no `@ratchet/batch-engine` references linger
+- [x] 7.1 Update the PR #10 description / any README mention to reflect MIT + bundled engine (no licensing, no separate install)
+- [x] 8.1 Confirm `pnpm build && pnpm test && pnpm lint` green; confirm no license/activation strings remain (grep) and no `@ratchet/batch-engine` references linger

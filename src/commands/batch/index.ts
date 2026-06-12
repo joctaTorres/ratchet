@@ -2,7 +2,7 @@
  * Batch CLI Commands
  *
  * The open CLI surface for batch orchestration: status, view, list, config,
- * report, and apply (apply hands off to the licensed engine).
+ * report, and apply (apply runs the bundled engine in-process).
  */
 
 export { batchStatusCommand } from './status.js';

@@ -458,7 +458,7 @@ batchCmd
 
 batchCmd
   .command('apply [name]')
-  .description('Advance the batch by one step via the execution engine')
+  .description('Advance the batch by one step via the bundled engine')
   .option('--json', 'Output as JSON')
   .action(async (name: string | undefined, options: BatchApplyOptions) => {
     try {

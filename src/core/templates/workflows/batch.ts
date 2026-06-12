@@ -29,10 +29,9 @@ const BATCH_BODY = `Advance a Ratchet batch by exactly one step.
    \`\`\`bash
    ratchet batch apply "<name>"
    \`\`\`
-   This picks the next ready, ungated step from the DAG and hands it to the execution engine for exactly one transition (propose -> apply -> verify).
+   This picks the next ready, ungated step from the DAG and runs the bundled engine in-process for exactly one transition (propose -> apply -> verify). The engine ships inside ratchet — there is no separate install or activation.
 
    **Handle states:**
-   - **Engine absent**: \`apply\` fails with a clear message that the licensed engine is required and how to install/activate it. Relay that message and STOP. The open commands (status, view, list, config, report) still work.
    - **Advanced**: report the transition that ran and the next actionable step.
    - **Blocked / awaiting-approval**: report what input is required; do not cross the halt.
 
@@ -49,16 +48,16 @@ const BATCH_BODY = `Advance a Ratchet batch by exactly one step.
 **Guardrails**
 - One step per invocation; never loop.
 - Never cross a halt (blocked / awaiting-approval) without recorded input.
-- Status/view/config/report work without the engine; only \`apply\` needs it.`;
+- The engine is bundled, so \`apply\` runs in-process with no separate install or activation.`;
 
 export function getBatchSkillTemplate(): SkillTemplate {
   return {
     name: 'ratchet-batch',
     description:
-      'Advance a Ratchet batch by one step. Use when the user wants to drive a batch forward one transition (propose/apply/verify) via the execution engine, keeping inspection points between steps.',
+      'Advance a Ratchet batch by one step. Use when the user wants to drive a batch forward one transition (propose/apply/verify) via the bundled engine, keeping inspection points between steps.',
     instructions: BATCH_BODY,
     license: 'MIT',
-    compatibility: 'Requires ratchet CLI and the batch execution engine for apply.',
+    compatibility: 'Requires the ratchet CLI; the batch engine is bundled in-process.',
     metadata: { author: 'ratchet', version: '1.0' },
   };
 }

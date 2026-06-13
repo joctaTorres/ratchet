@@ -111,33 +111,33 @@ constraints, stated in the skill body as rationale):
 
 ## Tasks
 
-- [ ] 1.1 Create `src/core/templates/workflows/propose-batch.ts` with a shared body
+- [x] 1.1 Create `src/core/templates/workflows/propose-batch.ts` with a shared body
       constant and exports `getProposeBatchSkillTemplate()` and
       `getRctProposeBatchCommandTemplate()`, mirroring `batch.ts` / `propose.ts`.
-- [ ] 1.2 Encode the five-step flow in the body: explore objective → slice into
+- [x] 1.2 Encode the five-step flow in the body: explore objective → slice into
       vertical-slice phases → require success + proof-of-work per phase → scaffold manifest
       via `ratchet new batch` with a shallow DAG → gated "propose phase-one changes now?"
       prompt that optionally chains into the propose-change flow.
-- [ ] 1.3 In the body, state the four anti-waterfall principles as rationale and map each
+- [x] 1.3 In the body, state the four anti-waterfall principles as rationale and map each
       to a concrete skill behavior (reject horizontal phases; hard proof-of-work gate;
       phase-one concrete vs later-phase refinable proof; shallow-but-wide DAG).
-- [ ] 1.4 Keep the body agent-neutral and phrase any structured-question step as optional
+- [x] 1.4 Keep the body agent-neutral and phrase any structured-question step as optional
       with a plain-prose fallback, per the `multi-agent-support` standard.
-- [ ] 2.1 Re-export `getProposeBatchSkillTemplate` and `getRctProposeBatchCommandTemplate`
+- [x] 2.1 Re-export `getProposeBatchSkillTemplate` and `getRctProposeBatchCommandTemplate`
       from `src/core/templates/skill-templates.ts`.
-- [ ] 2.2 Add the `propose-batch` `SkillTemplateEntry` (`dirName: 'ratchet-propose-batch'`,
+- [x] 2.2 Add the `propose-batch` `SkillTemplateEntry` (`dirName: 'ratchet-propose-batch'`,
       `workflowId: 'propose-batch'`) to `getSkillTemplates` in
       `src/core/shared/skill-generation.ts`.
-- [ ] 2.3 Add the `propose-batch` `CommandTemplateEntry` (`id: 'propose-batch'`) to
+- [x] 2.3 Add the `propose-batch` `CommandTemplateEntry` (`id: 'propose-batch'`) to
       `getCommandTemplates` in `src/core/shared/skill-generation.ts`, and update the import
       block accordingly.
-- [ ] 2.4 Add `'propose-batch'` to `ALL_WORKFLOWS` in `src/core/profiles.ts`; leave
+- [x] 2.4 Add `'propose-batch'` to `ALL_WORKFLOWS` in `src/core/profiles.ts`; leave
       `CORE_WORKFLOWS` unchanged (opt-in, not core).
-- [ ] 3.1 Verify per-agent rendering: `ratchet init` with the workflow enabled emits a
+- [x] 3.1 Verify per-agent rendering: `ratchet init` with the workflow enabled emits a
       `ratchet-propose-batch` skill and a `propose-batch` command for every agent in the
       supported-tools registry (Claude Code, Codex, Cursor, GitHub Copilot, OpenCode).
-- [ ] 3.2 Update skill/command generation tests to assert the new `propose-batch` outputs
+- [x] 3.2 Update skill/command generation tests to assert the new `propose-batch` outputs
       for all registered agents (iterate the registry, not a single agent), and update any
       snapshot/count tests over `ALL_WORKFLOWS` or the template lists.
-- [ ] 3.3 Confirm `pnpm build` and the test suite pass, and that the rendered skill/command
+- [x] 3.3 Confirm `pnpm build` and the test suite pass, and that the rendered skill/command
       bodies read correctly in at least one agent directory.

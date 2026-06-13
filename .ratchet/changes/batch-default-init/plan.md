@@ -71,10 +71,10 @@ set or the stock-init output will need `batch` added. Known locations:
 
 ## Tasks
 
-- [ ] 1.1 Add `'batch'` to the `CORE_WORKFLOWS` tuple in `src/core/profiles.ts`.
-- [ ] 1.2 Update the `CORE_WORKFLOWS` and `ALL_WORKFLOWS` docstrings in `src/core/profiles.ts` so `batch` is described as default and only `eval` is noted as opt-in.
-- [ ] 2.1 Update `test/core/profiles.test.ts` so the `CORE_WORKFLOWS` equality assertion includes `batch`.
-- [ ] 2.2 Update `test/core/init.test.ts` core-skill test: add `ratchet-batch` to `coreSkillNames` and remove batch from any non-core exclusion list.
-- [ ] 2.3 Update `test/core/init.test.ts` core-command test: add `rct/batch.md` to `coreCommandNames`.
-- [ ] 2.4 Sweep `test/` for any remaining hardcoded core workflow set or stock-init installed-skill/command count and add `batch` (or update counts) as needed.
-- [ ] 3.1 Run the full test suite and confirm the batch workflow installs for every supported agent on a stock `ratchet init` (no custom profile) and that `eval` remains absent from the default install.
+- [x] 1.1 Add `'batch'` to the `CORE_WORKFLOWS` tuple in `src/core/profiles.ts`.
+- [x] 1.2 Update the `CORE_WORKFLOWS` and `ALL_WORKFLOWS` docstrings in `src/core/profiles.ts` so `batch` is described as default and only `eval` is noted as opt-in.
+- [x] 2.1 Update `test/core/profiles.test.ts` so the `CORE_WORKFLOWS` equality assertion includes `batch`.
+- [x] 2.2 Update `test/core/init.test.ts` core-skill test: add `ratchet-batch` to `coreSkillNames` and remove batch from any non-core exclusion list.
+- [x] 2.3 Update `test/core/init.test.ts` core-command test: add `rct/batch.md` to `coreCommandNames`.
+- [x] 2.4 Sweep `test/` for any remaining hardcoded core workflow set or stock-init installed-skill/command count and add `batch` (or update counts) as needed.
+- [x] 3.1 Run the full test suite and confirm the batch workflow installs for every supported agent on a stock `ratchet init` (no custom profile) and that `eval` remains absent from the default install.

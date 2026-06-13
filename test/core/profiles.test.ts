@@ -9,13 +9,21 @@ import {
 describe('profiles', () => {
   describe('CORE_WORKFLOWS', () => {
     it('should contain the default core workflows', () => {
-      expect(CORE_WORKFLOWS).toEqual(['propose', 'apply', 'verify', 'archive', 'propose-standard']);
+      expect(CORE_WORKFLOWS).toEqual(['propose', 'apply', 'verify', 'archive', 'propose-standard', 'batch']);
     });
 
     it('should be a subset of ALL_WORKFLOWS', () => {
       for (const workflow of CORE_WORKFLOWS) {
         expect(ALL_WORKFLOWS).toContain(workflow);
       }
+    });
+
+    it('should include batch by default', () => {
+      expect(CORE_WORKFLOWS).toContain('batch');
+    });
+
+    it('should keep eval opt-in (not in core)', () => {
+      expect(CORE_WORKFLOWS).not.toContain('eval');
     });
   });
 

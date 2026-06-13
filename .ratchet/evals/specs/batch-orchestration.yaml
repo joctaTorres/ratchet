@@ -552,3 +552,145 @@ changes/batch-orchestration/features/batch-view/rich-view#view-respects-no-color
       # absent from the output.
       printf '%s' "$out" > /tmp/view.out
       python3 -c "assert '\x1b[' not in open('/tmp/view.out').read(), 'ANSI escape under --no-color'"
+
+# ---------------------------------------------------------------------------
+# Recovered cases (added in a second pass): the `ratchet batch report` CLI
+# channel and the manifest/validate/config-level phase scenarios are all
+# deterministically checkable without a live coding agent. Cases that genuinely
+# require an agent or the deferred proof-of-work host loop remain unbound.
+# ---------------------------------------------------------------------------
+
+changes/batch-orchestration/features/batch-report/report#a-propose-agent-voluntarily-halts-for-alignment:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # Default resolved gate is "voluntary"; a propose agent raises a blocker.
+      ratchet new batch demo >/dev/null
+      printf '%s\n' \
+        'name: demo' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: stand up the API' \
+        '    success: endpoint responds' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: add-login-api' > .ratchet/batches/demo/batch.yaml
+      ratchet batch report demo --change add-login-api --blocker 'cookie or header sessions? changes the whole API surface' >/dev/null
+      # The step is parked as blocked with that question and is NOT advanced.
+      ratchet batch status demo --json | python3 -c "import sys,json; d=json.load(sys.stdin); c=[x for p in d['phases'] for x in p['changes'] if x['name']=='add-login-api'][0]; assert c['status']=='blocked', c; assert c['parked']['kind']=='blocked', c; assert 'cookie or header sessions' in c['parked']['reason'], c"
+      # The question surfaces in the batch view.
+      ratchet --no-color batch view demo | grep -q 'cookie or header sessions'
+
+changes/batch-orchestration/features/batch-report/report#an-agent-signals-it-produced-a-proposal-awaiting-approval:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch demo >/dev/null
+      printf '%s\n' \
+        'name: demo' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: stand up the API' \
+        '    success: endpoint responds' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: add-login-api' > .ratchet/batches/demo/batch.yaml
+      # Given the resolved gate is "after-propose".
+      ratchet batch config demo --set gate=after-propose >/dev/null
+      ratchet batch report demo --change add-login-api --complete 'proposal ready' --awaiting-approval >/dev/null
+      # The step is parked as awaiting-approval.
+      ratchet batch status demo --json | python3 -c "import sys,json; d=json.load(sys.stdin); c=[x for p in d['phases'] for x in p['changes'] if x['name']=='add-login-api'][0]; assert c['awaitingApproval'] is True, c; assert c['parked']['kind']=='awaiting-approval', c"
+      # The user can approve or reject-with-feedback from the batch view.
+      out="$(ratchet --no-color batch view demo)"
+      echo "$out" | grep -qi 'awaiting approval'
+      echo "$out" | grep -qi 'approve or reject'
+
+changes/batch-orchestration/features/batch-report/report#the-report-channel-works-for-any-agent-that-can-run-a-shell-command:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch demo >/dev/null
+      printf '%s\n' \
+        'name: demo' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: add-login-api' > .ratchet/batches/demo/batch.yaml
+      # Reporting requires only invoking the CLI; no interactive prompt. Run with
+      # stdin closed so any prompt would EOF — it must still succeed.
+      out="$(ratchet batch report demo --change add-login-api --status 'drafted 2 of 4 scenarios' </dev/null)"
+      echo "$out" | grep -qi 'recorded progress'
+      # The channel took effect headlessly: the journal recorded the progress.
+      grep -q 'drafted 2 of 4 scenarios' .ratchet/batches/demo/run/journal.jsonl
+
+changes/batch-orchestration/features/batch-phases/phases#a-phase-declares-a-goal-success-criteria-and-a-proof-of-work:
+  fixture: batch-states
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # The full manifest (goal + success + proofOfWork{kind,run,pass}) is valid.
+      ratchet validate states >/dev/null
+      # The phase exposes a human-readable goal and success criteria.
+      ratchet batch status states --json | python3 -c "import sys,json; p=json.load(sys.stdin)['phases'][0]; assert p['goal'].strip(), p; assert p['success'].strip(), p"
+      # Proof-of-work is a declared, required part of a phase: dropping it, or
+      # omitting its run command, makes the manifest invalid.
+      mkdir -p .ratchet/batches/nopow
+      printf '%s\n' 'name: nopow' 'phases:' '  - name: foundation' '    goal: g' '    success: s' '    changes: []' > .ratchet/batches/nopow/batch.yaml
+      ratchet validate nopow 2>&1 | grep -qi 'proofOfWork'
+      mkdir -p .ratchet/batches/badpow
+      printf '%s\n' 'name: badpow' 'phases:' '  - name: foundation' '    goal: g' '    success: s' '    proofOfWork: { kind: integration, pass: "exit 0" }' '    changes: []' > .ratchet/batches/badpow/batch.yaml
+      ratchet validate badpow 2>&1 | grep -qi 'proofofwork.run'
+
+changes/batch-orchestration/features/batch-phases/phases#proof-of-work-kinds-are-constrained-to-executable-checks:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch demo >/dev/null
+      # Each executable kind is accepted.
+      for k in integration blackbox llm-judge; do
+        printf '%s\n' 'name: demo' 'phases:' '  - name: p' '    goal: g' '    success: s' "    proofOfWork: { kind: $k, run: x, pass: \"exit 0\" }" '    changes: []' > .ratchet/batches/demo/batch.yaml
+        ratchet validate demo >/dev/null
+      done
+      # A non-executable / unknown kind is rejected, naming the allowed set.
+      printf '%s\n' 'name: demo' 'phases:' '  - name: p' '    goal: g' '    success: s' '    proofOfWork: { kind: manual-review, run: x, pass: "exit 0" }' '    changes: []' > .ratchet/batches/demo/batch.yaml
+      ratchet validate demo 2>&1 | grep -qi 'integration, blackbox, llm-judge'
+
+changes/batch-orchestration/features/batch-phases/phases#vertical-slice-is-the-default-phase-strategy:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # A batch scaffolded without an explicit strategy resolves to vertical-slice.
+      ratchet new batch demo >/dev/null
+      ratchet batch config demo --json | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['settings']['strategy']=='vertical-slice', d; assert d['sources']['strategy']=='default', d"
+
+changes/batch-orchestration/features/batch-phases/phases#the-strategy-can-be-changed-to-feature-mode:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch demo >/dev/null
+      ratchet batch config demo --json | python3 -c "import sys,json; assert json.load(sys.stdin)['settings']['strategy']=='vertical-slice'"
+      ratchet batch config demo --set strategy=feature >/dev/null
+      ratchet batch config demo --json | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['settings']['strategy']=='feature', d; assert d['sources']['strategy']=='project', d"

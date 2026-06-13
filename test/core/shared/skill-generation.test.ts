@@ -5,12 +5,13 @@ import {
   getCommandContents,
   generateSkillContent,
 } from '../../../src/core/shared/skill-generation.js';
+import { AI_TOOLS } from '../../../src/core/config.js';
 
 describe('skill-generation', () => {
   describe('getSkillTemplates', () => {
     it('should return the generated skill templates', () => {
       const templates = getSkillTemplates();
-      expect(templates).toHaveLength(6);
+      expect(templates).toHaveLength(7);
     });
 
     it('should have unique directory names', () => {
@@ -29,8 +30,32 @@ describe('skill-generation', () => {
       expect(dirNames).toContain('ratchet-verify-change');
       expect(dirNames).toContain('ratchet-propose');
       expect(dirNames).toContain('ratchet-propose-standard');
+      expect(dirNames).toContain('ratchet-batch');
+      expect(dirNames).toContain('ratchet-eval');
       // explore is internal-only and is never generated
       expect(dirNames).not.toContain('ratchet-explore');
+    });
+
+    it('renders the rct-eval skill for every supported agent', () => {
+      const evalEntry = getSkillTemplates(['eval']);
+      expect(evalEntry).toHaveLength(1);
+      expect(evalEntry[0].dirName).toBe('ratchet-eval');
+
+      // Iterate the supported-tools registry rather than hard-coding one agent:
+      // ratchet init writes `<tool.skillsDir>/skills/ratchet-eval/SKILL.md` for
+      // each registered agent, so the body must render for all of them.
+      const agents = AI_TOOLS.filter((t) => t.skillsDir);
+      expect(agents.length).toBeGreaterThanOrEqual(5);
+      for (const tool of agents) {
+        const content = generateSkillContent(evalEntry[0].template, '0.0.0-test');
+        expect(content).toContain('name: ratchet-eval');
+        expect(content).toContain('ratchet eval run');
+        expect(content).toContain('ratchet eval report');
+        // Tool-agnostic: never names a single agent's tooling unconditionally.
+        expect(content.toLowerCase()).toContain('your agent');
+        // The target path is derived from the tool's skillsDir.
+        expect(`${tool.skillsDir}/skills/ratchet-eval/SKILL.md`).toContain('ratchet-eval');
+      }
     });
 
     it('should have valid template structure', () => {
@@ -87,7 +112,7 @@ describe('skill-generation', () => {
   describe('getCommandTemplates', () => {
     it('should return the generated command templates', () => {
       const templates = getCommandTemplates();
-      expect(templates).toHaveLength(6);
+      expect(templates).toHaveLength(7);
     });
 
     it('should have unique IDs', () => {
@@ -106,6 +131,8 @@ describe('skill-generation', () => {
       expect(ids).toContain('verify');
       expect(ids).toContain('propose');
       expect(ids).toContain('propose-standard');
+      expect(ids).toContain('batch');
+      expect(ids).toContain('eval');
       // explore is internal-only and is never generated
       expect(ids).not.toContain('explore');
     });
@@ -138,7 +165,7 @@ describe('skill-generation', () => {
   describe('getCommandContents', () => {
     it('should return the generated command contents', () => {
       const contents = getCommandContents();
-      expect(contents).toHaveLength(6);
+      expect(contents).toHaveLength(7);
     });
 
     it('should have valid content structure', () => {

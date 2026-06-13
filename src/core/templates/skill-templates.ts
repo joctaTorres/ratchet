@@ -13,3 +13,4 @@ export { getVerifyChangeSkillTemplate, getRctVerifyCommandTemplate } from './wor
 export { getRctProposeSkillTemplate, getRctProposeCommandTemplate } from './workflows/propose.js';
 export { getRctProposeStandardSkillTemplate, getRctProposeStandardCommandTemplate } from './workflows/propose-standard.js';
 export { getBatchSkillTemplate, getRctBatchCommandTemplate } from './workflows/batch.js';
+export { getEvalSkillTemplate, getRctEvalCommandTemplate } from './workflows/eval.js';

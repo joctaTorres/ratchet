@@ -1,0 +1,11 @@
+name: states
+phases:
+  - name: foundation
+    goal: Exercise every derived change status from disk.
+    success: status reflects done, in-progress, pending, and archived changes.
+    proofOfWork: { kind: integration, run: 'true', pass: "exit code 0" }
+    changes:
+      - name: done-change
+      - name: wip-change
+      - name: pending-change
+      - name: arch-change

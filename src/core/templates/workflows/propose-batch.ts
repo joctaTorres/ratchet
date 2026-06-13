@@ -112,10 +112,11 @@ derive one from the objective.
      phases' \`changes\` are left empty** — a change intent with no change
      directory is a valid \`pending\`, which is what lets changes be created
      lazily. Do not decompose later phases up front.
-   - **Settings**: if the user wants a \`gate\` or \`strategy\` (or other setting)
-     that differs from the project defaults, record it under the manifest
-     \`settings\` block. **Omit the \`settings\` block entirely** when the project
-     defaults are acceptable.
+   - **Settings**: if the user wants a setting that differs from the project
+     defaults, record it under the manifest \`settings\` block. Only these keys are
+     accepted (the schema is strict — any other key fails validation): \`gate\`,
+     \`strategy\`, \`proofOfWork\`, \`agent\`. **Omit the \`settings\` block entirely**
+     when the project defaults are acceptable.
 
    The **only** artifact written for the batch is this manifest file. Do **NOT**
    generate any change directories under \`.ratchet/changes/\`, and do not produce

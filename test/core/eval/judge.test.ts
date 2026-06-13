@@ -44,6 +44,37 @@ describe('parseAgentVote', () => {
     expect(v.pass).toBe(false);
     expect(v.hasEvidence).toBe(false);
   });
+
+  it('parses a reason that itself contains braces', () => {
+    const v = parseAgentVote(
+      'preamble\n{"pass": true, "reason": "found config {\\"a\\": 1} in src"}'
+    );
+    expect(v.pass).toBe(true);
+    expect(v.reason).toBe('found config {"a": 1} in src');
+    expect(v.hasEvidence).toBe(true);
+  });
+
+  it('parses a multi-line reason', () => {
+    const v = parseAgentVote(
+      '{"pass": false, "reason": "line one\\nline two with } brace"}'
+    );
+    expect(v.pass).toBe(false);
+    expect(v.reason).toBe('line one\nline two with } brace');
+  });
+
+  it('takes the last balanced verdict block, ignoring earlier braces', () => {
+    const v = parseAgentVote(
+      'notes {not json} then {"pass": false, "reason": "first"}\n{"pass": true, "reason": "final {x}"}'
+    );
+    expect(v.pass).toBe(true);
+    expect(v.reason).toBe('final {x}');
+  });
+
+  it('fails closed when no block parses as a verdict despite braces', () => {
+    const v = parseAgentVote('thoughts: {maybe} {pass?} but no JSON verdict here');
+    expect(v.pass).toBe(false);
+    expect(v.hasEvidence).toBe(false);
+  });
 });
 
 describe('resolveVotes', () => {

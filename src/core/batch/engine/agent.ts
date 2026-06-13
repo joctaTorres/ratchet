@@ -14,7 +14,17 @@
  */
 
 import { spawn } from 'node:child_process';
-import type { ResolvedStepContext } from './contract.js';
+
+/**
+ * The narrow slice of step context an adapter may read when building a spawn
+ * request. `ResolvedStepContext` is assignable to this, so the engine passes its
+ * full context unchanged; callers without a transition (e.g. the eval judge) can
+ * build a minimal, fully-typed value instead of casting.
+ */
+export interface AgentRequestContext {
+  batch: string;
+  change: string;
+}
 
 export interface AgentSpawnResult {
   /** Process exit code (null if killed by signal). */
@@ -43,7 +53,7 @@ export interface AgentAdapter {
    * into a command + args so it is unit-testable without spawning.
    */
   buildRequest(
-    context: ResolvedStepContext,
+    context: AgentRequestContext,
     instructions: string,
     cwd: string,
     env: NodeJS.ProcessEnv
@@ -63,7 +73,7 @@ class CommandAgentAdapter implements AgentAdapter {
   ) {}
 
   buildRequest(
-    _context: ResolvedStepContext,
+    _context: AgentRequestContext,
     instructions: string,
     cwd: string,
     env: NodeJS.ProcessEnv

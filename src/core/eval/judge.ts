@@ -28,7 +28,7 @@ import {
   type BashRunner,
   type Spawner,
   type JudgeVerdict,
-  type ResolvedStepContext,
+  type AgentRequestContext,
 } from '../batch/engine/index.js';
 
 export type Verdict = 'pass' | 'fail' | 'unjudged';
@@ -103,11 +103,55 @@ export function parseAgentVote(stdout: string): AgentVote {
   return { pass: verdict.pass, reason, hasEvidence };
 }
 
+/**
+ * Find the last balanced `{...}` block that parses as a verdict. Scanning for
+ * balanced braces (rather than a single brace-free regex) means a `reason`
+ * containing `{`, `}`, or newlines still parses. Fails closed: any block that
+ * does not parse, or lacks a boolean `pass`, is ignored.
+ */
 function extractVerdictJson(stdout: string): JudgeVerdict | null {
-  const matches = [...stdout.matchAll(/\{[^{}]*"pass"\s*:\s*(?:true|false)[^{}]*\}/g)];
-  if (matches.length === 0) return null;
+  for (const block of balancedBraceBlocks(stdout).reverse()) {
+    const verdict = parseVerdictBlock(block);
+    if (verdict) return verdict;
+  }
+  return null;
+}
+
+/**
+ * Every top-level `{...}` substring with balanced braces, in order. Braces and
+ * escapes inside JSON string literals are skipped, so a `reason` value
+ * containing `{`/`}` does not prematurely open or close a block.
+ */
+function balancedBraceBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}' && depth > 0) {
+      depth--;
+      if (depth === 0) blocks.push(text.slice(start, i + 1));
+    }
+  }
+  return blocks;
+}
+
+function parseVerdictBlock(block: string): JudgeVerdict | null {
   try {
-    const parsed = JSON.parse(matches[matches.length - 1][0]) as JudgeVerdict;
+    const parsed = JSON.parse(block) as JudgeVerdict;
     if (typeof parsed.pass !== 'boolean') return null;
     return { pass: parsed.pass, reason: typeof parsed.reason === 'string' ? parsed.reason : '' };
   } catch {
@@ -115,9 +159,9 @@ function extractVerdictJson(stdout: string): JudgeVerdict | null {
   }
 }
 
-/** A minimal step context; the command adapters ignore it when building argv. */
-function judgeContext(c: EvalCase): ResolvedStepContext {
-  return { change: c.id } as unknown as ResolvedStepContext;
+/** A minimal, fully-typed adapter context; adapters ignore it when building argv. */
+function judgeContext(c: EvalCase): AgentRequestContext {
+  return { batch: 'eval', change: c.id };
 }
 
 /**

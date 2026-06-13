@@ -21,6 +21,7 @@ export {
   UnknownAgentError,
   DEFAULT_AGENT,
   type AgentAdapter,
+  type AgentRequestContext,
   type Spawner,
   type AgentSpawnRequest,
   type AgentSpawnResult,

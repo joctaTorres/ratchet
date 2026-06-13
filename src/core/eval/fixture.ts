@@ -51,14 +51,14 @@ export class FixtureManager {
   /** fixture+setup key -> prepared (post-setup) cached working copy. */
   private readonly setupCache = new Map<string, string>();
 
-  constructor(projectRoot: string, deps: FixtureManagerDeps = {}) {
-    this.projectRoot = projectRoot;
+  constructor(
+    private readonly projectRoot: string,
+    deps: FixtureManagerDeps = {}
+  ) {
     this.bash = deps.bash ?? realBashRunner;
     this.base = deps.tmpRoot ?? mkdtempSync(path.join(tmpdir(), 'ratchet-eval-'));
     mkdirSync(this.base, { recursive: true });
   }
-
-  private readonly projectRoot: string;
 
   private copyDir(from: string, to: string): void {
     cpSync(from, to, { recursive: true });

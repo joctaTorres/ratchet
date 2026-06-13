@@ -22,10 +22,12 @@ export const CORE_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose
  *
  * 'eval' is the only opt-in workflow (not part of the streamlined 'core'
  * profile): it runs the engine-backed eval suite and is installed only for
- * custom profiles that request it. 'batch' itself is now part of the default
- * 'core' profile.
+ * custom profiles that request it. 'propose-batch' is a guided batch-proposal
+ * skill that is likewise opt-in (it is only useful alongside 'batch'); it is
+ * available via custom profiles but not shipped in 'core'. 'batch' itself is now
+ * part of the default 'core' profile.
  */
-export const ALL_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'batch', 'eval'] as const;
+export const ALL_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'batch', 'eval', 'propose-batch'] as const;
 
 export type WorkflowId = (typeof ALL_WORKFLOWS)[number];
 export type CoreWorkflowId = (typeof CORE_WORKFLOWS)[number];

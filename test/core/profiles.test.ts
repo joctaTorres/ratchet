@@ -22,18 +22,19 @@ describe('profiles', () => {
       expect(CORE_WORKFLOWS).toContain('batch');
     });
 
-    it('should keep eval opt-in (not in core)', () => {
+    it('should keep eval and propose-batch opt-in (not in core)', () => {
       expect(CORE_WORKFLOWS).not.toContain('eval');
+      expect(CORE_WORKFLOWS).not.toContain('propose-batch');
     });
   });
 
   describe('ALL_WORKFLOWS', () => {
     it('should contain all workflows', () => {
-      expect(ALL_WORKFLOWS).toHaveLength(7);
+      expect(ALL_WORKFLOWS).toHaveLength(8);
     });
 
     it('should contain expected workflow IDs', () => {
-      const expected = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'batch', 'eval'];
+      const expected = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'batch', 'eval', 'propose-batch'];
       expect([...ALL_WORKFLOWS]).toEqual(expected);
     });
   });

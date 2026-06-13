@@ -138,6 +138,7 @@ describe('InitCommand', () => {
         'ratchet-ff-change',
         'ratchet-bulk-archive-change',
         'ratchet-eval',
+        'ratchet-propose-batch',
       ];
 
       for (const skillName of nonCoreSkillNames) {
@@ -175,6 +176,7 @@ describe('InitCommand', () => {
         'rct/ff.md',
         'rct/bulk-archive.md',
         'rct/eval.md',
+        'rct/propose-batch.md',
       ];
 
       for (const cmdName of nonCoreCommandNames) {

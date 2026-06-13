@@ -163,3 +163,36 @@ copy** and is what grants the spawned judge permission to act.
 
 See `fixtures/eval-self-run/` — an agent-judged case that dogfoods eval itself
 (its inner binding is a deterministic `check`, so the recursion depth is 1).
+
+## Driving `ratchet batch apply` deterministically (the agent stub seam)
+
+`ratchet batch apply` normally spawns a real coding agent to drive a transition,
+which a `kind: check` cannot do reproducibly. The **batch-agent-stub-seam** adds
+an env override mirroring `RATCHET_EVAL_AGENT_CMD`: when `RATCHET_BATCH_AGENT_CMD`
+is set, the engine runs that command via `bash -c` (feeding the step instructions
+on stdin) **instead of** resolving/spawning the configured adapter; unset → the
+adapter path is unchanged. The unit-test `Spawner` injection is untouched and
+complementary — the env var is the CLI/e2e/eval seam.
+
+- Fixture `fixtures/batch-apply/` is a self-contained `q3-auth` batch with one
+  ready change plus two checked-in scripted "agents":
+  - `agent.sh` — reads the instructions on stdin, learns the transition
+    (PROPOSE/APPLY/VERIFY) and the batch/change from the report-channel line,
+    then drives that transition for real (scaffolds a `plan.md` + `features/` on
+    propose, checks the task boxes on apply) and reports via `ratchet batch
+    report`.
+  - `agent-blocker.sh` — raises a blocker on the first propose to park the step,
+    then proceeds normally once an answer is in context (the resume path).
+- A batch-orchestration check points the seam at the script and asserts the
+  observable state, e.g. `export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent.sh"`
+  then `ratchet batch apply q3-auth --json` and a `python3 -c` assertion on
+  `ratchet batch status --json`. The fixture copy is the cwd, so `$PWD/agent.sh`
+  resolves inside it.
+
+**Deferred host-loop gap (kept honest, unjudged):** the *verify* transition and
+proof-of-work phase gating are not reachable through `batch apply` today — once a
+change's plan tasks are all checked it is `done` and the step-picker treats done
+as terminal, and `runProofOfWork` is not wired into `runStep`. The
+`batch-apply#...propose-then-apply-then-verify` and the `batch-phases` proof-of-
+work cases therefore stay `unjudged` (documented in `specs/batch-orchestration.yaml`)
+until the host loop lands.

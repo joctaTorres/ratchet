@@ -29,6 +29,7 @@ import {
   realSpawner,
   UnknownAgentError,
   type AgentAdapter,
+  type AgentSpawnRequest,
   type Spawner,
 } from './agent.js';
 import { buildAgentInstructions } from './instructions.js';
@@ -103,10 +104,15 @@ export class RatchetBatchEngine {
     const park = this.checkPark(context, transition);
     if (park) return park;
 
-    // 2. Reject unknown adapters BEFORE any spawn.
-    let adapter: AgentAdapter;
+    // 2-3. Build instructions + the spawn request for this single transition.
+    //      A `RATCHET_BATCH_AGENT_CMD` override stands in for the agent; otherwise
+    //      the configured adapter is resolved (rejecting unknowns before any spawn).
+    const stepContext: ResolvedStepContext = { ...context, transition };
+    const instructions = buildAgentInstructions(stepContext);
+    const env = { ...process.env };
+    let request;
     try {
-      adapter = resolveAdapter(context.settings.agent, this.adapters);
+      request = this.buildSpawnRequest(stepContext, instructions, projectRoot, env);
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return {
@@ -119,12 +125,6 @@ export class RatchetBatchEngine {
       }
       throw err;
     }
-
-    // 3. Build instructions + spawn a fresh agent for this single transition.
-    const stepContext: ResolvedStepContext = { ...context, transition };
-    const instructions = buildAgentInstructions(stepContext);
-    const env = { ...process.env };
-    const request = adapter.buildRequest(stepContext, instructions, projectRoot, env);
 
     // Snapshot journal length so we can isolate this session's entries.
     const before = readChangeJournalTolerant(projectRoot, batch, change).length;
@@ -160,6 +160,28 @@ export class RatchetBatchEngine {
     });
 
     return outcome;
+  }
+
+  /**
+   * Build the spawn request for one transition. When `RATCHET_BATCH_AGENT_CMD`
+   * is set, that command stands in for the coding-agent binary (used by e2e/eval
+   * checks to exercise the orchestration deterministically without a real agent),
+   * receiving the step instructions on stdin. Otherwise the configured adapter is
+   * resolved as usual — rejecting unknown adapters before any spawn. Mirrors
+   * `RATCHET_EVAL_AGENT_CMD` in the eval judge.
+   */
+  private buildSpawnRequest(
+    context: ResolvedStepContext,
+    instructions: string,
+    projectRoot: string,
+    env: NodeJS.ProcessEnv
+  ): AgentSpawnRequest {
+    const override = process.env.RATCHET_BATCH_AGENT_CMD;
+    if (override && override.trim().length > 0) {
+      return { command: 'bash', args: ['-c', override], instructions, cwd: projectRoot, env };
+    }
+    const adapter = resolveAdapter(context.settings.agent, this.adapters);
+    return adapter.buildRequest(context, instructions, projectRoot, env);
   }
 
   /**

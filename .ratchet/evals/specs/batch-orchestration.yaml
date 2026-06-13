@@ -14,17 +14,32 @@
 #   batch-states  a `states` batch whose manifest references four changes in
 #                 every derived state: done-change (all tasks [x]), wip-change
 #                 (partial), pending-change (no dir), arch-change (archived).
+#   batch-apply   a `q3-auth` batch with one ready change (add-login-api) plus a
+#                 checked-in scripted agent (agent.sh / agent-blocker.sh). Checks
+#                 export RATCHET_BATCH_AGENT_CMD=<that script> so `ratchet batch
+#                 apply` drives a real, deterministic propose/apply transition
+#                 without spawning a live LLM (see the batch-agent-stub-seam
+#                 change: the engine runs the override via `bash -c`, feeding the
+#                 step instructions on stdin, instead of resolving an adapter).
 #
 # Intentionally UNBOUND (remain `unjudged`, never passed):
-#   * batch-apply/* (except none) and engine-interface/* that describe an engine
-#     being "installed and licensed" or "absence of an engine" — licensing was
-#     dropped and the engine is bundled MIT; those scenarios are stale vs current
-#     behavior.
-#   * Any scenario requiring a live coding agent to drive real propose/apply/
-#     verify transitions end to end (batch apply spawning an agent, multi-step
-#     transition sequence, the /rct:batch skill). Kept out to stay deterministic.
-#   * batch-phases/* and most batch-report/* halts that depend on the deferred
-#     proof-of-work / host loop or on agent-produced halts.
+#   * engine-interface/* and the batch-apply "engine installed and licensed" /
+#     "/rct:batch skill" scenarios — licensing was dropped and the engine is
+#     bundled MIT; those scenarios are stale vs current behavior.
+#   * batch-apply#the-transition-sequence-per-change-is-propose-then-apply-then-
+#     verify — the propose and apply transitions are now driveable via the stub
+#     (see below), but the *verify* leg is part of the DEFERRED HOST LOOP: once a
+#     change's plan tasks are all checked it is `done`, and `batch apply`'s
+#     step-picker treats done as terminal (it never re-selects the change to run
+#     the verify transition the engine's computeNextTransition would otherwise
+#     return). Binding this case would require the not-yet-wired host loop, so it
+#     stays unjudged with the proof-of-work gating below.
+#   * batch-phases/phases proof-of-work gating cases (a failing proof-of-work
+#     hard-gates / a later phase blocked until the prior phase proof-of-work
+#     passes / enforcement relaxed to warn) — `runProofOfWork` is deliberately
+#     NOT wired into runStep/apply yet; this is the same deferred host-loop gap.
+#   * remaining batch-report/* halts that depend on agent-produced halts beyond
+#     the scripted stub.
 
 # ─────────────────────────── batch-template ───────────────────────────
 
@@ -694,3 +709,94 @@ changes/batch-orchestration/features/batch-phases/phases#the-strategy-can-be-cha
       ratchet batch config demo --json | python3 -c "import sys,json; assert json.load(sys.stdin)['settings']['strategy']=='vertical-slice'"
       ratchet batch config demo --set strategy=feature >/dev/null
       ratchet batch config demo --json | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['settings']['strategy']=='feature', d; assert d['sources']['strategy']=='project', d"
+
+# ─────────────────────────── batch-apply / apply-handoff ─────────────────────
+# Deterministic via the batch-agent-stub-seam: RATCHET_BATCH_AGENT_CMD points at
+# the checked-in scripted agent (batch-apply fixture), so `ratchet batch apply`
+# drives a real propose/apply transition with no live LLM. The transition-
+# sequence#...verify case is intentionally UNBOUND (deferred host loop — see the
+# header), as are the proof-of-work phase-gating cases.
+
+changes/batch-orchestration/features/batch-apply/apply-handoff#apply-advances-one-step-and-returns:
+  fixture: batch-apply
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # The scripted agent stands in for the coding agent: apply picks the one
+      # ready step, drives EXACTLY one transition (propose, scaffolding the
+      # change), and returns — it does not run on to apply in the same invocation.
+      export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent.sh"
+      ratchet batch apply q3-auth --json > /tmp/apply1.json
+      python3 -c "import json; d=json.load(open('/tmp/apply1.json')); assert d['state']=='advanced', d; assert d['change']=='add-login-api', d; assert d['transition']=='propose', d"
+      # Exactly one transition happened: the change now exists with a plan but is
+      # only in-progress (propose ran, apply did NOT auto-continue this call).
+      ratchet batch status q3-auth --json > /tmp/st1.json
+      python3 -c "import json; c=json.load(open('/tmp/st1.json'))['phases'][0]['changes'][0]; assert c['name']=='add-login-api', c; assert c['exists'] is True, c; assert c['status']=='in-progress', c; assert c['progress']['completed']==0, c"
+      # Control returned: the change directory + plan are on disk.
+      test -f .ratchet/changes/add-login-api/plan.md
+
+changes/batch-orchestration/features/batch-apply/apply-handoff#apply-respects-gates-and-does-not-cross-a-halt:
+  fixture: batch-apply
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # The blocker-raising scripted agent parks the step (a real halt). A second
+      # apply with no recorded answer must NOT advance and must report what input
+      # is required; once an answer is recorded the step resumes.
+      export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent-blocker.sh"
+      ratchet batch apply q3-auth --json > /tmp/halt1.json
+      python3 -c "import json; d=json.load(open('/tmp/halt1.json')); assert d['state']=='blocked', d; assert 'cookie or header sessions' in (d.get('blocker') or ''), d"
+      # Parked as blocked, not advanced (no change directory created).
+      ratchet batch status q3-auth --json | python3 -c "import sys,json; c=json.load(sys.stdin)['phases'][0]['changes'][0]; assert c['status']=='blocked', c; assert c['parked']['kind']=='blocked', c"
+      test ! -e .ratchet/changes/add-login-api
+      # Apply again WITHOUT an answer: the engine refuses to cross the halt and
+      # reports the required input.
+      ratchet batch apply q3-auth --json > /tmp/halt2.json
+      python3 -c "import json; d=json.load(open('/tmp/halt2.json')); assert d['state']=='parked', d; assert 'answer' in d.get('hint',''), d"
+      # Record an answer, then apply resumes the step with the answer in context.
+      ratchet batch report q3-auth --change add-login-api --answer 'use header bearer tokens' >/dev/null
+      ratchet batch apply q3-auth --json > /tmp/halt3.json
+      python3 -c "import json; d=json.load(open('/tmp/halt3.json')); assert d['state']=='advanced', d; assert d['transition']=='propose', d"
+      test -f .ratchet/changes/add-login-api/plan.md
+
+changes/batch-orchestration/features/batch-apply/apply-handoff#apply-renders-a-rich-view-of-the-step-it-ran:
+  fixture: batch-apply
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # The non-JSON apply output is a rich view of the step that ran: the change
+      # it ran for, the transition, and the outcome line.
+      export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent.sh"
+      out="$(ratchet --no-color batch apply q3-auth)"
+      printf '%s' "$out" > /tmp/applyview.out
+      echo "$out" | grep -q 'add-login-api'
+      echo "$out" | grep -q 'propose'
+      echo "$out" | grep -qi 'advanced'
+      # No ANSI escapes leak under --no-color.
+      python3 -c "assert '\x1b[' not in open('/tmp/applyview.out').read(), 'ANSI escape under --no-color'"
+
+changes/batch-orchestration/features/batch-manifest/create-batch#changes-are-created-lazily-as-the-batch-progresses:
+  fixture: batch-apply
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # A scaffolded batch references its change by name but owns no change
+      # directory: nothing exists under .ratchet/changes for it yet.
+      test ! -e .ratchet/changes/add-login-api
+      ls .ratchet/changes | python3 -c "import sys; entries=[l.strip() for l in sys.stdin if l.strip() and l.strip()!='.gitkeep']; assert entries==[], entries"
+      # The manifest entry is an intent (status pending, exists=false) — realized
+      # only as the batch progresses.
+      ratchet batch status q3-auth --json | python3 -c "import sys,json; c=json.load(sys.stdin)['phases'][0]['changes'][0]; assert c['exists'] is False, c; assert c['status']=='ready', c"
+      # Running one apply step realizes the change directory lazily.
+      export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent.sh"
+      ratchet batch apply q3-auth >/dev/null
+      test -d .ratchet/changes/add-login-api
+

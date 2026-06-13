@@ -36,6 +36,18 @@ import {
   type BatchApplyOptions,
   type NewBatchOptions,
 } from '../commands/batch/index.js';
+import {
+  evalSetCommand,
+  evalRunCommand,
+  evalRecordCommand,
+  evalReportCommand,
+  evalBaselineCommand,
+  type EvalSetOptions,
+  type EvalRunOptions,
+  type EvalRecordOptions,
+  type EvalReportOptions,
+  type EvalBaselineOptions,
+} from '../commands/eval/index.js';
 import { maybeShowTelemetryNotice, trackCommand, shutdown } from '../telemetry/index.js';
 
 const program = new Command();
@@ -463,6 +475,98 @@ batchCmd
   .action(async (name: string | undefined, options: BatchApplyOptions) => {
     try {
       await batchApplyCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+// ═══════════════════════════════════════════════════════════
+// Eval Commands
+// ═══════════════════════════════════════════════════════════
+
+const evalCmd = program
+  .command('eval')
+  .description('Turn .feature files into a scored, baseline-diffed eval suite');
+
+const withScopeFlags = (cmd: Command): Command =>
+  cmd
+    .option('--changes', 'Include active changes alongside the feature store')
+    .option('--change <name>', 'Scope to a single active change')
+    .option('--path <dir-or-file>', 'Narrow to a capability directory or file');
+
+withScopeFlags(
+  evalCmd
+    .command('set')
+    .description('Enumerate eval cases (one per Scenario) from .feature files')
+    .option('--json', 'Output as JSON')
+).action(async (options: EvalSetOptions) => {
+  try {
+    await evalSetCommand(options);
+  } catch (error) {
+    console.log();
+    ora().fail(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+});
+
+withScopeFlags(
+  evalCmd
+    .command('run')
+    .description('Judge every bound in-scope case through the engine and persist a run')
+    .option('--judge <mode>', 'Judge mode: auto | check | agent')
+    .option('--json', 'Output as JSON')
+).action(async (options: EvalRunOptions) => {
+  try {
+    await evalRunCommand(options);
+  } catch (error) {
+    console.log();
+    ora().fail(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+});
+
+evalCmd
+  .command('record')
+  .description('Manually override a case verdict in a persisted run')
+  .option('--run <id>', 'Run id to amend')
+  .option('--case <id>', 'Case id to override')
+  .option('--verdict <verdict>', 'pass | fail | unjudged')
+  .option('--evidence <text>', 'Evidence (required for a fail verdict)')
+  .option('--json', 'Output as JSON')
+  .action(async (options: EvalRecordOptions) => {
+    try {
+      await evalRecordCommand(options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+evalCmd
+  .command('report')
+  .description('Scorecard and baseline regression diff for a run')
+  .option('--run <id>', 'Run id to report')
+  .option('--json', 'Output as JSON')
+  .action(async (options: EvalReportOptions) => {
+    try {
+      await evalReportCommand(options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+evalCmd
+  .command('baseline <run-id>')
+  .description('Promote a run to the baseline')
+  .option('--json', 'Output as JSON')
+  .action(async (runId: string, options: EvalBaselineOptions) => {
+    try {
+      await evalBaselineCommand(runId, options);
     } catch (error) {
       console.log();
       ora().fail(`Error: ${(error as Error).message}`);

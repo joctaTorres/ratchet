@@ -53,3 +53,7 @@ export {
   type ProofOfWork,
   type ProofOfWorkKind,
 } from './batch/manifest.js';
+
+// Eval suite: enumerate .feature files into scored, baseline-diffed cases judged
+// by the bundled engine seams.
+export * from './eval/index.js';

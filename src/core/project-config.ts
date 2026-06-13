@@ -53,6 +53,16 @@ export const ProjectConfigSchema = z.object({
     .partial()
     .optional()
     .describe('Project-level defaults for batch orchestration'),
+
+  // Optional: project-level defaults for eval orchestration. The `judge`
+  // default mode is used by `ratchet eval run` when no `--judge` flag is given.
+  eval: z
+    .object({
+      judge: z.enum(['auto', 'check', 'agent']).optional(),
+    })
+    .partial()
+    .optional()
+    .describe('Project-level defaults for eval orchestration'),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
@@ -179,6 +189,19 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
         console.warn(
           `Invalid 'batch' field in config (check gate/strategy/proofOfWork values)`
         );
+      }
+    }
+
+    // Parse eval field using Zod (project-level eval defaults)
+    if (raw.eval !== undefined) {
+      const evalField = ProjectConfigSchema.shape.eval;
+      const evalResult = evalField.safeParse(raw.eval);
+      if (evalResult.success) {
+        if (evalResult.data) {
+          config.eval = evalResult.data;
+        }
+      } else {
+        console.warn(`Invalid 'eval' field in config (check judge value: auto|check|agent)`);
       }
     }
 

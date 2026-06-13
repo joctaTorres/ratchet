@@ -21,11 +21,11 @@ describe('profiles', () => {
 
   describe('ALL_WORKFLOWS', () => {
     it('should contain all workflows', () => {
-      expect(ALL_WORKFLOWS).toHaveLength(6);
+      expect(ALL_WORKFLOWS).toHaveLength(7);
     });
 
     it('should contain expected workflow IDs', () => {
-      const expected = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'batch'];
+      const expected = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'batch', 'eval'];
       expect([...ALL_WORKFLOWS]).toEqual(expected);
     });
   });

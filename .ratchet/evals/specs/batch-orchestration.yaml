@@ -1,0 +1,554 @@
+# Eval-spec bindings for the batch-orchestration change.
+#
+# Every bound case is a deterministic `check`: the `run` script performs the
+# real `ratchet` invocation(s) inside a fresh throwaway copy of the named
+# fixture and then asserts the scenario's Then post-condition, exiting non-zero
+# on any mismatch (`set -e`, `test`, `grep -q`, `|| exit 1`). `pass: exit-zero`
+# is therefore sound: the script itself proves the outcome.
+#
+# Fixtures (checked-in under ../fixtures/), each a self-contained ratchet
+# project with a nested .ratchet/:
+#   batch-base    minimal project (config.yaml `schema: ratchet`, empty
+#                 changes/). Checks scaffold batches / hand-write manifests /
+#                 set config at runtime, mutating their own throwaway copy.
+#   batch-states  a `states` batch whose manifest references four changes in
+#                 every derived state: done-change (all tasks [x]), wip-change
+#                 (partial), pending-change (no dir), arch-change (archived).
+#
+# Intentionally UNBOUND (remain `unjudged`, never passed):
+#   * batch-apply/* (except none) and engine-interface/* that describe an engine
+#     being "installed and licensed" or "absence of an engine" — licensing was
+#     dropped and the engine is bundled MIT; those scenarios are stale vs current
+#     behavior.
+#   * Any scenario requiring a live coding agent to drive real propose/apply/
+#     verify transitions end to end (batch apply spawning an agent, multi-step
+#     transition sequence, the /rct:batch skill). Kept out to stay deterministic.
+#   * batch-phases/* and most batch-report/* halts that depend on the deferred
+#     proof-of-work / host loop or on agent-produced halts.
+
+# ─────────────────────────── batch-template ───────────────────────────
+
+changes/batch-orchestration/features/batch-template/batch-template#print-the-canonical-batch-template:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      out="$(ratchet template batch)"
+      # The canonical template prints the phase/DAG skeleton, not a scaffolded
+      # instance: it carries the placeholder name and the `after` edge syntax.
+      echo "$out" | grep -q "phases:"
+      echo "$out" | grep -q "name: example-batch"
+      echo "$out" | grep -q "after"
+      echo "$out" | grep -q "proofOfWork"
+
+changes/batch-orchestration/features/batch-template/batch-template#scaffolded-batches-start-from-the-template:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch q3-auth >/dev/null
+      manifest=".ratchet/batches/q3-auth/batch.yaml"
+      test -f "$manifest"
+      # The scaffold is the template specialized to this batch: its own name, a
+      # real dated `created:`, and the same phases/proofOfWork skeleton.
+      grep -q "name: q3-auth" "$manifest"
+      grep -Eq "created: [0-9]{4}-[0-9]{2}-[0-9]{2}" "$manifest"
+      grep -q "phases:" "$manifest"
+      grep -q "proofOfWork" "$manifest"
+
+changes/batch-orchestration/features/batch-template/batch-template#validating-a-batch-manifest:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch q3-auth >/dev/null
+      out="$(ratchet validate q3-auth)"
+      echo "$out" | grep -q "valid"
+      # A manifest with a malformed proof-of-work kind is rejected, naming the
+      # offending field, with a non-zero exit.
+      mkdir -p .ratchet/batches/badkind
+      printf '%s\n' \
+        'name: badkind' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork:' \
+        '      kind: not-a-kind' \
+        '      run: x' \
+        '      pass: "0"' \
+        '    changes:' \
+        '      - name: ok-change' > .ratchet/batches/badkind/batch.yaml
+      if ratchet validate badkind >/tmp/bk.out 2>&1; then
+        echo "expected validate to fail on a bad proofOfWork kind" >&2
+        exit 1
+      fi
+      grep -q "proofOfWork" /tmp/bk.out
+
+changes/batch-orchestration/features/batch-template/batch-template#a-hand-edited-manifest-is-a-first-class-manifest:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # A manifest written entirely by hand (never scaffolded) is read,
+      # validated, and status-derived exactly like a generated one.
+      mkdir -p .ratchet/batches/by-hand
+      printf '%s\n' \
+        'name: by-hand' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: a' \
+        '      - name: b' \
+        '        after: [a]' > .ratchet/batches/by-hand/batch.yaml
+      ratchet validate by-hand | grep -q "valid"
+      name="$(ratchet batch status by-hand --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')"
+      test "$name" = "by-hand"
+
+# ─────────────────────────── batch-manifest / create-batch ───────────────────
+
+changes/batch-orchestration/features/batch-manifest/create-batch#scaffold-a-new-batch-from-the-template:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      out="$(ratchet new batch q3-auth)"
+      echo "$out" | grep -q "q3-auth"
+      test -f .ratchet/batches/q3-auth/batch.yaml
+      grep -q "name: q3-auth" .ratchet/batches/q3-auth/batch.yaml
+
+changes/batch-orchestration/features/batch-manifest/create-batch#creating-a-batch-that-already-exists-fails-safely:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch q3-auth >/dev/null
+      before="$(cat .ratchet/batches/q3-auth/batch.yaml)"
+      if ratchet new batch q3-auth >/tmp/dup.out 2>&1; then
+        echo "expected a second 'new batch' to fail" >&2
+        exit 1
+      fi
+      grep -q "already exists" /tmp/dup.out
+      # The existing manifest is left untouched.
+      after="$(cat .ratchet/batches/q3-auth/batch.yaml)"
+      test "$before" = "$after"
+
+changes/batch-orchestration/features/batch-manifest/create-batch#batch-names-are-validated-like-change-names:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      if ratchet new batch 'Bad Name!' >/tmp/name.out 2>&1; then
+        echo "expected an invalid batch name to be rejected" >&2
+        exit 1
+      fi
+      grep -qi "kebab-case" /tmp/name.out
+      test ! -e ".ratchet/batches/Bad Name!"
+
+changes/batch-orchestration/features/batch-manifest/create-batch#a-batch-references-changes-by-name-without-owning-them:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch q3-auth >/dev/null
+      # The manifest references a change by name; no change directory is created
+      # by scaffolding the batch — the batch does not own the change.
+      grep -q "name: add-first-change" .ratchet/batches/q3-auth/batch.yaml
+      test ! -e .ratchet/changes/add-first-change
+      # Status surfaces the referenced change as pending (exists=false), not an error.
+      exists="$(ratchet batch status q3-auth --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["phases"][0]["changes"][0]["exists"])')"
+      test "$exists" = "False"
+
+# ─────────────────────────── batch-manifest / dag-edges ──────────────────────
+
+changes/batch-orchestration/features/batch-manifest/dag-edges#a-cycle-in-after-edges-is-rejected:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      mkdir -p .ratchet/batches/cyclic
+      printf '%s\n' \
+        'name: cyclic' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: a' \
+        '        after: [b]' \
+        '      - name: b' \
+        '        after: [a]' > .ratchet/batches/cyclic/batch.yaml
+      if ratchet validate cyclic >/tmp/cyc.out 2>&1; then
+        echo "expected a cyclic after-edge to be rejected" >&2
+        exit 1
+      fi
+      grep -qi "cycle" /tmp/cyc.out
+      grep -q "a" /tmp/cyc.out
+      grep -q "b" /tmp/cyc.out
+
+changes/batch-orchestration/features/batch-manifest/dag-edges#an-after-edge-referencing-a-change-outside-the-batch-is-rejected:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      mkdir -p .ratchet/batches/dangling
+      printf '%s\n' \
+        'name: dangling' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: real-change' \
+        '        after: [ghost-change]' > .ratchet/batches/dangling/batch.yaml
+      if ratchet validate dangling >/tmp/dang.out 2>&1; then
+        echo "expected an unknown after-reference to be rejected" >&2
+        exit 1
+      fi
+      grep -qi "unknown reference" /tmp/dang.out
+      grep -q "real-change" /tmp/dang.out
+      grep -q "ghost-change" /tmp/dang.out
+
+changes/batch-orchestration/features/batch-manifest/dag-edges#serial-execution-is-a-chain-of-after-edges:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      mkdir -p .ratchet/batches/serial
+      printf '%s\n' \
+        'name: serial' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: a' \
+        '      - name: b' \
+        '        after: [a]' > .ratchet/batches/serial/batch.yaml
+      # A chain of `after` edges serializes: only the head is ready, the tail is
+      # blocked by its predecessor, and `next` is the head.
+      ratchet validate serial | grep -q "valid"
+      ratchet batch status serial --json > /tmp/serial.json
+      q() { python3 -c "import json;c={x['name']:x for x in json.load(open('/tmp/serial.json'))['phases'][0]['changes']};d=json.load(open('/tmp/serial.json'));print($1)"; }
+      test "$(q "c['a']['status']")" = "ready"
+      test "$(q "c['b']['status']")" = "blocked"
+      test "$(q "','.join(c['b']['blockedBy'])")" = "a"
+      test "$(q "d['next']['change']")" = "a"
+
+changes/batch-orchestration/features/batch-manifest/dag-edges#parallel-execution-is-the-absence-of-edges:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      mkdir -p .ratchet/batches/par
+      printf '%s\n' \
+        'name: par' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: a' \
+        '      - name: b' > .ratchet/batches/par/batch.yaml
+      # No edges => both changes are independently ready (parallel), neither blocked.
+      ratchet validate par | grep -q "valid"
+      ratchet batch status par --json > /tmp/par.json
+      q() { python3 -c "import json;c={x['name']:x for x in json.load(open('/tmp/par.json'))['phases'][0]['changes']};print($1)"; }
+      test "$(q "c['a']['status']")" = "ready"
+      test "$(q "c['b']['status']")" = "ready"
+      test "$(q "len(c['a']['blockedBy'])+len(c['b']['blockedBy'])")" = "0"
+
+# ─────────────────────────── batch-config ───────────────────────────────────
+
+changes/batch-orchestration/features/batch-config/config#sensible-defaults-when-no-batch-section-is-present:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # config.yaml carries no `batch:` section: the resolved settings are the
+      # hard-coded defaults, sourced as `default`.
+      ratchet batch config --json > /tmp/cfg.json
+      f() { python3 -c "import json;print(json.load(open('/tmp/cfg.json'))$1)"; }
+      test "$(f "['settings']['gate']")" = "voluntary"
+      test "$(f "['settings']['strategy']")" = "vertical-slice"
+      test "$(f "['settings']['proofOfWork']")" = "hard-gate"
+      test "$(f "['sources']['gate']")" = "default"
+
+changes/batch-orchestration/features/batch-config/config#defaults-are-loaded-from-the-project-config:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # Writing the project-level batch section makes it the source of the value.
+      ratchet batch config --set gate=every-phase >/dev/null
+      grep -q "every-phase" .ratchet/config.yaml
+      ratchet batch config --json > /tmp/cfg.json
+      f() { python3 -c "import json;print(json.load(open('/tmp/cfg.json'))$1)"; }
+      test "$(f "['settings']['gate']")" = "every-phase"
+      test "$(f "['sources']['gate']")" = "project"
+
+changes/batch-orchestration/features/batch-config/config#a-batch-manifest-overrides-project-defaults:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # Project gate is voluntary (default); the manifest pins after-propose.
+      mkdir -p .ratchet/batches/q3-auth
+      printf '%s\n' \
+        'name: q3-auth' \
+        'settings:' \
+        '  gate: after-propose' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: a' > .ratchet/batches/q3-auth/batch.yaml
+      ratchet batch config q3-auth --json > /tmp/cfg.json
+      f() { python3 -c "import json;print(json.load(open('/tmp/cfg.json'))$1)"; }
+      test "$(f "['settings']['gate']")" = "after-propose"
+      test "$(f "['sources']['gate']")" = "manifest"
+
+changes/batch-orchestration/features/batch-config/config#reading-effective-settings-for-a-specific-batch:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # Project sets strategy=feature; the named batch inherits it (no manifest
+      # override) and the effective read names the batch and its sources.
+      ratchet batch config --set strategy=feature >/dev/null
+      mkdir -p .ratchet/batches/q3-auth
+      printf '%s\n' \
+        'name: q3-auth' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes:' \
+        '      - name: a' > .ratchet/batches/q3-auth/batch.yaml
+      ratchet batch config q3-auth --json > /tmp/cfg.json
+      f() { python3 -c "import json;print(json.load(open('/tmp/cfg.json'))$1)"; }
+      test "$(f "['name']")" = "q3-auth"
+      test "$(f "['settings']['strategy']")" = "feature"
+      test "$(f "['sources']['strategy']")" = "project"
+
+changes/batch-orchestration/features/batch-config/config#the-gate-policy-is-a-dial:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # The gate is a dial across its full enum: each allowed value is accepted
+      # and read back.
+      for g in voluntary after-propose every-phase autonomous; do
+        ratchet batch config --set "gate=$g" >/dev/null
+        got="$(ratchet batch config --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["settings"]["gate"])')"
+        test "$got" = "$g" || { echo "gate dial failed at $g (got $got)" >&2; exit 1; }
+      done
+
+changes/batch-orchestration/features/batch-config/config#invalid-setting-values-are-rejected:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      before="$(cat .ratchet/config.yaml)"
+      # An out-of-enum gate value is rejected, listing the allowed values, and
+      # the config file is left untouched.
+      if ratchet batch config --set gate=whenever >/tmp/cfg.out 2>&1; then
+        echo "expected an invalid gate value to be rejected" >&2
+        exit 1
+      fi
+      grep -q "voluntary" /tmp/cfg.out
+      after="$(cat .ratchet/config.yaml)"
+      test "$before" = "$after"
+
+# ─────────────────────────── batch-status / derived-status ───────────────────
+
+changes/batch-orchestration/features/batch-status/derived-status#a-change-with-all-plan-tasks-checked-counts-as-done:
+  fixture: batch-states
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet batch status states --json > /tmp/st.json
+      c() { python3 -c "import json;m={x['name']:x for x in json.load(open('/tmp/st.json'))['phases'][0]['changes']};print(m$1)"; }
+      test "$(c "['done-change']['status']")" = "done"
+      test "$(c "['done-change']['progress']['completed']")" = "2"
+      test "$(c "['done-change']['progress']['total']")" = "2"
+
+changes/batch-orchestration/features/batch-status/derived-status#a-change-with-partial-task-progress-is-in-progress:
+  fixture: batch-states
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet batch status states --json > /tmp/st.json
+      c() { python3 -c "import json;m={x['name']:x for x in json.load(open('/tmp/st.json'))['phases'][0]['changes']};print(m$1)"; }
+      test "$(c "['wip-change']['status']")" = "in-progress"
+      test "$(c "['wip-change']['progress']['completed']")" = "1"
+      test "$(c "['wip-change']['progress']['total']")" = "2"
+
+changes/batch-orchestration/features/batch-status/derived-status#a-manifest-intent-with-no-change-directory-yet-is-pending:
+  fixture: batch-states
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # The intent references a change with no directory; this is not an error
+      # (status exits 0) and the change is reported as not-yet-existing.
+      ratchet batch status states --json > /tmp/st.json
+      c() { python3 -c "import json;m={x['name']:x for x in json.load(open('/tmp/st.json'))['phases'][0]['changes']};print(m$1)"; }
+      test "$(c "['pending-change']['exists']")" = "False"
+      test "$(c "['pending-change']['archived']")" = "False"
+      test "$(c "['pending-change']['progress']['total']")" = "0"
+      test ! -e .ratchet/changes/pending-change
+
+changes/batch-orchestration/features/batch-status/derived-status#an-archived-change-counts-as-done:
+  fixture: batch-states
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet batch status states --json > /tmp/st.json
+      c() { python3 -c "import json;m={x['name']:x for x in json.load(open('/tmp/st.json'))['phases'][0]['changes']};print(m$1)"; }
+      test "$(c "['arch-change']['status']")" = "done"
+      test "$(c "['arch-change']['archived']")" = "True"
+      test -d .ratchet/changes/archive/arch-change
+
+changes/batch-orchestration/features/batch-status/derived-status#machine-readable-status-for-agents-and-the-engine:
+  fixture: batch-states
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # `--json` is valid, machine-readable, and carries the contract fields an
+      # agent/engine consume: name, phases[].changes[] with per-change status,
+      # and the next-actionable pointer.
+      ratchet batch status states --json > /tmp/st.json
+      f() { python3 -c "import json;print(json.load(open('/tmp/st.json'))$1)"; }
+      test "$(f "['name']")" = "states"
+      test "$(f "[ 'phases' ][0]['changes'][0]['name']")" = "done-change"
+      test "$(f "[ 'phases' ][0]['changes'][0]['status']")" = "done"
+      # The next-actionable pointer is part of the contract (may be a dict or null).
+      python3 -c "import json;d=json.load(open('/tmp/st.json'));assert 'next' in d"
+
+# ─────────────────────────── batch-view / rich-view ─────────────────────────
+
+changes/batch-orchestration/features/batch-view/rich-view#list-all-batches:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch alpha >/dev/null
+      ratchet new batch beta >/dev/null
+      # The list surfaces every batch by name (machine-readable form is exact).
+      ratchet batch list --json > /tmp/list.json
+      names="$(python3 -c "import json;print(' '.join(b['name'] for b in json.load(open('/tmp/list.json'))['batches']))")"
+      echo "$names" | grep -q "alpha"
+      echo "$names" | grep -q "beta"
+      # The rich list renders both as well.
+      out="$(ratchet --no-color batch list)"
+      echo "$out" | grep -q "alpha"
+      echo "$out" | grep -q "beta"
+
+changes/batch-orchestration/features/batch-view/rich-view#view-a-single-batch-in-detail:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch q3-auth >/dev/null
+      out="$(ratchet --no-color batch view q3-auth)"
+      # The detailed view shows the batch, its phase, and the referenced change.
+      echo "$out" | grep -q "q3-auth"
+      echo "$out" | grep -q "foundation"
+      echo "$out" | grep -q "add-first-change"
+
+changes/batch-orchestration/features/batch-view/rich-view#viewing-a-batch-with-no-changes-yet:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # A batch whose phase has no change intents is viewable without error and
+      # reports the empty state rather than failing.
+      mkdir -p .ratchet/batches/empty
+      printf '%s\n' \
+        'name: empty' \
+        'phases:' \
+        '  - name: foundation' \
+        '    goal: g' \
+        '    success: s' \
+        '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
+        '    changes: []' > .ratchet/batches/empty/batch.yaml
+      out="$(ratchet --no-color batch view empty)"
+      echo "$out" | grep -qi "no changes yet"
+      status="$(ratchet batch view empty --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["status"])')"
+      test "$status" = "empty"
+
+changes/batch-orchestration/features/batch-view/rich-view#view-respects-no-color:
+  fixture: batch-base
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      ratchet new batch q3-auth >/dev/null
+      out="$(ratchet --no-color batch view q3-auth)"
+      # Under --no-color no ANSI escape codes are emitted: the CSI byte must be
+      # absent from the output.
+      printf '%s' "$out" > /tmp/view.out
+      python3 -c "assert '\x1b[' not in open('/tmp/view.out').read(), 'ANSI escape under --no-color'"

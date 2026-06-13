@@ -142,3 +142,24 @@ surface as a **regression** in `ratchet eval report`.
 4. Iterate `ratchet eval run --path <dir> --judge check` until green.
 5. Verify `ratchet eval set` (store / `--changes`) case counts are unchanged by
    your fixtures.
+
+## Agent-judged fixtures need a tool allowlist
+
+For `kind: agent` bindings, the judge is a freshly spawned coding-agent
+subprocess whose cwd is the throwaway fixture copy. `FixtureManager` copies the
+whole fixture recursively, so a **fixture-local agent config travels into that
+copy** and is what grants the spawned judge permission to act.
+
+- For a Claude judge, put `.claude/settings.json` in the fixture with a tool
+  allowlist (e.g. `Bash, Read, Glob, Grep, LS`). Without it the sandboxed judge
+  cannot run commands and **fails closed** (correct, but the case never passes).
+  Use a scoped allowlist, not blanket bypass.
+- The repo's `.gitignore` ignores `.claude/`, so a fixture's `.claude/settings.json`
+  must be force-added (`git add -f`) to be tracked.
+- Adapter selection: `ratchet eval run` currently always resolves the default
+  adapter (`claude`) — there is no flag to pick another agent (only the
+  `RATCHET_EVAL_AGENT_CMD` test stub). Selecting the adapter is a possible
+  follow-up in the eval implementation.
+
+See `fixtures/eval-self-run/` — an agent-judged case that dogfoods eval itself
+(its inner binding is a deterministic `check`, so the recursion depth is 1).

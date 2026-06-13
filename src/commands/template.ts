@@ -17,7 +17,7 @@ export interface TemplateOptions {
 }
 
 // Candidate file extensions tried for a bare template name (e.g. "standard").
-const TEMPLATE_EXTENSIONS = ['.md', '.feature'];
+const TEMPLATE_EXTENSIONS = ['.md', '.feature', '.yaml', '.yml'];
 
 /**
  * Resolves the template file content for a name, trying known extensions when the

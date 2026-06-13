@@ -1,0 +1,118 @@
+# Eval-spec bindings for the archive-change feature.
+#
+# Every case is a deterministic `check`: the `run` script performs the real
+# `ratchet archive` invocation inside the fixture working copy and then asserts
+# the scenario's Then post-condition, exiting non-zero on any mismatch. Because
+# the archive command exits 0 even when it blocks (it prints an error and
+# `return`s without moving the change), `pass: exit-zero` is only sound when the
+# script itself verifies the filesystem outcome — which each script below does.
+#
+# Fixtures (checked-in under ../fixtures/) each contain a nested ratchet project
+# with an active change "add-login":
+#   archive-ready          valid feature + complete plan (all tasks [x])
+#   archive-feature-error  feature with a scenario missing a When step
+#   archive-plan-warning   valid feature + plan whose ## Why is too short (WARNING)
+#   archive-incomplete     valid feature + plan with one unchecked task
+
+features/archive-change/archive#archiving-a-complete-change-syncs-features-and-moves-the-directory:
+  fixture: archive-ready
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      date="$(date +%Y-%m-%d)"
+      ratchet archive add-login -y
+      # Feature synced into the permanent store.
+      test -f .ratchet/features/auth/login.feature
+      # Change directory moved to the dated archive; no longer active.
+      test -d ".ratchet/changes/archive/${date}-add-login"
+      test ! -d .ratchet/changes/add-login
+
+features/archive-change/archive#skipping-the-feature-store-leaves-it-untouched:
+  fixture: archive-ready
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      date="$(date +%Y-%m-%d)"
+      ratchet archive add-login -y --skip-features
+      # Feature store was never created/populated — left untouched.
+      test ! -e .ratchet/features/auth/login.feature
+      # Change still moved into the archive.
+      test -d ".ratchet/changes/archive/${date}-add-login"
+      test ! -d .ratchet/changes/add-login
+
+features/archive-change/archive#feature-errors-block-the-archive:
+  fixture: archive-feature-error
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      date="$(date +%Y-%m-%d)"
+      out="$(ratchet archive add-login 2>&1)"
+      # The feature errors are reported.
+      echo "$out" | grep -q "Validation errors in change features"
+      echo "$out" | grep -q "Validation failed"
+      # Archiving stopped: the change is NOT moved into the archive.
+      test -d .ratchet/changes/add-login
+      test ! -d ".ratchet/changes/archive/${date}-add-login"
+
+features/archive-change/archive#plan-warnings-do-not-block-the-archive:
+  fixture: archive-plan-warning
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      date="$(date +%Y-%m-%d)"
+      out="$(ratchet archive add-login -y 2>&1)"
+      # Plan warnings shown as non-blocking notices.
+      echo "$out" | grep -q "Plan warnings in plan.md (non-blocking)"
+      # The archive proceeds despite the warnings.
+      test -d ".ratchet/changes/archive/${date}-add-login"
+      test ! -d .ratchet/changes/add-login
+
+features/archive-change/archive#incomplete-tasks-require-confirmation:
+  fixture: archive-incomplete
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # No -y: the command warns about incomplete tasks and prompts for
+      # confirmation. With stdin closed (the judge runs with no tty) the prompt
+      # receives EOF and the archive is declined — exercising the confirm gate
+      # deterministically.
+      date="$(date +%Y-%m-%d)"
+      out="$(ratchet archive add-login 2>&1 || true)"
+      # A warning reports the number of incomplete tasks and asks to confirm.
+      echo "$out" | grep -q "1 incomplete task(s) found"
+      # Archiving did not continue without confirmation: change still active.
+      test -d .ratchet/changes/add-login
+      test ! -d ".ratchet/changes/archive/${date}-add-login"
+
+features/archive-change/archive#archiving-twice-on-the-same-day-fails:
+  fixture: archive-ready
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      date="$(date +%Y-%m-%d)"
+      # First archive succeeds.
+      ratchet archive add-login -y
+      test -d ".ratchet/changes/archive/${date}-add-login"
+      feature_before="$(cat ".ratchet/changes/archive/${date}-add-login/features/auth/login.feature")"
+      # Recreate an active change of the same name and archive again the same day.
+      ratchet new change add-login >/dev/null 2>&1
+      out="$(ratchet archive add-login -y 2>&1 || true)"
+      # The operation fails because the dated archive already exists.
+      echo "$out" | grep -q "already exists"
+      # The existing archive is preserved unchanged.
+      feature_after="$(cat ".ratchet/changes/archive/${date}-add-login/features/auth/login.feature")"
+      test "$feature_before" = "$feature_after"
+      # The re-created active change was not moved over the existing archive.
+      test -d .ratchet/changes/add-login

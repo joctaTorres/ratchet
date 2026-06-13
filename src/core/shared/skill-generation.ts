@@ -10,11 +10,17 @@ import {
   getVerifyChangeSkillTemplate,
   getRctProposeSkillTemplate,
   getRctProposeStandardSkillTemplate,
+  getBatchSkillTemplate,
+  getProposeBatchSkillTemplate,
+  getEvalSkillTemplate,
   getRctApplyCommandTemplate,
   getRctArchiveCommandTemplate,
   getRctVerifyCommandTemplate,
   getRctProposeCommandTemplate,
   getRctProposeStandardCommandTemplate,
+  getRctBatchCommandTemplate,
+  getRctProposeBatchCommandTemplate,
+  getRctEvalCommandTemplate,
   type SkillTemplate,
 } from '../templates/skill-templates.js';
 import type { CommandContent } from '../command-generation/index.js';
@@ -50,6 +56,9 @@ export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemp
     { template: getVerifyChangeSkillTemplate(), dirName: 'ratchet-verify-change', workflowId: 'verify' },
     { template: getRctProposeSkillTemplate(), dirName: 'ratchet-propose', workflowId: 'propose' },
     { template: getRctProposeStandardSkillTemplate(), dirName: 'ratchet-propose-standard', workflowId: 'propose-standard' },
+    { template: getBatchSkillTemplate(), dirName: 'ratchet-batch', workflowId: 'batch' },
+    { template: getProposeBatchSkillTemplate(), dirName: 'ratchet-propose-batch', workflowId: 'propose-batch' },
+    { template: getEvalSkillTemplate(), dirName: 'ratchet-eval', workflowId: 'eval' },
   ];
 
   if (!workflowFilter) return all;
@@ -71,6 +80,9 @@ export function getCommandTemplates(workflowFilter?: readonly string[]): Command
     { template: getRctVerifyCommandTemplate(), id: 'verify' },
     { template: getRctProposeCommandTemplate(), id: 'propose' },
     { template: getRctProposeStandardCommandTemplate(), id: 'propose-standard' },
+    { template: getRctBatchCommandTemplate(), id: 'batch' },
+    { template: getRctProposeBatchCommandTemplate(), id: 'propose-batch' },
+    { template: getRctEvalCommandTemplate(), id: 'eval' },
   ];
 
   if (!workflowFilter) return all;

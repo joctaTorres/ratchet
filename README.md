@@ -142,6 +142,69 @@ ratchet archive add-login -y                      # sync features → store, arc
 | `list` | List active changes (or `--specs` for the feature store) |
 | `view` | Interactive dashboard of changes and features |
 | `archive [name]` | Sync features into the store and archive the change |
+| `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
+| `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|check\|agent`, `--json`) |
+| `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
+| `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
+| `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
+
+## Eval suite
+
+`ratchet eval` turns the project's `.feature` files into a scored, reproducible,
+baseline-diffed regression suite. The CLI is deterministic plumbing; **judging is
+delegated to the bundled batch engine, run against fixtures** — never the live
+working tree — so a scenario that passes today can't silently regress tomorrow.
+
+```bash
+ratchet eval set --json                 # one case per Scenario, with binding status
+ratchet eval run --json                 # judge bound cases through the engine, persist a run
+ratchet eval report --run <run-id> --json   # scorecard + baseline regression diff
+ratchet eval baseline <run-id>          # promote a clean run as the baseline
+```
+
+**Cases & ids.** Each Scenario becomes one case with a stable id
+`<feature-path-sans-ext>#<scenario-slug>` (e.g. `features/cli/status#status-as-json`;
+duplicate scenario names in a file get an ordinal `-2`, `-3` suffix). Baseline
+diffing keys on this id, so a renamed scenario surfaces as retired + new.
+
+**Bindings (`.ratchet/evals/specs/*.yaml`).** A case is unjudged until an
+eval-spec says how to judge it. Each binding maps a case id to a **fixture**
+(a checked-in codebase under `.ratchet/evals/fixtures/<name>/`) and a judging kind:
+
+```yaml
+# .ratchet/evals/specs/status.yaml
+features/cli/status#status-as-json:
+  fixture: status-ok          # .ratchet/evals/fixtures/status-ok/
+  kind: check                 # deterministic — preferred
+  setup: pnpm install         # optional: runs ONCE into a cached working copy
+  check:
+    run: ratchet status --json
+    pass: contains:applyRequires   # exit-zero | contains:<text> | regex:<pattern>
+
+features/cli/status#status-as-text:
+  fixture: verify-sample
+  kind: agent                 # spawned-judge fallback for prose-y scenarios
+  success: the status output is human-readable text
+  agentVotes: 3               # N-of-M repeat votes; majority wins
+```
+
+**Fixtures run isolated.** Before judging, the fixture is materialized into a
+throwaway temp working copy that becomes the judging cwd, so a check or agent may
+build/run/mutate freely without touching the checked-in fixture or the host repo.
+An optional `setup` bootstraps a fixture **once** into a copy cached by
+fixture+setup and reused across every case bound to it.
+
+**The agent judge is guarded.** It **fails closed on uncertainty** (no concrete
+evidence ⇒ not a pass) and may cast **N-of-M votes** (`agentVotes`, default 1).
+When votes disagree, the case is recorded `unjudged` — never silently `fail` — so
+judge noise can't manufacture a regression. Prefer a deterministic `check`.
+
+**Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
+is a case that **passed in the baseline and fails now**; new/retired cases are
+diffed, not failed. `unjudged` keeps a run incomplete and never counts as a pass.
+The overall verdict fails while any regression or fail exists — so never promote a
+run to baseline while a regression exists. Unbound cases (no fixture) can take a
+manual verdict via `ratchet eval record` (a `fail` requires `--evidence`).
 
 ## Agent workflows (skills / `/rct:` commands)
 
@@ -152,6 +215,7 @@ ratchet archive add-login -y                      # sync features → store, arc
 | **verify** | Confirms the implementation satisfies every scenario and all tasks are done |
 | **archive** | Runs `ratchet archive` to ratchet features into the permanent store |
 | **propose-standard** | Authors a new standard into `.ratchet/standards/` for propose + verify to apply |
+| **eval** | Runs the engine-backed eval, surfaces regressions first, and guides authoring bindings for unjudged cases |
 
 > `explore` exists as an internal stance used by **propose** — it is not a standalone command.
 

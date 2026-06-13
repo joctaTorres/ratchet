@@ -39,6 +39,30 @@ export const ProjectConfigSchema = z.object({
     )
     .optional()
     .describe('Per-artifact rules, keyed by artifact ID'),
+
+  // Optional: project-level defaults for batch orchestration. Per-manifest
+  // overrides win over these (see effective-settings resolution in
+  // src/core/batch/config.ts).
+  batch: z
+    .object({
+      gate: z.enum(['voluntary', 'after-propose', 'every-phase', 'autonomous']).optional(),
+      strategy: z.enum(['vertical-slice', 'feature']).optional(),
+      proofOfWork: z.enum(['hard-gate', 'warn']).optional(),
+      agent: z.string().optional(),
+    })
+    .partial()
+    .optional()
+    .describe('Project-level defaults for batch orchestration'),
+
+  // Optional: project-level defaults for eval orchestration. The `judge`
+  // default mode is used by `ratchet eval run` when no `--judge` flag is given.
+  eval: z
+    .object({
+      judge: z.enum(['auto', 'check', 'agent']).optional(),
+    })
+    .partial()
+    .optional()
+    .describe('Project-level defaults for eval orchestration'),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
@@ -150,6 +174,34 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
         }
       } else {
         console.warn(`Invalid 'rules' field in config (must be object)`);
+      }
+    }
+
+    // Parse batch field using Zod (project-level batch defaults)
+    if (raw.batch !== undefined) {
+      const batchField = ProjectConfigSchema.shape.batch;
+      const batchResult = batchField.safeParse(raw.batch);
+      if (batchResult.success) {
+        if (batchResult.data) {
+          config.batch = batchResult.data;
+        }
+      } else {
+        console.warn(
+          `Invalid 'batch' field in config (check gate/strategy/proofOfWork values)`
+        );
+      }
+    }
+
+    // Parse eval field using Zod (project-level eval defaults)
+    if (raw.eval !== undefined) {
+      const evalField = ProjectConfigSchema.shape.eval;
+      const evalResult = evalField.safeParse(raw.eval);
+      if (evalResult.success) {
+        if (evalResult.data) {
+          config.eval = evalResult.data;
+        }
+      } else {
+        console.warn(`Invalid 'eval' field in config (check judge value: auto|check|agent)`);
       }
     }
 

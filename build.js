@@ -24,6 +24,7 @@ console.log('Compiling TypeScript...');
 try {
   runTsc(['--version']);
   runTsc();
+
   console.log('\n✅ Build completed successfully!');
 } catch (error) {
   console.error('\n❌ Build failed!');

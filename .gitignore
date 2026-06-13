@@ -166,3 +166,6 @@ opencode.json
 # Generated animation preview images (scripts/preview-*.mjs)
 *-preview.png
 side-*.png
+
+# Eval suite: per-run results are transient (specs/fixtures/baseline are tracked)
+.ratchet/evals/runs/

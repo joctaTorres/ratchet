@@ -5,7 +5,7 @@ import { buildAgentInstructions } from '../../src/core/batch/engine/instructions
 const POW: ProofOfWork = { kind: 'integration', run: 'echo ok', pass: 'exit 0' };
 
 function settings(over: Partial<BatchSettings> = {}): BatchSettings {
-  return { gate: 'voluntary', strategy: 'vertical-slice', proofOfWork: 'hard-gate', agent: 'fake', ...over };
+  return { gate: 'voluntary', strategy: 'vertical-slice', proofOfWork: 'hard-gate', locus: 'local', agent: 'fake', ...over };
 }
 
 function context(transition: Transition, over: Partial<ResolvedStepContext> = {}): ResolvedStepContext {

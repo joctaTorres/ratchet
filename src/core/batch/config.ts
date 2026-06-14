@@ -19,15 +19,24 @@ import type { BatchManifest } from './manifest.js';
 export const GATE_VALUES = ['voluntary', 'after-propose', 'every-phase', 'autonomous'] as const;
 export const STRATEGY_VALUES = ['vertical-slice', 'feature'] as const;
 export const PROOF_OF_WORK_POLICY_VALUES = ['hard-gate', 'warn'] as const;
+/**
+ * Execution locus: where a step's agent runs. `local` drives the in-process ReX
+ * sidecar (this phase). `docker`/`remote` are later phases; the enum is the clean
+ * extension point — add a value here and a runtime selector branch in the engine.
+ */
+export const LOCUS_VALUES = ['local'] as const;
 
 export type Gate = (typeof GATE_VALUES)[number];
 export type Strategy = (typeof STRATEGY_VALUES)[number];
 export type ProofOfWorkPolicy = (typeof PROOF_OF_WORK_POLICY_VALUES)[number];
+export type Locus = (typeof LOCUS_VALUES)[number];
 
 export interface BatchSettings {
   gate: Gate;
   strategy: Strategy;
   proofOfWork: ProofOfWorkPolicy;
+  /** Where the agent runs. Defaults to `local` (the ReX sidecar). */
+  locus: Locus;
   agent?: string;
 }
 
@@ -43,14 +52,16 @@ export const DEFAULT_BATCH_SETTINGS: BatchSettings = {
   gate: 'voluntary',
   strategy: 'vertical-slice',
   proofOfWork: 'hard-gate',
+  locus: 'local',
 };
 
-const SETTING_KEYS: (keyof BatchSettings)[] = ['gate', 'strategy', 'proofOfWork', 'agent'];
+const SETTING_KEYS: (keyof BatchSettings)[] = ['gate', 'strategy', 'proofOfWork', 'locus', 'agent'];
 
 const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
   gate: GATE_VALUES,
   strategy: STRATEGY_VALUES,
   proofOfWork: PROOF_OF_WORK_POLICY_VALUES,
+  locus: LOCUS_VALUES,
   agent: null, // free-form string
 };
 
@@ -66,6 +77,7 @@ export function resolveBatchSettings(
     gate: 'default',
     strategy: 'default',
     proofOfWork: 'default',
+    locus: 'default',
     agent: 'default',
   };
 

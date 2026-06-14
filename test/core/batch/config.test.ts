@@ -55,6 +55,32 @@ describe('resolveBatchSettings', () => {
     expect(settings.gate).toBe('after-propose');
     expect(sources.gate).toBe('manifest');
   });
+
+  it('defaults the execution locus to local (source default)', async () => {
+    await writeConfig('schema: ratchet\n');
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.locus).toBe('local');
+    expect(sources.locus).toBe('default');
+  });
+
+  it('honors a project-level locus (source project)', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  locus: local\n');
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.locus).toBe('local');
+    expect(sources.locus).toBe('project');
+  });
+
+  it('honors a manifest locus override (source manifest)', async () => {
+    await writeConfig('schema: ratchet\n');
+    const manifest = {
+      name: 'q3-auth',
+      phases: [],
+      settings: { locus: 'local' },
+    } as unknown as BatchManifest;
+    const { settings, sources } = resolveBatchSettings(projectRoot, manifest);
+    expect(settings.locus).toBe('local');
+    expect(sources.locus).toBe('manifest');
+  });
 });
 
 describe('validateSetting', () => {
@@ -75,6 +101,13 @@ describe('validateSetting', () => {
 
   it('accepts free-form agent', () => {
     expect(validateSetting('agent', 'claude-code').ok).toBe(true);
+  });
+
+  it('accepts the local locus and rejects an unknown locus', () => {
+    expect(validateSetting('locus', 'local').ok).toBe(true);
+    const bad = validateSetting('locus', 'remote');
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toContain('local');
   });
 });
 

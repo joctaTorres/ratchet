@@ -47,6 +47,7 @@ function settings(over: Partial<BatchSettings> = {}): BatchSettings {
     gate: 'autonomous',
     strategy: 'vertical-slice',
     proofOfWork: 'hard-gate',
+    locus: 'local',
     agent: 'fake',
     ...over,
   };

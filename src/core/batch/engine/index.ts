@@ -13,7 +13,15 @@ export type {
   StepState,
   Transition,
 } from './contract.js';
-export { RatchetBatchEngine, type EngineDeps } from './engine.js';
+export { RatchetBatchEngine, type EngineDeps, type LinePrinter } from './engine.js';
+export type { AgentEvent, AgentRuntime } from './runtime/contract.js';
+export {
+  makeRexSidecarRuntime,
+  buildRunCommand,
+  type RexSidecarRuntimeOptions,
+  type SidecarChild,
+  type SidecarDeps,
+} from './runtime/rex-sidecar-runtime.js';
 export {
   resolveAdapter,
   availableAdapters,

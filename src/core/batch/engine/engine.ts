@@ -26,12 +26,14 @@ import { appendJournal, type JournalEntryKind } from '../journal.js';
 import type { ResolvedStepContext, StepResult, Transition } from './contract.js';
 import {
   resolveAdapter,
-  realSpawner,
   UnknownAgentError,
   type AgentAdapter,
   type AgentSpawnRequest,
+  type AgentSpawnResult,
   type Spawner,
 } from './agent.js';
+import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
+import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
 import { buildAgentInstructions } from './instructions.js';
 import { mapSessionToOutcome } from './outcome.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
@@ -39,13 +41,47 @@ import { computeNextTransition, readChangeDiskState } from './transition.js';
 import { withBatchLock } from './lock.js';
 import { readChangeJournalTolerant } from './run-state.js';
 
+/** Print one streamed line to the terminal (injectable so tests can assert it). */
+export type LinePrinter = (line: string) => void;
+
 export interface EngineDeps {
-  /** Process-spawn seam (defaults to the real cross-spawn spawner). */
+  /**
+   * Streaming agent runtime (defaults to the ReX-local sidecar runtime). This is
+   * the primary execution seam: it streams the agent's output live AND returns
+   * the accumulated `AgentSpawnResult` for `mapSessionToOutcome`.
+   */
+  runtime?: AgentRuntime;
+  /**
+   * Legacy direct-spawn seam, preserved as a documented fallback for one release.
+   * When a `runtime` is provided (or defaulted) it is NOT used; an explicit
+   * `spawner` is wrapped into a non-streaming runtime so the old injection path
+   * keeps working for tests that have not migrated.
+   */
   spawner?: Spawner;
+  /** Print each streamed stdout line live (defaults to writing to stdout). */
+  printLine?: LinePrinter;
   /** Extra/override agent adapters (e.g. for tests). */
   adapters?: Record<string, AgentAdapter>;
   /** Resolve the project root (defaults to planning-home). */
   projectRoot?: () => string;
+}
+
+/**
+ * Adapt a legacy `Spawner` into an `AgentRuntime`: run it, then replay the
+ * captured stdout as a single accumulated transcript followed by an exit event.
+ * Preserves the direct-spawn fallback path while keeping the streaming contract.
+ */
+function spawnerAsRuntime(spawner: Spawner): AgentRuntime {
+  return async (req, onEvent) => {
+    const result = await spawner(req);
+    if (result.stdout) {
+      for (const line of result.stdout.split('\n')) {
+        onEvent({ kind: 'stdout', line });
+      }
+    }
+    onEvent({ kind: 'exit', exitCode: result.exitCode ?? undefined });
+    return result;
+  };
 }
 
 /** Map a step outcome state to the journal entry kind recorded for it. */
@@ -65,14 +101,35 @@ function outcomeKind(state: EngineStepOutcome['state']): JournalEntryKind {
 export class RatchetBatchEngine {
   readonly name = 'ratchet-batch-engine';
 
-  private readonly spawner: Spawner;
+  /**
+   * The injected runtime override, when any. When unset, the runtime is selected
+   * by locus per step (currently `local` → ReX sidecar). An injected `spawner`
+   * (legacy fallback) is wrapped into a runtime so the old path keeps working.
+   */
+  private readonly runtimeOverride?: AgentRuntime;
+  private readonly printLine: LinePrinter;
   private readonly adapters?: Record<string, AgentAdapter>;
   private readonly projectRoot: () => string;
 
   constructor(deps: EngineDeps = {}) {
-    this.spawner = deps.spawner ?? realSpawner;
+    this.runtimeOverride =
+      deps.runtime ?? (deps.spawner ? spawnerAsRuntime(deps.spawner) : undefined);
+    this.printLine = deps.printLine ?? ((line) => process.stdout.write(line + '\n'));
     this.adapters = deps.adapters;
     this.projectRoot = deps.projectRoot ?? resolveProjectRoot;
+  }
+
+  /**
+   * Select the `AgentRuntime` for a step. An injected runtime/spawner always
+   * wins (tests, fallback). Otherwise the locus selects the runtime: `local`
+   * drives the ReX sidecar with `REX_LOCUS=local` and `REX_WORKDIR=projectRoot`.
+   */
+  private selectRuntime(projectRoot: string, context: ResolvedStepContext): AgentRuntime {
+    if (this.runtimeOverride) return this.runtimeOverride;
+    const locus = context.settings.locus ?? 'local';
+    // Only `local` exists this phase; docker/remote are later phases. The enum is
+    // validated upstream, so an unknown locus here is a programming error.
+    return makeRexSidecarRuntime({ locus, projectRoot });
   }
 
   async runStep(context: ResolvedStepContext): Promise<StepResult> {
@@ -109,7 +166,9 @@ export class RatchetBatchEngine {
     //      the configured adapter is resolved (rejecting unknowns before any spawn).
     const stepContext: ResolvedStepContext = { ...context, transition };
     const instructions = buildAgentInstructions(stepContext);
-    const env = { ...process.env };
+    // Thread the batch name through the env so the runtime can place the temp
+    // prompt file under `.ratchet/batches/<batch>/.run/<id>/`.
+    const env = { ...process.env, RATCHET_BATCH_NAME: batch };
     let request;
     try {
       request = this.buildSpawnRequest(stepContext, instructions, projectRoot, env);
@@ -131,7 +190,14 @@ export class RatchetBatchEngine {
     const before = readChangeJournalTolerant(projectRoot, batch, change).length;
     const diskBefore = readChangeDiskState(projectRoot, change);
 
-    const spawnResult = await this.spawner(request);
+    // Route through the streaming runtime: each stdout line is PRINTED live as it
+    // arrives while still accumulating into the returned `AgentSpawnResult`, which
+    // flows into `mapSessionToOutcome` exactly as the old spawner result did.
+    const runtime = this.selectRuntime(projectRoot, stepContext);
+    const onEvent = (e: AgentEvent): void => {
+      if (e.kind === 'stdout' && e.line !== undefined) this.printLine(e.line);
+    };
+    const spawnResult: AgentSpawnResult = await runtime(request, onEvent);
 
     // 4. Read the entries the agent wrote during this session and map them.
     const afterAll = readChangeJournalTolerant(projectRoot, batch, change);

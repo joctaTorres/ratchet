@@ -76,36 +76,36 @@ delta (checkboxes advanced during THIS session), not an absolute count.
 
 ## Tasks
 
-- [ ] 1.1 Rewrite the `propose` branch of `transitionGuidance` in `instructions.ts` to
+- [x] 1.1 Rewrite the `propose` branch of `transitionGuidance` in `instructions.ts` to
   concrete tool-agnostic filesystem/CLI steps (create `.ratchet/changes/<change>/`,
   feature files under `features/**/*.feature`, `plan.md` with a `## Tasks` checklist),
   with no slash-command/workflow/skill reference and no agent name.
-- [ ] 1.2 Sanity-check and adjust the `apply` and `verify` branches so neither names a
+- [x] 1.2 Sanity-check and adjust the `apply` and `verify` branches so neither names a
   slash-command/skill; keep them describing concrete plan/test actions.
-- [ ] 1.3 Hoist the completion requirement: add a leading one-line MUST in
+- [x] 1.3 Hoist the completion requirement: add a leading one-line MUST in
   `buildAgentInstructions` (right after the transition line) stating the agent must
   finish by running `ratchet batch report <batch> --change <change> --complete`,
   keeping the full `reportChannel` at the bottom.
-- [ ] 2.1 Extend `MapOutcomeInput` in `outcome.ts` with a disk-evidence summary
+- [x] 2.1 Extend `MapOutcomeInput` in `outcome.ts` with a disk-evidence summary
   (before/after `ChangeDiskState` or a derived progress flag + task counts) and update
   the `mapSessionToOutcome` signature/types.
-- [ ] 2.2 On the zero-exit-no-report path, attach `detail = truncate(spawn.stdout /
+- [x] 2.2 On the zero-exit-no-report path, attach `detail = truncate(spawn.stdout /
   spawn.stderr)` reusing the existing `truncate` helper, mirroring the non-zero branch.
-- [ ] 2.3 On the same path, consult the disk-evidence summary: keep the outcome state
+- [x] 2.3 On the same path, consult the disk-evidence summary: keep the outcome state
   `blocked` (never auto-advance on unreported work), but when the transition's expected
   artifact appeared/advanced, enrich `message`/`detail` with the observed evidence
   (change dir/plan created; N checkboxes advanced) so the user sees the work; the
   evidence-free case stays a bare `blocked` with only the transcript `detail` attached.
-- [ ] 3.1 Wire the disk-evidence summary in `engine.ts`: snapshot
+- [x] 3.1 Wire the disk-evidence summary in `engine.ts`: snapshot
   `readChangeDiskState(projectRoot, change)` before the spawn and read it again after,
   and pass the summary into `mapSessionToOutcome`.
-- [ ] 4.1 Add vitest tests under `test/batch-engine/` asserting propose instructions
+- [x] 4.1 Add vitest tests under `test/batch-engine/` asserting propose instructions
   reference no slash-command/skill, contain the concrete steps, and state the
   completion requirement up front (and that apply/verify name no slash-command).
-- [ ] 4.2 Add vitest tests asserting the zero-exit-no-report outcome attaches the
+- [x] 4.2 Add vitest tests asserting the zero-exit-no-report outcome attaches the
   truncated transcript `detail`, and that on-disk evidence (propose dir/plan created;
   apply checkboxes advanced) is surfaced as progress rather than "did nothing", while a
   truly silent run with no evidence still parks as `blocked`.
-- [ ] 4.3 Update any existing `test/batch-engine` tests/snapshots that assert the old
+- [x] 4.3 Update any existing `test/batch-engine` tests/snapshots that assert the old
   instruction text or the old bare zero-exit message; confirm
   `pnpm vitest run test/batch-engine` passes (the phase proof-of-work).

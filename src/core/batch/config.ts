@@ -21,10 +21,19 @@ export const STRATEGY_VALUES = ['vertical-slice', 'feature'] as const;
 export const PROOF_OF_WORK_POLICY_VALUES = ['hard-gate', 'warn'] as const;
 /**
  * Execution locus: where a step's agent runs. `local` drives the in-process ReX
- * sidecar (this phase). `docker`/`remote` are later phases; the enum is the clean
- * extension point — add a value here and a runtime selector branch in the engine.
+ * sidecar (the default); `docker` runs the same step inside a container via ReX
+ * `DockerDeployment` with the project root bind-mounted in. `remote` is a later
+ * phase; the enum is the clean extension point — add a value here and a runtime
+ * selector branch in the engine.
  */
-export const LOCUS_VALUES = ['local'] as const;
+export const LOCUS_VALUES = ['local', 'docker'] as const;
+
+/**
+ * The default container image for `locus: docker` when no `image` is configured.
+ * A small, generic image that proves the plumbing; a REAL agent image (node +
+ * the chosen coding agent + `ratchet` on PATH) is a documented follow-on.
+ */
+export const DEFAULT_DOCKER_IMAGE = 'python:3.12';
 
 export type Gate = (typeof GATE_VALUES)[number];
 export type Strategy = (typeof STRATEGY_VALUES)[number];
@@ -38,6 +47,12 @@ export interface BatchSettings {
   /** Where the agent runs. Defaults to `local` (the ReX sidecar). */
   locus: Locus;
   agent?: string;
+  /**
+   * Container image for `locus: docker` (free-form, like `agent`). Ignored for
+   * `local`. When unset and locus is `docker`, the runtime uses
+   * `DEFAULT_DOCKER_IMAGE`.
+   */
+  image?: string;
 }
 
 /** Where each effective value came from. */
@@ -55,7 +70,14 @@ export const DEFAULT_BATCH_SETTINGS: BatchSettings = {
   locus: 'local',
 };
 
-const SETTING_KEYS: (keyof BatchSettings)[] = ['gate', 'strategy', 'proofOfWork', 'locus', 'agent'];
+const SETTING_KEYS: (keyof BatchSettings)[] = [
+  'gate',
+  'strategy',
+  'proofOfWork',
+  'locus',
+  'agent',
+  'image',
+];
 
 const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
   gate: GATE_VALUES,
@@ -63,6 +85,7 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
   proofOfWork: PROOF_OF_WORK_POLICY_VALUES,
   locus: LOCUS_VALUES,
   agent: null, // free-form string
+  image: null, // free-form string (container image reference)
 };
 
 /**
@@ -79,6 +102,7 @@ export function resolveBatchSettings(
     proofOfWork: 'default',
     locus: 'default',
     agent: 'default',
+    image: 'default',
   };
 
   const writable = settings as { [K in keyof BatchSettings]: BatchSettings[K] };
@@ -130,6 +154,16 @@ export function validateSetting(key: string, value: string): SetResult {
     return {
       ok: false,
       error: `Invalid value '${value}' for '${key}'. Allowed values: ${allowed.join(', ')}`,
+    };
+  }
+
+  // A free-form `image` must be a non-empty reference — an empty value is
+  // rejected before any container is started so the project config is left
+  // unchanged (see features/container-locus/configurable-image.feature).
+  if (key === 'image' && value.trim().length === 0) {
+    return {
+      ok: false,
+      error: `Invalid value for 'image': the container image reference must not be empty.`,
     };
   }
 

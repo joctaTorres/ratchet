@@ -48,8 +48,9 @@ export const ProjectConfigSchema = z.object({
       gate: z.enum(['voluntary', 'after-propose', 'every-phase', 'autonomous']).optional(),
       strategy: z.enum(['vertical-slice', 'feature']).optional(),
       proofOfWork: z.enum(['hard-gate', 'warn']).optional(),
-      locus: z.enum(['local']).optional(),
+      locus: z.enum(['local', 'docker']).optional(),
       agent: z.string().optional(),
+      image: z.string().optional(),
     })
     .partial()
     .optional()

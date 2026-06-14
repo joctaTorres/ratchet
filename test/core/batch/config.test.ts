@@ -81,6 +81,51 @@ describe('resolveBatchSettings', () => {
     expect(settings.locus).toBe('local');
     expect(sources.locus).toBe('manifest');
   });
+
+  it('accepts the docker locus from project config', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  locus: docker\n');
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.locus).toBe('docker');
+    expect(sources.locus).toBe('project');
+  });
+
+  it('accepts a manifest docker locus override', async () => {
+    await writeConfig('schema: ratchet\n');
+    const manifest = {
+      name: 'q3-auth',
+      phases: [],
+      settings: { locus: 'docker' },
+    } as unknown as BatchManifest;
+    const { settings, sources } = resolveBatchSettings(projectRoot, manifest);
+    expect(settings.locus).toBe('docker');
+    expect(sources.locus).toBe('manifest');
+  });
+
+  it('leaves image unset by default with the defaults source', async () => {
+    await writeConfig('schema: ratchet\n');
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.image).toBeUndefined();
+    expect(sources.image).toBe('default');
+  });
+
+  it('resolves a project-level image (source project)', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  image: my/registry:tag\n');
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.image).toBe('my/registry:tag');
+    expect(sources.image).toBe('project');
+  });
+
+  it('lets a manifest image override the project image (source manifest)', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  image: project/image:1\n');
+    const manifest = {
+      name: 'q3-auth',
+      phases: [],
+      settings: { image: 'manifest/image:2' },
+    } as unknown as BatchManifest;
+    const { settings, sources } = resolveBatchSettings(projectRoot, manifest);
+    expect(settings.image).toBe('manifest/image:2');
+    expect(sources.image).toBe('manifest');
+  });
 });
 
 describe('validateSetting', () => {
@@ -103,11 +148,22 @@ describe('validateSetting', () => {
     expect(validateSetting('agent', 'claude-code').ok).toBe(true);
   });
 
-  it('accepts the local locus and rejects an unknown locus', () => {
+  it('accepts the local and docker loci and rejects an unknown locus', () => {
     expect(validateSetting('locus', 'local').ok).toBe(true);
+    expect(validateSetting('locus', 'docker').ok).toBe(true);
     const bad = validateSetting('locus', 'remote');
     expect(bad.ok).toBe(false);
     expect(bad.error).toContain('local');
+    expect(bad.error).toContain('docker');
+  });
+
+  it('accepts a non-empty image and rejects an empty one', () => {
+    expect(validateSetting('image', 'python:3.12').ok).toBe(true);
+    const empty = validateSetting('image', '');
+    expect(empty.ok).toBe(false);
+    expect(empty.error).toContain('image');
+    const blank = validateSetting('image', '   ');
+    expect(blank.ok).toBe(false);
   });
 });
 

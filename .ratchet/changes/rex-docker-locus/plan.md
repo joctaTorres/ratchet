@@ -61,10 +61,10 @@ The e2e proves the **plumbing** — that a step actually runs inside a container
 
 ## Tasks
 
-- [ ] 1.1 Add `docker` to `LOCUS_VALUES` and a flat `image` key to `BatchSettings`, `DEFAULT_BATCH_SETTINGS`, `SETTING_KEYS`, and `ALLOWED_VALUES` (free-form, like `agent`) in `src/core/batch/config.ts`; keep `local` the default.
-- [ ] 1.2 Add `docker` to the manifest `locus` enum and an optional `image` to `BatchSettingsOverrideSchema` (keep `.strict()`) in `src/core/batch/manifest.ts`.
-- [ ] 1.3 Add `docker` to the `batch.locus` enum and an optional `image` to `batch` in `src/core/project-config.ts`.
-- [ ] 1.4 Unit tests: locus resolution accepts `docker`; `image` resolves through defaults ← project ← manifest with correct sources; `validateSetting` accepts a non-empty image and rejects an empty one; an unknown locus is still rejected. (No daemon required.)
+- [x] 1.1 Add `docker` to `LOCUS_VALUES` and a flat `image` key to `BatchSettings`, `DEFAULT_BATCH_SETTINGS`, `SETTING_KEYS`, and `ALLOWED_VALUES` (free-form, like `agent`) in `src/core/batch/config.ts`; keep `local` the default.
+- [x] 1.2 Add `docker` to the manifest `locus` enum and an optional `image` to `BatchSettingsOverrideSchema` (keep `.strict()`) in `src/core/batch/manifest.ts`.
+- [x] 1.3 Add `docker` to the `batch.locus` enum and an optional `image` to `batch` in `src/core/project-config.ts`.
+- [x] 1.4 Unit tests: locus resolution accepts `docker`; `image` resolves through defaults ← project ← manifest with correct sources; `validateSetting` accepts a non-empty image and rejects an empty one; an unknown locus is still rejected. (No daemon required.)
 - [ ] 2.1 In `sidecar.py` `_make_deployment`, read `REX_IMAGE`/`REX_MOUNT_HOST`/`REX_MOUNT_CONTAINER` and build `DockerDeploymentConfig(image=..., docker_args=["-v", f"{host}:{container}"])`; keep docker imported lazily and local untouched.
 - [ ] 2.2 Map `REX_WORKDIR` to the in-container mount path (`/workspace`) for docker; leave it as the project root for local. Document the mapping in the sidecar docstring.
 - [ ] 2.3 Sidecar belt-and-braces: wrap docker `deployment.start()` and emit a clear `error` event on a daemon/connection failure (no raw traceback).

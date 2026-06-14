@@ -58,6 +58,15 @@ const adapter: AgentAdapter = {
   },
 };
 
+/** A stream-json-capable fake adapter (emitsStreamJson true) → rich rendering. */
+const sjAdapter: AgentAdapter = {
+  name: 'sj',
+  emitsStreamJson: true,
+  buildRequest(_ctx, instructions, cwd, env): AgentSpawnRequest {
+    return { command: 'sj-agent', args: [], instructions, cwd, env };
+  },
+};
+
 /** A fake streaming runtime that emits canned lines and reports an exit code. */
 function fakeRuntime(behavior: {
   lines?: string[];
@@ -172,6 +181,105 @@ describe('RatchetBatchEngine — routing through the AgentRuntime seam', () => {
     const result = await engine.runStep(context());
     expect(started).toBe(true);
     expect(result.state).toBe('advanced');
+  });
+});
+
+describe('RatchetBatchEngine — stream-json capability routing', () => {
+  const NDJSON = [
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello there.' }] } }),
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'pnpm test' } }] } }),
+    'this is not json {', // malformed → must degrade to raw, never crash
+    JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done', total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 2 } }),
+  ];
+
+  it('routes a capable adapter through the renderer (formatted, not raw NDJSON)', async () => {
+    const printed: string[] = [];
+    const { runtime } = fakeRuntime({
+      lines: NDJSON,
+      report: (root, batch, change) =>
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' }),
+    });
+    const engine = new RatchetBatchEngine({
+      runtime,
+      adapters: { sj: sjAdapter },
+      projectRoot: () => projectRoot,
+      printLine: (line) => printed.push(line),
+    });
+
+    const result = await engine.runStep(context({ settings: settings({ agent: 'sj' }) }));
+    expect(result.state).toBe('advanced');
+
+    const out = printed.join('\n');
+    // Rendered, not raw: prose, a tool-call line, and a summary appear; the raw
+    // NDJSON object lines do NOT (no `"type":"assistant"` braces).
+    expect(out).toContain('Hello there.');
+    expect(out).toContain('Bash');
+    expect(out).toContain('pnpm test');
+    expect(out.toLowerCase()).toContain('success');
+    expect(printed.some((l) => l.includes('"type":"assistant"'))).toBe(false);
+    // The malformed line degraded to raw, not a crash.
+    expect(printed).toContain('this is not json {');
+  });
+
+  it('keeps a non-capable adapter on raw line printing (renderer not invoked)', async () => {
+    const printed: string[] = [];
+    const { runtime } = fakeRuntime({
+      lines: NDJSON,
+      report: (root, batch, change) =>
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' }),
+    });
+    const engine = new RatchetBatchEngine({
+      runtime,
+      adapters: { fake: adapter },
+      projectRoot: () => projectRoot,
+      printLine: (line) => printed.push(line),
+    });
+
+    const result = await engine.runStep(context());
+    expect(result.state).toBe('advanced');
+    // Raw: each NDJSON line is printed verbatim, unrendered.
+    expect(printed).toEqual(NDJSON);
+  });
+
+  it('renders display-only: the accumulated transcript is byte-identical with and without rendering', async () => {
+    const report = (root: string, batch: string, change: string) =>
+      appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+
+    // A runtime that captures the EXACT `AgentSpawnResult.stdout` it returns to
+    // the engine (the value that flows into mapSessionToOutcome), so we can prove
+    // rendering never mutates it.
+    const makeCapturing = () => {
+      let returnedStdout: string | undefined;
+      const runtime: AgentRuntime = async (req, onEvent) => {
+        report(projectRoot, 'b', 'add-login-api');
+        for (const line of NDJSON) onEvent({ kind: 'stdout', line });
+        onEvent({ kind: 'exit', exitCode: 0 });
+        returnedStdout = NDJSON.join('\n');
+        return { exitCode: 0, signal: null, stdout: returnedStdout, stderr: '' };
+      };
+      return { runtime, get: () => returnedStdout };
+    };
+
+    const rendered = makeCapturing();
+    await new RatchetBatchEngine({
+      runtime: rendered.runtime,
+      adapters: { sj: sjAdapter },
+      projectRoot: () => projectRoot,
+      printLine: () => {},
+    }).runStep(context({ settings: settings({ agent: 'sj' }) }));
+
+    const raw = makeCapturing();
+    await new RatchetBatchEngine({
+      runtime: raw.runtime,
+      adapters: { fake: adapter },
+      projectRoot: () => projectRoot,
+      printLine: () => {},
+    }).runStep(context());
+
+    // The transcript the runtime hands the engine is the raw, unrendered NDJSON
+    // in BOTH cases — byte-identical regardless of rich rendering.
+    expect(rendered.get()).toBe(NDJSON.join('\n'));
+    expect(rendered.get()).toBe(raw.get());
   });
 });
 

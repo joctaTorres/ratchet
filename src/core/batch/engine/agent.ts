@@ -49,6 +49,16 @@ export type Spawner = (request: AgentSpawnRequest) => Promise<AgentSpawnResult>;
 export interface AgentAdapter {
   readonly name: string;
   /**
+   * Whether this adapter's argv makes the agent emit structured `stream-json`
+   * NDJSON on stdout (one event per line). When true the engine routes the
+   * agent's stdout through the generic stream-json renderer for polished live
+   * output; when false/absent the engine prints each line raw. This is a
+   * tool-agnostic CAPABILITY flag — the renderer is gated on it, never on the
+   * agent name — so any future stream-json agent reuses the renderer by setting
+   * it true.
+   */
+  readonly emitsStreamJson?: boolean;
+  /**
    * Build the spawn request for a transition. Pure: turns context+instructions
    * into a command + args so it is unit-testable without spawning.
    */
@@ -69,7 +79,8 @@ class CommandAgentAdapter implements AgentAdapter {
     readonly name: string,
     private readonly command: string,
     private readonly argv: (instructions: string) => string[],
-    private readonly passOnStdin: boolean
+    private readonly passOnStdin: boolean,
+    readonly emitsStreamJson: boolean = false
   ) {}
 
   buildRequest(
@@ -94,7 +105,16 @@ class CommandAgentAdapter implements AgentAdapter {
  * instructions go on stdin where the agent reads a prompt there.
  */
 const BUILTIN_ADAPTERS: Record<string, AgentAdapter> = {
-  claude: new CommandAgentAdapter('claude', 'claude', () => ['-p'], true),
+  // claude emits structured stream-json (one NDJSON event per line) with partial
+  // message deltas, so the engine renders it richly. `--verbose` is required for
+  // stream-json with `-p`; `--include-partial-messages` streams text deltas live.
+  claude: new CommandAgentAdapter(
+    'claude',
+    'claude',
+    () => ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
+    true,
+    true
+  ),
   codex: new CommandAgentAdapter('codex', 'codex', () => ['exec', '-'], true),
   gemini: new CommandAgentAdapter('gemini', 'gemini', () => ['-p'], true),
   cursor: new CommandAgentAdapter('cursor', 'cursor-agent', () => ['-p'], true),

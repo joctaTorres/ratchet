@@ -125,18 +125,18 @@ the result, or the accumulated stdout. Covered by
 
 ## Tasks
 
-- [ ] 1.1 Add a stream-json capability to the adapter contract in `src/core/batch/engine/agent.ts` (`AgentAdapter.emitsStreamJson?`), thread it through `CommandAgentAdapter`'s constructor, and expose it from `resolveAdapter`'s returned adapter.
-- [ ] 1.2 Switch `BUILTIN_ADAPTERS.claude` argv to `['-p','--output-format','stream-json','--verbose','--include-partial-messages']` and mark it `emitsStreamJson: true`; leave codex/gemini/cursor argv unchanged and non-capable.
+- [x] 1.1 Add a stream-json capability to the adapter contract in `src/core/batch/engine/agent.ts` (`AgentAdapter.emitsStreamJson?`), thread it through `CommandAgentAdapter`'s constructor, and expose it from `resolveAdapter`'s returned adapter.
+- [x] 1.2 Switch `BUILTIN_ADAPTERS.claude` argv to `['-p','--output-format','stream-json','--verbose','--include-partial-messages']` and mark it `emitsStreamJson: true`; leave codex/gemini/cursor argv unchanged and non-capable.
 - [ ] 1.3 Unit test (`test/batch-engine/agent.test.ts` or new): claude is stream-json-capable with the exact argv; codex/gemini/cursor are non-capable with unchanged argv (`capability-gating.feature` scenarios 1–2).
-- [ ] 2.1 Create `src/core/batch/engine/runtime/stream-json-renderer.ts` with a `makeStreamJsonRenderer(print: LinePrinter)` returning `{ handleLine(line), flush() }`; internal line buffer + per-line try/catch raw fallback.
-- [ ] 2.2 Implement `assistant` text rendering and `stream_event` partial-delta streaming (incremental), with the full-message fallback when deltas are absent (`assistant-text.feature`).
-- [ ] 2.3 Implement `tool_use` rendering: tool-name lookup → glyph + target extraction with a generic fallback for unknown tools (`tool-calls.feature`).
-- [ ] 2.4 Implement `tool_result` rendering: concise, truncated, error-marked (`tool-results.feature`).
-- [ ] 2.5 Implement `result` summary rendering (success/error, result text + usage/cost) and ensure `flush()` emits buffered partials and the summary (`final-summary.feature`).
-- [ ] 2.6 Implement graceful degradation: non-JSON, unknown `type`, and missing `type` print raw and never throw; flush emits a buffered partial line (`graceful-degradation.feature`).
+- [x] 2.1 Create `src/core/batch/engine/runtime/stream-json-renderer.ts` with a `makeStreamJsonRenderer(print: LinePrinter)` returning `{ handleLine(line), flush() }`; internal line buffer + per-line try/catch raw fallback.
+- [x] 2.2 Implement `assistant` text rendering and `stream_event` partial-delta streaming (incremental), with the full-message fallback when deltas are absent (`assistant-text.feature`).
+- [x] 2.3 Implement `tool_use` rendering: tool-name lookup → glyph + target extraction with a generic fallback for unknown tools (`tool-calls.feature`).
+- [x] 2.4 Implement `tool_result` rendering: concise, truncated, error-marked (`tool-results.feature`).
+- [x] 2.5 Implement `result` summary rendering (success/error, result text + usage/cost) and ensure `flush()` emits buffered partials and the summary (`final-summary.feature`).
+- [x] 2.6 Implement graceful degradation: non-JSON, unknown `type`, and missing `type` print raw and never throw; flush emits a buffered partial line (`graceful-degradation.feature`).
 - [ ] 3.1 Unit tests for the renderer (`test/batch-engine/stream-json-renderer.test.ts`) driving canned NDJSON fixtures through a fake `LinePrinter`: assert formatted assistant text, tool-call lines (Edit/Bash/Grep/unknown), truncated/error results, and the success/error summary.
 - [ ] 3.2 Unit tests for malformed/unknown/missing-type → raw fallback (no throw) and partial-flush behavior.
-- [ ] 4.1 Wire routing in `src/core/batch/engine/engine.ts` `runStepLocked`: when the resolved adapter `emitsStreamJson`, route `onEvent` stdout lines through a renderer constructed with `this.printLine`, and `flush()` on exit/end; otherwise keep the raw `this.printLine(e.line)` path.
+- [x] 4.1 Wire routing in `src/core/batch/engine/engine.ts` `runStepLocked`: when the resolved adapter `emitsStreamJson`, route `onEvent` stdout lines through a renderer constructed with `this.printLine`, and `flush()` on exit/end; otherwise keep the raw `this.printLine(e.line)` path.
 - [ ] 4.2 Unit test (`test/batch-engine/engine.*.test.ts`): a capable adapter routes stdout through the renderer (assert formatted output via the injected `printLine`); a non-capable adapter prints raw lines unchanged; the renderer is not invoked for non-capable adapters (`capability-gating.feature` scenarios 3–4).
 - [ ] 4.3 Unit test: `AgentSpawnResult.stdout` and the value passed to `mapSessionToOutcome` are byte-identical with and without rendering (`transcript-untouched.feature`).
 - [ ] 5.1 Author canned NDJSON fixtures (system init, assistant text, assistant tool_use Edit/Bash, user tool_result, a malformed line, and a final result-success) under the change/test fixtures.

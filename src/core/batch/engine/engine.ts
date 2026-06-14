@@ -34,6 +34,7 @@ import {
 } from './agent.js';
 import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
 import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
+import { makeStreamJsonRenderer } from './runtime/stream-json-renderer.js';
 import { buildAgentInstructions } from './instructions.js';
 import { mapSessionToOutcome } from './outcome.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
@@ -170,8 +171,11 @@ export class RatchetBatchEngine {
     // prompt file under `.ratchet/batches/<batch>/.run/<id>/`.
     const env = { ...process.env, RATCHET_BATCH_NAME: batch };
     let request;
+    let emitsStreamJson = false;
     try {
-      request = this.buildSpawnRequest(stepContext, instructions, projectRoot, env);
+      const built = this.buildSpawnRequest(stepContext, instructions, projectRoot, env);
+      request = built.request;
+      emitsStreamJson = built.emitsStreamJson;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return {
@@ -193,11 +197,26 @@ export class RatchetBatchEngine {
     // Route through the streaming runtime: each stdout line is PRINTED live as it
     // arrives while still accumulating into the returned `AgentSpawnResult`, which
     // flows into `mapSessionToOutcome` exactly as the old spawner result did.
+    // When the resolved adapter emits structured stream-json, route each stdout
+    // line through the generic renderer (which itself writes via `this.printLine`,
+    // keeping the single sink seam) for polished live output; flush any buffered
+    // partial + the summary on exit. Otherwise print each line raw, as before.
+    // Rendering is display-only — the runtime accumulates the raw NDJSON into
+    // `AgentSpawnResult.stdout` independently, so the mapped transcript is
+    // untouched.
     const runtime = this.selectRuntime(projectRoot, stepContext);
+    const renderer = emitsStreamJson ? makeStreamJsonRenderer(this.printLine) : undefined;
     const onEvent = (e: AgentEvent): void => {
-      if (e.kind === 'stdout' && e.line !== undefined) this.printLine(e.line);
+      if (e.kind === 'stdout' && e.line !== undefined) {
+        if (renderer) renderer.handleLine(e.line + '\n');
+        else this.printLine(e.line);
+      } else if (e.kind === 'exit' && renderer) {
+        renderer.flush();
+      }
     };
     const spawnResult: AgentSpawnResult = await runtime(request, onEvent);
+    // Belt-and-braces: flush in case the runtime resolved without an exit event.
+    renderer?.flush();
 
     // 4. Read the entries the agent wrote during this session and map them.
     const afterAll = readChangeJournalTolerant(projectRoot, batch, change);
@@ -245,13 +264,21 @@ export class RatchetBatchEngine {
     instructions: string,
     projectRoot: string,
     env: NodeJS.ProcessEnv
-  ): AgentSpawnRequest {
+  ): { request: AgentSpawnRequest; emitsStreamJson: boolean } {
     const override = process.env.RATCHET_BATCH_AGENT_CMD;
     if (override && override.trim().length > 0) {
-      return { command: 'bash', args: ['-c', override], instructions, cwd: projectRoot, env };
+      // The `bash -c` override stands in for the agent binary and is NOT
+      // stream-json-capable (keeps e2e/eval deterministic) → raw streaming.
+      return {
+        request: { command: 'bash', args: ['-c', override], instructions, cwd: projectRoot, env },
+        emitsStreamJson: false,
+      };
     }
     const adapter = resolveAdapter(context.settings.agent, this.adapters);
-    return adapter.buildRequest(context, instructions, projectRoot, env);
+    return {
+      request: adapter.buildRequest(context, instructions, projectRoot, env),
+      emitsStreamJson: adapter.emitsStreamJson === true,
+    };
   }
 
   /**

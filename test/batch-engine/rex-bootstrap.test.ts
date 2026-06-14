@@ -3,10 +3,13 @@ import path from 'node:path';
 import {
   bootstrapRexRuntime,
   findPython,
+  preflightDockerDaemon,
   resolveSidecarPath,
   resolveCacheHome,
   RexBootstrapError,
   SWE_REX_VERSION,
+  DEFAULT_DOCKER_IMAGE,
+  DOCKER_EXTRA,
   type BootstrapDeps,
   type RunResult,
 } from '../../src/core/batch/engine/runtime/rex-bootstrap.js';
@@ -294,5 +297,147 @@ describe('bootstrapRexRuntime — actionable failures', () => {
     expect(() => bootstrapRexRuntime({ cacheHome: CACHE, deps })).toThrow(
       /does not import/i
     );
+  });
+});
+
+describe('preflightDockerDaemon (no-Docker, fail closed)', () => {
+  it('returns silently when `docker info` succeeds', () => {
+    const deps = new FakeDeps((cmd, args) =>
+      cmd === 'docker' && args[0] === 'info' ? ok('Server: ...') : fail()
+    );
+    expect(() => preflightDockerDaemon(deps)).not.toThrow();
+  });
+
+  it('throws an actionable RexBootstrapError naming locus=docker when the daemon is down', () => {
+    const deps = new FakeDeps((cmd, args) =>
+      cmd === 'docker' && args[0] === 'info'
+        ? { status: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon' }
+        : fail()
+    );
+    expect(() => preflightDockerDaemon(deps)).toThrow(RexBootstrapError);
+    try {
+      preflightDockerDaemon(deps);
+    } catch (e: any) {
+      expect(e.message).toContain('locus=docker');
+      expect(e.message.toLowerCase()).toContain('install docker');
+      expect(e.message).toContain('docker info');
+    }
+  });
+});
+
+describe('bootstrapRexRuntime — docker locus', () => {
+  /** A handler that makes a docker bootstrap succeed end to end. */
+  function dockerHappy(command: string, args: string[], self: FakeDeps): RunResult {
+    if (command === 'docker' && args[0] === 'info') return ok('Server: ...');
+    if (args.includes('--version')) return ok('Python 3.12.1');
+    if (command === 'uv' && args[0] === 'venv') {
+      self.writeText(VENV_PYTHON, '#!/bin/sh');
+      return ok();
+    }
+    if (args[0] === '-m' && args[1] === 'venv') {
+      self.writeText(VENV_PYTHON, '#!/bin/sh');
+      return ok();
+    }
+    if (command === 'uv' && args[0] === 'pip') return ok();
+    if (args.some((a) => a.includes('import swerex'))) return ok();
+    return ok();
+  }
+
+  it('runs the docker daemon pre-flight FIRST and fails closed before any venv work', () => {
+    const deps = new FakeDeps((cmd, args) =>
+      cmd === 'docker' && args[0] === 'info'
+        ? { status: 1, stdout: '', stderr: 'daemon down' }
+        : ok()
+    );
+    deps.toolsOnPath.add('uv');
+    expect(() =>
+      bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'docker' })
+    ).toThrow(/locus=docker/);
+    // No venv was built (no `uv venv` call) — we failed before touching it.
+    expect(deps.calls.some((c) => c.command === 'uv' && c.args[0] === 'venv')).toBe(false);
+  });
+
+  it('installs the docker extra and records it in the readiness marker', () => {
+    const deps = new FakeDeps(dockerHappy);
+    deps.toolsOnPath.add('uv');
+    bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'docker' });
+
+    // The install spec carried the docker extra.
+    const installCall = deps.calls.find(
+      (c) => c.args.includes('pip') && c.args.includes('install')
+    );
+    expect(installCall?.args.some((a) => a.includes('swe-rex[docker]'))).toBe(true);
+
+    const markerPath = path.join(CACHE, 'ratchet', 'rex', 'venv', '.ratchet-rex-ready.json');
+    const marker = JSON.parse(deps.readText(markerPath));
+    expect(marker.extras).toContain(DOCKER_EXTRA);
+  });
+
+  it('passes REX_IMAGE (configured) and REX_MOUNT_* through to the launch env', () => {
+    const deps = new FakeDeps(dockerHappy);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({
+      cacheHome: CACHE,
+      deps,
+      locus: 'docker',
+      workdir: '/workspace',
+      image: 'my/image:tag',
+      mountHost: '/host/project',
+      mountContainer: '/workspace',
+    });
+    expect(launch.env.REX_LOCUS).toBe('docker');
+    expect(launch.env.REX_WORKDIR).toBe('/workspace');
+    expect(launch.env.REX_IMAGE).toBe('my/image:tag');
+    expect(launch.env.REX_MOUNT_HOST).toBe('/host/project');
+    expect(launch.env.REX_MOUNT_CONTAINER).toBe('/workspace');
+  });
+
+  it('defaults REX_IMAGE to DEFAULT_DOCKER_IMAGE when no image is configured', () => {
+    const deps = new FakeDeps(dockerHappy);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'docker' });
+    expect(launch.env.REX_IMAGE).toBe(DEFAULT_DOCKER_IMAGE);
+  });
+
+  it('rebuilds a local-only venv when the docker locus is first requested', () => {
+    // First build a LOCAL venv (marker records no extras).
+    const deps = new FakeDeps(dockerHappy);
+    deps.toolsOnPath.add('uv');
+    bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'local' });
+    const markerPath = path.join(CACHE, 'ratchet', 'rex', 'venv', '.ratchet-rex-ready.json');
+    expect(JSON.parse(deps.readText(markerPath)).extras).toEqual([]);
+
+    const before = deps.calls.length;
+    // Now request docker → the local-only venv is NOT ready, so it rebuilds.
+    bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'docker' });
+    const rebuilt = deps.calls
+      .slice(before)
+      .some((c) => c.command === 'uv' && c.args[0] === 'venv');
+    expect(rebuilt).toBe(true);
+    expect(JSON.parse(deps.readText(markerPath)).extras).toContain(DOCKER_EXTRA);
+  });
+
+  it('reuses a docker-capable venv for both docker and local (superset)', () => {
+    const deps = new FakeDeps(dockerHappy);
+    deps.toolsOnPath.add('uv');
+    bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'docker' }); // build docker-capable
+    const afterBuild = deps.calls.length;
+
+    bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'docker' });
+    bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'local' });
+    const rebuilt = deps.calls
+      .slice(afterBuild)
+      .some((c) => c.args.includes('venv') || c.args.includes('install'));
+    expect(rebuilt).toBe(false);
+  });
+
+  it('does not run the docker pre-flight or set image/mount env for local', () => {
+    const deps = new FakeDeps(happyHandler);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'local' });
+    expect(deps.calls.some((c) => c.command === 'docker')).toBe(false);
+    expect(launch.env.REX_IMAGE).toBeUndefined();
+    expect(launch.env.REX_MOUNT_HOST).toBeUndefined();
+    expect(launch.env.REX_MOUNT_CONTAINER).toBeUndefined();
   });
 });

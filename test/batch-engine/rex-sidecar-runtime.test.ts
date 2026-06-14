@@ -3,9 +3,12 @@ import { EventEmitter } from 'node:events';
 import {
   makeRexSidecarRuntime,
   buildRunCommand,
+  hostToContainerPath,
+  DOCKER_MOUNT_CONTAINER,
   type SidecarChild,
   type SidecarDeps,
 } from '../../src/core/batch/engine/runtime/rex-sidecar-runtime.js';
+import type { BootstrapOptions } from '../../src/core/batch/engine/runtime/rex-bootstrap.js';
 import { RexBootstrapError, type ResolvedLaunch } from '../../src/core/batch/engine/runtime/rex-bootstrap.js';
 import type { AgentSpawnRequest } from '../../src/core/batch/engine/agent.js';
 import type { AgentEvent } from '../../src/core/batch/engine/runtime/contract.js';
@@ -231,6 +234,16 @@ describe('makeRexSidecarRuntime', () => {
     expect(removed.some((p) => p.includes('.run/'))).toBe(true);
   });
 
+  it('maps a host path under the project root to the in-container mount path', () => {
+    expect(
+      hostToContainerPath('/host/project/.ratchet/x/prompt.txt', '/host/project', '/workspace')
+    ).toBe('/workspace/.ratchet/x/prompt.txt');
+    // A path NOT under the root is returned unchanged (defensive fallback).
+    expect(hostToContainerPath('/elsewhere/f', '/host/project', '/workspace')).toBe(
+      '/elsewhere/f'
+    );
+  });
+
   it('feeds the prompt file to a bash -c override command too', () => {
     const cmd = buildRunCommand('/tmp/run/prompt.txt', {
       command: 'bash',
@@ -293,6 +306,104 @@ describe('makeRexSidecarRuntime', () => {
 
     expect(bootstrapArgs.locus).toBe('local');
     expect(bootstrapArgs.workdir).toBe('/the/root');
+  });
+
+  it('threads docker image + projectRoot→mount and maps REX_WORKDIR to the mount path', async () => {
+    const child = new FakeChild();
+    let bootstrapArgs: BootstrapOptions | undefined;
+    const { deps } = fakeDeps(child, {
+      bootstrap: (opts) => {
+        bootstrapArgs = opts;
+        return LAUNCH;
+      },
+    });
+    const runtime = makeRexSidecarRuntime({
+      projectRoot: '/host/project',
+      locus: 'docker',
+      image: 'my/image:tag',
+      deps,
+    });
+
+    child.onOp = (op, self) => {
+      if (op.op === 'run') self.emitLine({ event: 'exit', id: op.id, exit_code: 0 });
+      else if (op.op === 'shutdown') {
+        self.emitLine({ event: 'closed' });
+        self.emit('exit', 0, null);
+      }
+    };
+
+    const runPromise = runtime(request(), () => {});
+    child.emitLine({ event: 'ready', locus: 'docker' });
+    await runPromise;
+
+    expect(bootstrapArgs?.locus).toBe('docker');
+    expect(bootstrapArgs?.image).toBe('my/image:tag');
+    // The project root is the bind-mount host; the container mount is /workspace
+    // and REX_WORKDIR maps to it (NOT the host path).
+    expect(bootstrapArgs?.mountHost).toBe('/host/project');
+    expect(bootstrapArgs?.mountContainer).toBe(DOCKER_MOUNT_CONTAINER);
+    expect(bootstrapArgs?.workdir).toBe(DOCKER_MOUNT_CONTAINER);
+
+    // The run command cats the prompt at its IN-CONTAINER path (under the mount),
+    // not the host path.
+    const runOp = child.ops.find((o) => o.op === 'run');
+    expect(runOp.command).toContain(`${DOCKER_MOUNT_CONTAINER}/.ratchet/batches/`);
+    expect(runOp.command).toContain('prompt.txt');
+    expect(runOp.command).not.toContain('/host/project/.ratchet');
+  });
+
+  it('does not pass image/mount and keeps the host workdir for local', async () => {
+    const child = new FakeChild();
+    let bootstrapArgs: BootstrapOptions | undefined;
+    const { deps } = fakeDeps(child, {
+      bootstrap: (opts) => {
+        bootstrapArgs = opts;
+        return LAUNCH;
+      },
+    });
+    const runtime = makeRexSidecarRuntime({
+      projectRoot: '/host/project',
+      locus: 'local',
+      image: 'ignored/for:local',
+      deps,
+    });
+
+    child.onOp = (op, self) => {
+      if (op.op === 'run') self.emitLine({ event: 'exit', id: op.id, exit_code: 0 });
+      else if (op.op === 'shutdown') {
+        self.emitLine({ event: 'closed' });
+        self.emit('exit', 0, null);
+      }
+    };
+
+    const runPromise = runtime(request(), () => {});
+    child.emitLine({ event: 'ready', locus: 'local' });
+    await runPromise;
+
+    expect(bootstrapArgs?.locus).toBe('local');
+    expect(bootstrapArgs?.workdir).toBe('/host/project');
+    expect(bootstrapArgs?.image).toBeUndefined();
+    expect(bootstrapArgs?.mountHost).toBeUndefined();
+    expect(bootstrapArgs?.mountContainer).toBeUndefined();
+  });
+
+  it('surfaces the no-Docker RexBootstrapError as a failed result with the actionable message', async () => {
+    const child = new FakeChild();
+    const { deps } = fakeDeps(child, {
+      bootstrap: () => {
+        throw new RexBootstrapError(
+          'Docker not available for locus=docker. Install Docker … (`docker info` should succeed)'
+        );
+      },
+    });
+    const runtime = makeRexSidecarRuntime({ projectRoot: '/proj', locus: 'docker', deps });
+    const events: AgentEvent[] = [];
+
+    const result = await runtime(request(), (e) => events.push(e));
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('locus=docker');
+    expect(events.find((e) => e.kind === 'error')?.message).toContain('Docker not available');
   });
 
   it('tears down the child on a timeout and surfaces a timeout error', async () => {

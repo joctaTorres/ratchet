@@ -1,0 +1,145 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# A batch coordinates related changes across ordered phases. It references
+# changes by NAME and never owns them: changes live under .ratchet/changes/
+# like any other change and can be inspected, validated, and archived on their
+# own. Status is derived live from change state on disk — never stored here.
+#
+# Phases ship functional software behind an executable proof-of-work, so errors
+# surface early. A later phase is blocked until the prior phase's proof-of-work
+# passes. Changes are created lazily as the batch progresses: an entry with no
+# change directory yet is simply "pending", not an error.
+#
+# GOAL OF THIS BATCH
+# Replace the silent `spawn('claude', ['-p'])` headless path with a configurable
+# SWE-ReX execution substrate (local OR container, switchable at runtime) that
+# streams rich, real-time coding-agent output back to `ratchet batch apply`, and
+# fix the two correctness bugs that make the current engine throw work away and
+# instruct the agent to use a skill a headless agent does not have.
+#
+# KEY SPIKE FINDINGS BAKED INTO THIS PLAN (see batch journal / discussion):
+#   - Integration shape: Python SIDECAR driving swe-rex, JSON-lines over stdio.
+#     Locus (local vs docker) is a one-line DeploymentConfig switch at RUNTIME.
+#   - ReX is request/response, NOT incremental: real-time output is achieved by
+#     launching the agent to a logfile and tail-polling it (~300ms) through ReX
+#     `execute()` calls. Use execute(), not run_in_session() (pexpect is brittle).
+#   - Rich output = `claude -p --output-format stream-json --verbose
+#     --include-partial-messages` → NDJSON (system/assistant/tool_use/result),
+#     parsed and rendered by ratchet.
+#   - Decision: ReX EVERYWHERE (uniform) — the sidecar drives LocalDeployment for
+#     local and DockerDeployment for containers; one code path, Python required.
+
+name: rex-agent-runtime
+created: 2026-06-14
+
+settings:
+  gate: voluntary          # agent-decided halts; propose may park for alignment
+  strategy: vertical-slice # each phase is a thin end-to-end slice
+  proofOfWork: hard-gate    # a phase blocks the next until its proof-of-work passes
+  agent: claude
+
+phases:
+  # ---------------------------------------------------------------------------
+  - name: honest-headless-contract
+    goal: >-
+      Make the EXISTING headless path honest before changing transport: stop
+      telling a headless agent to use the `/rct:propose` skill it cannot invoke,
+      and stop discarding the agent's work + transcript on a zero-exit-without-
+      report. These are transport-independent correctness fixes that unblock the
+      whole batch and immediately make `batch apply` less mystifying.
+    success: >-
+      A propose step's instructions contain only steps a non-interactive agent
+      can actually perform (no slash-command/skill references), and a step that
+      exits 0 without reporting completion surfaces the captured agent transcript
+      (stdout/stderr) and any on-disk evidence of work instead of a bare
+      "blocked — exited 0 without reporting" with nothing attached.
+    proofOfWork:
+      kind: integration
+      run: pnpm vitest run test/batch-engine
+      pass: exit code 0 — new tests assert (a) propose instructions reference no skill and (b) zero-exit-no-report attaches the transcript/detail
+    changes:
+      - name: fix-headless-agent-contract
+
+  # ---------------------------------------------------------------------------
+  - name: rex-local-runtime
+    goal: >-
+      Introduce an `AgentRuntime` seam beside the existing `Spawner` and ship a
+      ReX Python sidecar that runs the coding agent via LocalDeployment, with the
+      execution locus selected by config (default `local`). Bootstrap the Python
+      venv + swe-rex, and stream RAW agent output line-by-line to the terminal so
+      the silent-multi-minute UX is gone — even before rich rendering lands.
+    success: >-
+      `ratchet batch apply` runs a step through the ReX sidecar (LocalDeployment,
+      no Docker), the agent's output appears in the terminal AS IT HAPPENS (not
+      one batched dump at the end), and the exit code + accumulated transcript are
+      still returned to `mapSessionToOutcome`. Locus is read from config and
+      defaults to local; a missing Python/swe-rex prereq fails with a clear,
+      actionable bootstrap message.
+    proofOfWork:
+      kind: blackbox
+      run: bash test/e2e/rex-local-stream.sh
+      pass: exit code 0 — drives a step whose stub agent emits one line/second and asserts lines arrive incrementally (timestamps spread, not bunched) and the final exit code is captured
+    changes:
+      - name: python-sidecar-bootstrap
+      - name: rex-local-agent-runtime
+        after: [python-sidecar-bootstrap]
+
+  # ---------------------------------------------------------------------------
+  - name: rich-stream-json-renderer
+    goal: >-
+      Switch the claude adapter to `--output-format stream-json --verbose
+      --include-partial-messages` and render the NDJSON event stream as beautiful,
+      readable, real-time output — assistant text, tool calls (with target),
+      tool results, and a final summary — routed from the sidecar through the
+      AgentRuntime event channel into `batch apply`.
+    success: >-
+      A run shows a polished live view: streaming assistant text, distinct
+      tool-call lines (e.g. "✎ Edit src/foo.ts", "⚙ Bash pnpm test"), tool
+      results, and a closing summary — not raw JSON and not a silent wait.
+      Malformed/unknown event types degrade gracefully to a raw line rather than
+      crashing the run.
+    proofOfWork:
+      kind: llm-judge
+      run: bash test/e2e/render-stream-json.sh   # replays canned + live NDJSON through the renderer, captures the rendered transcript
+      pass: an LLM judge confirms the rendered output streams in real time and clearly shows assistant text, tool calls, tool results, and a final summary in a readable, polished form
+    changes:
+      - name: stream-json-rich-renderer
+
+  # ---------------------------------------------------------------------------
+  - name: container-locus
+    goal: >-
+      Make the locus switch real: with `execution.locus: docker`, the sidecar
+      drives DockerDeployment (image + repo mount) so an agent runs isolated in a
+      container with NO change to the calling code — the same AgentRuntime, the
+      same streaming, the same rich renderer.
+    success: >-
+      Setting the locus to `docker` runs the identical batch step inside a
+      container (verified by an in-container marker, e.g. a sentinel only present
+      in the image), with live streaming and transcript capture intact; `local`
+      remains the default and is unaffected. Docker absence yields a clear
+      "Docker not available for locus=docker" error, not a hang.
+    proofOfWork:
+      kind: integration
+      run: bash test/e2e/rex-docker-locus.sh   # skips with a clear SKIP message when Docker is absent
+      pass: exit code 0 — when Docker is present, a step runs in-container and the in-container marker is observed; when absent, the test SKIPs explicitly (never silently passes)
+    changes:
+      - name: rex-docker-locus
+
+  # ---------------------------------------------------------------------------
+  - name: remote-locus
+    goal: >-
+      Complete the "full ReX" surface: a `RexRemoteRuntime` (native Node `fetch`
+      client against a `swerex-remote` server) selected by `execution.locus:
+      remote` with host/port/auth-token, reusing the same launch-to-log + tail
+      streaming over the REST API (/create_session, /execute, X-API-Key).
+    success: >-
+      With a reachable swerex-remote server (a localhost server is sufficient for
+      the proof), `batch apply` runs a step on the remote runtime over REST with
+      live streaming and transcript capture, authenticated via the configured
+      token; auth failure returns a clear 401-derived error.
+    proofOfWork:
+      kind: blackbox
+      run: bash test/e2e/rex-remote-locus.sh   # boots a local swerex-remote server, points the runtime at it
+      pass: exit code 0 — a step completes against the local REST server with streamed output and a captured exit code; a bad token surfaces a clear auth error
+    changes:
+      - name: rex-remote-locus

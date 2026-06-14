@@ -124,46 +124,46 @@ Node runtime.
 
 ## Tasks
 
-- [ ] 1.1 Add `src/core/batch/engine/runtime/sidecar.py`: refine the spike prototype
+- [x] 1.1 Add `src/core/batch/engine/runtime/sidecar.py`: refine the spike prototype
   into a full script — start deployment by `REX_LOCUS` (local/docker), open a bash
   session, emit `{"event":"ready","locus":...}` once; read JSON-line ops from stdin
   and dispatch `run`/`shutdown`; on shutdown stop the deployment and emit
   `{"event":"closed"}` then exit 0.
-- [ ] 1.2 Implement streaming in the sidecar: for `{"op":"run","id":N,"command":...}`
+- [x] 1.2 Implement streaming in the sidecar: for `{"op":"run","id":N,"command":...}`
   launch to a per-run logfile under `REX_WORKDIR` and tail-poll (~300ms) via ReX
   `execute()`, emitting `{"event":"stdout","id":N,"line":...}` per new line and a
   single `{"event":"exit","id":N,"exit_code":...}` on completion. Never use
   `run_in_session()`; never run `exit` in the session.
-- [ ] 1.3 Wrap sidecar operations in exception handling that emits
+- [x] 1.3 Wrap sidecar operations in exception handling that emits
   `{"event":"error",...}` (mirroring `{"swerexception":...}` in `detail` where
   useful) instead of an unhandled traceback, keeping the loop alive or shutting down
   cleanly.
-- [ ] 2.1 Update `build.js` to copy `src/**/*.py` to the mirrored `dist/**` path
+- [x] 2.1 Update `build.js` to copy `src/**/*.py` to the mirrored `dist/**` path
   after the successful `tsc()` build (preserving subdirectories), with a log line; add
   a guard/log if no `.py` assets are found so a future rename is noticed.
-- [ ] 3.1 Add `src/core/batch/engine/runtime/rex-bootstrap.ts`: locate a usable
+- [x] 3.1 Add `src/core/batch/engine/runtime/rex-bootstrap.ts`: locate a usable
   Python (>=3.10) by probing candidate interpreters; expose a `RexBootstrapError`
   with an actionable message; resolve the sidecar `.py` path relative to the compiled
   module (works from both `dist` and `src`).
-- [ ] 3.2 Implement venv creation in the cache dir
+- [x] 3.2 Implement venv creation in the cache dir
   (`$XDG_CACHE_HOME`/`~/.cache` → `ratchet/rex/venv`): prefer `uv` when on PATH, else
   `python -m venv` + pip; install the PINNED `swe-rex` version (recorded as a
   constant). Verify `swe-rex` is importable from the venv interpreter.
-- [ ] 3.3 Make bootstrap lazy, cached, and idempotent: write a success marker
+- [x] 3.3 Make bootstrap lazy, cached, and idempotent: write a success marker
   (recording the pinned version) LAST; treat a missing venv/marker or a version
   mismatch as stale and rebuild after clearing the dir; reuse otherwise and return
   the resolved `{ command, args, env }` quickly.
-- [ ] 3.4 Produce actionable errors: no suitable Python → clear message naming the
+- [x] 3.4 Produce actionable errors: no suitable Python → clear message naming the
   required version and how to install/point ratchet at one; venv build failure →
   message naming what failed (venv vs install) and a remedy (network/uv), leaving no
   partial venv that looks usable. Fail fast, never hang, never raw traceback.
-- [ ] 4.1 Add unit tests (vitest) for `rex-bootstrap.ts`: path resolution, the
+- [x] 4.1 Add unit tests (vitest) for `rex-bootstrap.ts`: path resolution, the
   uv-vs-pip selection, the cache-hit (no rebuild) vs missing/stale (rebuild) logic,
   and that the missing-Python / failed-build paths throw `RexBootstrapError` with the
   actionable message (injecting the runner/fs seams so no real network/venv is built).
-- [ ] 4.2 Add `test/e2e/rex-sidecar-bootstrap.sh`: SKIP explicitly (printed SKIP line,
+- [x] 4.2 Add `test/e2e/rex-sidecar-bootstrap.sh`: SKIP explicitly (printed SKIP line,
   exit 0) when Python/network is unavailable; otherwise bootstrap, launch the sidecar
   via the resolved command, assert `{"event":"ready"}` within a timeout, send
   `{"op":"shutdown"}`, assert `{"event":"closed"}` and exit 0. Mark it executable.
-- [ ] 4.3 Confirm `pnpm build` carries `sidecar.py` into `dist/` and the e2e script
+- [x] 4.3 Confirm `pnpm build` carries `sidecar.py` into `dist/` and the e2e script
   passes (or SKIPs cleanly) locally.

@@ -122,15 +122,24 @@ export class RatchetBatchEngine {
 
   /**
    * Select the `AgentRuntime` for a step. An injected runtime/spawner always
-   * wins (tests, fallback). Otherwise the locus selects the runtime: `local`
-   * drives the ReX sidecar with `REX_LOCUS=local` and `REX_WORKDIR=projectRoot`.
+   * wins (tests, fallback). Otherwise the locus selects the runtime — and this
+   * is the ONLY place that branches on locus: `local` drives the ReX sidecar
+   * with `REX_LOCUS=local` and `REX_WORKDIR=projectRoot`; `docker` drives the
+   * SAME sidecar runtime with `REX_LOCUS=docker` plus the resolved `image`
+   * (the project root is bind-mounted by the runtime/sidecar). The engine,
+   * renderer, and event channel are otherwise locus-agnostic — streaming and
+   * rendering are identical regardless of locus.
    */
   private selectRuntime(projectRoot: string, context: ResolvedStepContext): AgentRuntime {
     if (this.runtimeOverride) return this.runtimeOverride;
     const locus = context.settings.locus ?? 'local';
-    // Only `local` exists this phase; docker/remote are later phases. The enum is
-    // validated upstream, so an unknown locus here is a programming error.
-    return makeRexSidecarRuntime({ locus, projectRoot });
+    // The enum is validated upstream, so an unknown locus here is a programming
+    // error. `image` is threaded only for docker (ignored by the local path).
+    return makeRexSidecarRuntime({
+      locus,
+      projectRoot,
+      ...(locus === 'docker' ? { image: context.settings.image } : {}),
+    });
   }
 
   async runStep(context: ResolvedStepContext): Promise<StepResult> {

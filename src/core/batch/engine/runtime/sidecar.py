@@ -24,7 +24,29 @@ pexpect backing is brittle on macOS and threw NoExitCodeError in the spike). We
 never run ``exit`` inside the session (it would EOF the shell).
 
 The deployment is selected at runtime by ``REX_LOCUS`` (default ``local`` ->
-LocalDeployment; ``docker`` -> DockerDeployment). This change targets LOCAL.
+LocalDeployment; ``docker`` -> DockerDeployment).
+
+Docker locus (env contract, set by the Node side via rex-bootstrap.ts):
+  REX_LOCUS=docker
+  REX_IMAGE=<image ref>            container image (e.g. python:3.12)
+  REX_MOUNT_HOST=<projectRoot>     host path bind-mounted into the container
+  REX_MOUNT_CONTAINER=/workspace   in-container mount point (a stable path)
+  REX_WORKDIR=/workspace           the agent's cwd AND where tail-poll logfiles
+                                   live — for docker this is the IN-CONTAINER
+                                   mount path (the host projectRoot may not
+                                   exist inside the container), so logfile
+                                   writes land on the writable bind mount and
+                                   journal writes propagate back to the host.
+
+The repo bind mount is expressed via ``DockerDeploymentConfig.docker_args``
+(``["-v", f"{host}:{container}"]``) because swe-rex (1.4.0) has NO dedicated
+``volumes``/``mounts`` field; ``DockerDeployment.start()`` splices ``docker_args``
+into the ``docker run`` argv.
+
+Follow-on (out of scope here): the e2e proves PLUMBING with a generic image +
+stub agent. A REAL agent run needs an image provisioned with node + the chosen
+coding agent + ``ratchet`` on PATH so the agent can run ``ratchet batch report``
+and the engine can read the journal back over the mount.
 """
 
 from __future__ import annotations
@@ -63,13 +85,30 @@ def _exception_detail(exc: BaseException) -> object:
     return detail
 
 
+DEFAULT_DOCKER_IMAGE = "python:3.12"
+
+
 def _make_deployment(locus: str):
     """Construct a deployment for the requested locus. Docker is imported lazily
-    so the local path does not require docker-only dependencies (aiohttp)."""
+    so the local path does not require docker-only dependencies (aiohttp).
+
+    For ``docker`` the image comes from ``REX_IMAGE`` (default
+    ``python:3.12``) and the project root is bind-mounted via ``docker_args``
+    (``-v REX_MOUNT_HOST:REX_MOUNT_CONTAINER``) — swe-rex 1.4.0 has no dedicated
+    ``volumes`` field; ``start()`` splices ``docker_args`` into the run argv.
+    """
     if locus == "docker":
         from swerex.deployment.docker import DockerDeployment
 
-        return DockerDeployment()
+        image = os.environ.get("REX_IMAGE", "").strip() or DEFAULT_DOCKER_IMAGE
+        mount_host = os.environ.get("REX_MOUNT_HOST", "").strip()
+        mount_container = (
+            os.environ.get("REX_MOUNT_CONTAINER", "").strip() or "/workspace"
+        )
+        docker_args: list = []
+        if mount_host:
+            docker_args = ["-v", f"{mount_host}:{mount_container}"]
+        return DockerDeployment(image=image, docker_args=docker_args)
     # Default / "local".
     from swerex.deployment.local import LocalDeployment
 
@@ -88,7 +127,23 @@ class Sidecar:
         from swerex.runtime.abstract import CreateBashSessionRequest
 
         self.deployment = _make_deployment(self.locus)
-        await self.deployment.start()
+        # Belt-and-braces for the docker locus: the Node side already runs a
+        # `docker info` pre-flight before spawning us, but a daemon that dies
+        # between that probe and `start()` (or an image-pull failure) would
+        # otherwise surface as a raw traceback. Wrap the docker start so any
+        # failure becomes a clear, actionable error event instead — the runtime
+        # maps `error` -> non-zero + stderr, so the engine stays resumable.
+        if self.locus == "docker":
+            try:
+                await self.deployment.start()
+            except Exception as exc:  # noqa: BLE001 — surface, don't crash
+                raise RuntimeError(
+                    "Docker deployment failed to start for locus=docker. "
+                    "Ensure the Docker daemon is running and the configured "
+                    f"image is pullable. Detail: {exc}"
+                ) from exc
+        else:
+            await self.deployment.start()
         self.runtime = self.deployment.runtime
         # Open the bash session the protocol promises. Streaming itself uses
         # execute(), but the session is part of the lifecycle contract.

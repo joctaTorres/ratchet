@@ -70,11 +70,24 @@ export interface SidecarDeps {
   clearTimer(handle: ReturnType<typeof setTimeout>): void;
 }
 
+/**
+ * The stable in-container mount point for the docker locus. The project root is
+ * bind-mounted here read-write, and REX_WORKDIR maps to it (NOT the host path,
+ * which may not exist inside the container).
+ */
+export const DOCKER_MOUNT_CONTAINER = '/workspace';
+
 export interface RexSidecarRuntimeOptions {
   /** REX_LOCUS to pass through (default 'local'). */
   locus?: string;
   /** Project root → REX_WORKDIR and the `.ratchet/batches/<batch>/.run` parent. */
   projectRoot: string;
+  /**
+   * Container image for the docker locus (passed through to the sidecar's
+   * `DockerDeployment`). Ignored for `local`. When unset under docker the
+   * bootstrap applies `DEFAULT_DOCKER_IMAGE`.
+   */
+  image?: string;
   /** Overall guard against a hung child (ms). Default 10 minutes. */
   timeoutMs?: number;
   /** Grace before escalating SIGTERM → SIGKILL on teardown (ms). Default 2s. */
@@ -132,6 +145,8 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
 
+  const isDocker = locus === 'docker';
+
   return (req: AgentSpawnRequest, onEvent: (e: AgentEvent) => void): Promise<AgentSpawnResult> => {
     // A short, filesystem-safe id for this run's working directory.
     const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -143,17 +158,37 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
       '.run',
       runId
     );
+    // The prompt file is always WRITTEN on the host. For docker the project root
+    // is bind-mounted at DOCKER_MOUNT_CONTAINER, so the path the in-container
+    // command must `cat` is the host path with the projectRoot prefix swapped to
+    // the mount point (the host path does not exist inside the container).
     const promptFile = path.join(runDir, 'prompt.txt');
+    const promptFileInContainer = isDocker
+      ? hostToContainerPath(promptFile, options.projectRoot, DOCKER_MOUNT_CONTAINER)
+      : promptFile;
 
-    // Resolve the launch descriptor (lazy/cached bootstrap). A missing Python
-    // throws RexBootstrapError → surface as a failed result (non-zero exit +
-    // message in stderr) so the engine maps it to blocked/failed.
+    // Resolve the launch descriptor (lazy/cached bootstrap). A missing Python or
+    // (for docker) a missing daemon throws RexBootstrapError → surface as a
+    // failed result (non-zero exit + message in stderr) so the engine maps it to
+    // blocked/failed. For docker, REX_WORKDIR maps to the in-container mount path
+    // (the agent's cwd AND the sidecar's tail-poll logfile dir, which must be
+    // writable inside the container), and the project root is bind-mounted there.
     let launch: ResolvedLaunch;
     try {
-      launch = deps.bootstrap({
-        locus,
-        workdir: options.projectRoot,
-      });
+      launch = deps.bootstrap(
+        isDocker
+          ? {
+              locus,
+              workdir: DOCKER_MOUNT_CONTAINER,
+              image: options.image,
+              mountHost: options.projectRoot,
+              mountContainer: DOCKER_MOUNT_CONTAINER,
+            }
+          : {
+              locus,
+              workdir: options.projectRoot,
+            }
+      );
     } catch (err) {
       if (err instanceof RexBootstrapError) {
         onEvent({ kind: 'error', message: err.message });
@@ -247,7 +282,7 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
           case 'ready':
             if (sentRun) return;
             sentRun = true;
-            send({ op: 'run', id: 1, command: buildRunCommand(promptFile, req) });
+            send({ op: 'run', id: 1, command: buildRunCommand(promptFileInContainer, req) });
             return;
           case 'stdout': {
             const line = obj.line ?? '';
@@ -315,6 +350,21 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
       });
     });
   };
+}
+
+/**
+ * Translate a host path that lives under `hostRoot` into its path under the
+ * in-container `mountPoint` (the bind mount). Used for the docker locus so the
+ * prompt file written on the host is read at its in-container location. Always
+ * emits POSIX separators (the container is Linux). Falls back to the original
+ * path if it is not under `hostRoot` (defensive — should not happen for the
+ * prompt file, which is built under the project root).
+ */
+export function hostToContainerPath(hostPath: string, hostRoot: string, mountPoint: string): string {
+  const rel = path.relative(hostRoot, hostPath);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return hostPath;
+  const posixRel = rel.split(path.sep).join('/');
+  return `${mountPoint.replace(/\/$/, '')}/${posixRel}`;
 }
 
 /**

@@ -42,6 +42,21 @@ export const SWE_REX_VERSION = '1.4.0';
 /** Minimum acceptable Python (swe-rex requires modern asyncio/typing). */
 export const MIN_PYTHON = { major: 3, minor: 10 } as const;
 
+/**
+ * Default container image for `locus: docker` when none is configured. Mirrors
+ * `DEFAULT_DOCKER_IMAGE` in config.ts / sidecar.py (kept in sync deliberately).
+ */
+export const DEFAULT_DOCKER_IMAGE = 'python:3.12';
+
+/**
+ * The `docker` extra label recorded in the readiness marker. The docker locus
+ * needs `swe-rex[docker]` (it pulls `aiohttp`, which base swe-rex omits — see
+ * rex-bootstrap design note), so a local-only venv must be REBUILT the first
+ * time docker is requested. The marker records which extras are installed so the
+ * readiness check can detect a local-only venv and force a docker-capable rebuild.
+ */
+export const DOCKER_EXTRA = 'docker';
+
 /** Candidate interpreter commands probed, in order, when no override is given. */
 const PYTHON_CANDIDATES = ['python3', 'python', 'python3.12', 'python3.11', 'python3.10'];
 
@@ -94,6 +109,15 @@ export interface BootstrapOptions {
   locus?: string;
   /** REX_WORKDIR to pass through to the sidecar. */
   workdir?: string;
+  /**
+   * REX_IMAGE to pass through (docker locus only). The container image the ReX
+   * `DockerDeployment` runs; ignored for `local`.
+   */
+  image?: string;
+  /** REX_MOUNT_HOST to pass through (docker locus only): host path to bind-mount. */
+  mountHost?: string;
+  /** REX_MOUNT_CONTAINER to pass through (docker locus only): in-container mount point. */
+  mountContainer?: string;
   /** Injected seams; defaults to the real fs/child_process. */
   deps?: BootstrapDeps;
 }
@@ -245,14 +269,26 @@ function venvLayout(cacheHome: string): VenvLayout {
   };
 }
 
-/** A venv is ready iff its marker exists AND records the current pinned version. */
-function isReady(deps: BootstrapDeps, layout: VenvLayout): boolean {
+/**
+ * A venv is ready iff its marker exists, records the current pinned version, AND
+ * carries every required extra. A local-only marker (no `docker` extra) is
+ * treated as NOT ready when the docker locus is requested, forcing a
+ * docker-capable rebuild on first docker use; `local` requires no extras so a
+ * docker-capable venv (a superset) is always reusable for local.
+ */
+function isReady(
+  deps: BootstrapDeps,
+  layout: VenvLayout,
+  requiredExtras: readonly string[] = []
+): boolean {
   if (!deps.exists(layout.venvDir)) return false;
   if (!deps.exists(layout.venvPython)) return false;
   if (!deps.exists(layout.markerPath)) return false;
   try {
     const marker = JSON.parse(deps.readText(layout.markerPath));
-    return marker?.sweRexVersion === SWE_REX_VERSION;
+    if (marker?.sweRexVersion !== SWE_REX_VERSION) return false;
+    const have: string[] = Array.isArray(marker?.extras) ? marker.extras : [];
+    return requiredExtras.every((extra) => have.includes(extra));
   } catch {
     return false;
   }
@@ -265,16 +301,29 @@ function isReady(deps: BootstrapDeps, layout: VenvLayout): boolean {
 const SWE_REX_SPEC = `swe-rex==${SWE_REX_VERSION}`;
 
 /**
- * Build the venv from scratch and install the pinned swe-rex. Clears any prior
- * (possibly partial) dir first, writes the success marker LAST. Prefers `uv`,
- * falls back to `python -m venv` + that venv's pip. Throws `RexBootstrapError`
- * naming the failing stage (venv creation vs install) with a remedy.
+ * The pip install spec for the given extras. With the `docker` extra this is
+ * `swe-rex[docker]==<ver>` so `aiohttp` (required by the docker deployment) is
+ * pulled in; with no extras it is the plain pinned base.
+ */
+function sweRexSpec(extras: readonly string[]): string {
+  if (extras.length === 0) return SWE_REX_SPEC;
+  return `swe-rex[${[...extras].sort().join(',')}]==${SWE_REX_VERSION}`;
+}
+
+/**
+ * Build the venv from scratch and install the pinned swe-rex (with any required
+ * extras). Clears any prior (possibly partial) dir first, writes the success
+ * marker LAST. Prefers `uv`, falls back to `python -m venv` + that venv's pip.
+ * Throws `RexBootstrapError` naming the failing stage (venv creation vs install)
+ * with a remedy.
  */
 function buildVenv(
   deps: BootstrapDeps,
   python: string,
-  layout: VenvLayout
+  layout: VenvLayout,
+  extras: readonly string[] = []
 ): void {
+  const spec = sweRexSpec(extras);
   // Clear any half-built state so nothing stale is mistaken for usable.
   deps.rmrf(layout.venvDir);
   deps.mkdirp(layout.cacheHome);
@@ -294,7 +343,7 @@ function buildVenv(
       'install',
       '--python',
       layout.venvPython,
-      SWE_REX_SPEC,
+      spec,
     ]);
     if (installed.status !== 0) {
       deps.rmrf(layout.venvDir);
@@ -314,7 +363,7 @@ function buildVenv(
       '-m',
       'pip',
       'install',
-      SWE_REX_SPEC,
+      spec,
     ]);
     if (installed.status !== 0) {
       deps.rmrf(layout.venvDir);
@@ -323,21 +372,34 @@ function buildVenv(
   }
 
   // Verify swe-rex actually imports from the venv interpreter before declaring
-  // success — a non-importable install must not be cached as ready.
-  const check = deps.run(layout.venvPython, ['-c', 'import swerex']);
+  // success — a non-importable install must not be cached as ready. For the
+  // docker extra, also verify the docker deployment module imports (it pulls
+  // `aiohttp`, which the base install omits) so a missing extra is caught here,
+  // not at run time.
+  const importCheck = extras.includes(DOCKER_EXTRA)
+    ? 'import swerex; import swerex.deployment.docker'
+    : 'import swerex';
+  const check = deps.run(layout.venvPython, ['-c', importCheck]);
   if (check.status !== 0) {
     deps.rmrf(layout.venvDir);
     throw new RexBootstrapError(
-      `ReX runtime bootstrap: installed ${SWE_REX_SPEC} but it does not import ` +
+      `ReX runtime bootstrap: installed ${spec} but it does not import ` +
         `from the venv interpreter. Detail: ${truncate(check.stderr)}`
     );
   }
 
-  // Marker written LAST: only now is the venv considered ready.
+  // Marker written LAST: only now is the venv considered ready. `extras` records
+  // which swe-rex extras are installed so a local-only venv is rebuilt when the
+  // docker locus is first requested.
   deps.writeText(
     layout.markerPath,
     JSON.stringify(
-      { sweRexVersion: SWE_REX_VERSION, python, builtAt: new Date().toISOString() },
+      {
+        sweRexVersion: SWE_REX_VERSION,
+        extras: [...extras].sort(),
+        python,
+        builtAt: new Date().toISOString(),
+      },
       null,
       2
     )
@@ -367,6 +429,31 @@ function truncate(s: string, max = 800): string {
 }
 
 // -----------------------------------------------------------------------------
+// Docker daemon pre-flight (fail closed, no hang)
+// -----------------------------------------------------------------------------
+
+/**
+ * Probe the Docker daemon BEFORE spawning the sidecar. `docker info` (a cheap
+ * round-trip to the daemon) is the primary fail-fast check: when Docker is not
+ * installed or the daemon is not running, it exits non-zero (or the binary is
+ * missing), and we throw an actionable `RexBootstrapError` naming `locus=docker`.
+ * The runtime catches `RexBootstrapError` and resolves a non-zero result with the
+ * message in stderr, so the engine maps it to blocked/failed and stays resumable
+ * — and we never wait on swe-rex's 180s `startup_timeout`.
+ */
+export function preflightDockerDaemon(deps: BootstrapDeps): void {
+  const res = deps.run('docker', ['info']);
+  if (res.status === 0) return;
+  throw new RexBootstrapError(
+    `Docker not available for locus=docker. ratchet needs a running Docker ` +
+      `daemon to run the batch step in a container. Install Docker ` +
+      `(https://docs.docker.com/get-docker/) and ensure the daemon is running ` +
+      `(\`docker info\` should succeed), or set locus back to \`local\`. ` +
+      `Detail: ${truncate(res.stderr || res.stdout || 'docker info failed')}`
+  );
+}
+
+// -----------------------------------------------------------------------------
 // Entry point
 // -----------------------------------------------------------------------------
 
@@ -374,15 +461,31 @@ function truncate(s: string, max = 800): string {
  * Lazily ensure the ReX venv exists (reusing a valid cache) and return the
  * resolved command to launch the sidecar. Idempotent: a ready venv is reused
  * without a rebuild; a missing/stale venv is rebuilt after clearing the dir.
+ *
+ * Docker locus: a `docker info` pre-flight runs FIRST (fail closed, no hang),
+ * and the venv must carry the `docker` extra (`swe-rex[docker]`, for `aiohttp`),
+ * which forces a rebuild of a local-only venv on first docker use. The image +
+ * mount env (`REX_IMAGE`/`REX_MOUNT_HOST`/`REX_MOUNT_CONTAINER`) is threaded to
+ * the sidecar. `local` is unaffected: no docker probe, no extras, no image/mount.
  */
 export function bootstrapRexRuntime(options: BootstrapOptions = {}): ResolvedLaunch {
   const deps = options.deps ?? defaultDeps;
   const cacheHome = resolveCacheHome(options.cacheHome);
   const layout = venvLayout(cacheHome);
+  const isDocker = options.locus === 'docker';
 
-  if (!isReady(deps, layout)) {
+  // Fail fast on a missing/stopped daemon before any venv work, so the docker
+  // path never hangs and the error is in the same actionable channel as the
+  // Python-prereq error.
+  if (isDocker) {
+    preflightDockerDaemon(deps);
+  }
+
+  const requiredExtras = isDocker ? [DOCKER_EXTRA] : [];
+
+  if (!isReady(deps, layout, requiredExtras)) {
     const python = findPython(deps, options.pythonOverride);
-    buildVenv(deps, python, layout);
+    buildVenv(deps, python, layout, requiredExtras);
   }
 
   const sidecar = resolveSidecarPath();
@@ -396,6 +499,12 @@ export function bootstrapRexRuntime(options: BootstrapOptions = {}): ResolvedLau
   };
   if (options.locus !== undefined) env.REX_LOCUS = options.locus;
   if (options.workdir !== undefined) env.REX_WORKDIR = options.workdir;
+  // Image + mount env is only meaningful for docker; local stays untouched.
+  if (isDocker) {
+    env.REX_IMAGE = options.image && options.image.trim() ? options.image : DEFAULT_DOCKER_IMAGE;
+    if (options.mountHost !== undefined) env.REX_MOUNT_HOST = options.mountHost;
+    if (options.mountContainer !== undefined) env.REX_MOUNT_CONTAINER = options.mountContainer;
+  }
 
   return {
     command: layout.venvPython,

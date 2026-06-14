@@ -25,15 +25,18 @@ Feature: Honest zero-exit outcome with transcript and on-disk evidence
     Given the transition is "propose"
     And on-disk state shows the change directory and a plan.md now exist
     When the session is mapped to an engine outcome
-    Then the outcome reflects observed on-disk progress
+    Then the outcome state is "blocked"
+    And the outcome message reflects the observed on-disk progress
     And the outcome message does not state that the agent "did nothing"
+    And the step is not auto-advanced without a completion report
 
   Scenario: An apply run that advanced task checkboxes is recognized as progress
     Given the transition is "apply"
     And on-disk state shows more task checkboxes are now checked than before the session
     When the session is mapped to an engine outcome
-    Then the outcome reflects observed on-disk progress
+    Then the outcome state is "blocked"
     And the outcome message references the task progress rather than a bare stall
+    And the step is not auto-advanced without a completion report
 
   Scenario: A truly silent run with no evidence still parks for attention
     Given the transition is "propose"

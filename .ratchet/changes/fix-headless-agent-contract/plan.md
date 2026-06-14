@@ -52,16 +52,16 @@ the `blocked` family for the truly-silent case, but make it evidence-aware:
   `blocked` path we surface it via `detail` (and reference it in `message`).
 - Consult on-disk evidence. When the propose artifact exists (change dir + plan.md
   appeared) or the apply artifact advanced (more task checkboxes checked than the
-  pre-session count), represent the step as observed progress rather than a stall.
-  Representation choice: introduce an `advanced-unreported` shape — surfaced to the
-  CLI as `advanced` with a message that says the agent completed work on disk but did
-  not post a completion (so the batch moves forward and resume re-derives the next
-  transition from disk), while still attaching the transcript `detail`. If the team
-  prefers conservatism, the fallback is to stay `blocked` but enrich `message`/`detail`
-  with the observed evidence; the tests assert the message reflects evidence either
-  way. We default to the `advanced`-with-note representation because the transition
-  computer (`computeNextTransition`) already re-derives state from disk, so advancing
-  is safe and idempotent.
+  pre-session count), surface that evidence in the outcome — but DO NOT auto-advance.
+  Representation choice (decided): the step stays in the `blocked` family so a human
+  looks at it, but the `message`/`detail` are enriched with the observed evidence
+  (e.g. "agent exited without reporting, but a change directory / N task(s) were
+  created on disk — review and resume"). We deliberately reject auto-advancing on
+  unreported work: a zero-exit-without-report can mean the agent abandoned partial or
+  half-done work, and silently advancing would skip the human checkpoint the voluntary
+  gate exists to provide. Advancing is only ever triggered by an explicit completion
+  report. The transcript `detail` is attached in every zero-exit-no-report case,
+  with-evidence or not.
 
 **Disk-state wiring.** `mapSessionToOutcome` currently has no `projectRoot`/disk
 access. `MapOutcomeInput` gains a small, pre-computed disk-evidence summary rather
@@ -91,10 +91,11 @@ delta (checkboxes advanced during THIS session), not an absolute count.
   the `mapSessionToOutcome` signature/types.
 - [ ] 2.2 On the zero-exit-no-report path, attach `detail = truncate(spawn.stdout /
   spawn.stderr)` reusing the existing `truncate` helper, mirroring the non-zero branch.
-- [ ] 2.3 On the same path, consult the disk-evidence summary: when the transition's
-  expected artifact appeared/advanced, represent the step as observed progress
-  (`advanced` with an "unreported completion" note) instead of a bare stall; otherwise
-  keep the evidence-free `blocked` outcome but with the transcript `detail` attached.
+- [ ] 2.3 On the same path, consult the disk-evidence summary: keep the outcome state
+  `blocked` (never auto-advance on unreported work), but when the transition's expected
+  artifact appeared/advanced, enrich `message`/`detail` with the observed evidence
+  (change dir/plan created; N checkboxes advanced) so the user sees the work; the
+  evidence-free case stays a bare `blocked` with only the transcript `detail` attached.
 - [ ] 3.1 Wire the disk-evidence summary in `engine.ts`: snapshot
   `readChangeDiskState(projectRoot, change)` before the spawn and read it again after,
   and pass the summary into `mapSessionToOutcome`.

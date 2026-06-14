@@ -161,22 +161,22 @@ do not build those loci here.
 
 ## Tasks
 
-- [ ] 1.1 Define `AgentEvent` and the `AgentRuntime` function-type seam in `src/core/batch/engine/runtime/contract.ts`, reusing `AgentSpawnRequest`/`AgentSpawnResult` from `agent.ts`.
-- [ ] 1.2 Unit-test the contract shape: a fake `AgentRuntime` streams `stdout` events and returns an accumulated `AgentSpawnResult` (satisfies `features/agent-runtime/transcript-and-exit.feature`).
-- [ ] 2.1 Add `locus` to `BatchSettings` in `config.ts` (default `local`), register it in `SETTING_KEYS` and `ALLOWED_VALUES` (`['local']`), and confirm `resolveBatchSettings` resolves it defaults ← project ← manifest.
-- [ ] 2.2 Add the optional `locus` field to `BatchSettingsOverrideSchema` in `manifest.ts`, keeping `.strict()` valid.
-- [ ] 2.3 Unit-test locus resolution: default → `local` (source `default`), project value (source `project`), manifest override (source `manifest`) — satisfies `features/locus/local-default.feature` (first two scenarios).
-- [ ] 3.1 Implement the prompt-to-agent temp-file mechanism: write `request.instructions` to `.ratchet/batches/<batch>/.run/<id>/prompt.txt` and build the run command `cat <promptfile> | <agent argv>`; remove the file in `finally`.
-- [ ] 3.2 Unit-test prompt delivery and cleanup, and that the override command (`bash -c <override>`) also receives the prompt via the file (satisfies `features/agent-runtime/prompt-delivery.feature`).
-- [ ] 4.1 Implement `RexSidecarRuntime` in `src/core/batch/engine/runtime/rex-sidecar-runtime.ts`: resolve launch via `bootstrapRexRuntime` (locus + project-root workdir), spawn the child, parse JSON-lines, drive ready→run→stdout→exit→shutdown→closed, with injected child/fs/clock seams.
-- [ ] 4.2 Stream `stdout` events to `onEvent` AND accumulate into `AgentSpawnResult`; take `exitCode` from the `exit` event (satisfies `features/agent-runtime/live-streaming.feature` and `transcript-and-exit.feature`).
-- [ ] 4.3 Surface a sidecar `error` event as a failed run, and propagate `RexBootstrapError` (missing Python) as a failure with its actionable message (satisfies `features/agent-runtime/error-handling.feature`).
-- [ ] 4.4 Implement teardown: end stdin, `child.kill()` with SIGKILL escalation, and a configurable timeout so no sidecar is orphaned on completion/abort/timeout.
-- [ ] 4.5 Unit-test `RexSidecarRuntime` against a fake child emitting canned JSON lines (ready/stdout/exit/closed, and an error case) — no real Python.
-- [ ] 5.1 Add `runtime?: AgentRuntime` and an injectable line-printer to `EngineDeps`; default `runtime` to `RexSidecarRuntime`.
-- [ ] 5.2 Add a locus→runtime selector and route `runStepLocked` through `this.runtime(request, onEvent)` when the locus selects ReX, passing an `onEvent` that prints each stdout line live; keep `mapSessionToOutcome` unchanged.
-- [ ] 5.3 Ensure `RATCHET_BATCH_AGENT_CMD` (and a blank override = unset) flows through the runtime streaming path; preserve `realSpawner`/`Spawner` as a documented fallback seam for one release (satisfies `features/agent-runtime/override-and-fallback.feature`).
-- [ ] 5.4 Unit-test engine routing with an injected fake runtime: stdout lines are printed live, the override runs through the runtime, and the accumulated result reaches `mapSessionToOutcome` — no Python.
-- [ ] 6.1 Create the phase proof-of-work `test/e2e/rex-local-stream.sh`: drive a step (via `ratchet batch apply` or the runtime directly) with a STUB agent emitting one line/second for ~5 lines; assert lines arrive INCREMENTALLY (timestamps spread, not bunched) and the final exit code is captured.
-- [ ] 6.2 Make the e2e SKIP explicitly (print SKIP, exit 0) when Python/swe-rex prereqs are unavailable, mirroring `test/e2e/rex-sidecar-bootstrap.sh`; never a silent pass.
-- [ ] 6.3 Run `bash test/e2e/rex-local-stream.sh` and the batch-engine unit suite (`pnpm vitest run test/batch-engine`) green to satisfy the phase gate.
+- [x] 1.1 Define `AgentEvent` and the `AgentRuntime` function-type seam in `src/core/batch/engine/runtime/contract.ts`, reusing `AgentSpawnRequest`/`AgentSpawnResult` from `agent.ts`.
+- [x] 1.2 Unit-test the contract shape: a fake `AgentRuntime` streams `stdout` events and returns an accumulated `AgentSpawnResult` (satisfies `features/agent-runtime/transcript-and-exit.feature`).
+- [x] 2.1 Add `locus` to `BatchSettings` in `config.ts` (default `local`), register it in `SETTING_KEYS` and `ALLOWED_VALUES` (`['local']`), and confirm `resolveBatchSettings` resolves it defaults ← project ← manifest.
+- [x] 2.2 Add the optional `locus` field to `BatchSettingsOverrideSchema` in `manifest.ts`, keeping `.strict()` valid.
+- [x] 2.3 Unit-test locus resolution: default → `local` (source `default`), project value (source `project`), manifest override (source `manifest`) — satisfies `features/locus/local-default.feature` (first two scenarios).
+- [x] 3.1 Implement the prompt-to-agent temp-file mechanism: write `request.instructions` to `.ratchet/batches/<batch>/.run/<id>/prompt.txt` and build the run command `cat <promptfile> | <agent argv>`; remove the file in `finally`.
+- [x] 3.2 Unit-test prompt delivery and cleanup, and that the override command (`bash -c <override>`) also receives the prompt via the file (satisfies `features/agent-runtime/prompt-delivery.feature`).
+- [x] 4.1 Implement `RexSidecarRuntime` in `src/core/batch/engine/runtime/rex-sidecar-runtime.ts`: resolve launch via `bootstrapRexRuntime` (locus + project-root workdir), spawn the child, parse JSON-lines, drive ready→run→stdout→exit→shutdown→closed, with injected child/fs/clock seams.
+- [x] 4.2 Stream `stdout` events to `onEvent` AND accumulate into `AgentSpawnResult`; take `exitCode` from the `exit` event (satisfies `features/agent-runtime/live-streaming.feature` and `transcript-and-exit.feature`).
+- [x] 4.3 Surface a sidecar `error` event as a failed run, and propagate `RexBootstrapError` (missing Python) as a failure with its actionable message (satisfies `features/agent-runtime/error-handling.feature`).
+- [x] 4.4 Implement teardown: end stdin, `child.kill()` with SIGKILL escalation, and a configurable timeout so no sidecar is orphaned on completion/abort/timeout.
+- [x] 4.5 Unit-test `RexSidecarRuntime` against a fake child emitting canned JSON lines (ready/stdout/exit/closed, and an error case) — no real Python.
+- [x] 5.1 Add `runtime?: AgentRuntime` and an injectable line-printer to `EngineDeps`; default `runtime` to `RexSidecarRuntime`.
+- [x] 5.2 Add a locus→runtime selector and route `runStepLocked` through `this.runtime(request, onEvent)` when the locus selects ReX, passing an `onEvent` that prints each stdout line live; keep `mapSessionToOutcome` unchanged.
+- [x] 5.3 Ensure `RATCHET_BATCH_AGENT_CMD` (and a blank override = unset) flows through the runtime streaming path; preserve `realSpawner`/`Spawner` as a documented fallback seam for one release (satisfies `features/agent-runtime/override-and-fallback.feature`).
+- [x] 5.4 Unit-test engine routing with an injected fake runtime: stdout lines are printed live, the override runs through the runtime, and the accumulated result reaches `mapSessionToOutcome` — no Python.
+- [x] 6.1 Create the phase proof-of-work `test/e2e/rex-local-stream.sh`: drive a step (via `ratchet batch apply` or the runtime directly) with a STUB agent emitting one line/second for ~5 lines; assert lines arrive INCREMENTALLY (timestamps spread, not bunched) and the final exit code is captured.
+- [x] 6.2 Make the e2e SKIP explicitly (print SKIP, exit 0) when Python/swe-rex prereqs are unavailable, mirroring `test/e2e/rex-sidecar-bootstrap.sh`; never a silent pass.
+- [x] 6.3 Run `bash test/e2e/rex-local-stream.sh` and the batch-engine unit suite (`pnpm vitest run test/batch-engine`) green to satisfy the phase gate.

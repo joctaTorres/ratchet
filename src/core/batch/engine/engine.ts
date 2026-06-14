@@ -35,7 +35,7 @@ import {
 import { buildAgentInstructions } from './instructions.js';
 import { mapSessionToOutcome } from './outcome.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
-import { computeNextTransition } from './transition.js';
+import { computeNextTransition, readChangeDiskState } from './transition.js';
 import { withBatchLock } from './lock.js';
 import { readChangeJournalTolerant } from './run-state.js';
 
@@ -126,8 +126,10 @@ export class RatchetBatchEngine {
       throw err;
     }
 
-    // Snapshot journal length so we can isolate this session's entries.
+    // Snapshot journal length and on-disk change state so we can isolate this
+    // session's entries and measure the artifact delta (e.g. apply progress).
     const before = readChangeJournalTolerant(projectRoot, batch, change).length;
+    const diskBefore = readChangeDiskState(projectRoot, change);
 
     const spawnResult = await this.spawner(request);
 
@@ -135,6 +137,7 @@ export class RatchetBatchEngine {
     const afterAll = readChangeJournalTolerant(projectRoot, batch, change);
     const sessionEntries = afterAll.slice(before);
     const sessionIndices = sessionEntries.map((_, i) => before + i);
+    const diskAfter = readChangeDiskState(projectRoot, change);
 
     const parkForApproval = this.shouldParkForApproval(context, transition);
 
@@ -145,6 +148,7 @@ export class RatchetBatchEngine {
       sessionIndices,
       spawn: spawnResult,
       parkForApproval,
+      diskEvidence: { before: diskBefore, after: diskAfter },
     });
 
     // 5. Record a journal entry for the transition outcome (the agent may not

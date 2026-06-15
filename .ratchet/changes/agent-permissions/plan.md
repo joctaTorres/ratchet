@@ -190,27 +190,27 @@ disable them. This is documented as a known boundary, not a bug.
 
 ## Tasks
 
-- [ ] 1.1 Define the agent-agnostic `permissions` zod schema (posture enum, allow/deny lists, per-agent `raw` map) as a single shared schema
-- [ ] 1.2 Add the `permissions` block to the project `batch:` schema in `src/core/project-config.ts`
-- [ ] 1.3 Add a `batch.permissions` block to the user/global config in `src/core/global-config.ts`
-- [ ] 1.4 Add `permissions` to `BatchSettingsOverrideSchema` in `src/core/batch/manifest.ts`, keeping `.strict()`
-- [ ] 1.5 Extend `BatchSettings` and `resolveBatchSettings` in `src/core/batch/config.ts` to add the user/global scope and resolve `permissions` with documented merge semantics (posture override; deny union; allow replace-by-nearest; raw per-agent nearest-wins)
-- [ ] 2.1 Create `src/core/batch/runtime/agent-permissions.ts` exporting `resolvePermissionFlags(agent, policy, repoRoot)` and the per-agent posture maps
-- [ ] 2.2 Encode the repo-sandboxed-permissive denylist (rm -rf outside repo, sudo, out-of-repo writes, curl|sh) as agent-neutral patterns plus repo-scoping
-- [ ] 2.3 Implement claude mapping (verified flags) and gemini mapping (verified flags) in the translator
-- [ ] 2.4 Implement codex and cursor-agent mappings per the design table; mark uncertain flags "verify at apply"
-- [ ] 2.5 Honor the per-agent `raw` override (append for matching agent, ignore others)
-- [ ] 3.1 Wire `resolvePermissionFlags` into each adapter's `buildRequest` in `src/core/batch/engine/agent.ts` so resolved flags append to the base argv
-- [ ] 3.2 Pass the resolved policy + repo root through `AgentRequestContext` from `engine.ts` so adapters can consume it
-- [ ] 3.3 Confirm flags flow unchanged through local/docker sidecar (`rex-sidecar-runtime.ts`) and remote (`rex-remote-runtime.ts`) runtimes
-- [ ] 4.1 Add the batch-scoped first-run hook that detects a missing permission config at all scopes
-- [ ] 4.2 Implement the no-TTY/CI/non-interactive fallback (use `isInteractive()`): no prompt, default posture, no config write, never block
-- [ ] 4.3 Implement the interactive guided setup mirroring `ratchet init` (posture choice + save scope), default save to project `.ratchet/config.yaml`, option to save to user config dir
-- [ ] 4.4 Make first-run idempotent: once a config exists at any scope, never re-prompt
-- [ ] 5.1 Extend `redactSettings` to redact secret-bearing values inside `permissions.raw`
-- [ ] 6.1 Unit-test the translator: posture→flags assertions per agent (claude + gemini verified; codex/cursor against intended map)
-- [ ] 6.2 Unit-test scope resolution: posture override, deny union, allow replace-by-nearest, raw per-agent nearest-wins, and the no-config default
-- [ ] 6.3 Unit-test the denylist patterns (rm -rf outside repo, sudo, out-of-repo write, curl|sh)
-- [ ] 6.4 Add a no-TTY-no-hang e2e test: a batch command with no config and no TTY returns the default posture without prompting or blocking
-- [ ] 6.5 e2e: confirm resolved permission flags appear in the spawned agent argv across local/docker/remote loci
-- [ ] 7.1 Build and test green (`pnpm build`, full test suite)
+- [x] 1.1 Define the agent-agnostic `permissions` zod schema (posture enum, allow/deny lists, per-agent `raw` map) as a single shared schema
+- [x] 1.2 Add the `permissions` block to the project `batch:` schema in `src/core/project-config.ts`
+- [x] 1.3 Add a `batch.permissions` block to the user/global config in `src/core/global-config.ts`
+- [x] 1.4 Add `permissions` to `BatchSettingsOverrideSchema` in `src/core/batch/manifest.ts`, keeping `.strict()`
+- [x] 1.5 Extend `BatchSettings` and `resolveBatchSettings` in `src/core/batch/config.ts` to add the user/global scope and resolve `permissions` with documented merge semantics (posture override; deny union; allow replace-by-nearest; raw per-agent nearest-wins)
+- [x] 2.1 Create `src/core/batch/runtime/agent-permissions.ts` exporting `resolvePermissionFlags(agent, policy, repoRoot)` and the per-agent posture maps
+- [x] 2.2 Encode the repo-sandboxed-permissive denylist (rm -rf outside repo, sudo, out-of-repo writes, curl|sh) as agent-neutral patterns plus repo-scoping
+- [x] 2.3 Implement claude mapping (verified flags) and gemini mapping (verified flags) in the translator
+- [x] 2.4 Implement codex and cursor-agent mappings per the design table; mark uncertain flags "verify at apply"
+- [x] 2.5 Honor the per-agent `raw` override (append for matching agent, ignore others)
+- [x] 3.1 Wire `resolvePermissionFlags` into each adapter's `buildRequest` in `src/core/batch/engine/agent.ts` so resolved flags append to the base argv
+- [x] 3.2 Pass the resolved policy + repo root through `AgentRequestContext` from `engine.ts` so adapters can consume it
+- [x] 3.3 Confirm flags flow unchanged through local/docker sidecar (`rex-sidecar-runtime.ts`) and remote (`rex-remote-runtime.ts`) runtimes
+- [x] 4.1 Add the batch-scoped first-run hook that detects a missing permission config at all scopes
+- [x] 4.2 Implement the no-TTY/CI/non-interactive fallback (use `isInteractive()`): no prompt, default posture, no config write, never block
+- [x] 4.3 Implement the interactive guided setup mirroring `ratchet init` (posture choice + save scope), default save to project `.ratchet/config.yaml`, option to save to user config dir
+- [x] 4.4 Make first-run idempotent: once a config exists at any scope, never re-prompt
+- [x] 5.1 Extend `redactSettings` to redact secret-bearing values inside `permissions.raw`
+- [x] 6.1 Unit-test the translator: posture→flags assertions per agent (claude + gemini verified; codex/cursor against intended map)
+- [x] 6.2 Unit-test scope resolution: posture override, deny union, allow replace-by-nearest, raw per-agent nearest-wins, and the no-config default
+- [x] 6.3 Unit-test the denylist patterns (rm -rf outside repo, sudo, out-of-repo write, curl|sh)
+- [x] 6.4 Add a no-TTY-no-hang e2e test: a batch command with no config and no TTY returns the default posture without prompting or blocking
+- [x] 6.5 e2e: confirm resolved permission flags appear in the spawned agent argv across local/docker/remote loci
+- [x] 7.1 Build and test green (`pnpm build`, full test suite)

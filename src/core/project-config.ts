@@ -3,6 +3,7 @@ import { RATCHET_DIR_NAME } from './config.js';
 import path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { PermissionsPolicySchema } from './batch/permissions-policy.js';
 
 /**
  * Zod schema for project configuration.
@@ -54,6 +55,9 @@ export const ProjectConfigSchema = z.object({
       host: z.string().optional(),
       port: z.number().optional(),
       authToken: z.string().optional(),
+      // Agent-agnostic permission policy (posture + allow/deny + per-agent raw).
+      // Shared schema; merged across user/project/manifest in resolveBatchSettings.
+      permissions: PermissionsPolicySchema.optional(),
     })
     .partial()
     .optional()

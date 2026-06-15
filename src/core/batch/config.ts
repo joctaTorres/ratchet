@@ -14,6 +14,17 @@ import path from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { RATCHET_DIR_NAME } from '../config.js';
 import { readProjectConfig } from '../project-config.js';
+import { readUserBatchPermissions } from '../global-config.js';
+import {
+  PERMISSION_RAW_AGENTS,
+  PermissionsPolicySchema,
+  DEFAULT_PERMISSION_POSTURE,
+} from './permissions-policy.js';
+import type {
+  PermissionPosture,
+  PermissionsPolicy,
+  ResolvedPermissionsPolicy,
+} from './permissions-policy.js';
 import type { BatchManifest } from './manifest.js';
 
 export const GATE_VALUES = ['voluntary', 'after-propose', 'every-phase', 'autonomous'] as const;
@@ -40,6 +51,21 @@ export type Gate = (typeof GATE_VALUES)[number];
 export type Strategy = (typeof STRATEGY_VALUES)[number];
 export type ProofOfWorkPolicy = (typeof PROOF_OF_WORK_POLICY_VALUES)[number];
 export type Locus = (typeof LOCUS_VALUES)[number];
+
+// The agent-agnostic permissions policy schema/types live in their own module to
+// avoid a config↔project-config import cycle; re-exported here for convenience.
+export {
+  PERMISSION_POSTURE_VALUES,
+  PERMISSION_RAW_AGENTS,
+  PermissionsPolicySchema,
+  DEFAULT_PERMISSION_POSTURE,
+} from './permissions-policy.js';
+export type {
+  PermissionPosture,
+  PermissionRawAgent,
+  PermissionsPolicy,
+  ResolvedPermissionsPolicy,
+} from './permissions-policy.js';
 
 export interface BatchSettings {
   gate: Gate;
@@ -72,6 +98,18 @@ export interface BatchSettings {
    * `redactSettings`) and runtime error messages name only host/port.
    */
   authToken?: string;
+  /**
+   * The resolved agent permission policy injected (as argv flags) into the
+   * spawned coding agent. Always present after {@link resolveBatchSettings}:
+   * posture defaults to `repo-sandboxed-permissive`, lists default to empty, and
+   * `raw` to {}. The per-agent translator (`runtime/agent-permissions.ts`) turns
+   * this into each agent's native flags.
+   *
+   * Merge across scopes (user ← project ← manifest): posture is nearest-wins,
+   * `deny` is the UNION of all scopes, `allow` is REPLACED by the nearest defining
+   * scope, and each agent's `raw` entry is nearest-wins.
+   */
+  permissions?: ResolvedPermissionsPolicy;
 }
 
 /**
@@ -95,11 +133,80 @@ export function redactSettings(settings: BatchSettings): BatchSettings {
       (redacted as unknown as Record<string, unknown>)[key] = REDACTED_PLACEHOLDER;
     }
   }
+  if (redacted.permissions) {
+    redacted.permissions = redactPermissionsPolicy(redacted.permissions);
+  }
   return redacted;
 }
 
+/**
+ * Matches argv tokens that look secret-bearing — either a bare token value
+ * (long opaque/hex/base64-ish string) or a `--flag=secret` / `--token secret`
+ * pairing where the flag name signals a secret. The `raw` override is an escape
+ * hatch, so a careless operator could embed an API key there; this keeps it out
+ * of `batch config` output and logs.
+ */
+const SECRET_FLAG_NAME = /(token|secret|key|password|passwd|pwd|auth|bearer|credential)/i;
+const SECRETISH_VALUE = /^[A-Za-z0-9_\-./+=]{20,}$/;
+
+/**
+ * Redact any secret-bearing values inside a resolved policy's per-agent `raw`
+ * argv fragments. Two cases are masked: an `--flag=value` whose flag name signals
+ * a secret (value masked, flag kept), and a value that immediately follows a
+ * secret-signalling flag token. As a backstop, any standalone long opaque token
+ * is also masked. Non-secret flags/values are preserved so the override stays
+ * legible.
+ */
+export function redactPermissionsPolicy(
+  policy: ResolvedPermissionsPolicy
+): ResolvedPermissionsPolicy {
+  const rawEntries = Object.entries(policy.raw) as [
+    (typeof PERMISSION_RAW_AGENTS)[number],
+    string[] | undefined,
+  ][];
+  const raw: ResolvedPermissionsPolicy['raw'] = {};
+  for (const [agent, fragment] of rawEntries) {
+    if (!fragment) continue;
+    raw[agent] = redactArgvFragment(fragment);
+  }
+  return { ...policy, raw };
+}
+
+function redactArgvFragment(fragment: string[]): string[] {
+  const out: string[] = [];
+  let prevWasSecretFlag = false;
+  for (const token of fragment) {
+    const isFlag = token.startsWith('-');
+    if (isFlag) {
+      const eq = token.indexOf('=');
+      if (eq !== -1) {
+        const name = token.slice(0, eq);
+        if (SECRET_FLAG_NAME.test(name)) {
+          out.push(`${name}=${REDACTED_PLACEHOLDER}`);
+          prevWasSecretFlag = false;
+          continue;
+        }
+        out.push(token);
+        prevWasSecretFlag = false;
+        continue;
+      }
+      out.push(token);
+      prevWasSecretFlag = SECRET_FLAG_NAME.test(token);
+      continue;
+    }
+    // A value token: mask if it follows a secret flag or looks like a secret.
+    if (prevWasSecretFlag || SECRETISH_VALUE.test(token)) {
+      out.push(REDACTED_PLACEHOLDER);
+    } else {
+      out.push(token);
+    }
+    prevWasSecretFlag = false;
+  }
+  return out;
+}
+
 /** Where each effective value came from. */
-export type SettingSource = 'default' | 'project' | 'manifest';
+export type SettingSource = 'default' | 'user' | 'project' | 'manifest';
 
 export interface ResolvedBatchSettings {
   settings: BatchSettings;
@@ -138,7 +245,15 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
 };
 
 /**
- * Resolve effective batch settings: defaults ← project config ← manifest.
+ * Resolve effective batch settings, cascading across four scopes:
+ *
+ *   built-in default ← user/global ← project config ← per-change manifest
+ *
+ * Scalar settings (gate/strategy/agent/…) are nearest-wins. The structured
+ * `permissions` policy is merged with documented per-field semantics: posture is
+ * nearest-wins, `deny` is the UNION of every scope, `allow` is REPLACED by the
+ * nearest scope that defines one, and each agent's `raw` entry is nearest-wins.
+ * Permissions always resolve (the no-config default is the built-in posture).
  */
 export function resolveBatchSettings(
   projectRoot: string,
@@ -155,10 +270,13 @@ export function resolveBatchSettings(
     host: 'default',
     port: 'default',
     authToken: 'default',
+    permissions: 'default',
   };
 
   const writable = settings as { [K in keyof BatchSettings]: BatchSettings[K] };
 
+  // Scalar scopes, in increasing precedence. The user/global scope carries no
+  // scalar batch settings today (only `permissions`), so it does not appear here.
   const projectBatch = readProjectConfig(projectRoot)?.batch;
   if (projectBatch) {
     for (const key of SETTING_KEYS) {
@@ -181,7 +299,70 @@ export function resolveBatchSettings(
     }
   }
 
+  // Structured permissions: resolved across user ← project ← manifest with
+  // per-field merge semantics (see resolvePermissionsPolicy). The user/global
+  // scope stores raw JSON, so it is validated through the shared schema here
+  // (a malformed user policy is ignored rather than crashing a batch command).
+  const rawUserPermissions = readUserBatchPermissions();
+  let userPermissions: PermissionsPolicy | undefined;
+  if (rawUserPermissions !== undefined) {
+    const parsed = PermissionsPolicySchema.safeParse(rawUserPermissions);
+    if (parsed.success) userPermissions = parsed.data;
+  }
+  const permissionLayers: { scope: SettingSource; policy: PermissionsPolicy | undefined }[] = [
+    { scope: 'user', policy: userPermissions },
+    { scope: 'project', policy: projectBatch?.permissions },
+    { scope: 'manifest', policy: manifestOverrides?.permissions },
+  ];
+  const { policy, postureSource } = resolvePermissionsPolicy(permissionLayers);
+  settings.permissions = policy;
+  sources.permissions = postureSource;
+
   return { settings, sources };
+}
+
+/**
+ * Merge a set of permission layers (ordered low→high precedence) into a single
+ * resolved policy. Posture nearest-wins; deny union; allow replace-by-nearest;
+ * raw per-agent nearest-wins. Returns the source of the winning posture so
+ * `batch config` can annotate where the effective policy came from.
+ */
+export function resolvePermissionsPolicy(
+  layers: { scope: SettingSource; policy: PermissionsPolicy | undefined }[]
+): { policy: ResolvedPermissionsPolicy; postureSource: SettingSource } {
+  let posture: PermissionPosture = DEFAULT_PERMISSION_POSTURE;
+  let postureSource: SettingSource = 'default';
+  const denySet = new Set<string>();
+  let allow: string[] = [];
+  const raw: ResolvedPermissionsPolicy['raw'] = {};
+
+  for (const { scope, policy } of layers) {
+    if (!policy) continue;
+    if (policy.posture !== undefined) {
+      posture = policy.posture;
+      postureSource = scope;
+    }
+    // deny: union across every scope (a narrower scope cannot drop a denial).
+    if (policy.deny) {
+      for (const pattern of policy.deny) denySet.add(pattern);
+    }
+    // allow: replace by the nearest defining scope (deliberate, self-contained).
+    if (policy.allow !== undefined) {
+      allow = [...policy.allow];
+    }
+    // raw: nearest scope that defines a given agent's entry wins for that agent.
+    if (policy.raw) {
+      for (const agent of PERMISSION_RAW_AGENTS) {
+        const entry = policy.raw[agent];
+        if (entry !== undefined) raw[agent] = [...entry];
+      }
+    }
+  }
+
+  return {
+    policy: { posture, allow, deny: [...denySet], raw },
+    postureSource,
+  };
 }
 
 export interface SetResult {

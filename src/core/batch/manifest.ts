@@ -16,6 +16,7 @@ import path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { RATCHET_DIR_NAME } from '../config.js';
+import { PermissionsPolicySchema } from './permissions-policy.js';
 
 // -----------------------------------------------------------------------------
 // Zod schema
@@ -58,6 +59,9 @@ export const BatchSettingsOverrideSchema = z
     host: z.string().optional(),
     port: z.number().optional(),
     authToken: z.string().optional(),
+    // Per-change agent permission override. `permissions` is a known key, so the
+    // schema stays `.strict()` (it rejects unknown keys, not this one).
+    permissions: PermissionsPolicySchema.optional(),
   })
   .strict();
 

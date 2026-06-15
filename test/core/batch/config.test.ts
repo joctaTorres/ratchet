@@ -20,14 +20,24 @@ import {
 } from '../../../src/core/batch/manifest.js';
 
 let projectRoot: string;
+let userConfigHome: string;
+let priorXdgConfigHome: string | undefined;
 
 beforeEach(async () => {
   projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'batch-config-'));
   await fs.mkdir(path.join(projectRoot, '.ratchet'), { recursive: true });
+  // Isolate the user/global scope so resolution never reads the real machine's
+  // ~/.config/ratchet (which could carry a batch.permissions policy).
+  userConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), 'batch-config-xdg-'));
+  priorXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = userConfigHome;
 });
 
 afterEach(async () => {
   await fs.rm(projectRoot, { recursive: true, force: true });
+  await fs.rm(userConfigHome, { recursive: true, force: true });
+  if (priorXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = priorXdgConfigHome;
 });
 
 async function writeConfig(content: string): Promise<void> {
@@ -38,8 +48,18 @@ describe('resolveBatchSettings', () => {
   it('uses defaults when no batch section is present', async () => {
     await writeConfig('schema: ratchet\n');
     const { settings, sources } = resolveBatchSettings(projectRoot);
-    expect(settings).toEqual(DEFAULT_BATCH_SETTINGS);
+    // The scalar defaults are unchanged; resolution always adds a resolved
+    // permissions policy (the built-in default posture, empty lists, no raw).
+    const { permissions, ...scalars } = settings;
+    expect(scalars).toEqual(DEFAULT_BATCH_SETTINGS);
+    expect(permissions).toEqual({
+      posture: 'repo-sandboxed-permissive',
+      allow: [],
+      deny: [],
+      raw: {},
+    });
     expect(sources.gate).toBe('default');
+    expect(sources.permissions).toBe('default');
   });
 
   it('reflects project config values', async () => {

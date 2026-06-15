@@ -17,7 +17,7 @@ export const SKILL_NAMES = [
   'ratchet-verify-change',
   'ratchet-archive-change',
   'ratchet-propose-standard',
-  'ratchet-batch',
+  'ratchet-apply-batch',
   'ratchet-propose-batch',
   'ratchet-eval',
 ] as const;
@@ -34,7 +34,7 @@ export const COMMAND_IDS = [
   'verify',
   'propose',
   'propose-standard',
-  'batch',
+  'apply-batch',
   'propose-batch',
   'eval',
 ] as const;

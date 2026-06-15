@@ -166,20 +166,20 @@ the user-facing strings — but that is not recommended for the reason above.)
 
 ## Tasks
 
-- [ ] 1.1 Rename `src/core/templates/workflows/batch.ts` to `apply-batch.ts`; rewrite the doc comment to describe the orchestrator loop (not single-step)
-- [ ] 1.2 Rewrite the skill body (rename `BATCH_BODY` -> `APPLY_BATCH_BODY`) to the orchestrator loop: select batch, loop on `ratchet batch apply` until status-done, interpret advanced/halt/failure, record answers/approvals, stop conditions — agent-neutral prose
-- [ ] 1.3 In the body, explicitly state the skill-loops-but-`ratchet batch apply`-stays-single-step distinction and the hard role boundary (no coding, no hand-editing artifacts, only ratchet CLI + user communication)
-- [ ] 1.4 Rename `getBatchSkillTemplate` -> `getApplyBatchSkillTemplate` (name `'ratchet-apply-batch'`, orchestrator description); rename `getRctBatchCommandTemplate` -> `getRctApplyBatchCommandTemplate` (`'RCT: Apply Batch'`, orchestrator desc, tags `apply-batch`)
-- [ ] 2.1 Update `src/core/templates/skill-templates.ts:15` export to renamed fns + `./workflows/apply-batch.js`
-- [ ] 2.2 Update `src/core/shared/skill-generation.ts` imports (lines 13,21) and entries (lines 59,83): `dirName: 'ratchet-apply-batch'`, `workflowId: 'apply-batch'`, `id: 'apply-batch'`
-- [ ] 2.3 Update `src/core/shared/tool-detection.ts`: `SKILL_NAMES` `'ratchet-batch'` -> `'ratchet-apply-batch'` (line 20); `COMMAND_IDS` `'batch'` -> `'apply-batch'` (line 37)
-- [ ] 2.4 Update `src/core/profile-sync-drift.ts:20` `WORKFLOW_TO_SKILL_DIR`: `'apply-batch': 'ratchet-apply-batch'`
-- [ ] 2.5 Update `src/core/profiles.ts`: `CORE_WORKFLOWS` and `ALL_WORKFLOWS` `'batch'` -> `'apply-batch'` (lines 19,29) and the doc comments (lines 14-17,26-27)
-- [ ] 3.1 Add the `'batch'` -> `'apply-batch'` custom-profile alias/migration shim (custom workflow resolution + `migration.ts`/`update.ts` detection) so existing `profile: custom` allowlists are not silently dropped
-- [ ] 4.1 Update `test/core/shared/tool-detection.test.ts:37` to `'ratchet-apply-batch'` (keep length 8)
-- [ ] 4.2 Update `test/core/shared/skill-generation.test.ts` dirNames (line 33) and command ids (line 159) to the new names
-- [ ] 4.3 Update `test/core/profiles.test.ts` (lines 12,22,37) `'batch'` -> `'apply-batch'`
-- [ ] 4.4 Update `test/core/init.test.ts:119` `coreSkillNames` to `'ratchet-apply-batch'`
-- [ ] 4.5 Confirm `test/core/profile-sync-drift.test.ts` still passes (iterates generically) and add a regression test for the `'batch'` -> `'apply-batch'` alias
-- [ ] 5.1 Verify propose-batch and any docs: no `/rct:batch` slash cross-reference exists (grep confirmed); leave `ratchet batch apply` CLI references intact
-- [ ] 6.1 Run `pnpm build` and the full test suite; ensure green
+- [x] 1.1 Rename `src/core/templates/workflows/batch.ts` to `apply-batch.ts`; rewrite the doc comment to describe the orchestrator loop (not single-step)
+- [x] 1.2 Rewrite the skill body (rename `BATCH_BODY` -> `APPLY_BATCH_BODY`) to the orchestrator loop: select batch, loop on `ratchet batch apply` until status-done, interpret advanced/halt/failure, record answers/approvals, stop conditions — agent-neutral prose
+- [x] 1.3 In the body, explicitly state the skill-loops-but-`ratchet batch apply`-stays-single-step distinction and the hard role boundary (no coding, no hand-editing artifacts, only ratchet CLI + user communication)
+- [x] 1.4 Rename `getBatchSkillTemplate` -> `getApplyBatchSkillTemplate` (name `'ratchet-apply-batch'`, orchestrator description); rename `getRctBatchCommandTemplate` -> `getRctApplyBatchCommandTemplate` (`'RCT: Apply Batch'`, orchestrator desc, tags `apply-batch`)
+- [x] 2.1 Update `src/core/templates/skill-templates.ts:15` export to renamed fns + `./workflows/apply-batch.js`
+- [x] 2.2 Update `src/core/shared/skill-generation.ts` imports (lines 13,21) and entries (lines 59,83): `dirName: 'ratchet-apply-batch'`, `workflowId: 'apply-batch'`, `id: 'apply-batch'`
+- [x] 2.3 Update `src/core/shared/tool-detection.ts`: `SKILL_NAMES` `'ratchet-batch'` -> `'ratchet-apply-batch'` (line 20); `COMMAND_IDS` `'batch'` -> `'apply-batch'` (line 37)
+- [x] 2.4 Update `src/core/profile-sync-drift.ts:20` `WORKFLOW_TO_SKILL_DIR`: `'apply-batch': 'ratchet-apply-batch'`
+- [x] 2.5 Update `src/core/profiles.ts`: `CORE_WORKFLOWS` and `ALL_WORKFLOWS` `'batch'` -> `'apply-batch'` (lines 19,29) and the doc comments (lines 14-17,26-27)
+- [x] 3.1 Add the `'batch'` -> `'apply-batch'` custom-profile alias/migration shim (custom workflow resolution + `migration.ts`/`update.ts` detection) so existing `profile: custom` allowlists are not silently dropped
+- [x] 4.1 Update `test/core/shared/tool-detection.test.ts:37` to `'ratchet-apply-batch'` (keep length 8)
+- [x] 4.2 Update `test/core/shared/skill-generation.test.ts` dirNames (line 33) and command ids (line 159) to the new names
+- [x] 4.3 Update `test/core/profiles.test.ts` (lines 12,22,37) `'batch'` -> `'apply-batch'`
+- [x] 4.4 Update `test/core/init.test.ts:119` `coreSkillNames` to `'ratchet-apply-batch'`
+- [x] 4.5 Confirm `test/core/profile-sync-drift.test.ts` still passes (iterates generically) and add a regression test for the `'batch'` -> `'apply-batch'` alias
+- [x] 5.1 Verify propose-batch and any docs: no `/rct:batch` slash cross-reference exists (grep confirmed); leave `ratchet batch apply` CLI references intact
+- [x] 6.1 Run `pnpm build` and the full test suite; ensure green

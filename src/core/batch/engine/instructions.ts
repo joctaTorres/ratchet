@@ -41,16 +41,24 @@ function transitionGuidance(context: ResolvedStepContext): string {
   switch (context.transition) {
     case 'propose':
       return [
-        `Create the change "${context.change}" and its artifacts (features + plan).`,
-        'Use the ratchet propose workflow to scaffold the change directory, its',
-        'feature files, and a plan.md with a ## Tasks checklist.',
-        'Do NOT implement tasks in this step — only propose.',
+        `Create the change "${context.change}" and its artifacts (features + plan)`,
+        'by writing files directly on disk. Concretely:',
+        `  1. Create the change directory ".ratchet/changes/${context.change}/".`,
+        '  2. Write one or more feature files under',
+        `     ".ratchet/changes/${context.change}/features/**/*.feature" describing`,
+        '     the behavior to satisfy (Gherkin-style Feature/Scenario text).',
+        `  3. Write ".ratchet/changes/${context.change}/plan.md" containing a`,
+        '     "## Tasks" section with a checklist of "- [ ]" task items.',
+        'Do NOT implement tasks in this step — only create the change and its',
+        'artifacts.',
       ].join('\n');
     case 'apply':
       return [
         `Implement the planned tasks for change "${context.change}".`,
-        'Work through the plan.md ## Tasks checklist and check off each box as you',
-        'complete it. Do NOT re-propose or change the plan scope.',
+        `Work through the "## Tasks" checklist in`,
+        `".ratchet/changes/${context.change}/plan.md", editing the source as needed`,
+        'and checking off each "- [ ]" box (to "- [x]") as you complete it. Do NOT',
+        're-propose or change the plan scope.',
       ].join('\n');
     case 'verify':
       return [
@@ -89,6 +97,7 @@ export function buildAgentInstructions(context: ResolvedStepContext): string {
   const sections = [
     `You are advancing the ratchet batch "${context.batch}".`,
     `Perform EXACTLY ONE transition: ${context.transition.toUpperCase()} for change "${context.change}".`,
+    `You MUST finish by running \`ratchet batch report ${context.batch} --change ${context.change} --complete "<summary>"\` — without it this step is treated as unreported and parked.`,
     '',
     `Active phase: ${context.phase.name}`,
     `Phase goal: ${context.phase.goal}`,

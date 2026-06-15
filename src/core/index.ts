@@ -48,6 +48,7 @@ export {
   type Gate,
   type Strategy,
   type ProofOfWorkPolicy,
+  type Locus,
 } from './batch/config.js';
 export {
   type ProofOfWork,

@@ -26,26 +26,80 @@ import { appendJournal, type JournalEntryKind } from '../journal.js';
 import type { ResolvedStepContext, StepResult, Transition } from './contract.js';
 import {
   resolveAdapter,
-  realSpawner,
   UnknownAgentError,
   type AgentAdapter,
   type AgentSpawnRequest,
+  type AgentSpawnResult,
   type Spawner,
 } from './agent.js';
+import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
+import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
+import { makeRexRemoteRuntime } from './runtime/rex-remote-runtime.js';
+import { validateRemoteSettings } from '../config.js';
+import { makeStreamJsonRenderer } from './runtime/stream-json-renderer.js';
 import { buildAgentInstructions } from './instructions.js';
 import { mapSessionToOutcome } from './outcome.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
-import { computeNextTransition } from './transition.js';
+import { computeNextTransition, readChangeDiskState } from './transition.js';
 import { withBatchLock } from './lock.js';
 import { readChangeJournalTolerant } from './run-state.js';
 
+/** Print one streamed line to the terminal (injectable so tests can assert it). */
+export type LinePrinter = (line: string) => void;
+
 export interface EngineDeps {
-  /** Process-spawn seam (defaults to the real cross-spawn spawner). */
+  /**
+   * Streaming agent runtime (defaults to the ReX-local sidecar runtime). This is
+   * the primary execution seam: it streams the agent's output live AND returns
+   * the accumulated `AgentSpawnResult` for `mapSessionToOutcome`.
+   */
+  runtime?: AgentRuntime;
+  /**
+   * Legacy direct-spawn seam, preserved as a documented fallback for one release.
+   * When a `runtime` is provided (or defaulted) it is NOT used; an explicit
+   * `spawner` is wrapped into a non-streaming runtime so the old injection path
+   * keeps working for tests that have not migrated.
+   */
   spawner?: Spawner;
+  /** Print each streamed stdout line live (defaults to writing to stdout). */
+  printLine?: LinePrinter;
   /** Extra/override agent adapters (e.g. for tests). */
   adapters?: Record<string, AgentAdapter>;
   /** Resolve the project root (defaults to planning-home). */
   projectRoot?: () => string;
+}
+
+/**
+ * Adapt a legacy `Spawner` into an `AgentRuntime`: run it, then replay the
+ * captured stdout as a single accumulated transcript followed by an exit event.
+ * Preserves the direct-spawn fallback path while keeping the streaming contract.
+ */
+function spawnerAsRuntime(spawner: Spawner): AgentRuntime {
+  return async (req, onEvent) => {
+    const result = await spawner(req);
+    if (result.stdout) {
+      for (const line of result.stdout.split('\n')) {
+        onEvent({ kind: 'stdout', line });
+      }
+    }
+    onEvent({ kind: 'exit', exitCode: result.exitCode ?? undefined });
+    return result;
+  };
+}
+
+/**
+ * An `AgentRuntime` that fails immediately with an actionable message, used when
+ * a locus is selected but its configuration is incomplete (e.g. `remote` without
+ * host/port/authToken). It mirrors the runtime error-result contract — a
+ * non-zero `exitCode`, the message in `stderr`, and an `error` event — so the
+ * engine maps it to blocked/failed BEFORE any side effect (no REST call), with
+ * no new outcome states.
+ */
+function failingRuntime(message: string): AgentRuntime {
+  return async (_req, onEvent) => {
+    onEvent({ kind: 'error', message });
+    return { exitCode: 1, signal: null, stdout: '', stderr: message };
+  };
 }
 
 /** Map a step outcome state to the journal entry kind recorded for it. */
@@ -65,14 +119,62 @@ function outcomeKind(state: EngineStepOutcome['state']): JournalEntryKind {
 export class RatchetBatchEngine {
   readonly name = 'ratchet-batch-engine';
 
-  private readonly spawner: Spawner;
+  /**
+   * The injected runtime override, when any. When unset, the runtime is selected
+   * by locus per step (currently `local` → ReX sidecar). An injected `spawner`
+   * (legacy fallback) is wrapped into a runtime so the old path keeps working.
+   */
+  private readonly runtimeOverride?: AgentRuntime;
+  private readonly printLine: LinePrinter;
   private readonly adapters?: Record<string, AgentAdapter>;
   private readonly projectRoot: () => string;
 
   constructor(deps: EngineDeps = {}) {
-    this.spawner = deps.spawner ?? realSpawner;
+    this.runtimeOverride =
+      deps.runtime ?? (deps.spawner ? spawnerAsRuntime(deps.spawner) : undefined);
+    this.printLine = deps.printLine ?? ((line) => process.stdout.write(line + '\n'));
     this.adapters = deps.adapters;
     this.projectRoot = deps.projectRoot ?? resolveProjectRoot;
+  }
+
+  /**
+   * Select the `AgentRuntime` for a step. An injected runtime/spawner always
+   * wins (tests, fallback). Otherwise the locus selects the runtime — and this
+   * is the ONLY place that branches on locus: `local` drives the ReX sidecar
+   * with `REX_LOCUS=local` and `REX_WORKDIR=projectRoot`; `docker` drives the
+   * SAME sidecar runtime with `REX_LOCUS=docker` plus the resolved `image`
+   * (the project root is bind-mounted by the runtime/sidecar); `remote` drives
+   * the native-Node `RexRemoteRuntime` over the swerex-remote REST API with the
+   * resolved host/port/authToken (no local Python). The engine, renderer, and
+   * event channel are otherwise locus-agnostic — streaming and rendering are
+   * identical regardless of locus, because every runtime emits the same events.
+   */
+  private selectRuntime(projectRoot: string, context: ResolvedStepContext): AgentRuntime {
+    if (this.runtimeOverride) return this.runtimeOverride;
+    const locus = context.settings.locus ?? 'local';
+    // The enum is validated upstream, so an unknown locus here is a programming
+    // error. `image` is threaded only for docker (ignored by the local path).
+    if (locus === 'remote') {
+      // A missing/invalid host/port/token must fail with an actionable message
+      // BEFORE any REST call — mirror the runtime's error-result path (non-zero
+      // exit + message in stderr + an error event) so the engine maps it to
+      // blocked/failed with no new outcome states and never leaks the token.
+      const configError = validateRemoteSettings(context.settings);
+      if (configError) return failingRuntime(configError);
+      return makeRexRemoteRuntime({
+        host: context.settings.host as string,
+        port: context.settings.port as number,
+        authToken: context.settings.authToken as string,
+        // The runtime picks https for a non-local host and refuses plaintext to
+        // one unless this explicit opt-in is set; loopback always allows http.
+        allowInsecure: context.settings.insecure === true,
+      });
+    }
+    return makeRexSidecarRuntime({
+      locus,
+      projectRoot,
+      ...(locus === 'docker' ? { image: context.settings.image } : {}),
+    });
   }
 
   async runStep(context: ResolvedStepContext): Promise<StepResult> {
@@ -109,10 +211,15 @@ export class RatchetBatchEngine {
     //      the configured adapter is resolved (rejecting unknowns before any spawn).
     const stepContext: ResolvedStepContext = { ...context, transition };
     const instructions = buildAgentInstructions(stepContext);
-    const env = { ...process.env };
+    // Thread the batch name through the env so the runtime can place the temp
+    // prompt file under `.ratchet/batches/<batch>/.run/<id>/`.
+    const env = { ...process.env, RATCHET_BATCH_NAME: batch };
     let request;
+    let emitsStreamJson = false;
     try {
-      request = this.buildSpawnRequest(stepContext, instructions, projectRoot, env);
+      const built = this.buildSpawnRequest(stepContext, instructions, projectRoot, env);
+      request = built.request;
+      emitsStreamJson = built.emitsStreamJson;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return {
@@ -126,15 +233,47 @@ export class RatchetBatchEngine {
       throw err;
     }
 
-    // Snapshot journal length so we can isolate this session's entries.
+    // Snapshot journal length and on-disk change state so we can isolate this
+    // session's entries and measure the artifact delta (e.g. apply progress).
     const before = readChangeJournalTolerant(projectRoot, batch, change).length;
+    const diskBefore = readChangeDiskState(projectRoot, change);
 
-    const spawnResult = await this.spawner(request);
+    // Route through the streaming runtime: each stdout line is PRINTED live as it
+    // arrives while still accumulating into the returned `AgentSpawnResult`, which
+    // flows into `mapSessionToOutcome` exactly as the old spawner result did.
+    // When the resolved adapter emits structured stream-json, route each stdout
+    // line through the generic renderer (which itself writes via `this.printLine`,
+    // keeping the single sink seam) for polished live output; flush any buffered
+    // partial + the summary on exit. Otherwise print each line raw, as before.
+    // Rendering is display-only — the runtime accumulates the raw NDJSON into
+    // `AgentSpawnResult.stdout` independently, so the mapped transcript is
+    // untouched.
+    const runtime = this.selectRuntime(projectRoot, stepContext);
+    const renderer = emitsStreamJson ? makeStreamJsonRenderer(this.printLine) : undefined;
+    const onEvent = (e: AgentEvent): void => {
+      if (e.kind === 'stdout' && e.line !== undefined) {
+        if (renderer) renderer.handleLine(e.line + '\n');
+        else this.printLine(e.line);
+      } else if (e.kind === 'exit' && renderer) {
+        renderer.flush();
+      } else if (e.kind === 'error' && e.message !== undefined) {
+        // An actionable failure (e.g. a remote auth/connection/config error or a
+        // sidecar bootstrap failure) is printed live on the same sink so the user
+        // sees the message even though the mapped outcome stays a generic
+        // failed→blocked. Flush any buffered render first so it is not swallowed.
+        renderer?.flush();
+        this.printLine(e.message);
+      }
+    };
+    const spawnResult: AgentSpawnResult = await runtime(request, onEvent);
+    // Belt-and-braces: flush in case the runtime resolved without an exit event.
+    renderer?.flush();
 
     // 4. Read the entries the agent wrote during this session and map them.
     const afterAll = readChangeJournalTolerant(projectRoot, batch, change);
     const sessionEntries = afterAll.slice(before);
     const sessionIndices = sessionEntries.map((_, i) => before + i);
+    const diskAfter = readChangeDiskState(projectRoot, change);
 
     const parkForApproval = this.shouldParkForApproval(context, transition);
 
@@ -145,6 +284,7 @@ export class RatchetBatchEngine {
       sessionIndices,
       spawn: spawnResult,
       parkForApproval,
+      diskEvidence: { before: diskBefore, after: diskAfter },
     });
 
     // 5. Record a journal entry for the transition outcome (the agent may not
@@ -175,13 +315,21 @@ export class RatchetBatchEngine {
     instructions: string,
     projectRoot: string,
     env: NodeJS.ProcessEnv
-  ): AgentSpawnRequest {
+  ): { request: AgentSpawnRequest; emitsStreamJson: boolean } {
     const override = process.env.RATCHET_BATCH_AGENT_CMD;
     if (override && override.trim().length > 0) {
-      return { command: 'bash', args: ['-c', override], instructions, cwd: projectRoot, env };
+      // The `bash -c` override stands in for the agent binary and is NOT
+      // stream-json-capable (keeps e2e/eval deterministic) → raw streaming.
+      return {
+        request: { command: 'bash', args: ['-c', override], instructions, cwd: projectRoot, env },
+        emitsStreamJson: false,
+      };
     }
     const adapter = resolveAdapter(context.settings.agent, this.adapters);
-    return adapter.buildRequest(context, instructions, projectRoot, env);
+    return {
+      request: adapter.buildRequest(context, instructions, projectRoot, env),
+      emitsStreamJson: adapter.emitsStreamJson === true,
+    };
   }
 
   /**

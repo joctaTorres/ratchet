@@ -386,9 +386,14 @@ batchCmd.hook('preAction', async () => {
     const { maybeRunFirstRunSetup } = await import('../core/batch/first-run-setup.js');
     const root = resolveCurrentPlanningHomeSync().root;
     await maybeRunFirstRunSetup(root);
-  } catch {
+  } catch (err) {
     // No planning home / prompt cancellation / any setup error is non-fatal —
-    // the command proceeds with the default posture resolved downstream.
+    // the command proceeds with the default posture resolved downstream. We still
+    // surface it under DEBUG so a corrupt-config throw isn't silently swallowed
+    // every run while staying non-blocking.
+    if (process.env.DEBUG || process.env.RATCHET_DEBUG) {
+      console.debug('[batch] first-run setup skipped (non-fatal):', err);
+    }
   }
 });
 

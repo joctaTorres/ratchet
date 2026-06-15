@@ -14,6 +14,8 @@
  */
 
 import { spawn } from 'node:child_process';
+import { resolvePermissionFlags } from '../runtime/agent-permissions.js';
+import type { ResolvedPermissionsPolicy } from '../permissions-policy.js';
 
 /**
  * The narrow slice of step context an adapter may read when building a spawn
@@ -24,6 +26,16 @@ import { spawn } from 'node:child_process';
 export interface AgentRequestContext {
   batch: string;
   change: string;
+  /**
+   * The narrow slice of resolved settings an adapter reads. `ResolvedStepContext`
+   * (whose `settings` is the full `BatchSettings`) is assignable to this, so the
+   * engine passes its context unchanged. Only `permissions` is read here, and it
+   * is optional so minimal callers (e.g. the eval judge) need not supply it — a
+   * missing policy yields no permission flags.
+   */
+  settings?: {
+    permissions?: ResolvedPermissionsPolicy;
+  };
 }
 
 export interface AgentSpawnResult {
@@ -84,14 +96,21 @@ class CommandAgentAdapter implements AgentAdapter {
   ) {}
 
   buildRequest(
-    _context: AgentRequestContext,
+    context: AgentRequestContext,
     instructions: string,
     cwd: string,
     env: NodeJS.ProcessEnv
   ): AgentSpawnRequest {
+    // Append the resolved permission flags AFTER the base argv. `cwd` is the
+    // project/repo root the engine spawns in, so it doubles as the repo root the
+    // translator scopes the agent to (`--add-dir`/sandbox). A missing policy
+    // (minimal callers) appends nothing.
+    const permissionFlags = context.settings?.permissions
+      ? resolvePermissionFlags(this.name, context.settings.permissions, cwd)
+      : [];
     return {
       command: this.command,
-      args: this.argv(instructions),
+      args: [...this.argv(instructions), ...permissionFlags],
       instructions: this.passOnStdin ? instructions : '',
       cwd,
       env,

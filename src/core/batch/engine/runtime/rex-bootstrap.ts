@@ -50,10 +50,10 @@ export const DEFAULT_DOCKER_IMAGE = 'python:3.12';
 
 /**
  * The `docker` extra label recorded in the readiness marker. The docker locus
- * needs `swe-rex[docker]` (it pulls `aiohttp`, which base swe-rex omits — see
- * rex-bootstrap design note), so a local-only venv must be REBUILT the first
- * time docker is requested. The marker records which extras are installed so the
- * readiness check can detect a local-only venv and force a docker-capable rebuild.
+ * needs `aiohttp` (which base swe-rex omits and no swe-rex extra declares — see
+ * EXTRA_PACKAGES), so a local-only venv must be REBUILT the first time docker is
+ * requested. The marker records which extras are installed so the readiness
+ * check can detect a local-only venv and force a docker-capable rebuild.
  */
 export const DOCKER_EXTRA = 'docker';
 
@@ -301,13 +301,29 @@ function isReady(
 const SWE_REX_SPEC = `swe-rex==${SWE_REX_VERSION}`;
 
 /**
- * The pip install spec for the given extras. With the `docker` extra this is
- * `swe-rex[docker]==<ver>` so `aiohttp` (required by the docker deployment) is
- * pulled in; with no extras it is the plain pinned base.
+ * Extra pip packages a requested capability needs that swe-rex fails to declare.
+ *
+ * swe-rex 1.4.0 ships NO `docker` extra (its only extras are dev/modal/fargate/
+ * daytona), yet `swerex.deployment.docker` imports `aiohttp` (the docker
+ * deployment talks to the in-container server over HTTP via RemoteRuntime).
+ * `aiohttp` is an UNDECLARED transitive dependency, so `swe-rex[docker]` resolves
+ * to an unknown extra and a silent no-op. We therefore install `aiohttp`
+ * explicitly alongside the pinned base for the docker locus.
  */
-function sweRexSpec(extras: readonly string[]): string {
-  if (extras.length === 0) return SWE_REX_SPEC;
-  return `swe-rex[${[...extras].sort().join(',')}]==${SWE_REX_VERSION}`;
+const EXTRA_PACKAGES: Record<string, readonly string[]> = {
+  [DOCKER_EXTRA]: ['aiohttp'],
+};
+
+/**
+ * The pip install specs: the pinned swe-rex base plus any packages required by
+ * the requested extras (which swe-rex under-declares — see {@link EXTRA_PACKAGES}).
+ */
+function installSpecs(extras: readonly string[]): string[] {
+  const specs = [SWE_REX_SPEC];
+  for (const extra of [...extras].sort()) {
+    specs.push(...(EXTRA_PACKAGES[extra] ?? []));
+  }
+  return specs;
 }
 
 /**
@@ -323,7 +339,7 @@ function buildVenv(
   layout: VenvLayout,
   extras: readonly string[] = []
 ): void {
-  const spec = sweRexSpec(extras);
+  const specs = installSpecs(extras);
   // Clear any half-built state so nothing stale is mistaken for usable.
   deps.rmrf(layout.venvDir);
   deps.mkdirp(layout.cacheHome);
@@ -343,7 +359,7 @@ function buildVenv(
       'install',
       '--python',
       layout.venvPython,
-      spec,
+      ...specs,
     ]);
     if (installed.status !== 0) {
       deps.rmrf(layout.venvDir);
@@ -363,7 +379,7 @@ function buildVenv(
       '-m',
       'pip',
       'install',
-      spec,
+      ...specs,
     ]);
     if (installed.status !== 0) {
       deps.rmrf(layout.venvDir);
@@ -383,7 +399,7 @@ function buildVenv(
   if (check.status !== 0) {
     deps.rmrf(layout.venvDir);
     throw new RexBootstrapError(
-      `ReX runtime bootstrap: installed ${spec} but it does not import ` +
+      `ReX runtime bootstrap: installed ${specs.join(' ')} but it does not import ` +
         `from the venv interpreter. Detail: ${truncate(check.stderr)}`
     );
   }
@@ -463,8 +479,9 @@ export function preflightDockerDaemon(deps: BootstrapDeps): void {
  * without a rebuild; a missing/stale venv is rebuilt after clearing the dir.
  *
  * Docker locus: a `docker info` pre-flight runs FIRST (fail closed, no hang),
- * and the venv must carry the `docker` extra (`swe-rex[docker]`, for `aiohttp`),
- * which forces a rebuild of a local-only venv on first docker use. The image +
+ * and the venv must carry the `docker` extra (an explicit `aiohttp` install,
+ * which swe-rex under-declares), which forces a rebuild of a local-only venv on
+ * first docker use. The image +
  * mount env (`REX_IMAGE`/`REX_MOUNT_HOST`/`REX_MOUNT_CONTAINER`) is threaded to
  * the sidecar. `local` is unaffected: no docker probe, no extras, no image/mount.
  */

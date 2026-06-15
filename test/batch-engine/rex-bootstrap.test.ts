@@ -357,16 +357,20 @@ describe('bootstrapRexRuntime — docker locus', () => {
     expect(deps.calls.some((c) => c.command === 'uv' && c.args[0] === 'venv')).toBe(false);
   });
 
-  it('installs the docker extra and records it in the readiness marker', () => {
+  it('installs aiohttp (the docker dep swe-rex under-declares) and records the docker extra', () => {
     const deps = new FakeDeps(dockerHappy);
     deps.toolsOnPath.add('uv');
     bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'docker' });
 
-    // The install spec carried the docker extra.
+    // swe-rex 1.4.0 has NO `docker` extra; `swerex.deployment.docker` needs
+    // `aiohttp` (undeclared), so we install it explicitly alongside the base —
+    // NOT a `swe-rex[docker]` extra (which would be a silent no-op).
     const installCall = deps.calls.find(
       (c) => c.args.includes('pip') && c.args.includes('install')
     );
-    expect(installCall?.args.some((a) => a.includes('swe-rex[docker]'))).toBe(true);
+    expect(installCall?.args).toContain('aiohttp');
+    expect(installCall?.args.some((a) => a.includes('swe-rex==') )).toBe(true);
+    expect(installCall?.args.some((a) => a.includes('swe-rex[docker]'))).toBe(false);
 
     const markerPath = path.join(CACHE, 'ratchet', 'rex', 'venv', '.ratchet-rex-ready.json');
     const marker = JSON.parse(deps.readText(markerPath));

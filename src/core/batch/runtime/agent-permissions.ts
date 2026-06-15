@@ -129,20 +129,54 @@ function codexFlags(policy: ResolvedPermissionsPolicy): string[] {
 
 /**
  * cursor-agent — VERIFY AT APPLY (binary not installed on the build machine).
- * Intended mapping per the plan's table: a force/non-interactive flag for
- * unattended work, escalating to a force-all flag for full-autonomy. Re-verify
- * exact spellings once `cursor-agent` is on PATH.
+ *
+ * Researched from the Cursor CLI docs (cursor.com/docs/cli/reference/permissions
+ * and .../configuration): `--force` is a BYPASS flag — in print mode it skips the
+ * write-file confirmation, i.e. it grants the same unattended write authority that
+ * `full-autonomy` intends. Cursor's allow/deny permission lists are configured via
+ * a config file (`permissions.allow` / `permissions.deny`), NOT via argv, so under
+ * our locked argv-only decision we cannot inject a bounded allow/deny here.
+ *
+ * INVARIANT: the sandboxed/curated postures MUST NOT emit `--force`. Without it,
+ * cursor falls back to its default approval-prompting behavior, which is strictly
+ * more bounded than the bypass. `--force` is therefore reserved for
+ * `full-autonomy` ONLY. Because argv cannot express a bounded allow/deny for
+ * cursor, the sandboxed/curated invocation is best-effort (relies on cursor's own
+ * default gating) — we emit a one-time warning so a "sandboxed" label is never
+ * silently equivalent to full autonomy. Re-verify exact flags once `cursor-agent`
+ * is on PATH (e.g. a config-file-based allow/deny or a future approval-mode flag).
  */
 function cursorFlags(policy: ResolvedPermissionsPolicy): string[] {
   switch (policy.posture) {
     case 'full-autonomy':
+      // BYPASS: skip write/command confirmation entirely. Bypass lives here only.
       return ['--force'];
     case 'curated-allowlist':
-      return ['--force'];
     case 'repo-sandboxed-permissive':
     default:
-      return ['--force'];
+      // No `--force` → cursor keeps its default per-action approval gating. argv
+      // cannot carry cursor's allow/deny (config-file only), so warn once that
+      // this posture is bounded only by cursor's own defaults, not by our policy.
+      warnCursorBestEffort(policy.posture);
+      return [];
   }
+}
+
+/**
+ * One-time-per-process warning that a non-full-autonomy cursor posture is bounded
+ * only by cursor-agent's built-in approval gating (argv cannot carry our policy's
+ * allow/deny for cursor). Keeps the mapper effectively pure for callers — the
+ * warning fires at most once per posture and never alters the returned argv.
+ */
+const warnedCursorPostures = new Set<string>();
+function warnCursorBestEffort(posture: string): void {
+  if (warnedCursorPostures.has(posture)) return;
+  warnedCursorPostures.add(posture);
+  console.warn(
+    `[batch] cursor-agent: posture "${posture}" cannot be enforced via argv ` +
+      `(cursor's allow/deny is config-file only). Falling back to cursor's default ` +
+      `per-action approval gating — NOT the bypass. Verify at apply.`
+  );
 }
 
 type Mapper = (policy: ResolvedPermissionsPolicy, repoRoot: string) => string[];
@@ -170,8 +204,9 @@ export function resolvePermissionFlags(
   policy: ResolvedPermissionsPolicy,
   repoRoot: string
 ): string[] {
-  const mapper = AGENT_MAPPERS[agentName as PermissionRawAgent];
+  const agent = agentName as PermissionRawAgent;
+  const mapper = AGENT_MAPPERS[agent];
   const postureFlags = mapper ? mapper(policy, repoRoot) : [];
-  const rawForAgent = policy.raw[agentName as PermissionRawAgent] ?? [];
+  const rawForAgent = policy.raw[agent] ?? [];
   return [...postureFlags, ...rawForAgent];
 }

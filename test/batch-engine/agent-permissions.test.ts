@@ -97,8 +97,18 @@ describe('resolvePermissionFlags — codex/cursor (verify-at-apply mappings)', (
       '--full-auto',
     ]);
   });
-  it('cursor emits a force/non-interactive flag', () => {
-    expect(resolvePermissionFlags('cursor', policy(), REPO)).toContain('--force');
+  it('cursor reserves the --force bypass for full-autonomy ONLY', () => {
+    expect(resolvePermissionFlags('cursor', policy({ posture: 'full-autonomy' }), REPO)).toContain(
+      '--force'
+    );
+  });
+  it('cursor sandboxed/curated do NOT emit the --force bypass', () => {
+    // Regression guard for the safety defect: a "sandboxed" cursor run must never
+    // carry the same unattended bypass as full-autonomy.
+    expect(resolvePermissionFlags('cursor', policy(), REPO)).not.toContain('--force');
+    expect(
+      resolvePermissionFlags('cursor', policy({ posture: 'curated-allowlist' }), REPO)
+    ).not.toContain('--force');
   });
 });
 
@@ -165,5 +175,31 @@ describe('every posture resolves for every supported agent without throwing', ()
         expect(Array.isArray(flags)).toBe(true);
       });
     }
+  }
+});
+
+describe('safety invariant — sandboxed/curated must NOT equal full-autonomy', () => {
+  // The core promise of the permission abstraction: for EVERY agent, a bounded
+  // posture must translate to a flag set that DIFFERS from full-autonomy. This is
+  // the regression guard for the cursor defect (where all three postures returned
+  // ['--force']) and protects every other adapter from regressing the same way.
+  for (const agent of ['claude', 'gemini', 'codex', 'cursor']) {
+    const full = resolvePermissionFlags(agent, policy({ posture: 'full-autonomy' }), REPO);
+    it(`${agent}: repo-sandboxed-permissive ≠ full-autonomy`, () => {
+      const sandboxed = resolvePermissionFlags(
+        agent,
+        policy({ posture: 'repo-sandboxed-permissive' }),
+        REPO
+      );
+      expect(sandboxed).not.toEqual(full);
+    });
+    it(`${agent}: curated-allowlist ≠ full-autonomy`, () => {
+      const curated = resolvePermissionFlags(
+        agent,
+        policy({ posture: 'curated-allowlist' }),
+        REPO
+      );
+      expect(curated).not.toEqual(full);
+    });
   }
 });

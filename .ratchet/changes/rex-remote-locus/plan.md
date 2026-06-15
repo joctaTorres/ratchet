@@ -174,9 +174,9 @@ boots a real local server, and it SKIPs cleanly when `swerex-remote` is absent.
 - [x] 2.6 Detect the exit-code sentinel each poll; on completion drain the final tail, emit the `exit` event, then `POST /close_session` + `POST /close`; resolve `AgentSpawnResult`. Tear down (best-effort close) on timeout/abort too.
 - [x] 2.7 Unit tests with mocked `fetch`: full health→create→write→launch→tail→exit→close sequence; incremental event emission; transcript accumulation; auth-failure (401); connection-failure (reject + timeout); swerexception body; teardown calls close. NO real server.
 
-- [ ] 3.1 Extend `selectRuntime` in `src/core/batch/engine/engine.ts`: `locus === 'remote'` → `makeRexRemoteRuntime` with resolved host/port/authToken; `local`/`docker` unchanged; keep `onEvent`/renderer/outcome routing untouched.
-- [ ] 3.2 Surface a missing remote config (host/port/token) as a failed outcome BEFORE any REST call (actionable message), consistent with the auth/connection error path.
-- [ ] 3.3 Unit test the engine wiring: `remote` selects the remote runtime (injected fake) and gets stream-json rendering via the existing renderer; `local`/`docker` still select the sidecar; missing remote config fails actionably.
+- [x] 3.1 Extend `selectRuntime` in `src/core/batch/engine/engine.ts`: `locus === 'remote'` → `makeRexRemoteRuntime` with resolved host/port/authToken; `local`/`docker` unchanged; keep `onEvent`/renderer/outcome routing untouched.
+- [x] 3.2 Surface a missing remote config (host/port/token) as a failed outcome BEFORE any REST call (actionable message), consistent with the auth/connection error path.
+- [x] 3.3 Unit test the engine wiring: `remote` selects the remote runtime (injected fake) and gets stream-json rendering via the existing renderer; `local`/`docker` still select the sidecar; missing remote config fails actionably.
 
 - [ ] 4.1 Write `test/e2e/rex-remote-locus.sh` (blackbox): resolve a Python>=3.10 + the venv `swerex-remote` script; SKIP explicitly (exit 0) if genuinely unavailable; build dist if needed.
 - [ ] 4.2 Boot a local `swerex-remote` server with a known `--auth-token` on a free port; wait for `/is_alive`; ensure teardown on exit (trap).

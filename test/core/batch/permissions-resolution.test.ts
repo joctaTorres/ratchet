@@ -139,6 +139,28 @@ describe('redactSettings — secret-bearing raw override values', () => {
     expect(raw).toContain(`--auth-token=${REDACTED_PLACEHOLDER}`);
     expect(raw).toContain('--keep');
   });
+
+  it('masks an inline --flag=secret pairing by VALUE shape (non-secret flag name)', () => {
+    // Regression guard: a non-secret-named flag (`--config`) carrying an opaque
+    // token must still have its value half redacted, not leaked verbatim.
+    const settings = {
+      gate: 'voluntary',
+      strategy: 'vertical-slice',
+      proofOfWork: 'hard-gate',
+      locus: 'local',
+      permissions: {
+        posture: 'full-autonomy',
+        allow: [],
+        deny: [],
+        raw: { cursor: ['--config=sk-live-abcdef0123456789abcdef', '--print'] },
+      },
+    } as unknown as BatchSettings;
+    const raw = redactSettings(settings).permissions?.raw.cursor ?? [];
+    expect(raw).toContain(`--config=${REDACTED_PLACEHOLDER}`);
+    expect(raw).not.toContain('--config=sk-live-abcdef0123456789abcdef');
+    expect(raw.join(' ')).not.toContain('sk-live-abcdef0123456789abcdef');
+    expect(raw).toContain('--print'); // short non-secret flag preserved
+  });
 });
 
 describe('project persistence + idempotency key', () => {

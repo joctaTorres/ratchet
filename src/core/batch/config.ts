@@ -163,9 +163,17 @@ export function redactSettings(settings: BatchSettings): BatchSettings {
 /**
  * Matches argv tokens that look secret-bearing — either a bare token value
  * (long opaque/hex/base64-ish string) or a `--flag=secret` / `--token secret`
- * pairing where the flag name signals a secret. The `raw` override is an escape
- * hatch, so a careless operator could embed an API key there; this keeps it out
- * of `batch config` output and logs.
+ * pairing. For `--flag=value`, the value half is masked when the flag name
+ * signals a secret OR the value itself looks secret-shaped (`SECRETISH_VALUE`),
+ * so a non-secret-named flag carrying an opaque token (`--config=sk-live-…`) is
+ * still redacted. The `raw` override is an escape hatch, so a careless operator
+ * could embed an API key there; this keeps it out of `batch config` output and
+ * logs.
+ *
+ * RESIDUAL LIMITATION (operators: do not assume full coverage): the value
+ * heuristic only catches OPAQUE tokens ≥20 chars. A short secret (< 20 chars)
+ * that is neither preceded by a secret-named flag nor attached to one passes
+ * through verbatim. Prefer secret-named flags for sensitive `raw` values.
  */
 const SECRET_FLAG_NAME = /(token|secret|key|password|passwd|pwd|auth|bearer|credential)/i;
 const SECRETISH_VALUE = /^[A-Za-z0-9_\-./+=]{20,}$/;
@@ -202,7 +210,11 @@ function redactArgvFragment(fragment: string[]): string[] {
       const eq = token.indexOf('=');
       if (eq !== -1) {
         const name = token.slice(0, eq);
-        if (SECRET_FLAG_NAME.test(name)) {
+        const value = token.slice(eq + 1);
+        // Mask the value half when EITHER the flag name signals a secret OR the
+        // value itself looks secret-shaped — so e.g. `--config=sk-live-…` (a
+        // non-secret-named flag carrying an opaque token) is redacted, not leaked.
+        if (SECRET_FLAG_NAME.test(name) || SECRETISH_VALUE.test(value)) {
           out.push(`${name}=${REDACTED_PLACEHOLDER}`);
           prevWasSecretFlag = false;
           continue;

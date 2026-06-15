@@ -22,11 +22,12 @@ export const PROOF_OF_WORK_POLICY_VALUES = ['hard-gate', 'warn'] as const;
 /**
  * Execution locus: where a step's agent runs. `local` drives the in-process ReX
  * sidecar (the default); `docker` runs the same step inside a container via ReX
- * `DockerDeployment` with the project root bind-mounted in. `remote` is a later
- * phase; the enum is the clean extension point — add a value here and a runtime
- * selector branch in the engine.
+ * `DockerDeployment` with the project root bind-mounted in. `remote` drives a
+ * `swerex-remote` server over its REST API from a native-Node `fetch` client (no
+ * local Python sidecar — the Python lives on the server), selected by a runtime
+ * branch in the engine.
  */
-export const LOCUS_VALUES = ['local', 'docker'] as const;
+export const LOCUS_VALUES = ['local', 'docker', 'remote'] as const;
 
 /**
  * The default container image for `locus: docker` when no `image` is configured.
@@ -53,6 +54,48 @@ export interface BatchSettings {
    * `DEFAULT_DOCKER_IMAGE`.
    */
   image?: string;
+  /**
+   * Host of the `swerex-remote` server for `locus: remote` (e.g. `localhost`).
+   * Required for `remote`; ignored for `local`/`docker`.
+   */
+  host?: string;
+  /**
+   * Port of the `swerex-remote` server for `locus: remote`. Required for
+   * `remote`; ignored for `local`/`docker`.
+   */
+  port?: number;
+  /**
+   * Auth token sent as the `X-API-Key` header to the `swerex-remote` server for
+   * `locus: remote`. Required for `remote`; ignored for `local`/`docker`.
+   *
+   * SECRET: this value is NEVER printed — settings displays redact it (see
+   * `redactSettings`) and runtime error messages name only host/port.
+   */
+  authToken?: string;
+}
+
+/**
+ * Settings whose values are secret and must never be printed verbatim. Any
+ * settings display must run them through {@link redactSettings}.
+ */
+export const SECRET_SETTING_KEYS: readonly (keyof BatchSettings)[] = ['authToken'];
+
+/** The placeholder shown in place of a redacted secret value. */
+export const REDACTED_PLACEHOLDER = '***';
+
+/**
+ * Return a copy of `settings` with any secret values replaced by
+ * `REDACTED_PLACEHOLDER`, so callers can print settings without leaking the
+ * `authToken`. An unset secret stays unset (nothing to leak, nothing to show).
+ */
+export function redactSettings(settings: BatchSettings): BatchSettings {
+  const redacted: BatchSettings = { ...settings };
+  for (const key of SECRET_SETTING_KEYS) {
+    if (redacted[key] !== undefined) {
+      (redacted as unknown as Record<string, unknown>)[key] = REDACTED_PLACEHOLDER;
+    }
+  }
+  return redacted;
 }
 
 /** Where each effective value came from. */
@@ -77,6 +120,9 @@ const SETTING_KEYS: (keyof BatchSettings)[] = [
   'locus',
   'agent',
   'image',
+  'host',
+  'port',
+  'authToken',
 ];
 
 const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
@@ -86,6 +132,9 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
   locus: LOCUS_VALUES,
   agent: null, // free-form string
   image: null, // free-form string (container image reference)
+  host: null, // free-form string (swerex-remote host)
+  port: null, // numeric string (swerex-remote port)
+  authToken: null, // free-form secret string (swerex-remote X-API-Key)
 };
 
 /**
@@ -103,6 +152,9 @@ export function resolveBatchSettings(
     locus: 'default',
     agent: 'default',
     image: 'default',
+    host: 'default',
+    port: 'default',
+    authToken: 'default',
   };
 
   const writable = settings as { [K in keyof BatchSettings]: BatchSettings[K] };
@@ -167,7 +219,53 @@ export function validateSetting(key: string, value: string): SetResult {
     };
   }
 
+  // The remote-locus settings each have a shape constraint, rejected before the
+  // project config is written (see features/remote-locus/config-and-validation).
+  if ((key === 'host' || key === 'authToken') && value.trim().length === 0) {
+    return {
+      ok: false,
+      error: `Invalid value for '${key}': it must not be empty.`,
+    };
+  }
+  if (key === 'port' && !isValidPort(value)) {
+    return {
+      ok: false,
+      error: `Invalid value for 'port': it must be a positive integer (got '${value}').`,
+    };
+  }
+
   return { ok: true, key: key as keyof BatchSettings, value };
+}
+
+/** A port is a positive integer (numeric string, no decimals/sign/whitespace). */
+function isValidPort(value: string): boolean {
+  return /^[0-9]+$/.test(value.trim()) && Number(value.trim()) > 0;
+}
+
+/**
+ * Cross-field check for `locus: remote`: it requires `host`, `port`, and
+ * `authToken`. Returns an actionable error message naming the FIRST missing key
+ * (never echoing the secret token), or `null` when the settings are complete or
+ * the locus is not `remote`. Consumed where settings are resolved (the engine)
+ * so a misconfiguration fails BEFORE any REST call is attempted.
+ */
+export function validateRemoteSettings(settings: BatchSettings): string | null {
+  if (settings.locus !== 'remote') return null;
+  const missing: string[] = [];
+  if (settings.host === undefined || String(settings.host).trim().length === 0) {
+    missing.push('host');
+  }
+  if (settings.port === undefined || !isValidPort(String(settings.port))) {
+    missing.push('port');
+  }
+  if (settings.authToken === undefined || String(settings.authToken).trim().length === 0) {
+    missing.push('authToken');
+  }
+  if (missing.length === 0) return null;
+  return (
+    `locus 'remote' requires host, port, and authToken, but missing/invalid: ${missing.join(', ')}. ` +
+    `Set them with 'ratchet batch config --set <key>=<value>' or in .ratchet/config.yaml.`
+  );
 }
 
 function configFilePath(projectRoot: string): string {
@@ -210,7 +308,9 @@ export function setProjectBatchSetting(
     string,
     unknown
   >;
-  batch[key] = value;
+  // `port` is a number in the schema, so persist it as one (a quoted string
+  // would be rejected by the manifest/project-config schemas on read).
+  batch[key] = key === 'port' ? Number(value.trim()) : value;
   raw.batch = batch;
 
   writeFileSync(filePath, stringifyYaml(raw), 'utf-8');

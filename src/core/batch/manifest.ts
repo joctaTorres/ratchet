@@ -52,9 +52,12 @@ export const BatchSettingsOverrideSchema = z
     gate: z.enum(['voluntary', 'after-propose', 'every-phase', 'autonomous']).optional(),
     strategy: z.enum(['vertical-slice', 'feature']).optional(),
     proofOfWork: z.enum(['hard-gate', 'warn']).optional(),
-    locus: z.enum(['local', 'docker']).optional(),
+    locus: z.enum(['local', 'docker', 'remote']).optional(),
     agent: z.string().optional(),
     image: z.string().optional(),
+    host: z.string().optional(),
+    port: z.number().optional(),
+    authToken: z.string().optional(),
   })
   .strict();
 

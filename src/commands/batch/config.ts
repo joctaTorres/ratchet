@@ -15,6 +15,7 @@ import { loadBatchManifest } from '../../core/batch/manifest.js';
 import {
   resolveBatchSettings,
   setProjectBatchSetting,
+  redactSettings,
   type ResolvedBatchSettings,
   type BatchSettings,
 } from '../../core/batch/config.js';
@@ -63,21 +64,39 @@ export async function batchConfigCommand(
   const resolved = resolveBatchSettings(projectRoot, manifest);
 
   if (options.json) {
-    console.log(JSON.stringify({ name: name ?? null, ...resolved }, null, 2));
+    // Redact the secret authToken before printing — `ratchet batch config`
+    // must never echo it (see features/remote-locus/config-and-validation).
+    const safe: ResolvedBatchSettings = {
+      ...resolved,
+      settings: redactSettings(resolved.settings),
+    };
+    console.log(JSON.stringify({ name: name ?? null, ...safe }, null, 2));
     return;
   }
 
   printResolved(name, resolved);
 }
 
-const KEYS: (keyof BatchSettings)[] = ['gate', 'strategy', 'proofOfWork', 'agent'];
+const KEYS: (keyof BatchSettings)[] = [
+  'gate',
+  'strategy',
+  'proofOfWork',
+  'locus',
+  'agent',
+  'image',
+  'host',
+  'port',
+  'authToken',
+];
 
 function printResolved(name: string | undefined, resolved: ResolvedBatchSettings): void {
   const heading = name ? `Effective batch settings for '${name}'` : 'Batch settings (project)';
   console.log(chalk.bold(`\n${heading}\n`));
 
+  // Redact the secret authToken so the human-readable table never leaks it.
+  const display = redactSettings(resolved.settings);
   for (const key of KEYS) {
-    const value = resolved.settings[key];
+    const value = display[key];
     const source = resolved.sources[key];
     const valueText = value === undefined ? chalk.dim('(unset)') : String(value);
     const sourceText =

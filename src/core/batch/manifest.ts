@@ -62,6 +62,7 @@ export const BatchSettingsOverrideSchema = z
     // Per-change agent permission override. `permissions` is a known key, so the
     // schema stays `.strict()` (it rejects unknown keys, not this one).
     permissions: PermissionsPolicySchema.optional(),
+    insecure: z.boolean().optional(),
   })
   .strict();
 

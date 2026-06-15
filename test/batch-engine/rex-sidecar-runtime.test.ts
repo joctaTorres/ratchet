@@ -244,6 +244,27 @@ describe('makeRexSidecarRuntime', () => {
     );
   });
 
+  it('threads a cwd as a leading `cd <cwd>;` (parity with the remote runtime)', () => {
+    const cmd = buildRunCommand(
+      '/tmp/run/prompt.txt',
+      { command: 'claude', args: ['-p'], instructions: '', cwd: '/proj', env: {} },
+      '/the/workdir'
+    );
+    expect(cmd).toBe("cd '/the/workdir'; cat '/tmp/run/prompt.txt' | 'claude' '-p'");
+  });
+
+  it('omits the `cd` when no cwd is given (inherits the ReX session cwd)', () => {
+    const cmd = buildRunCommand('/tmp/run/prompt.txt', {
+      command: 'claude',
+      args: ['-p'],
+      instructions: '',
+      cwd: '/proj',
+      env: {},
+    });
+    expect(cmd.startsWith('cat ')).toBe(true);
+    expect(cmd).not.toContain('cd ');
+  });
+
   it('feeds the prompt file to a bash -c override command too', () => {
     const cmd = buildRunCommand('/tmp/run/prompt.txt', {
       command: 'bash',
@@ -332,7 +353,7 @@ describe('makeRexSidecarRuntime', () => {
       }
     };
 
-    const runPromise = runtime(request(), () => {});
+    const runPromise = runtime(request({ cwd: '/host/project' }), () => {});
     child.emitLine({ event: 'ready', locus: 'docker' });
     await runPromise;
 
@@ -350,6 +371,32 @@ describe('makeRexSidecarRuntime', () => {
     expect(runOp.command).toContain(`${DOCKER_MOUNT_CONTAINER}/.ratchet/batches/`);
     expect(runOp.command).toContain('prompt.txt');
     expect(runOp.command).not.toContain('/host/project/.ratchet');
+    // req.cwd (the host project root) is threaded as a `cd` onto the IN-CONTAINER
+    // mount path, NOT the host path which does not exist inside the container.
+    expect(runOp.command.startsWith(`cd '${DOCKER_MOUNT_CONTAINER}';`)).toBe(true);
+    expect(runOp.command).not.toContain(`cd '/host/project'`);
+  });
+
+  it('threads req.cwd as a leading `cd` in the local run command', async () => {
+    const child = new FakeChild();
+    const { deps } = fakeDeps(child, { bootstrap: () => LAUNCH });
+    const runtime = makeRexSidecarRuntime({ projectRoot: '/proj', deps });
+
+    child.onOp = (op, self) => {
+      if (op.op === 'run') self.emitLine({ event: 'exit', id: op.id, exit_code: 0 });
+      else if (op.op === 'shutdown') {
+        self.emitLine({ event: 'closed' });
+        self.emit('exit', 0, null);
+      }
+    };
+
+    const runPromise = runtime(request({ cwd: '/proj/sub' }), () => {});
+    child.emitLine({ event: 'ready', locus: 'local' });
+    await runPromise;
+
+    const runOp = child.ops.find((o) => o.op === 'run');
+    // Local: req.cwd is used verbatim (no path translation).
+    expect(runOp.command.startsWith(`cd '/proj/sub';`)).toBe(true);
   });
 
   it('does not pass image/mount and keeps the host workdir for local', async () => {

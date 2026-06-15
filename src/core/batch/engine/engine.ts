@@ -165,6 +165,9 @@ export class RatchetBatchEngine {
         host: context.settings.host as string,
         port: context.settings.port as number,
         authToken: context.settings.authToken as string,
+        // The runtime picks https for a non-local host and refuses plaintext to
+        // one unless this explicit opt-in is set; loopback always allows http.
+        allowInsecure: context.settings.insecure === true,
       });
     }
     return makeRexSidecarRuntime({

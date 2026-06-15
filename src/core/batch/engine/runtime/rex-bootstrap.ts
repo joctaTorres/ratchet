@@ -31,6 +31,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { DEFAULT_DOCKER_IMAGE } from '../../config.js';
 
 /**
  * The single pinned swe-rex version. Verified resolvable + importable in the
@@ -43,10 +44,14 @@ export const SWE_REX_VERSION = '1.4.0';
 export const MIN_PYTHON = { major: 3, minor: 10 } as const;
 
 /**
- * Default container image for `locus: docker` when none is configured. Mirrors
- * `DEFAULT_DOCKER_IMAGE` in config.ts / sidecar.py (kept in sync deliberately).
+ * Default container image for `locus: docker` when none is configured.
+ * Single TS source of truth: re-exported from config.ts so the Node side never
+ * drifts. The Python sidecar keeps its OWN constant (`DEFAULT_DOCKER_IMAGE` in
+ * sidecar.py) as a pure unset-fallback because it cannot import TS — that copy
+ * is only reached when `REX_IMAGE` is unset, which Node always threads; the
+ * cross-language sync is noted there.
  */
-export const DEFAULT_DOCKER_IMAGE = 'python:3.12';
+export { DEFAULT_DOCKER_IMAGE };
 
 /**
  * The `docker` extra label recorded in the readiness marker. The docker locus

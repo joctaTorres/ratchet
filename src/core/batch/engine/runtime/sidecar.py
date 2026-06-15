@@ -85,6 +85,12 @@ def _exception_detail(exc: BaseException) -> object:
     return detail
 
 
+# Cross-language constant: this MUST match `DEFAULT_DOCKER_IMAGE` in config.ts
+# (the single TS source of truth, which rex-bootstrap.ts re-exports). Python
+# cannot import the TS constant, so this is a deliberate duplicate — but it is a
+# pure UNSET-FALLBACK: the Node side always threads the resolved image via
+# `REX_IMAGE`, so this default is only reached if `REX_IMAGE` is missing. Keep
+# the two in sync if the default image ever changes.
 DEFAULT_DOCKER_IMAGE = "python:3.12"
 
 
@@ -179,6 +185,17 @@ class Sidecar:
         offset = 0
         while True:
             # Pull only the new bytes since the last poll.
+            #
+            # PINNED ASSUMPTION (byte-cursor vs decoded-string round-trip):
+            # `tail -c +N` advances a BYTE cursor, but ReX `execute()` hands us
+            # `tail.stdout` as an already-DECODED str. We re-derive the byte count
+            # with `chunk.encode("utf-8", "surrogateescape")`, which is exact iff
+            # the decode→encode round-trips losslessly. That holds when ReX decodes
+            # the bytes as UTF-8 with `surrogateescape` (any non-UTF-8 byte survives
+            # as a lone surrogate and re-encodes to the SAME byte), so the offset
+            # stays byte-accurate even on binary/garbled output. If a backend ever
+            # decoded through a DIFFERENT, lossy codec the cursor could drift — but
+            # swe-rex's runtime uses surrogateescape, so this is safe as pinned.
             tail = await self._exec(f"tail -c +{offset + 1} {log} 2>/dev/null")
             chunk = tail.stdout or ""
             if chunk:

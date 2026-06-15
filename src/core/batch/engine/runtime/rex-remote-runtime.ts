@@ -23,6 +23,12 @@
  *       final tail, emit AgentEvent{kind:'exit'}, then close.
  *   POST /close_session + POST /close -> teardown.
  *
+ * Transport: the `authToken` rides as the `X-API-Key` header, so the wire scheme
+ * matters. `host` may carry an explicit `http://`/`https://`; a bare host gets
+ * `http` for loopback (safe) and `https` for anything that leaves the machine.
+ * Plaintext `http://` to a NON-LOCAL host is REFUSED (the token would cross the
+ * network in the clear) unless `allowInsecure` is set — see `resolveTransport`.
+ *
  * Auth failure (401), an unreachable server, or a `swerexception` body map to the
  * existing error-result path (mirroring `RexBootstrapError` in the sidecar
  * runtime): a non-zero `exitCode` with a clear message in `stderr` plus an
@@ -64,12 +70,23 @@ export interface RemoteDeps {
 }
 
 export interface RexRemoteRuntimeOptions {
-  /** Host of the swerex-remote server (e.g. `localhost`). */
+  /**
+   * Host of the swerex-remote server (e.g. `localhost`). May carry an explicit
+   * scheme (`http://host` / `https://host`); a bare host has its scheme chosen
+   * by {@link resolveTransport} — `http` for a local host, `https` otherwise.
+   */
   host: string;
   /** Port of the swerex-remote server. */
   port: number;
   /** Auth token sent as `X-API-Key`. SECRET — never printed. */
   authToken: string;
+  /**
+   * Opt-in to send the token over PLAINTEXT `http://` to a NON-LOCAL host. Off
+   * by default: a bare non-local host upgrades to `https`, and an explicit
+   * `http://` non-local host is REJECTED (the token never leaves in cleartext)
+   * unless this is set. Local hosts (loopback) always allow plaintext.
+   */
+  allowInsecure?: boolean;
   /** Server-side directory for per-run prompt/log/exit files. Default `/tmp/ratchet-rex`. */
   serverRunRoot?: string;
   /** Overall guard against a hung run (ms). Default 10 minutes. */
@@ -112,6 +129,64 @@ export function buildRemoteRunCommand(serverPromptPath: string, request: AgentSp
 /** Raised internally to short-circuit to the error-result path with a clean message. */
 class RemoteError extends Error {}
 
+/**
+ * Is `host` a loopback address? Loopback never leaves the machine, so plaintext
+ * `http` to it cannot expose the token on the wire. Matches `localhost`, IPv4
+ * loopback `127.0.0.0/8`, and IPv6 `::1` (bare or bracketed).
+ */
+function isLocalHost(host: string): boolean {
+  const h = host.toLowerCase();
+  if (h === 'localhost') return true;
+  if (h === '::1' || h === '[::1]') return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+/**
+ * The resolved HTTP transport for the remote runtime: the wire scheme plus the
+ * bare host (scheme stripped) used for display/error messages.
+ */
+export interface ResolvedTransport {
+  /** `http` or `https`. */
+  scheme: 'http' | 'https';
+  /** The host with any scheme prefix removed (for the base URL + error display). */
+  host: string;
+}
+
+/**
+ * Pick the wire scheme for `host`, refusing to send the secret token in
+ * cleartext to a non-local host.
+ *
+ *   - An explicit `http://`/`https://` prefix on `host` is honoured — EXCEPT
+ *     plaintext `http://` to a NON-LOCAL host, which is rejected unless
+ *     `allowInsecure` is set (the token would cross the network in the clear).
+ *   - A bare local host (loopback) defaults to `http` (safe — never leaves the
+ *     machine); the swerex-remote dev server speaks plain http on localhost.
+ *   - A bare NON-LOCAL host defaults to `https` (the secure default), so a
+ *     misconfiguration fails closed rather than leaking the token.
+ *
+ * Throws `RemoteError` (caught by the run loop → actionable failed result) when
+ * plaintext to a non-local host is requested without the opt-in. The token is
+ * never included in the message.
+ */
+export function resolveTransport(host: string, allowInsecure = false): ResolvedTransport {
+  const m = host.match(/^(https?):\/\/(.+)$/i);
+  const explicitScheme = m ? (m[1].toLowerCase() as 'http' | 'https') : undefined;
+  const bareHost = m ? m[2] : host;
+  const local = isLocalHost(bareHost);
+
+  if (explicitScheme === 'https') return { scheme: 'https', host: bareHost };
+  if (explicitScheme === 'http') {
+    if (local || allowInsecure) return { scheme: 'http', host: bareHost };
+    throw new RemoteError(
+      `Refusing to send the remote auth token over plaintext http:// to non-local host ` +
+        `'${bareHost}': the X-API-Key would cross the network in cleartext. Use https:// ` +
+        `(the default for a non-local host), or set allowInsecure to opt in to plaintext.`
+    );
+  }
+  // No explicit scheme: http for loopback, https for anything that leaves the box.
+  return { scheme: local ? 'http' : 'https', host: bareHost };
+}
+
 /** A response body shaped like a swe-rex serialized exception. */
 function swerexceptionMessage(body: unknown): string | null {
   if (body && typeof body === 'object' && 'swerexception' in body) {
@@ -138,9 +213,20 @@ export function makeRexRemoteRuntime(options: RexRemoteRuntimeOptions): AgentRun
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const serverRunRoot = options.serverRunRoot ?? DEFAULT_SERVER_RUN_ROOT;
-  const base = `http://${options.host}:${options.port}`;
+  // Resolve the wire scheme up front, but DEFER any rejection (plaintext to a
+  // non-local host without opt-in) into the run loop so it surfaces as the
+  // standard failed-result path rather than throwing from the factory.
+  let transport: ResolvedTransport | undefined;
+  let transportError: RemoteError | undefined;
+  try {
+    transport = resolveTransport(options.host, options.allowInsecure);
+  } catch (err) {
+    transportError = err instanceof RemoteError ? err : new RemoteError(String(err));
+  }
   // host:port is safe to print (the token is not); used in every error message.
-  const where = `${options.host}:${options.port}`;
+  // Uses the bare host (scheme stripped) when transport resolved.
+  const where = `${transport?.host ?? options.host}:${options.port}`;
+  const base = transport ? `${transport.scheme}://${transport.host}:${options.port}` : '';
 
   /**
    * Issue one REST call with the auth header and a bounded per-request timeout.
@@ -149,6 +235,9 @@ export function makeRexRemoteRuntime(options: RexRemoteRuntimeOptions): AgentRun
    * contains the secret token.
    */
   async function call(pathName: string, body: unknown, opts: { health?: boolean } = {}): Promise<unknown> {
+    // Hard stop: never touch the network on an insecure transport — not on the
+    // run path NOR on teardown — so the token is NEVER sent in cleartext.
+    if (transportError) throw transportError;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
     let res: Awaited<ReturnType<FetchLike>>;
@@ -226,6 +315,10 @@ export function makeRexRemoteRuntime(options: RexRemoteRuntimeOptions): AgentRun
     };
 
     const run = async (): Promise<AgentSpawnResult> => {
+      // 0. Refuse to proceed if the transport is insecure (plaintext to a
+      //    non-local host) — fail BEFORE any fetch so the token never leaves.
+      if (transportError) throw transportError;
+
       // 1. Health check FIRST so an unreachable/misconfigured server fails fast.
       await call('/is_alive', undefined, { health: true });
 

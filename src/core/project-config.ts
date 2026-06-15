@@ -58,6 +58,7 @@ export const ProjectConfigSchema = z.object({
       // Agent-agnostic permission policy (posture + allow/deny + per-agent raw).
       // Shared schema; merged across user/project/manifest in resolveBatchSettings.
       permissions: PermissionsPolicySchema.optional(),
+      insecure: z.boolean().optional(),
     })
     .partial()
     .optional()

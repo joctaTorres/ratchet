@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   makeRexRemoteRuntime,
   buildRemoteRunCommand,
+  resolveTransport,
   type FetchLike,
   type RemoteDeps,
 } from '../../src/core/batch/engine/runtime/rex-remote-runtime.js';
@@ -67,7 +68,7 @@ function fakeServer(opts: {
   };
 
   const fetch: FetchLike = async (url, init) => {
-    const path = url.replace(/^http:\/\/[^/]+/, '');
+    const path = url.replace(/^https?:\/\/[^/]+/, '');
     const apiKey = init.headers['X-API-Key'];
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push({ path, body, apiKey });
@@ -292,7 +293,7 @@ describe('makeRexRemoteRuntime — error paths (actionable, no hang, no secret l
 
   it('surfaces a swerexception body readably (message + class_path)', async () => {
     const fetch: FetchLike = async (url, init) => {
-      const path = url.replace(/^http:\/\/[^/]+/, '');
+      const path = url.replace(/^https?:\/\/[^/]+/, '');
       if (init.headers['X-API-Key'] !== 'tok') return makeRes(401, { detail: 'Invalid API Key' });
       if (path === '/is_alive') return makeRes(200, { is_alive: true });
       // create_session blows up server-side.
@@ -332,6 +333,119 @@ describe('makeRexRemoteRuntime — error paths (actionable, no hang, no secret l
     await runtime(req, () => {});
     expect(server.calls.some((c) => c.path === '/close_session')).toBe(true);
     expect(server.calls.some((c) => c.path === '/close')).toBe(true);
+  });
+});
+
+describe('resolveTransport — scheme selection + plaintext guard', () => {
+  it('defaults a loopback host to http (token never leaves the machine)', () => {
+    expect(resolveTransport('localhost')).toEqual({ scheme: 'http', host: 'localhost' });
+    expect(resolveTransport('127.0.0.1')).toEqual({ scheme: 'http', host: '127.0.0.1' });
+    expect(resolveTransport('127.5.5.5')).toEqual({ scheme: 'http', host: '127.5.5.5' });
+    expect(resolveTransport('::1')).toEqual({ scheme: 'http', host: '::1' });
+    expect(resolveTransport('[::1]')).toEqual({ scheme: 'http', host: '[::1]' });
+  });
+
+  it('defaults a non-local host to https (secure by default)', () => {
+    expect(resolveTransport('example.com')).toEqual({ scheme: 'https', host: 'example.com' });
+    expect(resolveTransport('10.0.0.5')).toEqual({ scheme: 'https', host: '10.0.0.5' });
+  });
+
+  it('honours an explicit scheme on the host', () => {
+    expect(resolveTransport('https://example.com')).toEqual({
+      scheme: 'https',
+      host: 'example.com',
+    });
+    expect(resolveTransport('http://localhost')).toEqual({ scheme: 'http', host: 'localhost' });
+  });
+
+  it('allows explicit http to a loopback host', () => {
+    expect(resolveTransport('http://127.0.0.1')).toEqual({ scheme: 'http', host: '127.0.0.1' });
+  });
+
+  it('REJECTS explicit plaintext http to a non-local host without the opt-in', () => {
+    expect(() => resolveTransport('http://example.com')).toThrow(/plaintext/);
+    expect(() => resolveTransport('http://example.com')).toThrow(/cleartext/);
+  });
+
+  it('allows plaintext http to a non-local host only with allowInsecure', () => {
+    expect(resolveTransport('http://example.com', true)).toEqual({
+      scheme: 'http',
+      host: 'example.com',
+    });
+  });
+});
+
+describe('makeRexRemoteRuntime — transport on the wire', () => {
+  /** A fetch that records the full URL of every call (and serves the happy path). */
+  function recordingServer(authToken: string): { fetch: FetchLike; urls: string[] } {
+    const urls: string[] = [];
+    const inner = fakeServer({ authToken, logChunks: ['x\n'], exitCode: 0 });
+    const fetch: FetchLike = (url, init) => {
+      urls.push(url);
+      return inner.fetch(url, init);
+    };
+    return { fetch, urls };
+  }
+
+  it('uses http on the wire for a localhost host', async () => {
+    const { fetch, urls } = recordingServer('tok');
+    const runtime = makeRexRemoteRuntime({
+      host: 'localhost',
+      port: 8123,
+      authToken: 'tok',
+      pollIntervalMs: 0,
+      deps: noWaitDeps(fetch),
+    });
+    await runtime(req, () => {});
+    expect(urls.every((u) => u.startsWith('http://localhost:8123'))).toBe(true);
+  });
+
+  it('uses https on the wire for a non-local host (default)', async () => {
+    const { fetch, urls } = recordingServer('tok');
+    const runtime = makeRexRemoteRuntime({
+      host: 'agent.example.com',
+      port: 443,
+      authToken: 'tok',
+      pollIntervalMs: 0,
+      deps: noWaitDeps(fetch),
+    });
+    await runtime(req, () => {});
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => u.startsWith('https://agent.example.com:443'))).toBe(true);
+  });
+
+  it('refuses plaintext to a non-local host: fails BEFORE any fetch, token never sent', async () => {
+    const { fetch, urls } = recordingServer('tok');
+    const events: AgentEvent[] = [];
+    const runtime = makeRexRemoteRuntime({
+      host: 'http://agent.example.com',
+      port: 80,
+      authToken: 'super-secret',
+      pollIntervalMs: 0,
+      deps: noWaitDeps(fetch),
+    });
+    const result = await runtime(req, (e) => events.push(e));
+    expect(result.exitCode).toBe(1);
+    // Not a single network call was made — the token never left the process.
+    expect(urls).toHaveLength(0);
+    expect(result.stderr).toMatch(/plaintext|cleartext/);
+    expect(result.stderr).not.toContain('super-secret');
+    expect(events.some((e) => e.kind === 'error')).toBe(true);
+  });
+
+  it('allows plaintext to a non-local host with allowInsecure (opt-in)', async () => {
+    const { fetch, urls } = recordingServer('tok');
+    const runtime = makeRexRemoteRuntime({
+      host: 'http://agent.example.com',
+      port: 80,
+      authToken: 'tok',
+      allowInsecure: true,
+      pollIntervalMs: 0,
+      deps: noWaitDeps(fetch),
+    });
+    const result = await runtime(req, () => {});
+    expect(result.exitCode).toBe(0);
+    expect(urls.every((u) => u.startsWith('http://agent.example.com:80'))).toBe(true);
   });
 });
 

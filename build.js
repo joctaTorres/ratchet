@@ -32,7 +32,11 @@ const collectFiles = (dir, ext) => {
 const copyNonTsAssets = () => {
   const srcDir = path.resolve('src');
   const distDir = path.resolve('dist');
-  const assets = collectFiles(srcDir, '.py');
+  // Ship runtime .py (the ReX sidecar), but NOT `test_*.py` unit-test harnesses
+  // (stdlib unittest, run from src) — they are not part of the packaged CLI.
+  const assets = collectFiles(srcDir, '.py').filter(
+    (f) => !path.basename(f).startsWith('test_')
+  );
   if (assets.length === 0) {
     // A guard so a future rename/move of the sidecar is noticed loudly rather
     // than silently shipping a CLI without it.

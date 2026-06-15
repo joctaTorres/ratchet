@@ -178,10 +178,10 @@ boots a real local server, and it SKIPs cleanly when `swerex-remote` is absent.
 - [x] 3.2 Surface a missing remote config (host/port/token) as a failed outcome BEFORE any REST call (actionable message), consistent with the auth/connection error path.
 - [x] 3.3 Unit test the engine wiring: `remote` selects the remote runtime (injected fake) and gets stream-json rendering via the existing renderer; `local`/`docker` still select the sidecar; missing remote config fails actionably.
 
-- [ ] 4.1 Write `test/e2e/rex-remote-locus.sh` (blackbox): resolve a Python>=3.10 + the venv `swerex-remote` script; SKIP explicitly (exit 0) if genuinely unavailable; build dist if needed.
-- [ ] 4.2 Boot a local `swerex-remote` server with a known `--auth-token` on a free port; wait for `/is_alive`; ensure teardown on exit (trap).
-- [ ] 4.3 Drive a stub agent step through `RexRemoteRuntime` at `localhost:<port>`; assert output streamed incrementally (timestamp spread) + the exit code captured.
-- [ ] 4.4 Assert a BAD token surfaces a clear auth error (non-zero result, message names host, no traceback/hang); tear the server down.
+- [x] 4.1 Write `test/e2e/rex-remote-locus.sh` (blackbox): resolve a Python>=3.10 + the venv `swerex-remote` script; SKIP explicitly (exit 0) if genuinely unavailable; build dist if needed.
+- [x] 4.2 Boot a local `swerex-remote` server with a known `--auth-token` on a free port; wait for `/is_alive`; ensure teardown on exit (trap).
+- [x] 4.3 Drive a stub agent step through `RexRemoteRuntime` at `localhost:<port>`; assert output streamed incrementally (timestamp spread) + the exit code captured.
+- [x] 4.4 Assert a BAD token surfaces a clear auth error (non-zero result, message names host, no traceback/hang); tear the server down.
 
-- [ ] 5.1 Run unit tests (`pnpm vitest run test/batch-engine`) and the live `bash test/e2e/rex-remote-locus.sh`; confirm both green on this machine.
-- [ ] 5.2 Confirm `local`/`docker` proofs-of-work and existing tests still pass (no regression from the config/enum/engine changes).
+- [x] 5.1 Run unit tests (`pnpm vitest run test/batch-engine`) and the live `bash test/e2e/rex-remote-locus.sh`; confirm both green on this machine.
+- [x] 5.2 Confirm `local`/`docker` proofs-of-work and existing tests still pass (no regression from the config/enum/engine changes).

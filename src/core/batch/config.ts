@@ -33,6 +33,12 @@ export const LOCUS_VALUES = ['local', 'docker', 'remote'] as const;
  * The default container image for `locus: docker` when no `image` is configured.
  * A small, generic image that proves the plumbing; a REAL agent image (node +
  * the chosen coding agent + `ratchet` on PATH) is a documented follow-on.
+ *
+ * SINGLE TS SOURCE OF TRUTH: `rex-bootstrap.ts` re-exports this rather than
+ * keeping its own copy. The Python sidecar (`sidecar.py`) holds a separate
+ * `DEFAULT_DOCKER_IMAGE` only because it cannot import TS — and that copy is a
+ * pure unset-fallback (Node always threads `REX_IMAGE`). Keep the two languages
+ * in sync if this value ever changes.
  */
 export const DEFAULT_DOCKER_IMAGE = 'python:3.12';
 
@@ -57,8 +63,23 @@ export interface BatchSettings {
   /**
    * Host of the `swerex-remote` server for `locus: remote` (e.g. `localhost`).
    * Required for `remote`; ignored for `local`/`docker`.
+   *
+   * May carry an explicit scheme (`http://host` / `https://host`). A bare host
+   * is resolved by the runtime: `http` for a loopback host (safe — the token
+   * never leaves the machine), `https` for any non-local host (the secure
+   * default). Plaintext `http://` to a non-local host is refused unless
+   * `insecure: true` is set (see below), so the `authToken` is never sent in
+   * cleartext by accident.
    */
   host?: string;
+  /**
+   * Opt-in to send the `authToken` over plaintext `http://` to a NON-LOCAL
+   * `host` for `locus: remote`. Off by default (a non-local host upgrades to
+   * `https`, and explicit non-local `http://` is rejected). Loopback hosts
+   * always allow plaintext regardless of this flag. Ignored for
+   * `local`/`docker`. SECURITY: only enable for a trusted network you control.
+   */
+  insecure?: boolean;
   /**
    * Port of the `swerex-remote` server for `locus: remote`. Required for
    * `remote`; ignored for `local`/`docker`.
@@ -123,6 +144,7 @@ const SETTING_KEYS: (keyof BatchSettings)[] = [
   'host',
   'port',
   'authToken',
+  'insecure',
 ];
 
 const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
@@ -132,9 +154,10 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
   locus: LOCUS_VALUES,
   agent: null, // free-form string
   image: null, // free-form string (container image reference)
-  host: null, // free-form string (swerex-remote host)
+  host: null, // free-form string (swerex-remote host, optional scheme prefix)
   port: null, // numeric string (swerex-remote port)
   authToken: null, // free-form secret string (swerex-remote X-API-Key)
+  insecure: ['true', 'false'], // boolean opt-in for plaintext to a non-local host
 };
 
 /**
@@ -155,6 +178,7 @@ export function resolveBatchSettings(
     host: 'default',
     port: 'default',
     authToken: 'default',
+    insecure: 'default',
   };
 
   const writable = settings as { [K in keyof BatchSettings]: BatchSettings[K] };
@@ -308,9 +332,16 @@ export function setProjectBatchSetting(
     string,
     unknown
   >;
-  // `port` is a number in the schema, so persist it as one (a quoted string
-  // would be rejected by the manifest/project-config schemas on read).
-  batch[key] = key === 'port' ? Number(value.trim()) : value;
+  // `port` is a number and `insecure` is a boolean in the schema, so persist
+  // them with their real type (a quoted string would be rejected by the
+  // manifest/project-config schemas on read).
+  if (key === 'port') {
+    batch[key] = Number(value.trim());
+  } else if (key === 'insecure') {
+    batch[key] = value.trim() === 'true';
+  } else {
+    batch[key] = value;
+  }
   raw.batch = batch;
 
   writeFileSync(filePath, stringifyYaml(raw), 'utf-8');

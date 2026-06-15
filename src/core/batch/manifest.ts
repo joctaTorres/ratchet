@@ -58,6 +58,7 @@ export const BatchSettingsOverrideSchema = z
     host: z.string().optional(),
     port: z.number().optional(),
     authToken: z.string().optional(),
+    insecure: z.boolean().optional(),
   })
   .strict();
 

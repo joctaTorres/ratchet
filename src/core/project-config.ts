@@ -54,6 +54,7 @@ export const ProjectConfigSchema = z.object({
       host: z.string().optional(),
       port: z.number().optional(),
       authToken: z.string().optional(),
+      insecure: z.boolean().optional(),
     })
     .partial()
     .optional()

@@ -16,6 +16,8 @@ import {
   resolveBatchSettings,
   setProjectBatchSetting,
   redactSettings,
+  SECRET_SETTING_KEYS,
+  REDACTED_PLACEHOLDER,
   type ResolvedBatchSettings,
   type BatchSettings,
 } from '../../core/batch/config.js';
@@ -45,10 +47,14 @@ export async function batchConfigCommand(
       // No-op on invalid input: report and fail without touching the file.
       throw new Error(result.error);
     }
+    // Never echo a secret value back (it would persist in scrollback / CI logs).
+    const echoValue = (SECRET_SETTING_KEYS as readonly string[]).includes(key)
+      ? REDACTED_PLACEHOLDER
+      : value;
     if (!options.json) {
-      console.log(chalk.green(`Set batch.${key} = ${value}`));
+      console.log(chalk.green(`Set batch.${key} = ${echoValue}`));
     } else {
-      console.log(JSON.stringify({ ok: true, key, value }, null, 2));
+      console.log(JSON.stringify({ ok: true, key, value: echoValue }, null, 2));
     }
     return;
   }

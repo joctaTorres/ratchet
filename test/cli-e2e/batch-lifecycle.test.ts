@@ -231,6 +231,25 @@ describe('batch config --set validation (sad paths)', () => {
     const after = await fs.readFile(path.join(cwd, '.ratchet', 'config.yaml'), 'utf-8');
     expect(after).toBe(before);
   });
+
+  it('redacts the authToken value in the --set echo (human + json), never the raw secret', async () => {
+    const cwd = await prepareProject();
+    const secret = 'SUPER-SECRET-TOKEN-12345';
+
+    const human = await runCLI(['batch', 'config', '--set', `authToken=${secret}`], { cwd });
+    expect(human.exitCode).toBe(0);
+    expect(`${human.stdout}${human.stderr}`).not.toContain(secret);
+    expect(human.stdout).toContain('***');
+
+    const json = await runCLI(['batch', 'config', '--set', `authToken=${secret}`, '--json'], { cwd });
+    expect(json.exitCode).toBe(0);
+    expect(`${json.stdout}${json.stderr}`).not.toContain(secret);
+    expect(JSON.parse(json.stdout).value).toBe('***');
+
+    // The real value is still persisted to disk (only the echo is redacted).
+    const saved = await fs.readFile(path.join(cwd, '.ratchet', 'config.yaml'), 'utf-8');
+    expect(saved).toContain(secret);
+  });
 });
 
 describe('batch name resolution (sad paths)', () => {

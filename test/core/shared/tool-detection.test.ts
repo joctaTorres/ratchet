@@ -34,7 +34,7 @@ describe('tool-detection', () => {
       expect(SKILL_NAMES).toContain('ratchet-verify-change');
       expect(SKILL_NAMES).toContain('ratchet-archive-change');
       expect(SKILL_NAMES).toContain('ratchet-propose-standard');
-      expect(SKILL_NAMES).toContain('ratchet-batch');
+      expect(SKILL_NAMES).toContain('ratchet-apply-batch');
       expect(SKILL_NAMES).toContain('ratchet-propose-batch');
       expect(SKILL_NAMES).toContain('ratchet-eval');
       expect(SKILL_NAMES).not.toContain('ratchet-explore');

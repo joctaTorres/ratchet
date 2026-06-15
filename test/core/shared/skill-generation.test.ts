@@ -30,7 +30,7 @@ describe('skill-generation', () => {
       expect(dirNames).toContain('ratchet-verify-change');
       expect(dirNames).toContain('ratchet-propose');
       expect(dirNames).toContain('ratchet-propose-standard');
-      expect(dirNames).toContain('ratchet-batch');
+      expect(dirNames).toContain('ratchet-apply-batch');
       expect(dirNames).toContain('ratchet-propose-batch');
       expect(dirNames).toContain('ratchet-eval');
       // explore is internal-only and is never generated
@@ -156,7 +156,7 @@ describe('skill-generation', () => {
       expect(ids).toContain('verify');
       expect(ids).toContain('propose');
       expect(ids).toContain('propose-standard');
-      expect(ids).toContain('batch');
+      expect(ids).toContain('apply-batch');
       expect(ids).toContain('propose-batch');
       expect(ids).toContain('eval');
       // explore is internal-only and is never generated

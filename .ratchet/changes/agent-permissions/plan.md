@@ -91,9 +91,18 @@ Notes on confirmed claude flags (from `claude --help`): `--permission-mode` choi
 are `acceptEdits, auto, bypassPermissions, default, dontAsk, plan`;
 `--allowedTools`/`--disallowedTools` take comma/space-separated tool names like
 `"Bash(git *)" Edit`; `--dangerously-skip-permissions` bypasses all checks;
-`--add-dir` scopes allowed directories; `--settings <file-or-json>` can carry a
-`permissions.allow`/`permissions.deny` object as an alternative injection path. Gemini
+`--add-dir` scopes allowed directories. Gemini
 confirmed: `--approval-mode {default,auto_edit,yolo,plan}` and `-y/--yolo`.
+
+**DECISION (locked): argv flags ONLY — no settings-file route.** The policy is
+injected exclusively via command-line flags (`--permission-mode` / `--allowedTools` /
+`--disallowedTools` / `--add-dir`, and per-agent equivalents). We deliberately do NOT
+write a transient `--settings` JSON. Rationale: argv flows trivially through all three
+loci (local sidecar, docker, remote REST) with no temp-file lifecycle to plumb into
+containers/remote servers. **Accepted consequence:** denials are COARSE / tool-level —
+e.g. "rm -rf outside repo" and "curl | sh" become blunt `--disallowedTools`-style Bash
+denials, not path-aware rules. That is acceptable for v1; a settings-file route for
+path-precise denials is a documented future enhancement, out of scope here.
 
 The translator emits `acceptEdits` (not `bypassPermissions`) for the sandboxed default
 so edits proceed unprompted while the deny list and `--add-dir` repo scoping still

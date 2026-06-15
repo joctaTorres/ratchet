@@ -159,12 +159,12 @@ boots a real local server, and it SKIPs cleanly when `swerex-remote` is absent.
 
 ## Tasks
 
-- [ ] 1.1 Add `remote` to `LOCUS_VALUES` and the `Locus` type in `src/core/batch/config.ts`; update the doc comment to drop "remote is a later phase".
-- [ ] 1.2 Add flat optional `host`, `port` (number), `authToken` to `BatchSettings`, `SETTING_KEYS`, `ALLOWED_VALUES` (free-form/null), and the `resolveBatchSettings` `sources` map in `config.ts`.
-- [ ] 1.3 Extend `validateSetting` (config.ts): non-empty `host`/`authToken`, numeric `port`; and a cross-field check that `locus: remote` requires host+port+authToken (surface as an actionable config error where settings are resolved/consumed).
-- [ ] 1.4 Add `remote` to the `locus` enum and add `host`/`port`/`authToken` to `BatchSettingsOverrideSchema` in `src/core/batch/manifest.ts`, keeping `.strict()`.
-- [ ] 1.5 Add `remote` to the `locus` enum and `host`/`port`/`authToken` to the `batch` schema in `src/core/project-config.ts`.
-- [ ] 1.6 Unit tests for config/manifest/project-config: `remote` accepted; flat keys parsed; strict schema still rejects unknown keys; remote-requires-host/port/token; empty/non-numeric rejected and file left unchanged.
+- [x] 1.1 Add `remote` to `LOCUS_VALUES` and the `Locus` type in `src/core/batch/config.ts`; update the doc comment to drop "remote is a later phase".
+- [x] 1.2 Add flat optional `host`, `port` (number), `authToken` to `BatchSettings`, `SETTING_KEYS`, `ALLOWED_VALUES` (free-form/null), and the `resolveBatchSettings` `sources` map in `config.ts`.
+- [x] 1.3 Extend `validateSetting` (config.ts): non-empty `host`/`authToken`, numeric `port`; and a cross-field check that `locus: remote` requires host+port+authToken (surface as an actionable config error where settings are resolved/consumed).
+- [x] 1.4 Add `remote` to the `locus` enum and add `host`/`port`/`authToken` to `BatchSettingsOverrideSchema` in `src/core/batch/manifest.ts`, keeping `.strict()`.
+- [x] 1.5 Add `remote` to the `locus` enum and `host`/`port`/`authToken` to the `batch` schema in `src/core/project-config.ts`.
+- [x] 1.6 Unit tests for config/manifest/project-config: `remote` accepted; flat keys parsed; strict schema still rejects unknown keys; remote-requires-host/port/token; empty/non-numeric rejected and file left unchanged.
 
 - [ ] 2.1 Create `src/core/batch/engine/runtime/rex-remote-runtime.ts` exporting `makeRexRemoteRuntime(options)` returning an `AgentRuntime`, with `RemoteDeps` (injectable `fetch`, `sleep`/clock) and options `{host, port, authToken, projectRoot?, timeoutMs?, pollIntervalMs?}`.
 - [ ] 2.2 Implement the typed REST client helpers (post/get with `X-API-Key`, JSON, bounded `AbortController` timeout) and map `401`/`{detail}` and `{swerexception}` bodies to readable error messages.

@@ -16,9 +16,13 @@
  * Prompt delivery: the sidecar runs a SHELL COMMAND (not stdin), and the agents
  * read their prompt on stdin, so we write `request.instructions` to a temp prompt
  * file under `.ratchet/batches/<batch>/.run/<id>/prompt.txt` and build the run
- * command as `cat <promptfile> | <agent argv>` (tool-agnostic). The agent argv is
- * the PLAIN adapter argv — RAW streaming, no `--output-format stream-json` (that
- * is phase 3). The prompt file is removed in a `finally`.
+ * command as `cd <cwd>; cat <promptfile> | <agent argv>` (tool-agnostic). The
+ * `cd <cwd>` threads `req.cwd` so the agent runs in the requested directory —
+ * parity with the remote runtime; for docker the cwd is translated onto the
+ * in-container bind mount (the host path may not exist in the container). The
+ * agent argv is the PLAIN adapter argv — RAW streaming, no
+ * `--output-format stream-json` (that is phase 3). The prompt file is removed in
+ * a `finally`.
  *
  * The child spawn, fs writes, and clock are injectable seams (mirroring
  * `BootstrapDeps`) so unit tests drive a fake child emitting canned JSON lines
@@ -128,10 +132,23 @@ function shquote(s: string): string {
  * The prompt file feeds the instructions to the agent's stdin uniformly for any
  * agent (claude/codex/gemini/cursor or a `bash -c <override>`), so the PLAIN
  * adapter argv stays raw.
+ *
+ * `cwd` (when given) is prepended as `cd <cwd>;` so the agent runs in the
+ * requested directory — parity with the remote runtime (`buildRemoteRunCommand`
+ * threads `req.cwd` the same way). The caller passes the path as the SIDECAR
+ * sees it: for `local` that is `req.cwd` verbatim; for `docker` it must be the
+ * IN-CONTAINER path (the host `req.cwd` may not exist inside the container — see
+ * the docker caller, which translates it onto the bind mount). When omitted the
+ * agent inherits the ReX session cwd (REX_WORKDIR), preserving prior behaviour.
  */
-export function buildRunCommand(promptFile: string, request: AgentSpawnRequest): string {
+export function buildRunCommand(
+  promptFile: string,
+  request: AgentSpawnRequest,
+  cwd?: string
+): string {
   const argv = [request.command, ...request.args].map(shquote).join(' ');
-  return `cat ${shquote(promptFile)} | ${argv}`;
+  const prefix = cwd ? `cd ${shquote(cwd)}; ` : '';
+  return `${prefix}cat ${shquote(promptFile)} | ${argv}`;
 }
 
 /**
@@ -166,6 +183,18 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
     const promptFileInContainer = isDocker
       ? hostToContainerPath(promptFile, options.projectRoot, DOCKER_MOUNT_CONTAINER)
       : promptFile;
+
+    // Thread `req.cwd` so the agent runs in the requested directory — parity
+    // with the remote runtime. For docker the host `req.cwd` may not exist
+    // inside the container, so translate it onto the bind mount (same swap as
+    // the prompt file); paths outside the project root fall back unchanged and,
+    // if they don't exist in the container, the agent's own `cd` would fail —
+    // but the engine always passes the project root, which IS the mount.
+    const cwdForSidecar = req.cwd
+      ? isDocker
+        ? hostToContainerPath(req.cwd, options.projectRoot, DOCKER_MOUNT_CONTAINER)
+        : req.cwd
+      : undefined;
 
     // Resolve the launch descriptor (lazy/cached bootstrap). A missing Python or
     // (for docker) a missing daemon throws RexBootstrapError → surface as a
@@ -282,7 +311,11 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
           case 'ready':
             if (sentRun) return;
             sentRun = true;
-            send({ op: 'run', id: 1, command: buildRunCommand(promptFileInContainer, req) });
+            send({
+              op: 'run',
+              id: 1,
+              command: buildRunCommand(promptFileInContainer, req, cwdForSidecar),
+            });
             return;
           case 'stdout': {
             const line = obj.line ?? '';
@@ -363,8 +396,12 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
 export function hostToContainerPath(hostPath: string, hostRoot: string, mountPoint: string): string {
   const rel = path.relative(hostRoot, hostPath);
   if (rel.startsWith('..') || path.isAbsolute(rel)) return hostPath;
+  const base = mountPoint.replace(/\/$/, '');
+  // `hostPath === hostRoot` (e.g. cwd is the project root) → rel is '', which is
+  // the mount point itself (no trailing slash).
+  if (rel === '') return base;
   const posixRel = rel.split(path.sep).join('/');
-  return `${mountPoint.replace(/\/$/, '')}/${posixRel}`;
+  return `${base}/${posixRel}`;
 }
 
 /**

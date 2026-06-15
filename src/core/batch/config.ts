@@ -497,3 +497,45 @@ export function setProjectBatchSetting(
   writeFileSync(filePath, stringifyYaml(raw), 'utf-8');
   return validation;
 }
+
+/**
+ * Persist an agent-permissions policy under the project config's `batch:`
+ * section, merging into any existing config (preserving other settings). Used by
+ * the first-run guided setup when the operator saves to the project (the
+ * default). Returns the path written. The policy is validated by the caller (it
+ * comes from the guided setup, not free-form input).
+ */
+export function setProjectBatchPermissions(
+  projectRoot: string,
+  permissions: PermissionsPolicy
+): string {
+  const filePath = configFilePath(projectRoot);
+  let raw: Record<string, unknown> = {};
+  if (existsSync(filePath)) {
+    const parsed = parseYaml(readFileSync(filePath, 'utf-8'));
+    if (parsed && typeof parsed === 'object') {
+      raw = parsed as Record<string, unknown>;
+    }
+  }
+  const batch = (raw.batch && typeof raw.batch === 'object' ? raw.batch : {}) as Record<
+    string,
+    unknown
+  >;
+  batch.permissions = permissions;
+  raw.batch = batch;
+  writeFileSync(filePath, stringifyYaml(raw), 'utf-8');
+  return filePath;
+}
+
+/**
+ * Whether a permission policy is configured at the user/global OR project scope.
+ * This is the idempotency key for the first-run guided setup: once either scope
+ * defines `permissions`, the setup never re-prompts. (The per-change manifest
+ * scope is not consulted here — a manifest exists only inside a specific batch,
+ * whereas the first-run gate fires before any batch is necessarily selected.)
+ */
+export function hasPermissionConfig(projectRoot: string): boolean {
+  if (readUserBatchPermissions() !== undefined) return true;
+  const projectPermissions = readProjectConfig(projectRoot)?.batch?.permissions;
+  return projectPermissions !== undefined;
+}

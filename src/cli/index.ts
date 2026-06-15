@@ -375,6 +375,23 @@ const batchCmd = program
   .command('batch')
   .description('Coordinate related changes across phases (batch orchestration)');
 
+// First-run agent-permissions setup: fires before any `batch *` subcommand the
+// first time none is configured. Interactive operators are guided to choose a
+// posture; headless/CI runs are NEVER prompted, written to, or blocked (the
+// effective posture falls back to the built-in default). Best-effort: any failure
+// here must not break the underlying command.
+batchCmd.hook('preAction', async () => {
+  try {
+    const { resolveCurrentPlanningHomeSync } = await import('../core/planning-home.js');
+    const { maybeRunFirstRunSetup } = await import('../core/batch/first-run-setup.js');
+    const root = resolveCurrentPlanningHomeSync().root;
+    await maybeRunFirstRunSetup(root);
+  } catch {
+    // No planning home / prompt cancellation / any setup error is non-fatal —
+    // the command proceeds with the default posture resolved downstream.
+  }
+});
+
 batchCmd
   .command('new <name>')
   .description('Scaffold a new batch manifest from the template')

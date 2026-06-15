@@ -21,12 +21,17 @@ function policy(over: Partial<ResolvedPermissionsPolicy> = {}): ResolvedPermissi
 }
 
 describe('resolvePermissionFlags — claude (verified flags)', () => {
-  it('repo-sandboxed-permissive emits acceptEdits + --add-dir <repo> + denylist', () => {
+  it('repo-sandboxed-permissive emits acceptEdits + --add-dir <repo> + allow Bash + denylist', () => {
     const flags = resolvePermissionFlags('claude', policy(), REPO);
     expect(flags).toContain('--permission-mode');
     expect(flags[flags.indexOf('--permission-mode') + 1]).toBe('acceptEdits');
     expect(flags).toContain('--add-dir');
     expect(flags[flags.indexOf('--add-dir') + 1]).toBe(REPO);
+    // acceptEdits covers edits only, so Bash must be explicitly allowed for the
+    // headless agent to run shell unattended (verified empirically with claude -p).
+    expect(flags).toContain('--allowedTools');
+    expect(flags[flags.indexOf('--allowedTools') + 1]).toBe('Bash');
+    // The denylist is still emitted alongside the allow (deny beats allow).
     expect(flags).toContain('--disallowedTools');
     // The repo-sandbox baseline denials are present.
     for (const pattern of REPO_SANDBOX_DENY_PATTERNS) {
@@ -34,6 +39,22 @@ describe('resolvePermissionFlags — claude (verified flags)', () => {
     }
     // The sandboxed default is NOT a permission bypass.
     expect(flags).not.toContain('--dangerously-skip-permissions');
+  });
+
+  it('repo-sandboxed-permissive honors the operator allow list verbatim (no implicit Bash)', () => {
+    const flags = resolvePermissionFlags(
+      'claude',
+      policy({ allow: ['Bash(git *)', 'Edit'] }),
+      REPO
+    );
+    // When the operator configured an allow list, it is used as-is (the default
+    // ['Bash'] only applies when no allow list was given).
+    expect(flags).toContain('--allowedTools');
+    expect(flags).toContain('Bash(git *)');
+    expect(flags).toContain('Edit');
+    expect(flags).not.toContain('Bash'); // exact 'Bash' is not implicitly added
+    // Denylist still present.
+    expect(flags).toContain('--disallowedTools');
   });
 
   it('full-autonomy emits the skip-permissions flag and nothing else', () => {
@@ -70,9 +91,18 @@ describe('resolvePermissionFlags — claude (verified flags)', () => {
 });
 
 describe('resolvePermissionFlags — gemini (verified flags)', () => {
-  it('repo-sandboxed-permissive maps to --approval-mode auto_edit', () => {
+  // DOCUMENTED LIMITATION: gemini has no argv-only way to allow bounded shell
+  // (`--allowed-tools` is deprecated; the Policy Engine is file-based, violating
+  // the locked argv-only decision). So sandboxed stays the bounded `auto_edit`
+  // mapping — which auto-approves EDITS ONLY and may prompt/stall on shell in
+  // headless mode (empirically confirmed). We intentionally do NOT promote it to
+  // `yolo` (full autonomy). This assertion pins that bounded mapping and the
+  // invariant that sandboxed never silently becomes yolo.
+  it('repo-sandboxed-permissive maps to bounded --approval-mode auto_edit (NOT yolo)', () => {
     const flags = resolvePermissionFlags('gemini', policy(), REPO);
     expect(flags).toEqual(['--approval-mode', 'auto_edit']);
+    expect(flags).not.toContain('--yolo');
+    expect(flags).not.toContain('yolo');
   });
   it('curated-allowlist maps to --approval-mode default', () => {
     const flags = resolvePermissionFlags('gemini', policy({ posture: 'curated-allowlist' }), REPO);

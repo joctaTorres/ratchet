@@ -18,6 +18,21 @@
  * build machine. codex and cursor-agent are NOT installed here — their mappings
  * are the documented intended design and are flagged accordingly below; they are
  * unit-tested as pure mappings, to be re-verified once those binaries are present.
+ *
+ * UNATTENDED SHELL (verified empirically with `claude -p` 2.x): a permission mode
+ * that auto-accepts edits (claude `acceptEdits`, gemini `auto_edit`) covers FILE
+ * EDITS ONLY — every Bash/shell tool call still hits the permission engine and, in
+ * headless mode, is DENIED/STALLS unless explicitly allowed. So the sandboxed
+ * claude mapping ALSO emits `--allowedTools` including `Bash` (defaulting to
+ * `['Bash']` when the operator configured no allow list), while still emitting the
+ * `--disallowedTools` denylist; DENY BEATS ALLOW is verified (a denylisted
+ * `Bash(sudo *)` stays refused even with `Bash` allowed). The `curated-allowlist`
+ * posture allows ONLY the listed tools, so operators MUST include a `Bash(...)`
+ * allow entry there or shell steps stall headless. This all stays argv-only — no
+ * `--settings` file. Gemini has NO argv-only way to allow bounded shell
+ * (`--allowed-tools` is deprecated; the Policy Engine is file-based), so its
+ * sandboxed mapping stays the bounded `auto_edit` and is documented as a limitation
+ * (it may prompt/stall on shell) rather than overreaching to `yolo` — see below.
  */
 
 import type {
@@ -68,6 +83,17 @@ function effectiveDenyList(policy: ResolvedPermissionsPolicy): string[] {
  * `acceptEdits | default | …`; `--allowedTools`/`--disallowedTools` take
  * space/comma-separated tool names; `--add-dir` scopes allowed directories;
  * `--dangerously-skip-permissions` bypasses all checks.
+ *
+ * SANDBOXED — why `acceptEdits` ALONE is not enough (verified empirically with
+ * `claude -p` 2.x): `acceptEdits` auto-accepts FILE EDITS only. Every `Bash` tool
+ * call still hits the permission engine, and in headless `-p` mode an un-allowed
+ * Bash command is denied outright ("requires approval"), stalling the agent — e.g.
+ * `uv --version` is refused. So we ALSO emit `--allowedTools` including `Bash` so
+ * ordinary shell runs unattended. The denylist is kept via `--disallowedTools`,
+ * and DENY BEATS ALLOW (verified: with `--allowedTools Bash` present, a denylisted
+ * `Bash(sudo *)` is still refused). We deliberately do NOT use
+ * `--dangerously-skip-permissions` here — that is reserved for `full-autonomy`;
+ * acceptEdits+allow+deny is strictly narrower. Stays argv-only (no `--settings`).
  */
 function claudeFlags(policy: ResolvedPermissionsPolicy, repoRoot: string): string[] {
   const deny = effectiveDenyList(policy);
@@ -75,6 +101,10 @@ function claudeFlags(policy: ResolvedPermissionsPolicy, repoRoot: string): strin
     case 'full-autonomy':
       return ['--dangerously-skip-permissions'];
     case 'curated-allowlist': {
+      // NOTE: curated allows ONLY the listed tools by design — operators MUST
+      // include a `Bash(...)` allow entry (e.g. `Bash` or `Bash(git *)`) or any
+      // shell step will stall headless, exactly as the sandboxed posture would
+      // without an explicit Bash allow. See the module header.
       const flags = ['--permission-mode', 'default'];
       if (policy.allow.length > 0) flags.push('--allowedTools', ...policy.allow);
       if (deny.length > 0) flags.push('--disallowedTools', ...deny);
@@ -83,18 +113,38 @@ function claudeFlags(policy: ResolvedPermissionsPolicy, repoRoot: string): strin
     case 'repo-sandboxed-permissive':
     default: {
       const flags = ['--permission-mode', 'acceptEdits', '--add-dir', repoRoot];
+      // Explicit Bash allow: acceptEdits covers edits only, so without this every
+      // Bash call stalls headless. Default to ['Bash'] when the operator gave no
+      // allow list; otherwise honor the operator's list verbatim.
+      const allow = policy.allow.length > 0 ? policy.allow : ['Bash'];
+      flags.push('--allowedTools', ...allow);
+      // Deny beats allow (verified) — the sandbox denylist still wins over Bash.
       if (deny.length > 0) flags.push('--disallowedTools', ...deny);
-      // An allow list is additive even under the sandboxed posture if configured.
-      if (policy.allow.length > 0) flags.push('--allowedTools', ...policy.allow);
       return flags;
     }
   }
 }
 
 /**
- * Gemini (verified against `gemini --help`): `--approval-mode {default,auto_edit,
- * yolo,plan}` and `-y/--yolo`. Gemini has no argv allow/deny list, so allow/deny
- * patterns can only influence the approval mode (coarse, per the locked decision).
+ * Gemini (verified against `gemini --help` on the build machine, gemini 0.46.0):
+ * `--approval-mode {default,auto_edit,yolo,plan}` and `-y/--yolo`.
+ *
+ * KNOWN LIMITATION — bounded-unattended-shell is NOT expressible in gemini's argv.
+ * `auto_edit` auto-approves EDIT tools only; like claude's `acceptEdits` it does
+ * NOT cover the shell, so a `run_shell_command` in headless `-p` mode prompts and
+ * STALLS (empirically confirmed: an `auto_edit` headless run on a shell command
+ * hung indefinitely and had to be killed). Unlike claude, gemini offers no
+ * argv-only allow path to fix this: `--allowed-tools` is explicitly DEPRECATED
+ * ("Use Policy Engine instead"), and the supported Policy Engine
+ * (`--policy`/`--admin-policy`) loads policy FILES/DIRECTORIES — which violates our
+ * locked argv-only decision (no temp-file lifecycle). The only argv-only escape is
+ * `yolo`, which auto-approves ALL tools = full-autonomy semantics, far too broad.
+ *
+ * GROUNDED CALL: we keep the BOUNDED `auto_edit` mapping for sandboxed (honest and
+ * strictly narrower than yolo) and do NOT silently promote it to `yolo`. The
+ * accepted consequence is that gemini-sandboxed may prompt/stall on shell steps in
+ * headless mode — bounded-unattended-shell simply isn't expressible for gemini
+ * under argv-only. Revisit if gemini gains a non-deprecated argv allow-tool flag.
  */
 function geminiFlags(policy: ResolvedPermissionsPolicy): string[] {
   switch (policy.posture) {

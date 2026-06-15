@@ -166,13 +166,13 @@ boots a real local server, and it SKIPs cleanly when `swerex-remote` is absent.
 - [x] 1.5 Add `remote` to the `locus` enum and `host`/`port`/`authToken` to the `batch` schema in `src/core/project-config.ts`.
 - [x] 1.6 Unit tests for config/manifest/project-config: `remote` accepted; flat keys parsed; strict schema still rejects unknown keys; remote-requires-host/port/token; empty/non-numeric rejected and file left unchanged.
 
-- [ ] 2.1 Create `src/core/batch/engine/runtime/rex-remote-runtime.ts` exporting `makeRexRemoteRuntime(options)` returning an `AgentRuntime`, with `RemoteDeps` (injectable `fetch`, `sleep`/clock) and options `{host, port, authToken, projectRoot?, timeoutMs?, pollIntervalMs?}`.
-- [ ] 2.2 Implement the typed REST client helpers (post/get with `X-API-Key`, JSON, bounded `AbortController` timeout) and map `401`/`{detail}` and `{swerexception}` bodies to readable error messages.
-- [ ] 2.3 Implement `GET /is_alive` health check first (short timeout); on reject/timeout resolve with the actionable "server unreachable" error result + emit `error` event.
-- [ ] 2.4 Implement `POST /create_session`, then `POST /write_file` of the prompt to a server-side run dir, then the non-blocking launch `/execute` (`sh -c '( cat prompt | argv ) >log 2>&1; echo $? >exit.code' &`) with `shquote`d argv.
-- [ ] 2.5 Implement the tail-poll loop over `POST /execute` (`tail -c +<offset+1> log`): advance the byte offset, split complete lines, emit incremental `stdout` events, accumulate the transcript, hold trailing partials.
-- [ ] 2.6 Detect the exit-code sentinel each poll; on completion drain the final tail, emit the `exit` event, then `POST /close_session` + `POST /close`; resolve `AgentSpawnResult`. Tear down (best-effort close) on timeout/abort too.
-- [ ] 2.7 Unit tests with mocked `fetch`: full health→create→write→launch→tail→exit→close sequence; incremental event emission; transcript accumulation; auth-failure (401); connection-failure (reject + timeout); swerexception body; teardown calls close. NO real server.
+- [x] 2.1 Create `src/core/batch/engine/runtime/rex-remote-runtime.ts` exporting `makeRexRemoteRuntime(options)` returning an `AgentRuntime`, with `RemoteDeps` (injectable `fetch`, `sleep`/clock) and options `{host, port, authToken, projectRoot?, timeoutMs?, pollIntervalMs?}`.
+- [x] 2.2 Implement the typed REST client helpers (post/get with `X-API-Key`, JSON, bounded `AbortController` timeout) and map `401`/`{detail}` and `{swerexception}` bodies to readable error messages.
+- [x] 2.3 Implement `GET /is_alive` health check first (short timeout); on reject/timeout resolve with the actionable "server unreachable" error result + emit `error` event.
+- [x] 2.4 Implement `POST /create_session`, then `POST /write_file` of the prompt to a server-side run dir, then the non-blocking launch `/execute` (`sh -c '( cat prompt | argv ) >log 2>&1; echo $? >exit.code' &`) with `shquote`d argv.
+- [x] 2.5 Implement the tail-poll loop over `POST /execute` (`tail -c +<offset+1> log`): advance the byte offset, split complete lines, emit incremental `stdout` events, accumulate the transcript, hold trailing partials.
+- [x] 2.6 Detect the exit-code sentinel each poll; on completion drain the final tail, emit the `exit` event, then `POST /close_session` + `POST /close`; resolve `AgentSpawnResult`. Tear down (best-effort close) on timeout/abort too.
+- [x] 2.7 Unit tests with mocked `fetch`: full health→create→write→launch→tail→exit→close sequence; incremental event emission; transcript accumulation; auth-failure (401); connection-failure (reject + timeout); swerexception body; teardown calls close. NO real server.
 
 - [ ] 3.1 Extend `selectRuntime` in `src/core/batch/engine/engine.ts`: `locus === 'remote'` → `makeRexRemoteRuntime` with resolved host/port/authToken; `local`/`docker` unchanged; keep `onEvent`/renderer/outcome routing untouched.
 - [ ] 3.2 Surface a missing remote config (host/port/token) as a failed outcome BEFORE any REST call (actionable message), consistent with the auth/connection error path.

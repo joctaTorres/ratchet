@@ -34,6 +34,8 @@ import {
 } from './agent.js';
 import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
 import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
+import { makeRexRemoteRuntime } from './runtime/rex-remote-runtime.js';
+import { validateRemoteSettings } from '../config.js';
 import { makeStreamJsonRenderer } from './runtime/stream-json-renderer.js';
 import { buildAgentInstructions } from './instructions.js';
 import { mapSessionToOutcome } from './outcome.js';
@@ -85,6 +87,21 @@ function spawnerAsRuntime(spawner: Spawner): AgentRuntime {
   };
 }
 
+/**
+ * An `AgentRuntime` that fails immediately with an actionable message, used when
+ * a locus is selected but its configuration is incomplete (e.g. `remote` without
+ * host/port/authToken). It mirrors the runtime error-result contract — a
+ * non-zero `exitCode`, the message in `stderr`, and an `error` event — so the
+ * engine maps it to blocked/failed BEFORE any side effect (no REST call), with
+ * no new outcome states.
+ */
+function failingRuntime(message: string): AgentRuntime {
+  return async (_req, onEvent) => {
+    onEvent({ kind: 'error', message });
+    return { exitCode: 1, signal: null, stdout: '', stderr: message };
+  };
+}
+
 /** Map a step outcome state to the journal entry kind recorded for it. */
 function outcomeKind(state: EngineStepOutcome['state']): JournalEntryKind {
   switch (state) {
@@ -126,15 +143,30 @@ export class RatchetBatchEngine {
    * is the ONLY place that branches on locus: `local` drives the ReX sidecar
    * with `REX_LOCUS=local` and `REX_WORKDIR=projectRoot`; `docker` drives the
    * SAME sidecar runtime with `REX_LOCUS=docker` plus the resolved `image`
-   * (the project root is bind-mounted by the runtime/sidecar). The engine,
-   * renderer, and event channel are otherwise locus-agnostic — streaming and
-   * rendering are identical regardless of locus.
+   * (the project root is bind-mounted by the runtime/sidecar); `remote` drives
+   * the native-Node `RexRemoteRuntime` over the swerex-remote REST API with the
+   * resolved host/port/authToken (no local Python). The engine, renderer, and
+   * event channel are otherwise locus-agnostic — streaming and rendering are
+   * identical regardless of locus, because every runtime emits the same events.
    */
   private selectRuntime(projectRoot: string, context: ResolvedStepContext): AgentRuntime {
     if (this.runtimeOverride) return this.runtimeOverride;
     const locus = context.settings.locus ?? 'local';
     // The enum is validated upstream, so an unknown locus here is a programming
     // error. `image` is threaded only for docker (ignored by the local path).
+    if (locus === 'remote') {
+      // A missing/invalid host/port/token must fail with an actionable message
+      // BEFORE any REST call — mirror the runtime's error-result path (non-zero
+      // exit + message in stderr + an error event) so the engine maps it to
+      // blocked/failed with no new outcome states and never leaks the token.
+      const configError = validateRemoteSettings(context.settings);
+      if (configError) return failingRuntime(configError);
+      return makeRexRemoteRuntime({
+        host: context.settings.host as string,
+        port: context.settings.port as number,
+        authToken: context.settings.authToken as string,
+      });
+    }
     return makeRexSidecarRuntime({
       locus,
       projectRoot,
@@ -221,6 +253,13 @@ export class RatchetBatchEngine {
         else this.printLine(e.line);
       } else if (e.kind === 'exit' && renderer) {
         renderer.flush();
+      } else if (e.kind === 'error' && e.message !== undefined) {
+        // An actionable failure (e.g. a remote auth/connection/config error or a
+        // sidecar bootstrap failure) is printed live on the same sink so the user
+        // sees the message even though the mapped outcome stays a generic
+        // failed→blocked. Flush any buffered render first so it is not swallowed.
+        renderer?.flush();
+        this.printLine(e.message);
       }
     };
     const spawnResult: AgentSpawnResult = await runtime(request, onEvent);

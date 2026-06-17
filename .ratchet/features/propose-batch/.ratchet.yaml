@@ -1,0 +1,13 @@
+features:
+  gated-chain-in.feature:
+    - multi-agent-support
+  multi-agent-surface.feature:
+    - multi-agent-support
+  phase-elicitation.feature:
+    - multi-agent-support
+  proof-of-work-required.feature:
+    - multi-agent-support
+  reject-horizontal-phases.feature:
+    - multi-agent-support
+  scaffold-manifest.feature:
+    - multi-agent-support

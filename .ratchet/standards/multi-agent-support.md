@@ -52,3 +52,14 @@ only one agent (e.g. only Claude).
 Every change that alters ratchet — core logic, CLI, `ratchet init`, skill or command
 generation, shared templates, adapters, and any documentation describing how agents
 drive ratchet. All changes in this repo must assume ratchet is tool-agnostic.
+
+## Implemented by
+
+<!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
+
+- propose-batch/gated-chain-in.feature
+- propose-batch/multi-agent-surface.feature
+- propose-batch/phase-elicitation.feature
+- propose-batch/proof-of-work-required.feature
+- propose-batch/reject-horizontal-phases.feature
+- propose-batch/scaffold-manifest.feature

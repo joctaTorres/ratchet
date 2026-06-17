@@ -3,8 +3,8 @@ import { RATCHET_DIR_NAME } from './config.js';
 import path from 'path';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
 import fg from 'fast-glob';
-import { getParentPlanningHome, resolveCurrentPlanningHomeSync } from './planning-home.js';
-import { discoverModules, reconcileModuleRegistry } from './module-discovery.js';
+import { getParentPlanningHome, resolveCurrentPlanningHomeSync, type PlanningHome } from './planning-home.js';
+import { discoverModulesSafe, reconcileModuleRegistry } from './module-discovery.js';
 import { configLoadError } from './project-config.js';
 
 interface ChangeInfo {
@@ -112,6 +112,49 @@ async function collectChanges(changesDir: string, module?: string): Promise<Chan
   return changes;
 }
 
+/**
+ * Aggregate changes contributed by every discovered module of a root home.
+ *
+ * Returns the module-tagged change rows plus any non-fatal warnings produced
+ * along the way (discovery failure, registry lint, per-module load errors).
+ * The caller (`list.execute`) stays orchestration-only: it folds `changes` into
+ * the root rows and prints `warnings`. A single broken module degrades to a
+ * warning here rather than blinding the whole listing.
+ */
+async function collectModuleChanges(
+  planningHome: PlanningHome
+): Promise<{ changes: ChangeInfo[]; warnings: string[] }> {
+  const changes: ChangeInfo[] = [];
+  const warnings: string[] = [];
+
+  // Discovery failure (e.g. a duplicate module name) is non-fatal here.
+  const modules = await discoverModulesSafe(planningHome);
+
+  // Surface registry lint warnings (discovered-but-unregistered,
+  // registered-but-missing). Non-fatal.
+  warnings.push(...reconcileModuleRegistry(planningHome, modules));
+
+  for (const mod of modules) {
+    // A module with an unparseable config degrades to a warning; one
+    // broken module must not blind the whole repo.
+    const loadError = configLoadError(mod.home.root);
+    if (loadError) {
+      warnings.push(`Module '${mod.moduleName}' could not be loaded: ${loadError}`);
+      continue;
+    }
+    try {
+      const moduleChanges = await collectChanges(mod.home.changesDir, mod.moduleName);
+      if (moduleChanges) {
+        changes.push(...moduleChanges);
+      }
+    } catch (error) {
+      warnings.push(`Module '${mod.moduleName}' could not be loaded: ${(error as Error).message}`);
+    }
+  }
+
+  return { changes, warnings };
+}
+
 export class ListCommand {
   async execute(targetPath: string = '.', mode: 'changes' | 'specs' = 'changes', options: ListOptions = {}): Promise<void> {
     const { sort = 'recent', json = false } = options;
@@ -136,37 +179,11 @@ export class ListCommand {
       const changes: ChangeInfo[] = [...rootChanges];
       const isRootHome = getParentPlanningHome(planningHome) === null;
       if (isRootHome) {
-        let modules: Awaited<ReturnType<typeof discoverModules>> = [];
-        try {
-          modules = await discoverModules(planningHome);
-        } catch (error) {
-          console.warn(`Module discovery failed: ${(error as Error).message}`);
-          modules = [];
-        }
-
-        // Surface registry lint warnings (discovered-but-unregistered,
-        // registered-but-missing). Non-fatal.
-        for (const warning of reconcileModuleRegistry(planningHome, modules)) {
+        const { changes: moduleChanges, warnings } = await collectModuleChanges(planningHome);
+        for (const warning of warnings) {
           console.warn(warning);
         }
-
-        for (const mod of modules) {
-          // A module with an unparseable config degrades to a warning; one
-          // broken module must not blind the whole repo.
-          const loadError = configLoadError(mod.home.root);
-          if (loadError) {
-            console.warn(`Module '${mod.moduleName}' could not be loaded: ${loadError}`);
-            continue;
-          }
-          try {
-            const moduleChanges = await collectChanges(mod.home.changesDir, mod.moduleName);
-            if (moduleChanges) {
-              changes.push(...moduleChanges);
-            }
-          } catch (error) {
-            console.warn(`Module '${mod.moduleName}' could not be loaded: ${(error as Error).message}`);
-          }
-        }
+        changes.push(...moduleChanges);
       }
 
       if (changes.length === 0) {

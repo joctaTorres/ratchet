@@ -27,6 +27,7 @@ import {
   getRootPlanningHome,
   relativeModulePath,
   resolveCurrentPlanningHomeSync,
+  toPosix,
   type ResolvePlanningHomeOptions,
 } from './planning-home.js';
 import { readModuleName, readModuleRegistry } from './project-config.js';
@@ -111,7 +112,7 @@ export async function discoverModules(rootHome: PlanningHome): Promise<Discovere
   // parent. Drop the root's own `.ratchet` (relpath === RATCHET_DIR_NAME).
   const moduleRoots: string[] = [];
   for (const rel of matches) {
-    const normalized = rel.split(path.sep).join('/');
+    const normalized = toPosix(rel);
     if (normalized === RATCHET_DIR_NAME) continue; // root home itself
     const moduleRel = normalized.replace(new RegExp(`/?${RATCHET_DIR_NAME}$`), '');
     if (moduleRel.length === 0) continue;

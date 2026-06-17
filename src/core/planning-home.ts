@@ -120,12 +120,23 @@ export function resolveCurrentPlanningHomeSync(
 }
 
 /**
+ * Normalize a path to POSIX separators (`/`). Use this whenever a path is split
+ * on or compared as `/`, especially for `fast-glob` results: fast-glob always
+ * emits `/`, but `path.sep` is `\` on Windows, so a bare `rel.split(path.sep)`
+ * is a silent no-op there. Naming the conversion makes that contract explicit
+ * and removes the duplicated `.split(path.sep).join('/')` idiom across the
+ * callers (module discovery, project-config registry, relative module paths).
+ */
+export function toPosix(p: string): string {
+  return p.split(path.sep).join('/');
+}
+
+/**
  * The POSIX-style relative path from a root home to a descendant home, used as
  * the default module name (e.g. `packages/api`).
  */
 export function relativeModulePath(rootRoot: string, moduleRoot: string): string {
-  const rel = relativePlanningPath(rootRoot, moduleRoot);
-  return rel.split(path.sep).join('/');
+  return toPosix(relativePlanningPath(rootRoot, moduleRoot));
 }
 
 /**

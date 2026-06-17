@@ -4,6 +4,7 @@ import path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { PermissionsPolicySchema } from './batch/permissions-policy.js';
+import { toPosix } from './planning-home.js';
 
 /**
  * Zod schema for project configuration.
@@ -421,5 +422,5 @@ export function readModuleRegistry(rootRoot: string): string[] | undefined {
   if (!config?.modules) {
     return undefined;
   }
-  return config.modules.map((m) => m.split(path.sep).join('/').replace(/^\/+/, '').replace(/\/+$/, ''));
+  return config.modules.map((m) => toPosix(m).replace(/^\/+/, '').replace(/\/+$/, ''));
 }

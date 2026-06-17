@@ -264,7 +264,11 @@ export async function resolvePlanningHomeForCommand(
         ? modules.map((m) => m.moduleName).join(', ')
         : '(none discovered)';
     throw new Error(
-      `Unknown module '${moduleName}'. Discovered modules: ${known}`
+      `Unknown module '${moduleName}'. Discovered modules: ${known}. ` +
+        `Note: discovery skips paths matched by the root .gitignore using an ` +
+        `approximate translator (directory ignores only; negations and ` +
+        `globs are not fully supported), so a module under such a path may be ` +
+        `silently hidden — check whether its path is gitignored.`
     );
   }
 

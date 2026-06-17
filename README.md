@@ -34,6 +34,8 @@ AI coding assistants are powerful but unpredictable when the spec lives only in 
 - **Behavior is the contract.** Requirements are Gherkin scenarios (`Given/When/Then`) — concrete, testable, and unambiguous for both humans and agents.
 - **Two artifacts, no ceremony.** A change is `features/` + `plan.md`. That's it.
 - **A living spec that ratchets forward.** Archiving a change copies its features into a permanent `.ratchet/features/` store — your project's always-current behavioral spec.
+- **Big work ships in phases, not waterfalls.** [Batch orchestration](#batch-orchestration) slices an objective into ordered vertical-slice phases, each gated by an executable proof-of-work, and drives them to completion autonomously — changes are created lazily as the batch advances.
+- **The spec is also a regression suite.** [`ratchet eval`](#eval-suite) turns your `.feature` files into a scored, baseline-diffed eval run, judged against fixtures by the bundled engine — so behavior that passes today can't silently regress.
 - **Works with the tools you already use.** Slash commands and skills for Claude Code, OpenCode, Cursor, GitHub Copilot, and Codex.
 
 ## The model
@@ -122,9 +124,11 @@ ratchet archive add-login -y                      # sync features → store, arc
 └── config.yaml               # schema + project context/rules
 
 .claude/                      # (per selected tool)
-├── skills/ratchet-{propose,apply-change,verify-change,archive-change,propose-standard}/
-└── commands/rct/{propose,apply,verify,archive,propose-standard}.md
+├── skills/ratchet-{propose,apply-change,verify-change,archive-change,propose-standard,propose-batch,apply-batch}/
+└── commands/rct/{propose,apply,verify,archive,propose-standard,propose-batch,apply-batch}.md
 ```
+
+The `core` profile installed by a stock `ratchet init` ships the change workflows **plus** the batch workflows (`propose-batch` + `apply-batch`). `eval` is the one opt-in workflow — request it with a custom profile.
 
 **Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`.
 
@@ -142,11 +146,73 @@ ratchet archive add-login -y                      # sync features → store, arc
 | `list` | List active changes (or `--specs` for the feature store) |
 | `view` | Interactive dashboard of changes and features |
 | `archive [name]` | Sync features into the store and archive the change |
+| `new batch <name>` | Scaffold a batch manifest (`.ratchet/batches/<name>/batch.yaml`) |
+| `batch status [name]` | Live phase/change status derived from disk, incl. parked gates/blockers (`--json`) |
+| `batch view` / `batch list` | Rich dashboards of a batch (or all batches) |
+| `batch config [name]` | Resolved batch settings: project defaults + manifest overrides + agent permissions |
+| `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step) |
+| `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
 | `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|check\|agent`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
 | `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
+
+## Batch orchestration
+
+A **batch** ships a large objective as an ordered sequence of **phases**, where
+each phase is a **vertical slice** — runnable software a user can exercise end to
+end — gated by an **executable proof-of-work**. It's deliberately
+**anti-waterfall**: only the current phase is decomposed into concrete change
+intents; later phases stay as goal + proof, and their changes are created
+**lazily** as the batch advances with real outcomes in hand.
+
+```
+batch.yaml
+├── phase 1  goal · success · proofOfWork{kind,run,pass}     ← decomposed now
+│     └── changes: DAG of { name, after: [...] }  ──▶ propose ▶ apply ▶ verify
+├── phase 2  goal · success · proofOfWork (refined at entry) ← changes: lazy
+└── phase 3  …
+      ⮑ each phase boundary is a proof-of-work gate that unlocks the next
+```
+
+The manifest lives at `.ratchet/batches/<name>/batch.yaml` and **references
+changes by name — it never owns them**; status is derived live from disk.
+There's no new schema: a batch is intent you can revise before applying.
+
+### The two batch workflows
+
+| Workflow | Command | What it does |
+|---|---|---|
+| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox` / `llm-judge`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Ends with a gated offer to chain into `/rct:propose` on phase one. |
+| **apply-batch** | `/rct:apply-batch <name>` | Autonomous orchestrator that drives the batch to completion. It **loops** `ratchet batch apply` (which stays single-step) until done, surfacing halts (blocked / awaiting-approval) and proof-of-work failures to you, recording your answers via `ratchet batch report`, then resuming. The orchestrator does **no coding itself** — it only runs `ratchet` CLI commands and talks to you; the coding happens inside the engine-spawned agent. |
+
+```
+You: /rct:propose-batch ship a checkout flow
+AI:  Sliced into 3 vertical-slice phases, each with a proof-of-work.
+     ✓ .ratchet/batches/checkout-flow/batch.yaml
+     Propose phase one's changes now, or defer to `ratchet batch apply`?
+
+You: /rct:apply-batch checkout-flow
+AI:  Driving batch: checkout-flow
+     ✓ phase 1 · add-cart-model      proposed → applied → verified
+     ✓ phase 1 · proof-of-work       PASS — unlocking phase 2
+     ⏸ awaiting approval: phase 2 gate. Approve to continue?
+```
+
+### Single-step engine + the loop
+
+`ratchet batch apply` advances **exactly one transition** (propose → apply →
+verify for one ready DAG step) via a **bundled, in-process engine** — no separate
+package, install, or activation. The continuous loop lives in the **apply-batch
+skill**, not in the CLI. The engine appends to a resumable journal + run-state
+behind a per-batch lock, and halts on gates and agent-raised blockers; default
+gate is `voluntary` (`after-propose` / `every-phase` / `autonomous` are config
+dials under `.ratchet/config.yaml` `batch:`, with manifest-level overrides).
+
+The coding agent itself runs through a **SWE-ReX agent runtime** with live
+output streaming, configurable to execute **locally**, in **Docker**, or on a
+**remote** host — with pluggable adapters (claude / codex / gemini / cursor).
 
 ## Eval suite
 
@@ -215,9 +281,11 @@ manual verdict via `ratchet eval record` (a `fail` requires `--evidence`).
 | **verify** | Confirms the implementation satisfies every scenario and all tasks are done |
 | **archive** | Runs `ratchet archive` to ratchet features into the permanent store |
 | **propose-standard** | Authors a new standard into `.ratchet/standards/` for propose + verify to apply |
+| **propose-batch** | Slices an objective into ordered vertical-slice phases with per-phase proofs-of-work and writes a batch manifest (not change directories) |
+| **apply-batch** | Autonomously drives a batch to completion — loops the single-step `ratchet batch apply`, surfaces halts/approvals + proof-of-work failures, records answers, resumes |
 | **eval** | Runs the engine-backed eval, surfaces regressions first, and guides authoring bindings for unjudged cases |
 
-> `explore` exists as an internal stance used by **propose** — it is not a standalone command.
+> `explore` exists as an internal stance used by **propose** — it is not a standalone command. `propose-batch` + `apply-batch` ship in the default `core` profile; `eval` is opt-in.
 
 ## Development
 

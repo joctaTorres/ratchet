@@ -17,6 +17,9 @@ export const WORKFLOW_TO_SKILL_DIR: Record<WorkflowId, string> = {
   'verify': 'ratchet-verify-change',
   'archive': 'ratchet-archive-change',
   'propose-standard': 'ratchet-propose-standard',
+  'apply-batch': 'ratchet-apply-batch',
+  'eval': 'ratchet-eval',
+  'propose-batch': 'ratchet-propose-batch',
 };
 
 function toKnownWorkflows(workflows: readonly string[]): WorkflowId[] {

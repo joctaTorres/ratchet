@@ -34,6 +34,8 @@ AI coding assistants are powerful but unpredictable when the spec lives only in 
 - **Behavior is the contract.** Requirements are Gherkin scenarios (`Given/When/Then`) — concrete, testable, and unambiguous for both humans and agents.
 - **Two artifacts, no ceremony.** A change is `features/` + `plan.md`. That's it.
 - **A living spec that ratchets forward.** Archiving a change copies its features into a permanent `.ratchet/features/` store — your project's always-current behavioral spec.
+- **Big work ships in phases, not waterfalls.** [Batch orchestration](#batch-orchestration) slices an objective into ordered vertical-slice phases, each gated by an executable proof-of-work, and drives them to completion autonomously — changes are created lazily as the batch advances.
+- **The spec is also a regression suite.** [`ratchet eval`](#eval-suite) turns your `.feature` files into a scored, baseline-diffed eval run, judged against fixtures by the bundled engine — so behavior that passes today can't silently regress.
 - **Works with the tools you already use.** Slash commands and skills for Claude Code, OpenCode, Cursor, GitHub Copilot, and Codex.
 
 ## The model
@@ -50,6 +52,43 @@ features/**/*.feature  ──▶  plan.md  ──▶  apply  ──▶  archive
 - **`plan.md`** — a single document combining `## Why`, `## What Changes`, `## Design`, and a `## Tasks` checklist. The apply phase tracks progress by reading the `- [ ]` boxes here.
 - **`apply`** requires `plan`; it implements against the scenarios and checks off tasks.
 - **`archive`** validates, copies the change's features into the permanent store (add / overwrite by path, or remove via a `features/.deleted` tombstone), and moves the change into `changes/archive/<date>-<name>/`.
+
+### Batches: the propose → apply loop
+
+A single change is one trip through `propose → apply → archive`. A **batch**
+composes many such trips into a phased program of work, driven by two workflows
+that bracket the same loop — see [Batch orchestration](#batch-orchestration) for
+the full picture.
+
+```
+/rct:propose-batch  ──▶  batch.yaml  ──▶  /rct:apply-batch  ──▶  done
+  (author manifest:        (manifest of      (autonomous loop)
+   phases + proofs,          intent)
+   shallow DAG)                │
+                              ╭┘
+   ┌──────────────────────────▼──────────────────────────────┐
+   │  loop until the batch is done:                           │
+   │    batch status   → read live phase/DAG state            │
+   │    batch apply    → advance ONE step (propose▸apply▸      │
+   │                     verify for one ready change)          │
+   │    halt?  ─ blocked / awaiting-approval / proof failed ─┐ │
+   │             → surface to user → batch report → resume   │ │
+   └─────────────────────────────────────────────────────────┘
+```
+
+- **`/rct:propose-batch`** is guided, anti-waterfall authoring: it explores the
+  objective, slices it into ordered **vertical-slice** phases, **hard-gates**
+  every phase on a success criterion + an executable proof-of-work, and writes
+  the manifest with a **shallow DAG** — only phase one is decomposed into change
+  intents. Its sole artifact is `batch.yaml`; it creates no change directories.
+- **`/rct:apply-batch`** is the autonomous orchestrator. It **loops** the
+  single-step `ratchet batch apply` — read status → advance one transition
+  (`propose → apply → verify` for one ready DAG step) → interpret the outcome —
+  until the batch is done. It does **no coding itself** (only `ratchet` CLI
+  commands), runs autonomously between halts, and on a halt (blocked /
+  awaiting-approval / proof-of-work failure) **stops**, surfaces it, records your
+  answer via `ratchet batch report`, and resumes. Changes are created **lazily**
+  as the loop reaches them.
 
 ### Standards
 
@@ -122,9 +161,11 @@ ratchet archive add-login -y                      # sync features → store, arc
 └── config.yaml               # schema + project context/rules
 
 .claude/                      # (per selected tool)
-├── skills/ratchet-{propose,apply-change,verify-change,archive-change,propose-standard}/
-└── commands/rct/{propose,apply,verify,archive,propose-standard}.md
+├── skills/ratchet-{propose,apply-change,verify-change,archive-change,propose-standard,propose-batch,apply-batch}/
+└── commands/rct/{propose,apply,verify,archive,propose-standard,propose-batch,apply-batch}.md
 ```
+
+The `core` profile installed by a stock `ratchet init` ships the change workflows **plus** the batch workflows (`propose-batch` + `apply-batch`). `eval` is the one opt-in workflow — request it with a custom profile.
 
 **Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`.
 
@@ -142,6 +183,180 @@ ratchet archive add-login -y                      # sync features → store, arc
 | `list` | List active changes (or `--specs` for the feature store) |
 | `view` | Interactive dashboard of changes and features |
 | `archive [name]` | Sync features into the store and archive the change |
+| `new batch <name>` | Scaffold a batch manifest (`.ratchet/batches/<name>/batch.yaml`) |
+| `batch status [name]` | Live phase/change status derived from disk, incl. parked gates/blockers (`--json`) |
+| `batch view` / `batch list` | Rich dashboards of a batch (or all batches) |
+| `batch config [name]` | Resolved batch settings: project defaults + manifest overrides + agent permissions |
+| `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step) |
+| `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
+| `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
+| `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|check\|agent`, `--json`) |
+| `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
+| `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
+| `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
+
+## Batch orchestration
+
+A **batch** ships a large objective as an ordered sequence of **phases**, where
+each phase is a **vertical slice** — runnable software a user can exercise end to
+end — gated by an **executable proof-of-work**. It's deliberately
+**anti-waterfall**: only the current phase is decomposed into concrete change
+intents; later phases stay as goal + proof, and their changes are created
+**lazily** as the batch advances with real outcomes in hand.
+
+```
+batch.yaml
+├── phase 1  goal · success · proofOfWork{kind,run,pass}     ← decomposed now
+│     └── changes: DAG of { name, after: [...] }  ──▶ propose ▶ apply ▶ verify
+├── phase 2  goal · success · proofOfWork (refined at entry) ← changes: lazy
+└── phase 3  …
+      ⮑ each phase boundary is a proof-of-work gate that unlocks the next
+```
+
+The manifest lives at `.ratchet/batches/<name>/batch.yaml` and **references
+changes by name — it never owns them**; status is derived live from disk.
+There's no new schema: a batch is intent you can revise before applying.
+
+### The two batch workflows
+
+| Workflow | Command | What it does |
+|---|---|---|
+| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox` / `llm-judge`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Ends with a gated offer to chain into `/rct:propose` on phase one. |
+| **apply-batch** | `/rct:apply-batch <name>` | Autonomous orchestrator that drives the batch to completion. It **loops** `ratchet batch apply` (which stays single-step) until done, surfacing halts (blocked / awaiting-approval) and proof-of-work failures to you, recording your answers via `ratchet batch report`, then resuming. The orchestrator does **no coding itself** — it only runs `ratchet` CLI commands and talks to you; the coding happens inside the engine-spawned agent. |
+
+```
+You: /rct:propose-batch ship a checkout flow
+AI:  Sliced into 3 vertical-slice phases, each with a proof-of-work.
+     ✓ .ratchet/batches/checkout-flow/batch.yaml
+     Propose phase one's changes now, or defer to `ratchet batch apply`?
+
+You: /rct:apply-batch checkout-flow
+AI:  Driving batch: checkout-flow
+     ✓ phase 1 · add-cart-model      proposed → applied → verified
+     ✓ phase 1 · proof-of-work       PASS — unlocking phase 2
+     ⏸ awaiting approval: phase 2 gate. Approve to continue?
+```
+
+### The flow end to end
+
+```mermaid
+flowchart TD
+    Start(["🚀 /rct:propose-batch &lt;objective&gt;"]) --> Explore{"🔎 Objective clear?"}
+    Explore -->|No| Ask["💬 Ask the user to clarify"]
+    Ask --> Explore
+    Explore -->|Yes| Slice["✂️ Slice into ordered<br/>vertical-slice phases"]
+    Slice --> Gate1{"✓ Each phase has a success<br/>criterion + a proof-of-work?"}
+    Gate1 -->|No| Refuse["⛔ Refuse to scaffold —<br/>grill for what's missing"]
+    Refuse --> Slice
+    Gate1 -->|Yes| Scaffold["📝 ratchet new batch<br/>then write batch.yaml"]
+    Scaffold --> Manifest[("📄 batch.yaml<br/>phase 1 → change-intent DAG<br/>phases 2..n: goal + proof only")]
+    Manifest --> ChainGate{"🤝 Propose phase-one<br/>changes now?"}
+    ChainGate -->|Yes| Propose1["📐 /rct:propose<br/>phase-one changes"]
+    ChainGate -->|Defer| Apply
+    Propose1 --> Apply
+
+    subgraph LOOP["🔁 /rct:apply-batch — autonomous orchestrator loop"]
+        direction TB
+        Apply(["▶️ apply-batch &lt;name&gt;"]) --> Status["📊 ratchet batch status --json"]
+        Status --> Done{"✅ Batch done?"}
+        Done -->|Yes| Finish(["🎉 Batch complete"])
+        Done -->|No| Step["⚙️ ratchet batch apply<br/>single-step bundled engine"]
+        Step --> Pick["🎯 Pick next ready DAG step"]
+        Pick --> PAV["🔧 propose ▸ apply ▸ verify<br/>ONE transition"]
+        PAV --> Outcome{"🧭 Step outcome?"}
+        Outcome -->|Advanced| PoW{"🛡️ Phase boundary<br/>reached?"}
+        PoW -->|No| Status
+        PoW -->|Yes| Unlock["🔓 Proof-of-work gate passes →<br/>unlock next phase,<br/>lazily create its changes"]
+        Unlock --> Status
+        Outcome -->|"Blocked / approval / proof failed"| Halt["⏸️ HALT — surface to user"]
+        Halt --> Report["📨 ratchet batch report --answer"]
+        Report --> Status
+    end
+
+    classDef startend fill:#90EE90,stroke:#333,stroke-width:2px,color:#063d1a
+    classDef proc fill:#87CEEB,stroke:#333,stroke-width:2px,color:#06263d
+    classDef decision fill:#FFD700,stroke:#333,stroke-width:2px,color:#000000
+    classDef data fill:#E6E6FA,stroke:#5b2a86,stroke-width:2px,color:#2a1452
+    classDef halt fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:#000000
+
+    class Start,Finish startend
+    class Ask,Slice,Scaffold,Propose1,Status,Step,Pick,PAV,Unlock,Report proc
+    class Explore,Gate1,ChainGate,Done,Outcome,PoW decision
+    class Manifest data
+    class Refuse,Halt halt
+```
+
+### Single-step engine + the loop
+
+`ratchet batch apply` advances **exactly one transition** (propose → apply →
+verify for one ready DAG step) via a **bundled, in-process engine** — no separate
+package, install, or activation. The continuous loop lives in the **apply-batch
+skill**, not in the CLI. The engine appends to a resumable journal + run-state
+behind a per-batch lock, and halts on gates and agent-raised blockers; default
+gate is `voluntary` (`after-propose` / `every-phase` / `autonomous` are config
+dials under `.ratchet/config.yaml` `batch:`, with manifest-level overrides).
+
+The coding agent itself runs through a **SWE-ReX agent runtime** with live
+output streaming, configurable to execute **locally**, in **Docker**, or on a
+**remote** host — with pluggable adapters (claude / codex / gemini / cursor).
+
+## Eval suite
+
+`ratchet eval` turns the project's `.feature` files into a scored, reproducible,
+baseline-diffed regression suite. The CLI is deterministic plumbing; **judging is
+delegated to the bundled batch engine, run against fixtures** — never the live
+working tree — so a scenario that passes today can't silently regress tomorrow.
+
+```bash
+ratchet eval set --json                 # one case per Scenario, with binding status
+ratchet eval run --json                 # judge bound cases through the engine, persist a run
+ratchet eval report --run <run-id> --json   # scorecard + baseline regression diff
+ratchet eval baseline <run-id>          # promote a clean run as the baseline
+```
+
+**Cases & ids.** Each Scenario becomes one case with a stable id
+`<feature-path-sans-ext>#<scenario-slug>` (e.g. `features/cli/status#status-as-json`;
+duplicate scenario names in a file get an ordinal `-2`, `-3` suffix). Baseline
+diffing keys on this id, so a renamed scenario surfaces as retired + new.
+
+**Bindings (`.ratchet/evals/specs/*.yaml`).** A case is unjudged until an
+eval-spec says how to judge it. Each binding maps a case id to a **fixture**
+(a checked-in codebase under `.ratchet/evals/fixtures/<name>/`) and a judging kind:
+
+```yaml
+# .ratchet/evals/specs/status.yaml
+features/cli/status#status-as-json:
+  fixture: status-ok          # .ratchet/evals/fixtures/status-ok/
+  kind: check                 # deterministic — preferred
+  setup: pnpm install         # optional: runs ONCE into a cached working copy
+  check:
+    run: ratchet status --json
+    pass: contains:applyRequires   # exit-zero | contains:<text> | regex:<pattern>
+
+features/cli/status#status-as-text:
+  fixture: verify-sample
+  kind: agent                 # spawned-judge fallback for prose-y scenarios
+  success: the status output is human-readable text
+  agentVotes: 3               # N-of-M repeat votes; majority wins
+```
+
+**Fixtures run isolated.** Before judging, the fixture is materialized into a
+throwaway temp working copy that becomes the judging cwd, so a check or agent may
+build/run/mutate freely without touching the checked-in fixture or the host repo.
+An optional `setup` bootstraps a fixture **once** into a copy cached by
+fixture+setup and reused across every case bound to it.
+
+**The agent judge is guarded.** It **fails closed on uncertainty** (no concrete
+evidence ⇒ not a pass) and may cast **N-of-M votes** (`agentVotes`, default 1).
+When votes disagree, the case is recorded `unjudged` — never silently `fail` — so
+judge noise can't manufacture a regression. Prefer a deterministic `check`.
+
+**Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
+is a case that **passed in the baseline and fails now**; new/retired cases are
+diffed, not failed. `unjudged` keeps a run incomplete and never counts as a pass.
+The overall verdict fails while any regression or fail exists — so never promote a
+run to baseline while a regression exists. Unbound cases (no fixture) can take a
+manual verdict via `ratchet eval record` (a `fail` requires `--evidence`).
 
 ## Agent workflows (skills / `/rct:` commands)
 
@@ -152,8 +367,11 @@ ratchet archive add-login -y                      # sync features → store, arc
 | **verify** | Confirms the implementation satisfies every scenario and all tasks are done |
 | **archive** | Runs `ratchet archive` to ratchet features into the permanent store |
 | **propose-standard** | Authors a new standard into `.ratchet/standards/` for propose + verify to apply |
+| **propose-batch** | Slices an objective into ordered vertical-slice phases with per-phase proofs-of-work and writes a batch manifest (not change directories) |
+| **apply-batch** | Autonomously drives a batch to completion — loops the single-step `ratchet batch apply`, surfaces halts/approvals + proof-of-work failures, records answers, resumes |
+| **eval** | Runs the engine-backed eval, surfaces regressions first, and guides authoring bindings for unjudged cases |
 
-> `explore` exists as an internal stance used by **propose** — it is not a standalone command.
+> `explore` exists as an internal stance used by **propose** — it is not a standalone command. `propose-batch` + `apply-batch` ship in the default `core` profile; `eval` is opt-in.
 
 ## Development
 

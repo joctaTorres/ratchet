@@ -1,0 +1,37 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# A batch coordinates related changes across ordered phases. It references
+# changes by NAME and never owns them: changes live under .ratchet/changes/
+# like any other change and can be inspected, validated, and archived on their
+# own. Status is derived live from change state on disk — never stored here.
+#
+# Phases ship functional software behind an executable proof-of-work, so errors
+# surface early. A later phase is blocked until the prior phase's proof-of-work
+# passes. Changes are created lazily as the batch progresses: an entry with no
+# change directory yet is simply "pending", not an error.
+
+name: example-batch
+created: 2026-01-01
+
+# Optional per-batch overrides of the project-level batch settings
+# (.ratchet/config.yaml `batch:` section). Omit to inherit project defaults.
+# settings:
+#   gate: voluntary        # voluntary | after-propose | every-phase | autonomous
+#   strategy: vertical-slice # vertical-slice | feature
+#   proofOfWork: hard-gate # hard-gate | warn
+#   agent: claude-code
+
+phases:
+  - name: foundation
+    goal: Stand up a thin end-to-end slice of the feature.
+    success: A user can exercise the slice end to end.
+    # The proof-of-work is an executable check an agent can run directly.
+    proofOfWork:
+      kind: integration        # integration | blackbox | llm-judge
+      run: pnpm test           # a runnable command
+      pass: exit code 0        # the pass condition
+    # Change intents form a DAG via optional `after` edges. No edges = parallel.
+    changes:
+      - name: add-first-change
+      # - name: add-second-change
+      #   after: [add-first-change]

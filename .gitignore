@@ -166,3 +166,10 @@ opencode.json
 # Generated animation preview images (scripts/preview-*.mjs)
 *-preview.png
 side-*.png
+
+# Eval suite: per-run results are transient (specs/fixtures/baseline are tracked)
+.ratchet/evals/runs/
+
+# Python bytecode cache (e.g. from sidecar unit tests)
+__pycache__/
+*.pyc

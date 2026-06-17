@@ -90,6 +90,11 @@ function gitignoreGlobs(rootDir: string): string[] {
  * Returns modules sorted by their relative path. The `name:` override and
  * duplicate-name detection are applied here so callers always receive resolved
  * names. A duplicate module name throws.
+ *
+ * Note: this is an intentionally uncached, full filesystem scan re-run on every
+ * command. Module sets are small and discovery is cheap relative to the I/O the
+ * surrounding command already does; caching would add mtime/invalidation
+ * complexity for negligible benefit (mirrors the readProjectConfig rationale).
  */
 export async function discoverModules(rootHome: PlanningHome): Promise<DiscoveredModule[]> {
   const rootDir = rootHome.root;
@@ -160,6 +165,26 @@ export async function discoverModules(rootHome: PlanningHome): Promise<Discovere
 }
 
 /**
+ * Discover modules, degrading any discovery failure (including a duplicate
+ * module name) to a non-fatal warning and an empty result.
+ *
+ * This is the uniform policy for *incidental* cross-module aggregation: a
+ * malformed module set (e.g. two modules sharing a `name:`) must not hard-crash
+ * an otherwise-unrelated command. Commands that aggregate modules as a side
+ * effect (`list`, archive-time link materialization, `--module` resolution)
+ * route through here so a single broken module is diagnosable but not fatal.
+ * Use `discoverModules` directly only when the failure should propagate.
+ */
+export async function discoverModulesSafe(rootHome: PlanningHome): Promise<DiscoveredModule[]> {
+  try {
+    return await discoverModules(rootHome);
+  } catch (error) {
+    console.warn(`Module discovery failed: ${error instanceof Error ? error.message : String(error)}`);
+    return [];
+  }
+}
+
+/**
  * Compare discovered modules against the root `modules:` registry and return
  * lint warnings. The registry is an optional allowlist — discovery is always
  * the source of truth, so every warning here is non-fatal:
@@ -226,8 +251,11 @@ export async function resolvePlanningHomeForCommand(
   }
 
   // Address a module from the root: discovery is rooted at the topmost home.
+  // Use the safe variant so a duplicate name elsewhere in the repo degrades to
+  // a warning rather than crashing this command before it can report whether
+  // the requested module exists.
   const rootHome = getRootPlanningHome(nearest);
-  const modules = await discoverModules(rootHome);
+  const modules = await discoverModulesSafe(rootHome);
   const match = modules.find((m) => m.moduleName === moduleName);
 
   if (!match) {

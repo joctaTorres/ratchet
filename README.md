@@ -53,6 +53,43 @@ features/**/*.feature  ──▶  plan.md  ──▶  apply  ──▶  archive
 - **`apply`** requires `plan`; it implements against the scenarios and checks off tasks.
 - **`archive`** validates, copies the change's features into the permanent store (add / overwrite by path, or remove via a `features/.deleted` tombstone), and moves the change into `changes/archive/<date>-<name>/`.
 
+### Batches: the propose → apply loop
+
+A single change is one trip through `propose → apply → archive`. A **batch**
+composes many such trips into a phased program of work, driven by two workflows
+that bracket the same loop — see [Batch orchestration](#batch-orchestration) for
+the full picture.
+
+```
+/rct:propose-batch  ──▶  batch.yaml  ──▶  /rct:apply-batch  ──▶  done
+  (author manifest:        (manifest of      (autonomous loop)
+   phases + proofs,          intent)
+   shallow DAG)                │
+                              ╭┘
+   ┌──────────────────────────▼──────────────────────────────┐
+   │  loop until the batch is done:                           │
+   │    batch status   → read live phase/DAG state            │
+   │    batch apply    → advance ONE step (propose▸apply▸      │
+   │                     verify for one ready change)          │
+   │    halt?  ─ blocked / awaiting-approval / proof failed ─┐ │
+   │             → surface to user → batch report → resume   │ │
+   └─────────────────────────────────────────────────────────┘
+```
+
+- **`/rct:propose-batch`** is guided, anti-waterfall authoring: it explores the
+  objective, slices it into ordered **vertical-slice** phases, **hard-gates**
+  every phase on a success criterion + an executable proof-of-work, and writes
+  the manifest with a **shallow DAG** — only phase one is decomposed into change
+  intents. Its sole artifact is `batch.yaml`; it creates no change directories.
+- **`/rct:apply-batch`** is the autonomous orchestrator. It **loops** the
+  single-step `ratchet batch apply` — read status → advance one transition
+  (`propose → apply → verify` for one ready DAG step) → interpret the outcome —
+  until the batch is done. It does **no coding itself** (only `ratchet` CLI
+  commands), runs autonomously between halts, and on a halt (blocked /
+  awaiting-approval / proof-of-work failure) **stops**, surfaces it, records your
+  answer via `ratchet batch report`, and resumes. Changes are created **lazily**
+  as the loop reaches them.
+
 ### Standards
 
 Standards are project-level guidelines kept at `.ratchet/standards/*.md` — a sibling of the feature store, **not** a per-change artifact. A standard can cover any concern (testing, security, architecture, design, …). `ratchet init` creates the directory empty; author standards with `/rct:propose-standard`.
@@ -198,6 +235,55 @@ AI:  Driving batch: checkout-flow
      ✓ phase 1 · add-cart-model      proposed → applied → verified
      ✓ phase 1 · proof-of-work       PASS — unlocking phase 2
      ⏸ awaiting approval: phase 2 gate. Approve to continue?
+```
+
+### The flow end to end
+
+```mermaid
+flowchart TD
+    Start(["🚀 /rct:propose-batch &lt;objective&gt;"]) --> Explore{"🔎 Objective clear?"}
+    Explore -->|No| Ask["💬 Ask the user to clarify"]
+    Ask --> Explore
+    Explore -->|Yes| Slice["✂️ Slice into ordered<br/>vertical-slice phases"]
+    Slice --> Gate1{"✓ Each phase has a success<br/>criterion + a proof-of-work?"}
+    Gate1 -->|No| Refuse["⛔ Refuse to scaffold —<br/>grill for what's missing"]
+    Refuse --> Slice
+    Gate1 -->|Yes| Scaffold["📝 ratchet new batch<br/>then write batch.yaml"]
+    Scaffold --> Manifest[("📄 batch.yaml<br/>phase 1 → change-intent DAG<br/>phases 2..n: goal + proof only")]
+    Manifest --> ChainGate{"🤝 Propose phase-one<br/>changes now?"}
+    ChainGate -->|Yes| Propose1["📐 /rct:propose<br/>phase-one changes"]
+    ChainGate -->|Defer| Apply
+    Propose1 --> Apply
+
+    subgraph LOOP["🔁 /rct:apply-batch — autonomous orchestrator loop"]
+        direction TB
+        Apply(["▶️ apply-batch &lt;name&gt;"]) --> Status["📊 ratchet batch status --json"]
+        Status --> Done{"✅ Batch done?"}
+        Done -->|Yes| Finish(["🎉 Batch complete"])
+        Done -->|No| Step["⚙️ ratchet batch apply<br/>single-step bundled engine"]
+        Step --> Pick["🎯 Pick next ready DAG step"]
+        Pick --> PAV["🔧 propose ▸ apply ▸ verify<br/>ONE transition"]
+        PAV --> Outcome{"🧭 Step outcome?"}
+        Outcome -->|Advanced| PoW{"🛡️ Phase boundary<br/>reached?"}
+        PoW -->|No| Status
+        PoW -->|Yes| Unlock["🔓 Proof-of-work gate passes →<br/>unlock next phase,<br/>lazily create its changes"]
+        Unlock --> Status
+        Outcome -->|"Blocked / approval / proof failed"| Halt["⏸️ HALT — surface to user"]
+        Halt --> Report["📨 ratchet batch report --answer"]
+        Report --> Status
+    end
+
+    classDef startend fill:#90EE90,stroke:#333,stroke-width:2px,color:#063d1a
+    classDef proc fill:#87CEEB,stroke:#333,stroke-width:2px,color:#06263d
+    classDef decision fill:#FFD700,stroke:#333,stroke-width:2px,color:#000000
+    classDef data fill:#E6E6FA,stroke:#5b2a86,stroke-width:2px,color:#2a1452
+    classDef halt fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:#000000
+
+    class Start,Finish startend
+    class Ask,Slice,Scaffold,Propose1,Status,Step,Pick,PAV,Unlock,Report proc
+    class Explore,Gate1,ChainGate,Done,Outcome,PoW decision
+    class Manifest data
+    class Refuse,Halt halt
 ```
 
 ### Single-step engine + the loop

@@ -29,6 +29,7 @@ describe('planning home paths', () => {
       kind: 'repo',
       root: 'D:\\repos\\service',
       changesDir: 'D:\\repos\\service\\.ratchet\\changes',
+      batchesDir: 'D:\\repos\\service\\.ratchet\\batches',
       defaultSchema: 'ratchet',
     };
 

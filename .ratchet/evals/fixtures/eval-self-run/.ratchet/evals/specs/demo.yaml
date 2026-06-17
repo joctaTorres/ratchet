@@ -1,0 +1,12 @@
+# Inner eval-spec for the self-run fixture (DETERMINISTIC check — never agent,
+# so there is no agent-inside-agent; the recursion depth stays at 1).
+#
+# The bound case is judged by running the command below in a throwaway copy of
+# the `marker` sub-fixture and asserting the marker file is present.
+features/demo/demo#the-marker-file-is-present-in-the-working-copy:
+  fixture: marker
+  kind: check
+  check:
+    pass: contains:ok
+    run: |
+      test -f marker.txt && echo ok

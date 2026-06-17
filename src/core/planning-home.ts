@@ -10,6 +10,7 @@ export interface PlanningHome {
   kind: PlanningHomeKind;
   root: string;
   changesDir: string;
+  batchesDir: string;
   defaultSchema: string;
   /**
    * The enclosing planning home, if any. A home whose walk-up finds another
@@ -95,6 +96,7 @@ function repoPlanningHome(repoRoot: string): PlanningHome {
     kind: 'repo',
     root: repoRoot,
     changesDir: path.join(repoRoot, RATCHET_DIR_NAME, 'changes'),
+    batchesDir: path.join(repoRoot, RATCHET_DIR_NAME, 'batches'),
     defaultSchema: REPO_DEFAULT_SCHEMA,
   };
 }

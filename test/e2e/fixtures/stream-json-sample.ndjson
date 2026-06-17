@@ -1,0 +1,15 @@
+{"type":"system","subtype":"init","cwd":"/repo","session_id":"abc123","model":"claude-opus-4","permissionMode":"default"}
+{"type":"stream_event","event":{"type":"message_start"}}
+{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"I will "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"add a guard clause "}}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"to login()."}}}
+{"type":"stream_event","event":{"type":"content_block_stop"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I will add a guard clause to login()."}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"src/auth/login.ts","old_string":"return user","new_string":"if (!user) return null; return user"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"File edited: src/auth/login.ts (1 change)"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"pnpm test auth"}}]}}
+this is not valid json { broken line that must degrade to raw without crashing
+{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"1 test failed: login should reject null"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"SomeFutureTool","input":{"detail":"experimental target"}}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"Added guard clause to login() and verified the auth tests pass.","total_cost_usd":0.0521285,"usage":{"input_tokens":3295,"output_tokens":142}}

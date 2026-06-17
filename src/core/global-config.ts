@@ -17,6 +17,16 @@ export interface GlobalConfig {
   profile?: Profile;
   delivery?: Delivery;
   workflows?: string[];
+  /**
+   * User/global batch defaults. Today this only carries the agent-permissions
+   * policy (the user scope has no other batch settings). It is stored as a loose
+   * object here and validated against the shared `PermissionsPolicySchema` where
+   * it is consumed (`src/core/batch/config.ts`), keeping this module free of a
+   * dependency cycle on the batch config.
+   */
+  batch?: {
+    permissions?: unknown;
+  };
 }
 
 const DEFAULT_CONFIG: GlobalConfig = {
@@ -167,4 +177,25 @@ export function saveGlobalConfig(config: GlobalConfig): void {
   }
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+}
+
+/**
+ * Read the user/global batch permission policy as a raw, unvalidated object (or
+ * `undefined` when unset). The caller validates it against the shared schema —
+ * see {@link GlobalConfig.batch}. Kept here so the batch config layer has a
+ * single seam to read the user scope without importing init/CLI machinery.
+ */
+export function readUserBatchPermissions(): unknown {
+  return getGlobalConfig().batch?.permissions;
+}
+
+/**
+ * Persist a user/global batch permission policy, preserving the rest of the
+ * global config. Used by the first-run guided setup when the operator chooses to
+ * save the chosen posture to the user scope instead of the project.
+ */
+export function saveUserBatchPermissions(permissions: unknown): void {
+  const config = getGlobalConfig();
+  config.batch = { ...config.batch, permissions };
+  saveGlobalConfig(config);
 }

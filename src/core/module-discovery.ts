@@ -47,6 +47,7 @@ function makeModuleHome(rootHome: PlanningHome, moduleRoot: string): PlanningHom
     kind: 'repo',
     root: moduleRoot,
     changesDir: path.join(moduleRoot, RATCHET_DIR_NAME, 'changes'),
+    batchesDir: path.join(moduleRoot, RATCHET_DIR_NAME, 'batches'),
     defaultSchema: rootHome.defaultSchema,
     parent: rootHome,
   };

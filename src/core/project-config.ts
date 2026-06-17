@@ -3,6 +3,7 @@ import { RATCHET_DIR_NAME } from './config.js';
 import path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { PermissionsPolicySchema } from './batch/permissions-policy.js';
 
 /**
  * Zod schema for project configuration.
@@ -55,6 +56,39 @@ export const ProjectConfigSchema = z.object({
     .min(1)
     .optional()
     .describe("Override for this module's name (defaults to its relative path)"),
+
+  // Optional: project-level defaults for batch orchestration. Per-manifest
+  // overrides win over these (see effective-settings resolution in
+  // src/core/batch/config.ts).
+  batch: z
+    .object({
+      gate: z.enum(['voluntary', 'after-propose', 'every-phase', 'autonomous']).optional(),
+      strategy: z.enum(['vertical-slice', 'feature']).optional(),
+      proofOfWork: z.enum(['hard-gate', 'warn']).optional(),
+      locus: z.enum(['local', 'docker', 'remote']).optional(),
+      agent: z.string().optional(),
+      image: z.string().optional(),
+      host: z.string().optional(),
+      port: z.number().optional(),
+      authToken: z.string().optional(),
+      // Agent-agnostic permission policy (posture + allow/deny + per-agent raw).
+      // Shared schema; merged across user/project/manifest in resolveBatchSettings.
+      permissions: PermissionsPolicySchema.optional(),
+      insecure: z.boolean().optional(),
+    })
+    .partial()
+    .optional()
+    .describe('Project-level defaults for batch orchestration'),
+
+  // Optional: project-level defaults for eval orchestration. The `judge`
+  // default mode is used by `ratchet eval run` when no `--judge` flag is given.
+  eval: z
+    .object({
+      judge: z.enum(['auto', 'check', 'agent']).optional(),
+    })
+    .partial()
+    .optional()
+    .describe('Project-level defaults for eval orchestration'),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
@@ -192,6 +226,34 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
         config.name = nameResult.data;
       } else {
         console.warn(`Invalid 'name' field in config (must be a non-empty string)`);
+      }
+    }
+
+    // Parse batch field using Zod (project-level batch defaults)
+    if (raw.batch !== undefined) {
+      const batchField = ProjectConfigSchema.shape.batch;
+      const batchResult = batchField.safeParse(raw.batch);
+      if (batchResult.success) {
+        if (batchResult.data) {
+          config.batch = batchResult.data;
+        }
+      } else {
+        console.warn(
+          `Invalid 'batch' field in config (check gate/strategy/proofOfWork values)`
+        );
+      }
+    }
+
+    // Parse eval field using Zod (project-level eval defaults)
+    if (raw.eval !== undefined) {
+      const evalField = ProjectConfigSchema.shape.eval;
+      const evalResult = evalField.safeParse(raw.eval);
+      if (evalResult.success) {
+        if (evalResult.data) {
+          config.eval = evalResult.data;
+        }
+      } else {
+        console.warn(`Invalid 'eval' field in config (check judge value: auto|check|agent)`);
       }
     }
 

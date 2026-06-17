@@ -1,0 +1,8 @@
+name: q3-auth
+phases:
+  - name: foundation
+    goal: stand up the login API
+    success: the endpoint responds and the change verifies
+    proofOfWork: { kind: integration, run: 'true', pass: "exit 0" }
+    changes:
+      - name: add-login-api

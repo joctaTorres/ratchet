@@ -21,6 +21,33 @@ import {
   type InstructionsOptions,
   type NewChangeOptions,
 } from '../commands/workflow/index.js';
+import {
+  batchStatusCommand,
+  batchConfigCommand,
+  batchViewCommand,
+  batchListCommand,
+  batchReportCommand,
+  batchApplyCommand,
+  newBatchCommand,
+  type BatchStatusOptions,
+  type BatchConfigOptions,
+  type BatchViewOptions,
+  type BatchReportOptions,
+  type BatchApplyOptions,
+  type NewBatchOptions,
+} from '../commands/batch/index.js';
+import {
+  evalSetCommand,
+  evalRunCommand,
+  evalRecordCommand,
+  evalReportCommand,
+  evalBaselineCommand,
+  type EvalSetOptions,
+  type EvalRunOptions,
+  type EvalRecordOptions,
+  type EvalReportOptions,
+  type EvalBaselineOptions,
+} from '../commands/eval/index.js';
 import { maybeShowTelemetryNotice, trackCommand, shutdown } from '../telemetry/index.js';
 
 const program = new Command();
@@ -324,6 +351,249 @@ newCmd
   .action(async (name: string, options: NewChangeOptions) => {
     try {
       await newChangeCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+newCmd
+  .command('batch <name>')
+  .description('Scaffold a new batch manifest from the template')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, options: NewBatchOptions) => {
+    try {
+      await newBatchCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+// ═══════════════════════════════════════════════════════════
+// Batch Orchestration Commands
+// ═══════════════════════════════════════════════════════════
+
+const batchCmd = program
+  .command('batch')
+  .description('Coordinate related changes across phases (batch orchestration)');
+
+// First-run agent-permissions setup: fires before any `batch *` subcommand the
+// first time none is configured. Interactive operators are guided to choose a
+// posture; headless/CI runs are NEVER prompted, written to, or blocked (the
+// effective posture falls back to the built-in default). Best-effort: any failure
+// here must not break the underlying command.
+batchCmd.hook('preAction', async () => {
+  try {
+    const { resolveCurrentPlanningHomeSync } = await import('../core/planning-home.js');
+    const { maybeRunFirstRunSetup } = await import('../core/batch/first-run-setup.js');
+    const root = resolveCurrentPlanningHomeSync().root;
+    await maybeRunFirstRunSetup(root);
+  } catch (err) {
+    // No planning home / prompt cancellation / any setup error is non-fatal —
+    // the command proceeds with the default posture resolved downstream. We still
+    // surface it under DEBUG so a corrupt-config throw isn't silently swallowed
+    // every run while staying non-blocking.
+    if (process.env.DEBUG || process.env.RATCHET_DEBUG) {
+      console.debug('[batch] first-run setup skipped (non-fatal):', err);
+    }
+  }
+});
+
+batchCmd
+  .command('new <name>')
+  .description('Scaffold a new batch manifest from the template')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, options: NewBatchOptions) => {
+    try {
+      await newBatchCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('status [name]')
+  .description('Show batch status derived live from change state on disk')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchStatusOptions) => {
+    try {
+      await batchStatusCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('view [name]')
+  .description('Rich terminal dashboard for a single batch')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchViewOptions) => {
+    try {
+      await batchViewCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('list')
+  .description('List all batches with change count and aggregate progress')
+  .option('--json', 'Output as JSON')
+  .action(async (options: BatchViewOptions) => {
+    try {
+      await batchListCommand(options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('config [name]')
+  .description('Resolve, get, or set batch settings')
+  .option('--set <key=value>', 'Set a project-level batch setting')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchConfigOptions) => {
+    try {
+      await batchConfigCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('report [name]')
+  .description('Report progress, raise a blocker, or request input on a step')
+  .option('--change <name>', 'Change the report is about')
+  .option('--status <message>', 'Record routine progress')
+  .option('--blocker <message>', 'Raise a blocker and park the step')
+  .option('--needs-input <message>', 'Request input and park the step')
+  .option('--complete <message>', 'Signal the step produced its output')
+  .option('--answer <message>', 'Record an answer to a parked blocker')
+  .option('--reject <message>', 'Reject an awaiting-approval step with feedback')
+  .option('--awaiting-approval', 'Mark a completion as awaiting approval (after-propose gate)')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchReportOptions) => {
+    try {
+      await batchReportCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('apply [name]')
+  .description('Advance the batch by one step via the bundled engine')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchApplyOptions) => {
+    try {
+      await batchApplyCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+// ═══════════════════════════════════════════════════════════
+// Eval Commands
+// ═══════════════════════════════════════════════════════════
+
+const evalCmd = program
+  .command('eval')
+  .description('Turn .feature files into a scored, baseline-diffed eval suite');
+
+const withScopeFlags = (cmd: Command): Command =>
+  cmd
+    .option('--changes', 'Include active changes alongside the feature store')
+    .option('--change <name>', 'Scope to a single active change')
+    .option('--path <dir-or-file>', 'Narrow to a capability directory or file');
+
+withScopeFlags(
+  evalCmd
+    .command('set')
+    .description('Enumerate eval cases (one per Scenario) from .feature files')
+    .option('--json', 'Output as JSON')
+).action(async (options: EvalSetOptions) => {
+  try {
+    await evalSetCommand(options);
+  } catch (error) {
+    console.log();
+    ora().fail(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+});
+
+withScopeFlags(
+  evalCmd
+    .command('run')
+    .description('Judge every bound in-scope case through the engine and persist a run')
+    .option('--judge <mode>', 'Judge mode: auto | check | agent')
+    .option('--json', 'Output as JSON')
+).action(async (options: EvalRunOptions) => {
+  try {
+    await evalRunCommand(options);
+  } catch (error) {
+    console.log();
+    ora().fail(`Error: ${(error as Error).message}`);
+    process.exit(1);
+  }
+});
+
+evalCmd
+  .command('record')
+  .description('Manually override a case verdict in a persisted run')
+  .option('--run <id>', 'Run id to amend')
+  .option('--case <id>', 'Case id to override')
+  .option('--verdict <verdict>', 'pass | fail | unjudged')
+  .option('--evidence <text>', 'Evidence (required for a fail verdict)')
+  .option('--json', 'Output as JSON')
+  .action(async (options: EvalRecordOptions) => {
+    try {
+      await evalRecordCommand(options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+evalCmd
+  .command('report')
+  .description('Scorecard and baseline regression diff for a run')
+  .option('--run <id>', 'Run id to report')
+  .option('--json', 'Output as JSON')
+  .action(async (options: EvalReportOptions) => {
+    try {
+      await evalReportCommand(options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+evalCmd
+  .command('baseline <run-id>')
+  .description('Promote a run to the baseline')
+  .option('--json', 'Output as JSON')
+  .action(async (runId: string, options: EvalBaselineOptions) => {
+    try {
+      await evalBaselineCommand(runId, options);
     } catch (error) {
       console.log();
       ora().fail(`Error: ${(error as Error).message}`);

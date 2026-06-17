@@ -109,13 +109,15 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      // Core profile: propose, apply, verify, archive, propose-standard
+      // Core profile: propose, apply, verify, archive, propose-standard, apply-batch, propose-batch
       const coreSkillNames = [
         'ratchet-propose',
         'ratchet-apply-change',
         'ratchet-verify-change',
         'ratchet-archive-change',
         'ratchet-propose-standard',
+        'ratchet-apply-batch',
+        'ratchet-propose-batch',
       ];
 
       for (const skillName of coreSkillNames) {
@@ -128,13 +130,15 @@ describe('InitCommand', () => {
         expect(content).toContain('description:');
       }
 
-      // Non-core / internal-only skills should NOT be created
+      // Non-core / internal-only / opt-in skills should NOT be created.
+      // eval stays opt-in; the batch workflows (apply-batch + propose-batch) ship by default.
       const nonCoreSkillNames = [
         'ratchet-explore',
         'ratchet-new-change',
         'ratchet-continue-change',
         'ratchet-ff-change',
         'ratchet-bulk-archive-change',
+        'ratchet-eval',
       ];
 
       for (const skillName of nonCoreSkillNames) {
@@ -148,13 +152,15 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      // Core profile: propose, apply, verify, archive, propose-standard
+      // Core profile: propose, apply, verify, archive, propose-standard, apply-batch, propose-batch
       const coreCommandNames = [
         'rct/propose.md',
         'rct/apply.md',
         'rct/verify.md',
         'rct/archive.md',
         'rct/propose-standard.md',
+        'rct/apply-batch.md',
+        'rct/propose-batch.md',
       ];
 
       for (const cmdName of coreCommandNames) {
@@ -162,13 +168,15 @@ describe('InitCommand', () => {
         expect(await fileExists(cmdFile)).toBe(true);
       }
 
-      // Non-core / internal-only commands should NOT be created
+      // Non-core / internal-only / opt-in commands should NOT be created.
+      // eval stays opt-in; the batch workflows (apply-batch + propose-batch) ship by default.
       const nonCoreCommandNames = [
         'rct/explore.md',
         'rct/new.md',
         'rct/continue.md',
         'rct/ff.md',
         'rct/bulk-archive.md',
+        'rct/eval.md',
       ];
 
       for (const cmdName of nonCoreCommandNames) {

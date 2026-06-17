@@ -109,14 +109,14 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      // Core profile: propose, apply, verify, archive, propose-standard, batch, propose-batch
+      // Core profile: propose, apply, verify, archive, propose-standard, apply-batch, propose-batch
       const coreSkillNames = [
         'ratchet-propose',
         'ratchet-apply-change',
         'ratchet-verify-change',
         'ratchet-archive-change',
         'ratchet-propose-standard',
-        'ratchet-batch',
+        'ratchet-apply-batch',
         'ratchet-propose-batch',
       ];
 
@@ -131,7 +131,7 @@ describe('InitCommand', () => {
       }
 
       // Non-core / internal-only / opt-in skills should NOT be created.
-      // eval stays opt-in; the batch workflows (batch + propose-batch) ship by default.
+      // eval stays opt-in; the batch workflows (apply-batch + propose-batch) ship by default.
       const nonCoreSkillNames = [
         'ratchet-explore',
         'ratchet-new-change',
@@ -152,14 +152,14 @@ describe('InitCommand', () => {
 
       await initCommand.execute(testDir);
 
-      // Core profile: propose, apply, verify, archive, propose-standard, batch, propose-batch
+      // Core profile: propose, apply, verify, archive, propose-standard, apply-batch, propose-batch
       const coreCommandNames = [
         'rct/propose.md',
         'rct/apply.md',
         'rct/verify.md',
         'rct/archive.md',
         'rct/propose-standard.md',
-        'rct/batch.md',
+        'rct/apply-batch.md',
         'rct/propose-batch.md',
       ];
 
@@ -169,7 +169,7 @@ describe('InitCommand', () => {
       }
 
       // Non-core / internal-only / opt-in commands should NOT be created.
-      // eval stays opt-in; the batch workflows (batch + propose-batch) ship by default.
+      // eval stays opt-in; the batch workflows (apply-batch + propose-batch) ship by default.
       const nonCoreCommandNames = [
         'rct/explore.md',
         'rct/new.md',

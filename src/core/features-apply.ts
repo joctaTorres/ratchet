@@ -21,7 +21,7 @@ import {
   getParentPlanningHome,
   getRootPlanningHome,
 } from './planning-home.js';
-import { discoverModules } from './module-discovery.js';
+import { discoverModulesSafe } from './module-discovery.js';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -547,12 +547,16 @@ export async function materializeStandardLinks(
   // Reverse links: regenerate the `## Implemented by` block in each standard's
   // defining home. Without a planning home, or for a plain single-home repo,
   // this is exactly the legacy behavior (scan `root`'s store, regenerate
-  // `root`'s standards).
+  // `root`'s standards). The nested-monorepo layering is isolated in
+  // `regenerateLayeredReverseLinks`.
   const isNested = home !== undefined && getParentPlanningHome(home) !== null;
-  const rootHome = home ? getRootPlanningHome(home) : undefined;
-  const modules = rootHome && (isNested || home === rootHome)
-    ? await discoverModules(rootHome)
-    : [];
+  const rootHome = home && (isNested || home === getRootPlanningHome(home))
+    ? getRootPlanningHome(home)
+    : undefined;
+
+  // Discovery failure (e.g. a duplicate module name) is non-fatal: fall back to
+  // the single-home reverse-link path rather than crashing the archive.
+  const modules = rootHome ? await discoverModulesSafe(rootHome) : [];
 
   if (!rootHome || modules.length === 0) {
     // Single-home (or no discovered modules): pure projection of root's store.
@@ -561,17 +565,31 @@ export async function materializeStandardLinks(
     return;
   }
 
+  await regenerateLayeredReverseLinks(rootHome, modules);
+}
+
+/**
+ * Regenerate the `## Implemented by` reverse-link blocks across a nested
+ * monorepo (root + discovered modules). Isolated from the legacy single-home
+ * path in {@link materializeStandardLinks} so the layering logic lives in one
+ * place.
+ *
+ * Each home's standards are regenerated from a reverse index built relative to
+ * that home: the home's own features are listed unqualified, while features
+ * contributed by *other* modules are qualified by their module name. This keeps
+ * a module-local standard's entries local, while an inherited root standard
+ * collects module features qualified by module name.
+ */
+async function regenerateLayeredReverseLinks(
+  rootHome: PlanningHome,
+  modules: Array<{ home: PlanningHome; moduleName: string }>
+): Promise<void> {
   // Every home that could define a standard: the root and every module.
   const allHomes: Array<{ root: string; moduleName?: string }> = [
     { root: rootHome.root },
     ...modules.map((m) => ({ root: m.home.root, moduleName: m.moduleName })),
   ];
 
-  // Regenerate each home's standards from a reverse index built relative to
-  // that home: the home's own features are listed unqualified, while features
-  // contributed by *other* modules are qualified by their module name. This
-  // keeps a module-local standard's entries local, while an inherited root
-  // standard collects module features qualified by module name.
   for (const defining of allHomes) {
     const homesForIndex = allHomes.map((h) => ({
       storeDir: storeDirFor(h.root),

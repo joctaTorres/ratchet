@@ -2,17 +2,21 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { InitCommand } from '../../src/core/init.js';
+import { parse as parseYaml } from 'yaml';
+import { InitCommand, type SandboxPermissionPrompts } from '../../src/core/init.js';
 import { saveGlobalConfig, getGlobalConfig } from '../../src/core/global-config.js';
+import { setProjectBatchPermissions } from '../../src/core/batch/config.js';
 
-const { confirmMock, showWelcomeScreenMock, searchableMultiSelectMock } = vi.hoisted(() => ({
+const { confirmMock, selectMock, showWelcomeScreenMock, searchableMultiSelectMock } = vi.hoisted(() => ({
   confirmMock: vi.fn(),
+  selectMock: vi.fn(),
   showWelcomeScreenMock: vi.fn().mockResolvedValue(undefined),
   searchableMultiSelectMock: vi.fn(),
 }));
 
 vi.mock('@inquirer/prompts', () => ({
   confirm: confirmMock,
+  select: selectMock,
 }));
 
 vi.mock('../../src/ui/welcome-screen.js', () => ({
@@ -41,6 +45,8 @@ describe('InitCommand', () => {
     vi.spyOn(console, 'log').mockImplementation(() => { });
     confirmMock.mockReset();
     confirmMock.mockResolvedValue(true);
+    selectMock.mockReset();
+    selectMock.mockResolvedValue('repo-sandboxed-permissive');
     showWelcomeScreenMock.mockClear();
     searchableMultiSelectMock.mockReset();
   });
@@ -481,6 +487,8 @@ describe('InitCommand - profile and detection features', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     confirmMock.mockReset();
     confirmMock.mockResolvedValue(true);
+    selectMock.mockReset();
+    selectMock.mockResolvedValue('repo-sandboxed-permissive');
     showWelcomeScreenMock.mockClear();
     searchableMultiSelectMock.mockReset();
   });
@@ -658,7 +666,15 @@ describe('InitCommand - profile and detection features', () => {
       workflows: ['apply', 'verify'],
     });
 
-    const initCommand = new InitCommand({ force: true });
+    const initCommand = new InitCommand({
+      force: true,
+      // Decline the sandbox-permission offer via the injected seam so this test
+      // stays focused on profile confirmation (no real @inquirer confirm fires).
+      sandboxPermissionPrompts: {
+        confirmSetup: async () => false,
+        selectPosture: async () => 'repo-sandboxed-permissive',
+      },
+    });
     vi.spyOn(initCommand as any, 'canPromptInteractively').mockReturnValue(true);
     vi.spyOn(initCommand as any, 'getSelectedTools').mockResolvedValue(['claude']);
 
@@ -740,6 +756,106 @@ describe('InitCommand - profile and detection features', () => {
 
     const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
     expect(await fileExists(skillFile)).toBe(true);
+  });
+  // ───────────────────────────────────────────────────────────
+  // Sandbox permission setup offer (features/init/sandbox-permission-setup)
+  // ───────────────────────────────────────────────────────────
+  describe('sandbox permission setup offer', () => {
+    /** A prompt seam that fails loudly if invoked — proves no prompting happened. */
+    const neverPrompts: SandboxPermissionPrompts = {
+      confirmSetup: async () => {
+        throw new Error('confirmSetup must not be called in this scenario');
+      },
+      selectPosture: async () => {
+        throw new Error('selectPosture must not be called in this scenario');
+      },
+    };
+
+    async function readProjectPermissions(dir: string): Promise<unknown> {
+      const configPath = path.join(dir, '.ratchet', 'config.yaml');
+      const raw = await fs.readFile(configPath, 'utf-8');
+      return (parseYaml(raw) as { batch?: { permissions?: unknown } })?.batch?.permissions;
+    }
+
+    it('offers permission setup when no project-level config exists, then saves the chosen posture', async () => {
+      const confirmSetup = vi.fn().mockResolvedValue(true);
+      const selectPosture = vi.fn().mockResolvedValue('curated-allowlist');
+      const initCommand = new InitCommand({
+        force: true,
+        sandboxPermissionPrompts: { confirmSetup, selectPosture },
+      });
+      vi.spyOn(initCommand as any, 'canPromptInteractively').mockReturnValue(true);
+      searchableMultiSelectMock.mockResolvedValue(['claude']);
+
+      await initCommand.execute(testDir);
+
+      // The offer was made (confirm) and posture selected on accept.
+      expect(confirmSetup).toHaveBeenCalledTimes(1);
+      expect(selectPosture).toHaveBeenCalledTimes(1);
+
+      // Posture saved to the project config; init continued (structure created).
+      expect(await readProjectPermissions(testDir)).toEqual({ posture: 'curated-allowlist' });
+      expect(await directoryExists(path.join(testDir, '.ratchet', 'changes'))).toBe(true);
+
+      // Schema is preserved in the config alongside permissions.
+      const cfg = parseYaml(await fs.readFile(path.join(testDir, '.ratchet', 'config.yaml'), 'utf-8'));
+      expect(cfg.schema).toBe('ratchet');
+    });
+
+    it('writes no permission config when the offer is declined', async () => {
+      const confirmSetup = vi.fn().mockResolvedValue(false);
+      const initCommand = new InitCommand({
+        force: true,
+        sandboxPermissionPrompts: {
+          confirmSetup,
+          selectPosture: neverPrompts.selectPosture,
+        },
+      });
+      vi.spyOn(initCommand as any, 'canPromptInteractively').mockReturnValue(true);
+      searchableMultiSelectMock.mockResolvedValue(['claude']);
+
+      await initCommand.execute(testDir);
+
+      expect(confirmSetup).toHaveBeenCalledTimes(1);
+      // No permission config written; init still created the structure.
+      expect(await readProjectPermissions(testDir)).toBeUndefined();
+      expect(await directoryExists(path.join(testDir, '.ratchet', 'changes'))).toBe(true);
+    });
+
+    it('skips the offer entirely when a project-level config already exists, leaving it untouched', async () => {
+      // Pre-existing project-level permission config.
+      await fs.mkdir(path.join(testDir, '.ratchet'), { recursive: true });
+      setProjectBatchPermissions(testDir, { posture: 'full-autonomy' });
+
+      const initCommand = new InitCommand({
+        force: true,
+        sandboxPermissionPrompts: neverPrompts,
+      });
+      vi.spyOn(initCommand as any, 'canPromptInteractively').mockReturnValue(true);
+      searchableMultiSelectMock.mockResolvedValue(['claude']);
+
+      // neverPrompts throws if the offer fires; completing proves it was skipped.
+      await initCommand.execute(testDir);
+
+      // Existing config untouched.
+      expect(await readProjectPermissions(testDir)).toEqual({ posture: 'full-autonomy' });
+      expect(await directoryExists(path.join(testDir, '.ratchet', 'changes'))).toBe(true);
+    });
+
+    it('never prompts or writes a permission config in non-interactive mode', async () => {
+      // --tools flag → non-interactive; the offer must never fire.
+      const initCommand = new InitCommand({
+        tools: 'claude',
+        force: true,
+        sandboxPermissionPrompts: neverPrompts,
+      });
+
+      await initCommand.execute(testDir);
+
+      // No permission config written; init completed normally.
+      expect(await readProjectPermissions(testDir)).toBeUndefined();
+      expect(await directoryExists(path.join(testDir, '.ratchet', 'changes'))).toBe(true);
+    });
   });
 });
 

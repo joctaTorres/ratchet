@@ -46,6 +46,10 @@ import { getGlobalConfig, type Delivery, type Profile } from './global-config.js
 import { getProfileWorkflows, CORE_WORKFLOWS, ALL_WORKFLOWS } from './profiles.js';
 import { getAvailableTools } from './available-tools.js';
 import { migrateIfNeeded } from './migration.js';
+import { readProjectConfig } from './project-config.js';
+import { setProjectBatchPermissions } from './batch/config.js';
+import { selectPosture } from './batch/first-run-setup.js';
+import type { PermissionPosture } from './batch/permissions-policy.js';
 
 const require = createRequire(import.meta.url);
 const { version: RATCHET_VERSION } = require('../../package.json');
@@ -78,7 +82,23 @@ type InitCommandOptions = {
   force?: boolean;
   interactive?: boolean;
   profile?: string;
+  /**
+   * Injectable prompt seam for the sandbox-permission offer, so the flow is
+   * unit-testable without a real TTY. Defaults to dynamic `@inquirer/prompts`.
+   */
+  sandboxPermissionPrompts?: SandboxPermissionPrompts;
 };
+
+/**
+ * The interactive prompts used by the sandbox-permission offer. Kept agent-agnostic:
+ * the posture governs every supported coding agent, no per-agent branching.
+ */
+export interface SandboxPermissionPrompts {
+  /** Ask whether to set up project-level permission config. */
+  confirmSetup(): Promise<boolean>;
+  /** Choose an agent-agnostic permission posture. */
+  selectPosture(): Promise<PermissionPosture>;
+}
 
 // -----------------------------------------------------------------------------
 // Init Command Class
@@ -89,12 +109,14 @@ export class InitCommand {
   private readonly force: boolean;
   private readonly interactiveOption?: boolean;
   private readonly profileOverride?: string;
+  private readonly sandboxPermissionPrompts?: SandboxPermissionPrompts;
 
   constructor(options: InitCommandOptions = {}) {
     this.toolsArg = options.tools;
     this.force = options.force ?? false;
     this.interactiveOption = options.interactive;
     this.profileOverride = options.profile;
+    this.sandboxPermissionPrompts = options.sandboxPermissionPrompts;
   }
 
   async execute(targetPath: string): Promise<void> {
@@ -135,6 +157,12 @@ export class InitCommand {
 
     // Validate selected tools
     const validatedTools = this.validateTools(selectedToolIds, toolStates);
+
+    // Offer project-level agent sandbox permission setup (interactive only,
+    // skipped when a project-level policy already exists). Runs before the
+    // directory/config creation below; setProjectBatchPermissions creates or
+    // merges .ratchet/config.yaml on projectPath independently.
+    await this.offerSandboxPermissionSetup(projectPath);
 
     // Create directory structure and config
     await this.createDirectoryStructure(ratchetPath, extendMode);
@@ -441,6 +469,91 @@ export class InitCommand {
     }
 
     return validatedTools;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // SANDBOX PERMISSION SETUP
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Whether a permission policy is already configured at the PROJECT scope.
+   * Distinct from `hasPermissionConfig` (which also returns true for a user-scope
+   * policy): the init offer is explicitly project-level, so a user-level posture
+   * must NOT suppress it. A user posture still applies at runtime via normal
+   * scope merging — init just doesn't skip the project-level offer because of it.
+   */
+  private hasProjectPermissionConfig(projectPath: string): boolean {
+    return readProjectConfig(projectPath)?.batch?.permissions !== undefined;
+  }
+
+  /**
+   * Offer to set up a project-level agent sandbox permission posture during init.
+   *
+   * Gates (any of these → no prompt, no write, return):
+   *  - non-interactive mode (CI/headless/`--tools`/`--interactive=false`)
+   *  - a project-level permission policy already exists (`.ratchet/config.yaml`)
+   *
+   * The posture is tool-agnostic (`PermissionsPolicy`) and governs every supported
+   * coding agent; there is no per-agent branching here.
+   */
+  private async offerSandboxPermissionSetup(projectPath: string): Promise<void> {
+    // Headless/CI must never prompt or write.
+    if (!this.canPromptInteractively()) {
+      return;
+    }
+
+    // Project-level-exists gate: leave an existing project policy untouched.
+    if (this.hasProjectPermissionConfig(projectPath)) {
+      return;
+    }
+
+    const prompts = this.sandboxPermissionPrompts ?? this.defaultSandboxPermissionPrompts();
+
+    const shouldSetUp = await prompts.confirmSetup();
+    if (!shouldSetUp) {
+      // Decline: write nothing, init continues normally.
+      return;
+    }
+
+    const posture = await prompts.selectPosture();
+    // setProjectBatchPermissions writes .ratchet/config.yaml directly and the
+    // .ratchet directory is created later (createDirectoryStructure), so ensure
+    // it exists here to keep this step independent of write ordering.
+    const ratchetPath = path.join(projectPath, RATCHET_DIR_NAME);
+    await FileSystemUtils.createDirectory(ratchetPath);
+    // Seed the base config (schema) when no config file exists yet, so the
+    // posture merges on top instead of producing a config missing `schema`.
+    // createConfig() later sees the file already exists and leaves it intact.
+    const configPath = path.join(ratchetPath, 'config.yaml');
+    const configYmlPath = path.join(ratchetPath, 'config.yml');
+    if (!fs.existsSync(configPath) && !fs.existsSync(configYmlPath)) {
+      await FileSystemUtils.writeFile(configPath, serializeConfig({ schema: DEFAULT_SCHEMA }));
+    }
+    const filePath = setProjectBatchPermissions(projectPath, { posture });
+    console.log(
+      chalk.green(`Saved agent permission posture '${posture}' to ${filePath}.`)
+    );
+  }
+
+  /**
+   * Default prompt seam for the sandbox-permission offer. The confirm prompt
+   * explains the config governs what spawned coding agents may do without
+   * approval; posture selection reuses the shared `selectPosture` so init and
+   * batch first-run share one source of truth for posture semantics.
+   */
+  private defaultSandboxPermissionPrompts(): SandboxPermissionPrompts {
+    return {
+      async confirmSetup() {
+        const { confirm } = await import('@inquirer/prompts');
+        return confirm({
+          message:
+            'Set up project-level permission config for agent sandbox execution? ' +
+            'This governs what spawned coding agents may do without approval.',
+          default: true,
+        });
+      },
+      selectPosture,
+    };
   }
 
   // ═══════════════════════════════════════════════════════════

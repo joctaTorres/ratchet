@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import {
   runReleaseGate,
   writeReleaseAllowedOutput,
+  WIRED_GATES,
 } from '../../src/core/ci/release-gate.js';
 import { ALLOW, DENY } from '../../src/core/ci/release-decision.js';
 
@@ -163,6 +164,13 @@ describe('runReleaseGate', () => {
     expect(result.decision.outcome).toBe(DENY);
     expect(result.exitCode).not.toBe(0);
     expect(result.lines.join('\n')).toContain('"security" gate is not green');
+  });
+
+  it('wires a non-empty gate set (the gate can never run with zero gates)', () => {
+    // Defensive invariant: an empty WIRED_GATES would let the decision ALLOW with
+    // nothing proving the build green. The runner guards against it; this pins the
+    // wired set is non-empty so a future refactor that drains it fails loudly.
+    expect(WIRED_GATES.length).toBeGreaterThan(0);
   });
 
   it('surfaces release_allowed mirroring decision.allowed (true on ALLOW)', () => {

@@ -80,6 +80,18 @@ describe('decideRelease', () => {
     expect(decision.reasons).toEqual([]);
   });
 
+  it('is fail-closed: an EMPTY gate set DENIES on main (nothing proves green)', () => {
+    // With no wired gates the per-gate loop has nothing to reject; an empty set
+    // must DENY rather than ALLOW, so the gate can never be silently opened.
+    const decision = decideRelease(input('main', {}));
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.outcome).toBe(DENY);
+    expect(decision.reasons).toContainEqual(
+      expect.stringContaining('no wired gates'),
+    );
+  });
+
   it('is fail-closed: a missing wired gate signal DENIES', () => {
     // `test` is wired (its key is present) but carries no signal — fail closed.
     const decision = decideRelease(input('main', { lint: 'green', test: undefined }));

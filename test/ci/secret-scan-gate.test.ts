@@ -102,7 +102,7 @@ describe('evaluateSecretScan', () => {
     expect(result.reasons).toEqual([]);
   });
 
-  it('allowlists by bare file or bare rule, but a real leak alongside still goes red', () => {
+  it('allowlists by bare file, but a real leak alongside still goes red', () => {
     const result = evaluateSecretScan({
       findings: [
         finding({ rule: 'test-fixture-secret', file: 'test/fixtures/planted.txt' }),
@@ -113,6 +113,30 @@ describe('evaluateSecretScan', () => {
     expect(result.signal).toBe('red');
     expect(result.allowlisted).toBe(1);
     expect(result.reasons).toHaveLength(1);
+    expect(result.reasons[0]).toContain('src/real-leak.ts');
+  });
+
+  it('does NOT exempt a finding by a bare rule id (allowlist is too broad otherwise)', () => {
+    // A bare-rule allowlist entry must no longer exempt findings of that rule —
+    // allowlisting a whole rule everywhere is a security footgun. Only a precise
+    // fingerprint (file:rule) or a bare file exempts.
+    const result = evaluateSecretScan({
+      findings: [finding({ rule: 'generic-api-key', file: 'src/leak.ts' })],
+      allowlist: new Set(['generic-api-key']),
+    });
+    expect(result.signal).toBe('red');
+    expect(result.allowlisted).toBe(0);
+    expect(result.reasons).toHaveLength(1);
+    expect(result.reasons[0]).toContain('src/leak.ts');
+  });
+
+  it('a bare-rule exemption does not hide the same rule in another file', () => {
+    const result = evaluateSecretScan({
+      findings: [finding({ rule: 'aws-access-key', file: 'src/real-leak.ts' })],
+      allowlist: new Set(['aws-access-key']),
+    });
+    expect(result.signal).toBe('red');
+    expect(result.allowlisted).toBe(0);
     expect(result.reasons[0]).toContain('src/real-leak.ts');
   });
 

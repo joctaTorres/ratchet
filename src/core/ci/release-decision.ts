@@ -59,6 +59,15 @@ export function decideRelease(input: ReleaseDecisionInput): ReleaseDecision {
     reasons.push(`branch is "${input.branch}", not "${RELEASE_BRANCH}"`);
   }
 
+  // Fail-closed on an empty wired-gate set: with no gates the per-gate loop below
+  // has nothing to reject, so an empty set would otherwise ALLOW — a build that
+  // proved nothing. A release must be backed by at least one green gate, so an
+  // empty set is itself a denial. (The runner also guards WIRED_GATES is
+  // non-empty; this keeps the property at the pure-decision layer too.)
+  if (Object.keys(input.gates).length === 0) {
+    reasons.push('no wired gates — nothing proves the build is green');
+  }
+
   for (const [gate, signal] of Object.entries(input.gates)) {
     if (signal !== 'green') {
       reasons.push(`"${gate}" gate is not green`);

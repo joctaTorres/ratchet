@@ -71,6 +71,20 @@ function gateEnvVar(gate: string): string {
  * process or standing up an Actions runner.
  */
 export function runReleaseGate(env: NodeJS.ProcessEnv): ReleaseGateResult {
+  // Defensive invariant: the release decision is "only when green" over the
+  // wired gate set, so an EMPTY set must never reach the decision (the pure
+  // module also fail-closes on it). Asserting it here makes a future refactor
+  // that drains WIRED_GATES fail loudly rather than silently open the gate. A
+  // misconfigured wired set is a programming error, so this throws. (`length` is
+  // read through a widened view so the guard survives even if WIRED_GATES is
+  // later changed to an empty/dynamic set — today its tuple type is non-empty.)
+  const wiredGateCount: number = (WIRED_GATES as readonly string[]).length;
+  if (wiredGateCount === 0) {
+    throw new Error(
+      'release-gate misconfigured: WIRED_GATES is empty — refusing to evaluate a release with no gates.',
+    );
+  }
+
   const branch = env[BRANCH_ENV] ?? '';
 
   const gates: Record<string, GateSignal | undefined> = {};

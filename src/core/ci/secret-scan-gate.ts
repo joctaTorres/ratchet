@@ -66,7 +66,8 @@ export interface SecretScanInput {
   findings: SecretFinding[] | null;
   /**
    * Identifiers of known-safe findings to exempt. A finding is allowlisted when
-   * its fingerprint (`file:rule`), its `file`, or its `rule` is in this set.
+   * its fingerprint (`file:rule`) or its `file` is in this set — a bare `rule` is
+   * NOT matched (too broad: it would exempt that rule everywhere).
    * Defaults to empty — fail-closed on the unknown.
    */
   allowlist?: ReadonlySet<string>;
@@ -90,15 +91,13 @@ export function fingerprint(finding: SecretFinding): string {
 
 /**
  * True when `finding` is exempted by `allowlist` — matched by its fingerprint
- * (`file:rule`), its bare `file`, or its bare `rule`, so an allowlist can target
- * a specific planted fixture or a whole known-safe file/rule.
+ * (`file:rule`) or its bare `file`, so an allowlist can target a specific planted
+ * fixture or a whole known-safe file. A bare `rule` is deliberately NOT matched:
+ * exempting every finding of a rule across the whole tree is too broad for a
+ * security gate, so the allowlist stays scoped to a file (or a file+rule pair).
  */
 function isAllowlisted(finding: SecretFinding, allowlist: ReadonlySet<string>): boolean {
-  return (
-    allowlist.has(fingerprint(finding)) ||
-    allowlist.has(finding.file) ||
-    allowlist.has(finding.rule)
-  );
+  return allowlist.has(fingerprint(finding)) || allowlist.has(finding.file);
 }
 
 /** Human-readable reason naming an offending finding (file + rule, line when known). */

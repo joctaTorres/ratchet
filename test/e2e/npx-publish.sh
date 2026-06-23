@@ -228,7 +228,9 @@ else
   [ -n "$VERDACCIO_BIN" ] && [ -x "$VERDACCIO_BIN" ] || fail "could not provision verdaccio (network required for the staged-publish proof)"
 
   # Pick a free ephemeral port to avoid collisions with anything already bound.
-  PORT="$(node -e 'const s=require("net").createServer();s.listen(0,()=>{const p=s.address().port;s.close(()=>console.log(p))})')"
+  # Use process.stdout.write (not console.log) so a colorizing env (FORCE_COLOR)
+  # cannot wrap the number in ANSI escapes — verdaccio's --listen would reject it.
+  PORT="$(node -e 'const s=require("net").createServer();s.listen(0,()=>{const p=s.address().port;s.close(()=>process.stdout.write(String(p)))})')"
   [ -n "$PORT" ] || fail "could not allocate a port for the staged registry"
   REG="http://localhost:$PORT/"
 

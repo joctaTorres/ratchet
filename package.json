@@ -11,6 +11,12 @@
     "development"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joctaTorres/ratchet.git"
+  },
+  "homepage": "https://github.com/joctaTorres/ratchet#readme",
+  "bugs": "https://github.com/joctaTorres/ratchet/issues",
   "packageManager": "pnpm@11.5.1",
   "type": "module",
   "exports": {

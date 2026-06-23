@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { runReleaseGate } from '../../src/core/ci/release-gate.js';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import {
+  runReleaseGate,
+  writeReleaseAllowedOutput,
+} from '../../src/core/ci/release-gate.js';
 import { ALLOW, DENY } from '../../src/core/ci/release-decision.js';
 
 /**
@@ -157,5 +163,68 @@ describe('runReleaseGate', () => {
     expect(result.decision.outcome).toBe(DENY);
     expect(result.exitCode).not.toBe(0);
     expect(result.lines.join('\n')).toContain('"security" gate is not green');
+  });
+
+  it('surfaces release_allowed mirroring decision.allowed (true on ALLOW)', () => {
+    expect(runReleaseGate(allGreenMain()).release_allowed).toBe(true);
+  });
+
+  it('surfaces release_allowed = false on DENY', () => {
+    const result = runReleaseGate(
+      env({ branch: 'main', lint: 'green', test: 'red', coverage: 'green', e2e: 'green', security: 'green' }),
+    );
+    expect(result.release_allowed).toBe(false);
+  });
+});
+
+/**
+ * The runner's direct-run path lifts the verdict into a GitHub Actions step
+ * output by appending `release_allowed=true|false` to the file named by
+ * `GITHUB_OUTPUT`. The pure decision stays mechanism-free; only this impure
+ * writer touches the file, so it is exercised directly against a scratch file —
+ * no Actions runner or child process needed. This is the signal the `ci` job
+ * lifts into a job output the gated `publish` job depends on.
+ */
+describe('release_allowed step output (GITHUB_OUTPUT)', () => {
+  let dir: string;
+  let outFile: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'release-gate-output-'));
+    outFile = path.join(dir, 'github_output');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes release_allowed=true on ALLOW (main + every wired gate green)', () => {
+    const result = runReleaseGate(allGreenMain());
+    writeReleaseAllowedOutput({ GITHUB_OUTPUT: outFile }, result.release_allowed);
+
+    expect(readFileSync(outFile, 'utf8')).toContain('release_allowed=true');
+  });
+
+  it('writes release_allowed=false when a wired gate is red', () => {
+    const result = runReleaseGate(
+      env({ branch: 'main', lint: 'green', test: 'red', coverage: 'green', e2e: 'green', security: 'green' }),
+    );
+    writeReleaseAllowedOutput({ GITHUB_OUTPUT: outFile }, result.release_allowed);
+
+    expect(readFileSync(outFile, 'utf8')).toContain('release_allowed=false');
+  });
+
+  it('writes release_allowed=false on a non-main branch', () => {
+    const result = runReleaseGate(
+      env({ branch: 'feature/widget', lint: 'green', test: 'green', coverage: 'green', e2e: 'green', security: 'green' }),
+    );
+    writeReleaseAllowedOutput({ GITHUB_OUTPUT: outFile }, result.release_allowed);
+
+    expect(readFileSync(outFile, 'utf8')).toContain('release_allowed=false');
+  });
+
+  it('is a no-op when GITHUB_OUTPUT is unset (keeps the local/pure path clean)', () => {
+    // No GITHUB_OUTPUT in env -> nothing written, no throw.
+    expect(() => writeReleaseAllowedOutput({}, true)).not.toThrow();
   });
 });

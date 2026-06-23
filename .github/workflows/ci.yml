@@ -12,6 +12,14 @@ jobs:
   ci:
     name: install -> lint -> test
     runs-on: ubuntu-latest
+    # Lift the release-gate step's verdict into a job-level signal. The value is
+    # literally `decision.allowed` from the unit-tested release-decision module
+    # (the gate runner writes `release_allowed=true|false` to GITHUB_OUTPUT); the
+    # downstream `publish` job depends on this output to stay reachable ONLY when
+    # the decision is ALLOW on main. Absent/non-`true` (off main, or any red gate
+    # that skips the gate step) reads as "do not publish" — fail-closed.
+    outputs:
+      release_allowed: ${{ steps.release-gate.outputs.release_allowed }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -160,6 +168,7 @@ jobs:
       # module enforces main-only too). Later phases wire more gate signals into
       # the runner's environment; this step never grows new branching.
       - name: Release gate (consult release-decision module)
+        id: release-gate
         if: github.ref == 'refs/heads/main'
         env:
           # The job only reaches this step when lint and test succeeded, so these
@@ -179,10 +188,66 @@ jobs:
           pnpm build
           node dist/core/ci/release-gate.js
 
+  # === GATED PUBLISH JOB (main-only, dry-run) ===
+  # The publish is promoted into its OWN job so the reachability guarantee
+  # ("publish only when the release-decision module returns ALLOW on main")
+  # becomes a property of the workflow GRAPH, not just in-job step ordering:
+  #
+  #   - `needs: [ci]` makes this job run ONLY after `ci` succeeds. A red
+  #     lint/test/coverage/e2e/security fails `ci`, which skips `publish`.
+  #   - `if: needs.ci.outputs.release_allowed == 'true'` gates on the proven
+  #     verdict the `ci` job lifted from the release-gate step's output (literally
+  #     `decision.allowed`). Off `main` the gate step is skipped, so the output is
+  #     absent/non-`true` and this job is skipped too — fail-closed.
+  #
+  # Either guard alone blocks publish; together they are belt-and-braces. This
+  # slice keeps the publish a DRY-RUN: no npm token/secret, no provenance
+  # permission. The real token + provenance publish is the later `real-npm-publish`
+  # change; idempotency is `idempotent-version-guard`.
+  publish:
+    name: gated dry-run publish
+    needs: [ci]
+    if: needs.ci.outputs.release_allowed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the package
+        run: pnpm build
+
+      # Idempotency guard: decide PUBLISH (new version) vs SKIP (the local
+      # version is already on the registry) via the unit-tested version-decision
+      # module, and expose it as the `should_publish` step output the publish
+      # step gates on. The runner ALWAYS exits 0 — a SKIP is a deliberate, green
+      # no-op, so re-running an already-published version never errors the
+      # pipeline. This slice FORCES the published set via `PUBLISHED_VERSIONS`
+      # (kept empty here, so the dry-run path is exercised); `real-npm-publish`
+      # swaps that env source for a real `npm view ratchet versions` query.
+      - name: Version guard (skip an already-published version)
+        id: version-guard
+        env:
+          PUBLISHED_VERSIONS: ''
+        run: node dist/core/ci/version-guard.js
+
       # Dry-run only: runs the entire publish path (pack, manifest checks,
       # registry negotiation) and stops short of uploading — no real release, no
-      # NODE_AUTH_TOKEN / npm secret required. Reachable only after the gate
-      # above exits zero. Phase 4 flips this to a real publish; never here.
+      # NODE_AUTH_TOKEN / npm secret required. The later `real-npm-publish` change
+      # flips this to a real provenance publish; never here. Gated on the version
+      # guard's `should_publish` output: an already-published version skips this
+      # step while the job — and the whole pipeline — stays green (idempotent).
       - name: Dry-run publish (no real release)
-        if: github.ref == 'refs/heads/main'
+        if: steps.version-guard.outputs.should_publish == 'true'
         run: npm publish --dry-run

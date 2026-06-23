@@ -149,4 +149,9 @@ phases:
         registry) publish, and that `npx ratchet --version` then executes the
         published CLI; a forced red gate or non-main ref is asserted to skip
         publish entirely.
-    changes: []
+    changes:
+      - name: gated-publish-job
+      - name: idempotent-version-guard
+        after: [gated-publish-job]
+      - name: real-npm-publish
+        after: [idempotent-version-guard]

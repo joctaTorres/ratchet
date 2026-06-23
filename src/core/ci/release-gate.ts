@@ -16,6 +16,7 @@
  * to `WIRED_GATES` and the environment, never by growing branching here.
  */
 
+import { appendFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -45,7 +46,18 @@ export interface ReleaseGateResult {
   exitCode: number;
   /** Lines to print, describing the outcome and any denial reasons. */
   lines: string[];
+  /**
+   * The verdict surfaced as a machine-readable signal, mirroring
+   * `decision.allowed`. The direct-run path writes this as a
+   * `release_allowed=true|false` line to `GITHUB_OUTPUT`, lifting the proven
+   * decision into a job-level output a downstream `publish` job can depend on.
+   * This adds no new logic — it is exactly `decision.allowed`.
+   */
+  release_allowed: boolean;
 }
+
+/** GitHub Actions step-output mechanism: the file a step appends `key=value` to. */
+export const GITHUB_OUTPUT_ENV = 'GITHUB_OUTPUT';
 
 /** Environment variable name carrying the signal for a wired gate. */
 function gateEnvVar(gate: string): string {
@@ -81,7 +93,27 @@ export function runReleaseGate(env: NodeJS.ProcessEnv): ReleaseGateResult {
     }
   }
 
-  return { decision, exitCode: decision.allowed ? 0 : 1, lines };
+  return {
+    decision,
+    exitCode: decision.allowed ? 0 : 1,
+    lines,
+    release_allowed: decision.allowed,
+  };
+}
+
+/**
+ * Append the `release_allowed` verdict to the file named by `GITHUB_OUTPUT`
+ * (GitHub Actions' step-output mechanism), exposing it as a step output the `ci`
+ * job can lift into a job-level signal. A no-op when `GITHUB_OUTPUT` is unset
+ * (e.g. local runs), so the pure decision path stays mechanism-free — only this
+ * impure helper, called solely from the direct-run path, touches the file.
+ * Exported so tests can drive it against a scratch `GITHUB_OUTPUT` without
+ * spawning a process or standing up an Actions runner.
+ */
+export function writeReleaseAllowedOutput(env: NodeJS.ProcessEnv, releaseAllowed: boolean): void {
+  const outputFile = env[GITHUB_OUTPUT_ENV];
+  if (!outputFile) return;
+  appendFileSync(outputFile, `release_allowed=${releaseAllowed}\n`);
 }
 
 /** True when this module is the process entrypoint (`node release-gate.js`). */
@@ -98,5 +130,8 @@ if (isDirectRun()) {
   for (const line of result.lines) {
     console.log(line);
   }
+  // Surface the verdict as a job-consumable step output, then exit. The exit
+  // code is unchanged; this only adds the machine-readable `release_allowed`.
+  writeReleaseAllowedOutput(process.env, result.release_allowed);
   process.exit(result.exitCode);
 }

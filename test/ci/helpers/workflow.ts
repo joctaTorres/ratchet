@@ -11,6 +11,12 @@ import { parse as parseYaml } from 'yaml';
  */
 export interface WorkflowStep {
   name?: string;
+  /**
+   * The step's `id`, if any. The gated-publish assertions read this to verify the
+   * `ci` job's `release_allowed` output is sourced from the release-gate step
+   * (`steps.<id>.outputs.release_allowed`).
+   */
+  id?: string;
   uses?: string;
   run?: string;
   /**
@@ -31,6 +37,23 @@ export interface WorkflowJob {
   id: string;
   name?: string;
   runsOn?: string;
+  /**
+   * The job's `needs` (dependency edges), normalized to a string[] (the `needs:`
+   * key accepts a single string or a list). The gated-publish assertions read
+   * this to verify the `publish` job `needs` the `ci` job.
+   */
+  needs: string[];
+  /**
+   * The job's `if` condition, if any. The gated-publish assertions read this to
+   * verify the `publish` job is gated on `needs.ci.outputs.release_allowed`.
+   */
+  if?: string;
+  /**
+   * The job's `outputs:` map, with each value coerced to a string. The
+   * gated-publish assertions read this to verify the `ci` job exposes a
+   * `release_allowed` output sourced from the release-gate step.
+   */
+  outputs: Record<string, string>;
   steps: WorkflowStep[];
 }
 
@@ -78,11 +101,19 @@ function normalizeStep(raw: unknown): WorkflowStep {
   const step = (raw ?? {}) as Record<string, unknown>;
   return {
     name: typeof step.name === 'string' ? step.name : undefined,
+    id: typeof step.id === 'string' ? step.id : undefined,
     uses: typeof step.uses === 'string' ? step.uses : undefined,
     run: typeof step.run === 'string' ? step.run : undefined,
     if: typeof step.if === 'string' ? step.if : undefined,
     env: normalizeEnv(step.env),
   };
+}
+
+/** Normalize `needs:` (a single string or a list) to a flat string[]. */
+function normalizeNeeds(raw: unknown): string[] {
+  if (typeof raw === 'string') return [raw];
+  if (Array.isArray(raw)) return raw.map(String);
+  return [];
 }
 
 function normalizeJobs(jobs: unknown): WorkflowJob[] {
@@ -94,6 +125,9 @@ function normalizeJobs(jobs: unknown): WorkflowJob[] {
       id,
       name: typeof job.name === 'string' ? job.name : undefined,
       runsOn: typeof job['runs-on'] === 'string' ? (job['runs-on'] as string) : undefined,
+      needs: normalizeNeeds(job.needs),
+      if: typeof job.if === 'string' ? job.if : undefined,
+      outputs: normalizeEnv(job.outputs),
       steps,
     };
   });

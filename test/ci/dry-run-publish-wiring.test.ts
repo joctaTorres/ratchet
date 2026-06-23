@@ -13,7 +13,8 @@ import {
 /**
  * This slice fills the release-path seam in `.github/workflows/ci.yml`: after
  * the green install -> lint -> test spine, a main-only release-gate step that
- * consults the release-decision module, then a main-only `npm publish --dry-run`
+ * consults the release-decision module, then — promoted into its own gated
+ * `publish` job (see `gated-publish-job.test.ts`) — a `npm publish --dry-run`
  * step. A unit test can't run GitHub Actions, so the wiring is proven
  * structurally against the parsed-workflow model the first slice exposed — step
  * presence, ordering, the main-only `if`, and the dry-run flag — matching steps
@@ -22,11 +23,18 @@ import {
 
 const workflow = loadCiWorkflow();
 
-/** The single CI job that runs the spine and the release path. */
+/** The CI job that runs the spine and the release-gate step. */
 function ciJob(): WorkflowJob {
-  const job = workflow.jobs[0];
-  expect(job, 'workflow defines at least one job').toBeDefined();
-  return job;
+  const job = workflow.jobs.find((j) => j.id === 'ci');
+  expect(job, 'workflow defines a "ci" job').toBeDefined();
+  return job as WorkflowJob;
+}
+
+/** The gated publish job that runs the dry-run publish. */
+function publishJob(): WorkflowJob {
+  const job = workflow.jobs.find((j) => j.id === 'publish');
+  expect(job, 'workflow defines a "publish" job').toBeDefined();
+  return job as WorkflowJob;
 }
 
 /** Index of the main-only release-gate step (it invokes the release-gate runner). */
@@ -34,7 +42,7 @@ function gateStepIndex(steps: WorkflowStep[]): number {
   return findRunStepIndex(steps, 'release-gate');
 }
 
-/** Index of the dry-run publish step. */
+/** Index of the dry-run publish step within a job's steps. */
 function dryRunPublishIndex(steps: WorkflowStep[]): number {
   return findRunStepIndex(steps, 'npm publish --dry-run');
 }
@@ -58,14 +66,12 @@ describe('gated dry-run publish wiring', () => {
       expect(test).toBeGreaterThan(lint);
     });
 
-    it('places every release-path step after the test step', () => {
+    it('places the release-gate step after the test step', () => {
       const { steps } = ciJob();
       const test = findRunStepIndex(steps, 'test');
       const gate = gateStepIndex(steps);
-      const publish = dryRunPublishIndex(steps);
 
       expect(gate).toBeGreaterThan(test);
-      expect(publish).toBeGreaterThan(test);
     });
   });
 
@@ -145,29 +151,27 @@ describe('gated dry-run publish wiring', () => {
     });
   });
 
-  describe('the publish step runs as a dry-run after the release gate', () => {
+  describe('the publish step runs as a dry-run in the gated publish job', () => {
     it('runs "npm publish --dry-run"', () => {
-      const { steps } = ciJob();
+      const { steps } = publishJob();
       const publish = steps[dryRunPublishIndex(steps)];
       expect(publish).toBeDefined();
       expect(publish.run).toMatch(/npm\s+publish\s+--dry-run/);
     });
 
-    it('places the dry-run publish step after the release-gate step', () => {
-      const { steps } = ciJob();
-      expect(dryRunPublishIndex(steps)).toBeGreaterThan(gateStepIndex(steps));
-    });
-
-    it('conditions the dry-run publish step to run only on the main branch', () => {
-      const { steps } = ciJob();
-      const publish = steps[dryRunPublishIndex(steps)];
-      expect(isMainOnly(publish)).toBe(true);
+    it('gates the publish job on the release-decision verdict from the ci job', () => {
+      // The dry-run publish lives in a job that needs ci and is conditioned on
+      // the release_allowed output — the graph-level analog of the old main-only
+      // `if` on the in-job step. Full structure lives in gated-publish-job.test.ts.
+      const publish = publishJob();
+      expect(publish.needs).toContain('ci');
+      expect(publish.if ?? '').toContain('needs.ci.outputs.release_allowed');
     });
   });
 
   describe('the workflow never performs a real publish', () => {
     it('runs no bare "npm publish" without the --dry-run flag', () => {
-      const { steps } = ciJob();
+      const steps = [...ciJob().steps, ...publishJob().steps];
       const realPublish = steps.find(
         (s) => /npm\s+publish/i.test(s.run ?? '') && !/--dry-run/i.test(s.run ?? ''),
       );
@@ -200,17 +204,20 @@ describe('gated dry-run publish wiring', () => {
   });
 
   describe('the release path is unreachable while lint or test is red', () => {
-    it('places both release-path steps after the lint and test steps', () => {
+    it('places the release-gate step after the lint and test steps', () => {
       const { steps } = ciJob();
       const lint = findRunStepIndex(steps, 'lint');
       const test = findRunStepIndex(steps, 'test');
       const gate = gateStepIndex(steps);
-      const publish = dryRunPublishIndex(steps);
 
-      for (const releaseStep of [gate, publish]) {
-        expect(releaseStep).toBeGreaterThan(lint);
-        expect(releaseStep).toBeGreaterThan(test);
-      }
+      expect(gate).toBeGreaterThan(lint);
+      expect(gate).toBeGreaterThan(test);
+    });
+
+    it('reaches the dry-run publish only via a job that needs ci', () => {
+      // The publish job depends on ci, so a red lint/test (which fails ci) skips
+      // publish entirely — the graph-level guarantee replacing in-job ordering.
+      expect(publishJob().needs).toContain('ci');
     });
 
     it('checks out the repository before the install/lint/test spine', () => {

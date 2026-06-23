@@ -54,6 +54,13 @@ export interface WorkflowJob {
    * `release_allowed` output sourced from the release-gate step.
    */
   outputs: Record<string, string>;
+  /**
+   * The job's `permissions:` map, with each value coerced to a string. The
+   * real-npm-publish assertions read this to verify the `publish` job holds
+   * `id-token: write` (needed for npm provenance). Absent on jobs that declare
+   * no `permissions:` block.
+   */
+  permissions: Record<string, string>;
   steps: WorkflowStep[];
 }
 
@@ -128,6 +135,7 @@ function normalizeJobs(jobs: unknown): WorkflowJob[] {
       needs: normalizeNeeds(job.needs),
       if: typeof job.if === 'string' ? job.if : undefined,
       outputs: normalizeEnv(job.outputs),
+      permissions: normalizeEnv(job.permissions),
       steps,
     };
   });

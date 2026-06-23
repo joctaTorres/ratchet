@@ -1,3 +1,10 @@
 {
-  "parked": {}
+  "parked": {
+    "real-npm-publish": {
+      "parkedAt": "2026-06-23T22:04:45.477Z",
+      "change": "real-npm-publish",
+      "kind": "blocked",
+      "reason": "Agent exited with code 1 without reporting completion."
+    }
+  }
 }

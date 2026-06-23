@@ -15,9 +15,10 @@ import {
  *
  * A unit test can't run GitHub Actions, so the wiring is proven structurally
  * against the parsed-workflow model — matching on substrings so it stays robust
- * to cosmetic renames — mirroring `gated-publish-job.test.ts`. The publish stays
- * `npm publish --dry-run`; no token/secret or provenance permission is added in
- * this slice.
+ * to cosmetic renames — mirroring `gated-publish-job.test.ts`. The publish is now
+ * a real `npm publish` (the `real-npm-publish` slice flipped it from a dry-run);
+ * the real-publish specifics are asserted in `real-npm-publish.test.ts`, while
+ * this file proves only the idempotency wiring (the version-guard gate).
  */
 
 const workflow = loadCiWorkflow();
@@ -44,12 +45,12 @@ describe('idempotent version guard', () => {
     });
   });
 
-  describe('the dry-run publish step is gated on should_publish', () => {
+  describe('the publish step is gated on should_publish', () => {
     it("is conditioned on the guard's should_publish output == 'true'", () => {
       const { steps } = job('publish');
       const guard = steps[findRunStepIndex(steps, 'version-guard.js')];
-      const publishStep = steps[findRunStepIndex(steps, 'npm publish --dry-run')];
-      expect(publishStep, 'publish job has a dry-run publish step').toBeDefined();
+      const publishStep = steps[findRunStepIndex(steps, 'npm publish')];
+      expect(publishStep, 'publish job has a publish step').toBeDefined();
 
       const cond = (publishStep.if ?? '').replace(/\s+/g, ' ').trim();
       expect(cond).toContain(`steps.${guard.id}.outputs.should_publish`);
@@ -59,25 +60,9 @@ describe('idempotent version guard', () => {
     it('runs the guard before the publish step', () => {
       const { steps } = job('publish');
       const guard = findRunStepIndex(steps, 'version-guard.js');
-      const publishStep = findRunStepIndex(steps, 'npm publish --dry-run');
+      const publishStep = findRunStepIndex(steps, 'npm publish');
       expect(guard).toBeGreaterThanOrEqual(0);
       expect(guard).toBeLessThan(publishStep);
-    });
-  });
-
-  describe('the publish stays a dry-run (no real release in this slice)', () => {
-    it('runs "npm publish --dry-run"', () => {
-      const { steps } = job('publish');
-      const publishStep = steps[findRunStepIndex(steps, 'npm publish --dry-run')];
-      expect(publishStep.run).toMatch(/npm\s+publish\s+--dry-run/);
-    });
-
-    it('runs no bare "npm publish" without --dry-run (no real release)', () => {
-      const { steps } = job('publish');
-      const realPublish = steps.find(
-        (s) => /npm\s+publish/i.test(s.run ?? '') && !/--dry-run/i.test(s.run ?? ''),
-      );
-      expect(realPublish).toBeUndefined();
     });
   });
 });

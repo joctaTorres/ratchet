@@ -1,10 +1,11 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   runVersionGuard,
   writeShouldPublishOutput,
+  type PublishedVersionsResult,
 } from '../../src/core/ci/version-guard.js';
 import { PUBLISH, SKIP } from '../../src/core/ci/version-decision.js';
 
@@ -52,11 +53,77 @@ describe('runVersionGuard', () => {
     expect(result.lines.join('\n')).toContain(SKIP);
   });
 
-  it('PUBLISHes against an absent/empty PUBLISHED_VERSIONS (nothing shipped yet)', () => {
-    const result = runVersionGuard(env({ version: '0.1.0' }));
+  it('PUBLISHes against an empty PUBLISHED_VERSIONS override (nothing shipped yet)', () => {
+    const result = runVersionGuard(env({ version: '0.1.0', published: '' }));
 
     expect(result.should_publish).toBe(true);
     expect(result.exitCode).toBe(0);
+  });
+});
+
+/**
+ * The already-published set now comes from a real `npm view ratchet-ai versions`
+ * query, behind an injectable seam so no test hits the network. These tests feed
+ * `runVersionGuard` a fake fetcher and prove the four contracts the slice
+ * promises: the `PUBLISHED_VERSIONS` override still WINS (and the registry is not
+ * even queried); a successful query populates the set; an E404 ("package not
+ * found") resolves to an empty set so the FIRST version PUBLISHes; and any other
+ * query failure fails SAFE toward a SKIP that STILL exits 0 — a flaky registry
+ * never republishes and never reddens the pipeline.
+ */
+describe('runVersionGuard registry source (injectable seam)', () => {
+  /** A fetcher that always resolves cleanly to the given version set. */
+  function ok(versions: string[]): () => PublishedVersionsResult {
+    return () => ({ status: 'ok', versions });
+  }
+
+  it('honors the PUBLISHED_VERSIONS override and does NOT query the registry', () => {
+    const fetcher = vi.fn(ok(['9.9.9'])); // would say "not published" if consulted
+    const result = runVersionGuard(env({ version: '1.1.0', published: '1.0.0,1.1.0' }), fetcher);
+
+    // Override wins: 1.1.0 is in the forced set -> SKIP, registry untouched.
+    expect(result.should_publish).toBe(false);
+    expect(result.decision.outcome).toBe(SKIP);
+    expect(result.exitCode).toBe(0);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('SKIPs when a successful query reports the version already published', () => {
+    const fetcher = vi.fn(ok(['1.0.0', '1.1.0', '1.2.0']));
+    const result = runVersionGuard(env({ version: '1.1.0' }), fetcher);
+
+    expect(result.should_publish).toBe(false);
+    expect(result.decision.outcome).toBe(SKIP);
+    expect(result.exitCode).toBe(0);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it('PUBLISHes when a successful query does not contain the local version', () => {
+    const result = runVersionGuard(env({ version: '2.0.0' }), ok(['1.0.0', '1.1.0']));
+
+    expect(result.should_publish).toBe(true);
+    expect(result.decision.outcome).toBe(PUBLISH);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('PUBLISHes the FIRST version when the query resolves E404 to an empty set', () => {
+    // The default registry fetcher maps a not-found package to an empty set.
+    const result = runVersionGuard(env({ version: '0.1.0' }), ok([]));
+
+    expect(result.should_publish).toBe(true);
+    expect(result.decision.outcome).toBe(PUBLISH);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('fails SAFE toward SKIP (but STILL exits 0) on an ambiguous query failure', () => {
+    const fetcher = (): PublishedVersionsResult => ({ status: 'error', message: 'ETIMEDOUT' });
+    const result = runVersionGuard(env({ version: '3.0.0' }), fetcher);
+
+    // Ambiguous failure: do NOT publish, but keep the pipeline green.
+    expect(result.should_publish).toBe(false);
+    expect(result.decision.outcome).toBe(SKIP);
+    expect(result.exitCode).toBe(0);
+    expect(result.lines.join('\n')).toContain('failing safe');
   });
 });
 

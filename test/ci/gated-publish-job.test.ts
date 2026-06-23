@@ -71,12 +71,12 @@ describe('gated publish job', () => {
     });
   });
 
-  describe('the publish job runs a dry-run publish (no real release in this slice)', () => {
-    it('runs "npm publish --dry-run"', () => {
+  describe('the publish job runs a real publish (real-npm-publish slice)', () => {
+    it('runs "npm publish"', () => {
       const { steps } = job('publish');
-      const publishStep = steps[findRunStepIndex(steps, 'npm publish --dry-run')];
-      expect(publishStep, 'publish job has a dry-run publish step').toBeDefined();
-      expect(publishStep.run).toMatch(/npm\s+publish\s+--dry-run/);
+      const publishStep = steps[findRunStepIndex(steps, 'npm publish')];
+      expect(publishStep, 'publish job has a publish step').toBeDefined();
+      expect(publishStep.run).toMatch(/npm\s+publish/);
     });
 
     it('checks out, sets up node + pnpm, and builds before publishing', () => {
@@ -85,7 +85,7 @@ describe('gated publish job', () => {
       const node = steps.findIndex((s) => (s.uses ?? '').includes('actions/setup-node'));
       const pnpm = steps.findIndex((s) => (s.uses ?? '').includes('pnpm/action-setup'));
       const build = findRunStepIndex(steps, 'pnpm build');
-      const publishStep = findRunStepIndex(steps, 'npm publish --dry-run');
+      const publishStep = findRunStepIndex(steps, 'npm publish');
 
       for (const idx of [checkout, node, pnpm, build]) {
         expect(idx).toBeGreaterThanOrEqual(0);
@@ -93,12 +93,11 @@ describe('gated publish job', () => {
       expect(build).toBeLessThan(publishStep);
     });
 
-    it('runs no bare "npm publish" without --dry-run (no real release)', () => {
+    it('publishes a real release, not a dry-run (real-publish specifics in real-npm-publish.test.ts)', () => {
       const { steps } = job('publish');
-      const realPublish = steps.find(
-        (s) => /npm\s+publish/i.test(s.run ?? '') && !/--dry-run/i.test(s.run ?? ''),
-      );
-      expect(realPublish).toBeUndefined();
+      const realPublish = steps.find((s) => /npm\s+publish/i.test(s.run ?? ''));
+      expect(realPublish, 'publish job has a real npm publish step').toBeDefined();
+      expect(realPublish?.run).not.toMatch(/--dry-run/i);
     });
   });
 });

@@ -14,11 +14,12 @@ import {
  * This slice fills the release-path seam in `.github/workflows/ci.yml`: after
  * the green install -> lint -> test spine, a main-only release-gate step that
  * consults the release-decision module, then — promoted into its own gated
- * `publish` job (see `gated-publish-job.test.ts`) — a `npm publish --dry-run`
- * step. A unit test can't run GitHub Actions, so the wiring is proven
- * structurally against the parsed-workflow model the first slice exposed — step
- * presence, ordering, the main-only `if`, and the dry-run flag — matching steps
- * by `run` substrings so it stays robust to cosmetic renames.
+ * `publish` job (see `gated-publish-job.test.ts`) — a publish step (flipped to a
+ * real `npm publish` by the `real-npm-publish` slice). A unit test can't run
+ * GitHub Actions, so the wiring is proven structurally against the
+ * parsed-workflow model the first slice exposed — step presence, ordering, the
+ * main-only `if`, and the publish/auth wiring — matching steps by `run`
+ * substrings so it stays robust to cosmetic renames.
  */
 
 const workflow = loadCiWorkflow();
@@ -30,7 +31,7 @@ function ciJob(): WorkflowJob {
   return job as WorkflowJob;
 }
 
-/** The gated publish job that runs the dry-run publish. */
+/** The gated publish job that runs the publish. */
 function publishJob(): WorkflowJob {
   const job = workflow.jobs.find((j) => j.id === 'publish');
   expect(job, 'workflow defines a "publish" job').toBeDefined();
@@ -42,9 +43,9 @@ function gateStepIndex(steps: WorkflowStep[]): number {
   return findRunStepIndex(steps, 'release-gate');
 }
 
-/** Index of the dry-run publish step within a job's steps. */
-function dryRunPublishIndex(steps: WorkflowStep[]): number {
-  return findRunStepIndex(steps, 'npm publish --dry-run');
+/** Index of the publish step within a job's steps. */
+function publishIndex(steps: WorkflowStep[]): number {
+  return findRunStepIndex(steps, 'npm publish');
 }
 
 /** A step is main-only when its `if` pins `github.ref` to `refs/heads/main`. */
@@ -53,7 +54,7 @@ function isMainOnly(step: WorkflowStep): boolean {
   return cond.includes('refs/heads/main') || /\bmain\b/.test(cond);
 }
 
-describe('gated dry-run publish wiring', () => {
+describe('gated publish wiring', () => {
   describe('the install -> lint -> test spine is preserved ahead of the release path', () => {
     it('installs dependencies, then lints, then tests, in order', () => {
       const { steps } = ciJob();
@@ -151,17 +152,17 @@ describe('gated dry-run publish wiring', () => {
     });
   });
 
-  describe('the publish step runs as a dry-run in the gated publish job', () => {
-    it('runs "npm publish --dry-run"', () => {
+  describe('the publish step runs in the gated publish job', () => {
+    it('runs "npm publish"', () => {
       const { steps } = publishJob();
-      const publish = steps[dryRunPublishIndex(steps)];
+      const publish = steps[publishIndex(steps)];
       expect(publish).toBeDefined();
-      expect(publish.run).toMatch(/npm\s+publish\s+--dry-run/);
+      expect(publish.run).toMatch(/npm\s+publish/);
     });
 
     it('gates the publish job on the release-decision verdict from the ci job', () => {
-      // The dry-run publish lives in a job that needs ci and is conditioned on
-      // the release_allowed output — the graph-level analog of the old main-only
+      // The publish lives in a job that needs ci and is conditioned on the
+      // release_allowed output — the graph-level analog of the old main-only
       // `if` on the in-job step. Full structure lives in gated-publish-job.test.ts.
       const publish = publishJob();
       expect(publish.needs).toContain('ci');
@@ -169,19 +170,18 @@ describe('gated dry-run publish wiring', () => {
     });
   });
 
-  describe('the workflow never performs a real publish', () => {
-    it('runs no bare "npm publish" without the --dry-run flag', () => {
+  describe('the real publish is authenticated from the npm token secret', () => {
+    it('publishes a real release (no --dry-run); specifics in real-npm-publish.test.ts', () => {
       const steps = [...ciJob().steps, ...publishJob().steps];
-      const realPublish = steps.find(
-        (s) => /npm\s+publish/i.test(s.run ?? '') && !/--dry-run/i.test(s.run ?? ''),
-      );
-      expect(realPublish).toBeUndefined();
+      const realPublish = steps.find((s) => /npm\s+publish/i.test(s.run ?? ''));
+      expect(realPublish, 'workflow has a real npm publish step').toBeDefined();
+      expect(realPublish?.run).not.toMatch(/--dry-run/i);
     });
 
-    it('requires no npm auth token for the publish path', () => {
-      // Scan the workflow's executable content (comments stripped) for actual
-      // token wiring — a comment that merely says "no token needed" must not
-      // trip the assertion, only a real NODE_AUTH_TOKEN / secret reference would.
+    it('wires the npm auth token for the publish path', () => {
+      // Scan the workflow's executable content (comments stripped) for the token
+      // wiring — a comment must not satisfy the assertion, only real
+      // NODE_AUTH_TOKEN / secret references in executable YAML.
       const source = readFileSync(
         path.resolve(
           path.dirname(fileURLToPath(import.meta.url)),
@@ -197,9 +197,8 @@ describe('gated dry-run publish wiring', () => {
         .split('\n')
         .map((line) => line.replace(/#.*$/, ''))
         .join('\n');
-      expect(executable).not.toMatch(/NODE_AUTH_TOKEN/i);
-      expect(executable).not.toMatch(/NPM_TOKEN/i);
-      expect(executable).not.toMatch(/secrets\./i);
+      expect(executable).toMatch(/NODE_AUTH_TOKEN/);
+      expect(executable).toMatch(/secrets\.NPM_TOKEN/);
     });
   });
 
@@ -214,7 +213,7 @@ describe('gated dry-run publish wiring', () => {
       expect(gate).toBeGreaterThan(test);
     });
 
-    it('reaches the dry-run publish only via a job that needs ci', () => {
+    it('reaches the publish only via a job that needs ci', () => {
       // The publish job depends on ci, so a red lint/test (which fails ci) skips
       // publish entirely — the graph-level guarantee replacing in-job ordering.
       expect(publishJob().needs).toContain('ci');

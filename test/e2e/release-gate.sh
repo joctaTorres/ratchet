@@ -79,8 +79,8 @@ gate_signal() {
 }
 
 # release_path <coverage_signal> <e2e_signal> <out_prefix>: model the CI release
-# path. Drive release-gate.js on `main` with lint/test green (the spine is green
-# for this proof) and the supplied coverage/e2e signals; capture ALLOW/DENY +
+# path. Drive release-gate.js on `main` with lint/test/security green (the spine is
+# green for this proof) and the supplied coverage/e2e signals; capture ALLOW/DENY +
 # exit code. ONLY on ALLOW (exit 0) is the dry-run publish path reached, recorded
 # by writing "<out_prefix>.published". Echoes the release-gate exit code.
 release_path() {
@@ -88,7 +88,7 @@ release_path() {
   local rc
   set +e
   env GITHUB_REF_NAME=main GATE_LINT=green GATE_TEST=green \
-      GATE_COVERAGE="$cov" GATE_E2E="$e2e" \
+      GATE_COVERAGE="$cov" GATE_E2E="$e2e" GATE_SECURITY=green \
       node "$RELEASE_GATE_JS" >"$prefix.out" 2>&1
   rc=$?
   set -e
@@ -126,7 +126,7 @@ check "e2e gate is green after a passing cli-smoke run" \
   "$([ "$e2e_green" = green ] && echo true || echo false)"
 
 allow_rc="$(release_path "$cov_green" "$e2e_green" "$WORK/allow")"
-check "release gate ALLOWs (exit 0) when all four gates are green on main" \
+check "release gate ALLOWs (exit 0) when all five gates are green on main" \
   "$([ "$allow_rc" -eq 0 ] && echo true || echo false)"
 check "release gate prints ALLOW" \
   "$(grep -q 'ALLOW' "$WORK/allow.out" && echo true || echo false)"

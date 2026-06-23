@@ -65,6 +65,47 @@ jobs:
           bash test/e2e/cli-smoke.sh
           node dist/core/ci/e2e-gate.js
 
+      # Dependency-audit gate: run the package manager's vulnerability audit
+      # writing its machine-readable JSON report, then invoke the unit-tested
+      # dependency-audit-gate runner against that report. The raw `pnpm audit`
+      # exit is tolerated (`|| true`) because it goes non-zero on ANY advisory at
+      # ANY severity — too blunt to gate a release on; the tested runner owns the
+      # red/green decision, exiting non-zero only when a vulnerability at or above
+      # the configured severity (AUDIT_FAIL_ON, default `high`) is present —
+      # turning the run red. This sits AFTER `test` and OUTSIDE the release path:
+      # wiring its signal into the release decision is the separate
+      # `wire-security-into-release-gate` change, so no GATE_* is added here yet.
+      - name: Dependency-audit gate (fail on vulnerabilities at/above threshold)
+        id: audit
+        env:
+          AUDIT_REPORT: audit/audit-report.json
+        run: |
+          mkdir -p audit
+          pnpm audit --json > audit/audit-report.json || true
+          pnpm build
+          node dist/core/ci/dependency-audit-gate.js
+
+      # Secret-scan gate: run a secret scanner across the working tree writing
+      # its machine-readable JSON report, then invoke the unit-tested
+      # secret-scan-gate runner against that report. The raw scanner exit is
+      # tolerated (`|| true`) because a scanner's own exit is too blunt to gate a
+      # release on (it may go non-zero on warnings, or zero despite a finding,
+      # depending on flags); the tested runner owns the red/green decision,
+      # exiting non-zero when any non-allowlisted finding is present (or the
+      # report is missing/malformed, fail-closed) — turning the run red. This
+      # sits AFTER `test` and OUTSIDE the release path: wiring its signal into the
+      # release decision is the separate `wire-security-into-release-gate` change,
+      # so no GATE_* is added here yet.
+      - name: Secret-scan gate (fail on a leaked secret)
+        id: secret-scan
+        env:
+          SECRET_SCAN_REPORT: security/secret-scan-report.json
+        run: |
+          mkdir -p security
+          gitleaks detect --no-git --source . --report-format json --report-path security/secret-scan-report.json || true
+          pnpm build
+          node dist/core/ci/secret-scan-gate.js
+
       # === RELEASE PATH (main-only, dry-run) ===
       # Reached only after the green install -> lint -> test spine above: a red
       # lint or test fails the job (Actions' default `success()` condition) and
@@ -86,6 +127,12 @@ jobs:
           GATE_TEST: ${{ steps.test.outcome == 'success' && 'green' || 'red' }}
           GATE_COVERAGE: ${{ steps.coverage.outcome == 'success' && 'green' || 'red' }}
           GATE_E2E: ${{ steps.e2e.outcome == 'success' && 'green' || 'red' }}
+          # One combined security signal folded from BOTH security steps: green only
+          # when the dependency audit AND the secret scan succeeded, fail-closed to
+          # red when either did not. Keeps the spine's gate set aligned with the
+          # phase's single "security signal" framing while each underlying check
+          # stays an independently-red CI step above.
+          GATE_SECURITY: ${{ steps.audit.outcome == 'success' && steps.secret-scan.outcome == 'success' && 'green' || 'red' }}
         run: |
           pnpm build
           node dist/core/ci/release-gate.js

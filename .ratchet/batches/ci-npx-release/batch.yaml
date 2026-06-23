@@ -120,7 +120,11 @@ phases:
         the run asserts a clean tree keeps the gate ALLOW (dry-run), and that a
         planted vulnerable dependency or secret makes the security job fail and
         flips the release-decision module to DENY.
-    changes: []
+    changes:
+      - name: dependency-audit-gate
+      - name: secret-scan-gate
+      - name: wire-security-into-release-gate
+        after: [dependency-audit-gate, secret-scan-gate]
 
   # ---------------------------------------------------------------------------
   - name: real-npm-publish-on-main

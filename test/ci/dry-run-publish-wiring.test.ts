@@ -131,6 +131,18 @@ describe('gated dry-run publish wiring', () => {
       expect(gate.env.GATE_LINT).toMatch(/steps\.lint\.outcome/);
       expect(gate.env.GATE_TEST).toMatch(/steps\.test\.outcome/);
     });
+
+    it('folds GATE_SECURITY from BOTH the audit and secret-scan step outcomes', () => {
+      const { steps } = ciJob();
+      const gate = steps[gateStepIndex(steps)];
+      expect(gate.env.GATE_SECURITY).toBeDefined();
+      // The single security signal is green only when BOTH security steps
+      // succeeded; either failing (or the expression's `|| 'red'`) makes it red.
+      expect(gate.env.GATE_SECURITY).toMatch(/steps\.audit\.outcome/);
+      expect(gate.env.GATE_SECURITY).toMatch(/steps\.secret-scan\.outcome/);
+      expect(gate.env.GATE_SECURITY).toMatch(/green/);
+      expect(gate.env.GATE_SECURITY).toMatch(/red/);
+    });
   });
 
   describe('the publish step runs as a dry-run after the release gate', () => {

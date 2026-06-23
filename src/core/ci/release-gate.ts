@@ -30,7 +30,7 @@ import {
  * signal (`green` / `red`). A missing variable yields `undefined`, which the
  * decision module treats as not-green — keeping the runner fail-closed.
  */
-export const WIRED_GATES = ['lint', 'test', 'coverage', 'e2e'] as const;
+export const WIRED_GATES = ['lint', 'test', 'coverage', 'e2e', 'security'] as const;
 
 /**
  * GitHub Actions sets `GITHUB_REF_NAME` to the short branch name (e.g. `main`)

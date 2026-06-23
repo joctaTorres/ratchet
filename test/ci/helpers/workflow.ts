@@ -18,6 +18,12 @@ export interface WorkflowStep {
    * verify the gate and dry-run publish steps are conditioned to `main` only.
    */
   if?: string;
+  /**
+   * The step's `env:` map, with each value coerced to a string. The release-gate
+   * wiring assertions read this to verify the gate step carries the `GATE_*`
+   * signals (e.g. `GATE_COVERAGE`, `GATE_E2E`) fed into the decision module.
+   */
+  env: Record<string, string>;
 }
 
 /** A normalized GitHub Actions job: its `runs-on` and ordered step list. */
@@ -59,6 +65,15 @@ function normalizeTriggers(on: unknown): string[] {
   return [];
 }
 
+function normalizeEnv(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    out[key] = typeof value === 'string' ? value : String(value);
+  }
+  return out;
+}
+
 function normalizeStep(raw: unknown): WorkflowStep {
   const step = (raw ?? {}) as Record<string, unknown>;
   return {
@@ -66,6 +81,7 @@ function normalizeStep(raw: unknown): WorkflowStep {
     uses: typeof step.uses === 'string' ? step.uses : undefined,
     run: typeof step.run === 'string' ? step.run : undefined,
     if: typeof step.if === 'string' ? step.if : undefined,
+    env: normalizeEnv(step.env),
   };
 }
 

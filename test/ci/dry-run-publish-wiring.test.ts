@@ -104,6 +104,35 @@ describe('gated dry-run publish wiring', () => {
     });
   });
 
+  describe('the release-gate step feeds the coverage and e2e signals into the decision', () => {
+    it('wires GATE_COVERAGE from the coverage step outcome', () => {
+      const { steps } = ciJob();
+      const gate = steps[gateStepIndex(steps)];
+      expect(gate.env.GATE_COVERAGE).toBeDefined();
+      // Sourced from the coverage step's outcome, fail-closed to red otherwise.
+      expect(gate.env.GATE_COVERAGE).toMatch(/steps\.coverage\.outcome/);
+      expect(gate.env.GATE_COVERAGE).toMatch(/green/);
+      expect(gate.env.GATE_COVERAGE).toMatch(/red/);
+    });
+
+    it('wires GATE_E2E from the e2e step outcome', () => {
+      const { steps } = ciJob();
+      const gate = steps[gateStepIndex(steps)];
+      expect(gate.env.GATE_E2E).toBeDefined();
+      // Sourced from the e2e step's outcome, fail-closed to red otherwise.
+      expect(gate.env.GATE_E2E).toMatch(/steps\.e2e\.outcome/);
+      expect(gate.env.GATE_E2E).toMatch(/green/);
+      expect(gate.env.GATE_E2E).toMatch(/red/);
+    });
+
+    it('still wires the lint and test signals alongside coverage and e2e', () => {
+      const { steps } = ciJob();
+      const gate = steps[gateStepIndex(steps)];
+      expect(gate.env.GATE_LINT).toMatch(/steps\.lint\.outcome/);
+      expect(gate.env.GATE_TEST).toMatch(/steps\.test\.outcome/);
+    });
+  });
+
   describe('the publish step runs as a dry-run after the release gate', () => {
     it('runs "npm publish --dry-run"', () => {
       const { steps } = ciJob();

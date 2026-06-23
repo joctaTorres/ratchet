@@ -94,7 +94,11 @@ phases:
         the e2e run drives the built CLI like a user, asserts a passing run keeps
         the gate at ALLOW (dry-run), and asserts that a forced coverage-below-
         threshold or a failing e2e flips the release-decision module to DENY.
-    changes: []
+    changes:
+      - name: coverage-threshold-gate
+      - name: e2e-cli-smoke
+      - name: wire-coverage-e2e-into-release-gate
+        after: [coverage-threshold-gate, e2e-cli-smoke]
 
   # ---------------------------------------------------------------------------
   - name: security-layer-gate

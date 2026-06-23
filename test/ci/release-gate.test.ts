@@ -10,20 +10,37 @@ import { ALLOW, DENY } from '../../src/core/ci/release-decision.js';
  * release-decision.test.ts; here we prove the runner adapts and reports it.
  */
 
-/** Build the runner environment for a branch + lint/test gate signals. */
+/**
+ * Build the runner environment for a branch + the four wired gate signals
+ * (`lint`, `test`, `coverage`, `e2e`). Any omitted gate has its env var absent
+ * entirely, exercising the fail-closed path.
+ */
 function env(
-  vars: { branch?: string; lint?: string; test?: string },
+  vars: {
+    branch?: string;
+    lint?: string;
+    test?: string;
+    coverage?: string;
+    e2e?: string;
+  },
 ): NodeJS.ProcessEnv {
   const e: NodeJS.ProcessEnv = {};
   if (vars.branch !== undefined) e.GITHUB_REF_NAME = vars.branch;
   if (vars.lint !== undefined) e.GATE_LINT = vars.lint;
   if (vars.test !== undefined) e.GATE_TEST = vars.test;
+  if (vars.coverage !== undefined) e.GATE_COVERAGE = vars.coverage;
+  if (vars.e2e !== undefined) e.GATE_E2E = vars.e2e;
   return e;
 }
 
+/** An all-green main environment — the only configuration that ALLOWs. */
+function allGreenMain(): NodeJS.ProcessEnv {
+  return env({ branch: 'main', lint: 'green', test: 'green', coverage: 'green', e2e: 'green' });
+}
+
 describe('runReleaseGate', () => {
-  it('ALLOWs and exits zero on a green main build, so the dry-run publish proceeds', () => {
-    const result = runReleaseGate(env({ branch: 'main', lint: 'green', test: 'green' }));
+  it('ALLOWs and exits zero only when branch is main and all four gates are green', () => {
+    const result = runReleaseGate(allGreenMain());
 
     expect(result.decision.allowed).toBe(true);
     expect(result.decision.outcome).toBe(ALLOW);
@@ -33,7 +50,7 @@ describe('runReleaseGate', () => {
 
   it('DENIES and exits non-zero on a non-main branch, naming the branch', () => {
     const result = runReleaseGate(
-      env({ branch: 'feature/widget', lint: 'green', test: 'green' }),
+      env({ branch: 'feature/widget', lint: 'green', test: 'green', coverage: 'green', e2e: 'green' }),
     );
 
     expect(result.decision.allowed).toBe(false);
@@ -46,8 +63,10 @@ describe('runReleaseGate', () => {
     expect(printed).toContain('not "main"');
   });
 
-  it('DENIES and exits non-zero when a wired gate is red, naming the gate', () => {
-    const result = runReleaseGate(env({ branch: 'main', lint: 'green', test: 'red' }));
+  it('DENIES and exits non-zero when the test gate is red, naming the gate', () => {
+    const result = runReleaseGate(
+      env({ branch: 'main', lint: 'green', test: 'red', coverage: 'green', e2e: 'green' }),
+    );
 
     expect(result.decision.allowed).toBe(false);
     expect(result.decision.outcome).toBe(DENY);
@@ -55,13 +74,49 @@ describe('runReleaseGate', () => {
     expect(result.lines.join('\n')).toContain('"test" gate is not green');
   });
 
-  it('is fail-closed: DENIES and exits non-zero when a wired gate signal is missing', () => {
-    // `test` is wired but its env var is absent entirely — fail closed.
-    const result = runReleaseGate(env({ branch: 'main', lint: 'green' }));
+  it('DENIES and exits non-zero when the coverage gate is red, naming the gate', () => {
+    const result = runReleaseGate(
+      env({ branch: 'main', lint: 'green', test: 'green', coverage: 'red', e2e: 'green' }),
+    );
 
     expect(result.decision.allowed).toBe(false);
     expect(result.decision.outcome).toBe(DENY);
     expect(result.exitCode).not.toBe(0);
-    expect(result.lines.join('\n')).toContain('"test" gate is not green');
+    expect(result.lines.join('\n')).toContain('"coverage" gate is not green');
+  });
+
+  it('DENIES and exits non-zero when the e2e gate is red, naming the gate', () => {
+    const result = runReleaseGate(
+      env({ branch: 'main', lint: 'green', test: 'green', coverage: 'green', e2e: 'red' }),
+    );
+
+    expect(result.decision.allowed).toBe(false);
+    expect(result.decision.outcome).toBe(DENY);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.lines.join('\n')).toContain('"e2e" gate is not green');
+  });
+
+  it('is fail-closed: DENIES when the coverage signal is missing entirely', () => {
+    // `coverage` is wired but its env var is absent — fail closed.
+    const result = runReleaseGate(
+      env({ branch: 'main', lint: 'green', test: 'green', e2e: 'green' }),
+    );
+
+    expect(result.decision.allowed).toBe(false);
+    expect(result.decision.outcome).toBe(DENY);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.lines.join('\n')).toContain('"coverage" gate is not green');
+  });
+
+  it('is fail-closed: DENIES when the e2e signal is missing entirely', () => {
+    // `e2e` is wired but its env var is absent — fail closed.
+    const result = runReleaseGate(
+      env({ branch: 'main', lint: 'green', test: 'green', coverage: 'green' }),
+    );
+
+    expect(result.decision.allowed).toBe(false);
+    expect(result.decision.outcome).toBe(DENY);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.lines.join('\n')).toContain('"e2e" gate is not green');
   });
 });

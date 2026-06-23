@@ -30,7 +30,10 @@ export default defineConfig({
     maxWorkers: resolveMaxWorkers(),
     include: ['test/**/*.test.ts'],
     coverage: {
-      reporter: ['text', 'json', 'html'],
+      // `json-summary` emits coverage/coverage-summary.json with a `total` block;
+      // the coverage-gate evaluator reads that total. Enforcement does NOT live
+      // here (no `coverage.thresholds`) — it lives in the unit-tested runner.
+      reporter: ['text', 'json', 'html', 'json-summary'],
       exclude: [
         'node_modules/',
         'dist/',

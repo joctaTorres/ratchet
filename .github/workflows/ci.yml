@@ -36,6 +36,35 @@ jobs:
         id: test
         run: pnpm vitest run
 
+      # Coverage gate: re-run the suite collecting coverage (emitting the v8
+      # json-summary), then invoke the unit-tested coverage-gate runner, which
+      # exits non-zero when the measured total drops below the enforced
+      # threshold — turning the run red. Enforcement lives in that tested runner,
+      # not in vitest config. This sits AFTER `test`; its outcome feeds the
+      # release decision below as GATE_COVERAGE, so a coverage drop flips the
+      # gate to DENY.
+      - name: Coverage gate (enforce minimum threshold)
+        id: coverage
+        run: |
+          pnpm vitest run --coverage
+          pnpm build
+          node dist/core/ci/coverage-gate.js
+
+      # E2e gate: build the package and drive the BUILT CLI end to end the way a
+      # user running `npx ratchet` would (the smoke spawns `node bin/ratchet.js`
+      # as a subprocess against the fresh `dist/`), then invoke the unit-tested
+      # e2e-gate runner against the smoke's machine-readable result. The runner
+      # exits non-zero when any check failed (or the result is missing/malformed,
+      # fail-closed) — turning the run red. This sits AFTER `test`/`coverage`;
+      # its outcome feeds the release decision below as GATE_E2E, so a failing
+      # e2e run flips the gate to DENY.
+      - name: E2e gate (drive the built CLI end to end)
+        id: e2e
+        run: |
+          pnpm build
+          bash test/e2e/cli-smoke.sh
+          node dist/core/ci/e2e-gate.js
+
       # === RELEASE PATH (main-only, dry-run) ===
       # Reached only after the green install -> lint -> test spine above: a red
       # lint or test fails the job (Actions' default `success()` condition) and
@@ -55,6 +84,8 @@ jobs:
           # future change relaxes the short-circuit (e.g. with `if: always()`).
           GATE_LINT: ${{ steps.lint.outcome == 'success' && 'green' || 'red' }}
           GATE_TEST: ${{ steps.test.outcome == 'success' && 'green' || 'red' }}
+          GATE_COVERAGE: ${{ steps.coverage.outcome == 'success' && 'green' || 'red' }}
+          GATE_E2E: ${{ steps.e2e.outcome == 'success' && 'green' || 'red' }}
         run: |
           pnpm build
           node dist/core/ci/release-gate.js

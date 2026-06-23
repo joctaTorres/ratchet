@@ -31,6 +31,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Warm the SWE-ReX Python venv before the test suite. One test drives the
+      # local sidecar runtime, whose first use lazily builds a pinned-swe-rex venv
+      # (pip install) under the cache dir. On a cold runner that build exceeds the
+      # 10s per-test timeout and the test flakes; locally the venv is already
+      # cached so it is instant. Prebuild it here (uv makes it fast and resilient)
+      # so the bootstrap is a cache hit at test time — same as a developer machine.
+      # This only PRIME the cache; it changes no test, threshold, or gate logic.
+      - name: Warm SWE-ReX venv (avoid cold-bootstrap test flake)
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          pnpm build
+          node -e "import('./dist/core/batch/engine/runtime/rex-bootstrap.js').then(m => { m.bootstrapRexRuntime({ locus: 'local' }); console.log('ReX venv warmed'); })"
+
       - name: Lint
         id: lint
         run: pnpm lint

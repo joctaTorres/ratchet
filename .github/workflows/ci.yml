@@ -22,7 +22,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # pnpm 11.5.1 (pinned via packageManager) requires Node >= 22.13, so the
+          # pnpm CLI itself fails to start under Node 20. Bump to 22 to satisfy it;
+          # the package still targets Node >= 20.19 at runtime (see engines).
+          node-version: 22
           cache: pnpm
 
       - name: Install dependencies

@@ -3,24 +3,6 @@ Feature: Secret-scan gate — a green/red signal from a leaked-secret scan
   I want a pure, unit-tested evaluator that turns a secret-scan report into a green/red signal
   So that a leaked secret can later block the release — provably, not by hope
 
-  # This is the secret-scan half of the "security layer" phase. It mirrors the
-  # release-decision spine and the sibling dependency-audit slice: a PURE
-  # evaluator (inputs in, signal out) plus a thin runner that adapts the CI
-  # environment to it. The evaluator reads a parsed secret-scan report (the list
-  # of findings a secret scanner's `--report-format json` produces) and answers a
-  # single question: does the working tree contain any leaked secret?
-  #
-  # It deliberately produces a secret-scan gate SIGNAL (green | red) in the exact
-  # shape the release-decision module already consumes — but it does NOT wire that
-  # signal into the module's wired-gate set. That wiring is the separate `after`
-  # change `wire-security-into-release-gate`. This slice exists to prove the "no
-  # leaked secret" decision in isolation so the wiring has a trustworthy signal to
-  # feed in.
-  #
-  # Fail-closed: anything other than an explicit, parseable scan with zero
-  # findings is red. The evaluator is a pure function of its inputs — no I/O, no
-  # network, no clock — so every branch is exhaustively unit-testable.
-
   Background:
     Given the secret-scan gate exposes a pure evaluate function
     And the function takes a parsed secret-scan report of findings

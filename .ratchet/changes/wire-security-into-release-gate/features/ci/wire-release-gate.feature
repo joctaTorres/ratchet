@@ -3,27 +3,6 @@ Feature: Wire the security signal into the release-decision gate
   I want the security layer (dependency audit + secret scan) plugged into the release-decision spine
   So that a known vulnerability or a leaked secret provably flips the release gate to DENY — still dry-run, nothing published
 
-  # This is the wiring slice of the "security layer" phase. The two prior `after`
-  # changes already PRODUCE their signals in the exact `GateSignal` shape the
-  # release-decision module keys its gates by: `dependency-audit-gate`
-  # (src/core/ci/dependency-audit-gate.ts) and `secret-scan-gate`
-  # (src/core/ci/secret-scan-gate.ts). Neither wired its signal into the decision —
-  # by design. This change is that wiring and nothing more, plus the phase proof
-  # harness test/e2e/security-gate.sh.
-  #
-  # The two security signals are joined into ONE combined `security` gate on the
-  # spine — matching the phase's "the security signal green before ALLOW" framing.
-  # The release-decision module is intentionally data-driven: its wired-gate set is
-  # the keys of the `gates` record, not hardcoded branching. So wiring is a data
-  # change — adding `security` to the release-gate runner's WIRED_GATES and feeding
-  # a single GATE_SECURITY (green only when BOTH the audit step and the secret-scan
-  # step succeeded) into the workflow's release-gate step — with NO change to
-  # `decideRelease`'s core logic.
-  #
-  # Fail-closed is preserved: a missing or non-green security signal denies, exactly
-  # as lint/test/coverage/e2e already do. The publish path stays `npm publish
-  # --dry-run` — this phase proves the gate, it does not ship a real release.
-
   Background:
     Given the release-decision module decides ALLOW only when the branch is "main" and every wired gate is green
     And the dependency-audit gate produces a green/red signal in the release-decision GateSignal shape

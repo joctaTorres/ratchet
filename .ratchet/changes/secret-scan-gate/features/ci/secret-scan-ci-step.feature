@@ -3,19 +3,6 @@ Feature: CI runs a secret scan and goes red on a leaked secret
   I want CI to run a secret scan as its own red/green step
   So that a planted or leaked secret turns the run red before the release path is ever consulted
 
-  # The pure evaluator (secret-scan-gate.feature) needs a real scan report to act
-  # on. This feature pins the CI wiring that produces it: a step that runs a
-  # secret scanner across the working tree and writes its machine-readable JSON
-  # report, plus a secret-scan-gate step that feeds that report to the evaluator
-  # and exits non-zero when a finding is present.
-  #
-  # Structure is asserted against the parsed workflow model the prior phases'
-  # parser helper exposes (steps matched by their `run`/`uses` substrings, robust
-  # to cosmetic renames). The secret-scan step sits AFTER the test step and does
-  # NOT touch the release path — wiring the security signal into the
-  # release-decision module is the separate `wire-security-into-release-gate`
-  # change.
-
   Background:
     Given the repository defines a workflow at ".github/workflows/ci.yml"
     And the workflow is parsed into its triggers, jobs, and ordered steps

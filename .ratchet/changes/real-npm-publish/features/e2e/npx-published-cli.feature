@@ -3,34 +3,6 @@ Feature: Phase proof — a real publish lands on a registry and npx runs the pub
   I want the blackbox publish harness to perform a REAL publish to a staged registry and then run the package via npx
   So that I can see, end to end, that a green build on "main" actually publishes ratchet-ai and that `npx ratchet-ai --version` executes the freshly published CLI — while a red gate or a non-main ref publishes nothing
 
-  # This completes the phase-4 proof-of-work, `bash test/e2e/npx-publish.sh`. The
-  # earlier slices grew it to prove (a) GATING — the publish path is reachable only
-  # when the release-gate runner records `release_allowed=true` on `main` — and
-  # (b) IDEMPOTENCY against a forced published-version set, all while the publish
-  # was `npm publish --dry-run` and nothing left the machine.
-  #
-  # This slice flips the proof from dry-run to a REAL publish. Because actually
-  # uploading to npmjs.org from a test would be non-deterministic and irreversible,
-  # the harness stands up a STAGED local registry (e.g. verdaccio) — exactly the
-  # "real (or staged-registry) publish" the phase proof-of-work permits — and:
-  #   - on the ALLOW + should_publish path, performs a REAL `npm publish` to the
-  #     staged registry (with provenance attestation disabled for the offline
-  #     staged run), then
-  #   - runs the package through npx against that staged registry and asserts
-  #     `npx ratchet-ai --version` actually executes the PUBLISHED `ratchet` CLI and
-  #     prints the published version (not a locally-linked copy), and
-  #   - re-runs the version guard with its real registry source pointed at the
-  #     staged registry and asserts the just-published version is now seen as
-  #     already-published -> should_publish=false -> a green, idempotent SKIP.
-  #
-  # The gating cases are PRESERVED: a forced red wired gate and a non-main ref must
-  # each keep release_allowed=false so the publish path is never reached and the
-  # staged registry receives nothing.
-  #
-  # Inputs (branch, GATE_* signals) remain FORCED via environment so the harness is
-  # deterministic; the staged registry is local and torn down at the end, so the
-  # proof stays side-effect-free against the real npm registry.
-
   Scenario: A green build on main publishes to the staged registry and npx runs the published CLI
     Given the package is built
     And a staged npm registry is running

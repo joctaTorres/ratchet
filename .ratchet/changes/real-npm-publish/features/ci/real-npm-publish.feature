@@ -3,42 +3,6 @@ Feature: A green build on main performs a REAL provenance publish behind the pro
   I want CI to actually publish the package to the npm registry (with provenance) on a green push to "main"
   So that end users can run the freshly published CLI via npx — while every quality gate and the main-only rule still strictly govern whether anything is published
 
-  # This is the FINAL slice of the "real-npm-publish-on-main" phase. The prior
-  # slices proved the full publish path as a SAFE DRY-RUN:
-  #   - `gated-publish-job` promoted the publish into its own `publish` job that
-  #     `needs: [ci]` and runs only when `needs.ci.outputs.release_allowed == 'true'`
-  #     (the unit-tested `decideRelease` verdict, ALLOW only on `main` with every
-  #     wired gate green), and
-  #   - `idempotent-version-guard` added a `version-guard` step whose
-  #     `should_publish` output gates the publish step, so an already-published
-  #     version is a green SKIP rather than a hard E409 error.
-  # In both, the publish step was `npm publish --dry-run` — nothing was ever
-  # released, and no npm token or provenance permission existed.
-  #
-  # This slice FLIPS that proven dry-run into a REAL release, and NOTHING about the
-  # gating changes:
-  #   - the publish step becomes a real `npm publish` with provenance and public
-  #     access, authenticated by an `NPM_TOKEN` repository secret;
-  #   - the `publish` job is granted `id-token: write` permission so npm can mint a
-  #     provenance attestation, with `contents: read` kept minimal;
-  #   - the version guard's already-published set is sourced from a REAL registry
-  #     query (`npm view ratchet-ai versions`) instead of a forced env list, so the
-  #     idempotency decision reflects what is actually on the registry — while the
-  #     `PUBLISHED_VERSIONS` env override is PRESERVED so tests and the staged
-  #     proof stay deterministic and offline.
-  #
-  # The two fail-closed gates from earlier slices are UNCHANGED and still both
-  # apply in series: the job-level release gate (`release_allowed == 'true'`) and
-  # the step-level version guard (`should_publish == 'true'`). A red lint, test,
-  # coverage, e2e, or security signal — or any non-main ref — must still result in
-  # NO publish. `decideRelease`, `WIRED_GATES`, and `decidePublishVersion` are
-  # untouched: this slice swaps a data SOURCE and the publish COMMAND, not any
-  # decision logic.
-  #
-  # NOTE on naming: the package is `ratchet-ai` and exposes the `ratchet` bin, so
-  # the registry query targets `ratchet-ai` and end users invoke the published CLI
-  # as `npx ratchet-ai --version` (which runs the `ratchet` bin).
-
   Background:
     Given the package is named "ratchet-ai" and exposes a "ratchet" bin
     And the publish job is reachable only when the release decision is ALLOW on "main"

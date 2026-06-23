@@ -3,15 +3,6 @@ Feature: Release-decision module — the "only when green" spine
   I want a pure, unit-tested module that decides whether a release is allowed
   So that the publish path is reachable only when the branch is main AND every wired quality gate is green — provably, not by hope
 
-  # The module is the spine of the whole release pipeline. It takes the current
-  # branch plus the set of wired gate signals (this phase wires lint + test;
-  # later phases plug in coverage, e2e, and security against the SAME shape) and
-  # returns a single ALLOW / DENY decision with the reasons for a denial.
-  #
-  # It is fail-closed: anything other than an explicit green on every wired gate,
-  # on branch main, is a DENY. The decision is a pure function of its inputs — no
-  # I/O, no git, no clock — so it is exhaustively unit-testable.
-
   Background:
     Given the release-decision module exposes a pure decide function
     And the wired gate signals for this phase are "lint" and "test"

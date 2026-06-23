@@ -3,23 +3,6 @@ Feature: Coverage-threshold gate — a green/red signal from measured coverage
   I want a pure, unit-tested evaluator that turns a coverage report into a green/red signal against an enforced minimum threshold
   So that a drop in test coverage can later block the release — provably, not by hope
 
-  # This is the coverage half of the "coverage + e2e gates" phase. It mirrors the
-  # release-decision spine's shape: a PURE evaluator (inputs in, signal out) plus
-  # a thin runner that adapts the CI environment to it. The evaluator reads a
-  # coverage summary (the total percentage produced by the coverage tool) and a
-  # configured threshold and answers a single question: is coverage >= threshold?
-  #
-  # It deliberately produces a `coverage` gate SIGNAL (green | red) in the exact
-  # shape the release-decision module already consumes — but it does NOT wire that
-  # signal into the module's wired-gate set. That wiring is the separate `after`
-  # change `wire-coverage-e2e-into-release-gate`. This slice exists to prove the
-  # "coverage >= threshold" decision in isolation so the wiring has a trustworthy
-  # signal to feed in.
-  #
-  # Fail-closed: anything other than an explicit, parseable coverage at or above
-  # the threshold is red. The evaluator is a pure function of its inputs — no I/O,
-  # no clock — so every branch is exhaustively unit-testable.
-
   Background:
     Given the coverage gate exposes a pure evaluate function
     And the function takes a parsed coverage total and a minimum threshold

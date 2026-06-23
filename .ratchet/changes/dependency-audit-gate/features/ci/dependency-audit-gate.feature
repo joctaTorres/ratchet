@@ -3,26 +3,6 @@ Feature: Dependency-audit gate — a green/red signal from a vulnerability audit
   I want a pure, unit-tested evaluator that turns a dependency vulnerability audit into a green/red signal against a configured severity threshold
   So that a known-vulnerable dependency can later block the release — provably, not by hope
 
-  # This is the dependency-audit half of the "security layer" phase. It mirrors
-  # the release-decision spine and the sibling coverage/e2e slices: a PURE
-  # evaluator (inputs in, signal out) plus a thin runner that adapts the CI
-  # environment to it. The evaluator reads a parsed audit report (the per-severity
-  # vulnerability counts a package manager's `audit --json` produces) and a
-  # configured minimum severity to fail on, and answers a single question: does
-  # the dependency tree contain a vulnerability at or above that severity?
-  #
-  # It deliberately produces a dependency-audit gate SIGNAL (green | red) in the
-  # exact shape the release-decision module already consumes — but it does NOT
-  # wire that signal into the module's wired-gate set. That wiring is the separate
-  # `after` change `wire-security-into-release-gate`. This slice exists to prove
-  # the "no vulnerability at/above the threshold" decision in isolation so the
-  # wiring has a trustworthy signal to feed in.
-  #
-  # Fail-closed: anything other than an explicit, parseable audit with zero
-  # vulnerabilities at or above the threshold is red. The evaluator is a pure
-  # function of its inputs — no I/O, no network, no clock — so every branch is
-  # exhaustively unit-testable.
-
   Background:
     Given the dependency-audit gate exposes a pure evaluate function
     And the function takes a parsed audit report of per-severity vulnerability counts and a minimum severity to fail on

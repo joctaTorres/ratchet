@@ -3,15 +3,6 @@ Feature: Gated dry-run publish wired into the CI workflow
   I want the CI workflow to consult the release-decision module behind a main-only gate before exercising the publish path
   So that the full publish pipeline is run end to end as a safe dry-run — reachable only on a green main build, never as a real release
 
-  # This is the third and final slice of the `gated-release-path-dry-run` phase.
-  # The first slice shipped the install -> lint -> test workflow spine and a YAML
-  # parser; the second shipped the pure, unit-tested release-decision module.
-  # This slice fills the "RELEASE PATH SEAM" left in `.github/workflows/ci.yml`:
-  # a main-only release-gate step that CONSULTS the release-decision module,
-  # followed by `npm publish --dry-run` so the whole publish path is exercised
-  # without releasing anything. Assertions run against the SAME parsed-workflow
-  # model the first slice exposed, extended for release-path ordering.
-
   Background:
     Given the repository defines a workflow at ".github/workflows/ci.yml"
     And the workflow is parsed into its triggers, jobs, and ordered steps

@@ -30,6 +30,13 @@ import type { GateSignal } from './release-decision.js';
  * above current coverage would turn CI red on the very push that introduces the
  * gate. Overridable via `COVERAGE_THRESHOLD` so the value is data, not a literal
  * baked into the call site.
+ *
+ * TRACKING NOTE: this floor leaves only ~0.67pp of headroom over the measured
+ * 68.67% line coverage, so a real regression and a small measurement wobble can
+ * both trip it — ratchet this up as coverage improves. Also, only LINE coverage
+ * is gated here (`total.lines.pct`); BRANCH coverage is intentionally not gated
+ * yet, so logic can be added with branches untested while line% holds. Adding a
+ * branch floor is a deliberate future change, not a silent one.
  */
 export const DEFAULT_COVERAGE_THRESHOLD = 68;
 

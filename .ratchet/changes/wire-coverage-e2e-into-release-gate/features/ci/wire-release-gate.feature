@@ -3,23 +3,6 @@ Feature: Wire coverage + e2e into the release-decision gate
   I want the coverage and e2e signals plugged into the release-decision spine
   So that a coverage drop or a broken end-to-end run provably flips the release gate to DENY — still dry-run, nothing published
 
-  # This is the wiring slice of the "coverage + e2e gates" phase. The two prior
-  # `after` changes already PRODUCE the signals in the exact `GateSignal` shape
-  # the release-decision module keys its gates by: `coverage-threshold-gate`
-  # (src/core/ci/coverage-gate.ts) and `e2e-cli-smoke` (src/core/ci/e2e-gate.ts).
-  # Neither wired its signal into the decision — by design. This change is that
-  # wiring and nothing more.
-  #
-  # The release-decision module is intentionally data-driven: its wired-gate set
-  # is the keys of the `gates` record, not hardcoded branching. So wiring is a
-  # data change — adding `coverage` and `e2e` to the release-gate runner's
-  # WIRED_GATES and feeding `GATE_COVERAGE` / `GATE_E2E` into the workflow's
-  # release-gate step — with NO change to `decideRelease`'s core logic.
-  #
-  # Fail-closed is preserved: a missing or non-green coverage/e2e signal denies,
-  # exactly as lint/test already do. The publish path stays `npm publish
-  # --dry-run` — this phase proves the gate, it does not ship a real release.
-
   Background:
     Given the release-decision module decides ALLOW only when the branch is "main" and every wired gate is green
     And the coverage gate produces a green/red signal in the release-decision GateSignal shape

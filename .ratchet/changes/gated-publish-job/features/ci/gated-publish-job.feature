@@ -3,29 +3,6 @@ Feature: A dedicated publish job reachable only when the release decision is ALL
   I want the publish to live in its own CI job, gated by the release-decision module's verdict
   So that the publish path is reachable ONLY on a green build of "main" and is skipped entirely for a non-main branch or any red gate — still dry-run, nothing published
 
-  # This is the FIRST slice of the "real-npm-publish-on-main" phase. The prior
-  # phases proved the "only when green" spine: a pure `decideRelease`
-  # (src/core/ci/release-decision.ts) and a thin `release-gate` runner
-  # (src/core/ci/release-gate.ts) that today exits 0 on ALLOW / non-zero on DENY,
-  # consulted by a main-only step that immediately precedes a same-job
-  # `npm publish --dry-run` step in `.github/workflows/ci.yml`.
-  #
-  # This slice promotes the publish out of that single job into its OWN `publish`
-  # job whose reachability is governed by the proven decision — so "the publish
-  # job is reachable ONLY when the release-decision module returns ALLOW on main"
-  # becomes a structural property of the workflow graph, not just an in-job step
-  # order. To do that the release-gate runner additionally emits a machine-readable
-  # decision (`release_allowed=true|false`) to GITHUB_OUTPUT; the `ci` job exposes
-  # that as a job output; and a separate `publish` job `needs` the `ci` job and is
-  # conditioned on that output being `true`.
-  #
-  # SCOPE: this slice establishes the GATED JOB and the decision-output plumbing
-  # only. The publish step inside the new job stays `npm publish --dry-run` — the
-  # idempotent already-published guard (`idempotent-version-guard`) and the flip to
-  # a real token+provenance publish (`real-npm-publish`) are the later `after`
-  # changes in this phase and are out of scope here. `decideRelease`'s core logic
-  # is unchanged.
-
   Background:
     Given the release-decision module decides ALLOW only when the branch is "main" and every wired gate is green
     And the release-gate runner adapts that verdict into a process exit code for the workflow

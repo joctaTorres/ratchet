@@ -42,12 +42,31 @@ export interface FirstRunResult {
 }
 
 /** Human-friendly one-line descriptions for each posture in the prompt. */
-const POSTURE_DESCRIPTIONS: Record<PermissionPosture, string> = {
+export const POSTURE_DESCRIPTIONS: Record<PermissionPosture, string> = {
   'repo-sandboxed-permissive':
     'Sandboxed (recommended): edits & build/test run unprompted, scoped to the repo, dangerous ops denied',
   'curated-allowlist': 'Curated: only an explicit allow-list runs unprompted',
   'full-autonomy': 'Full autonomy: bypass ALL permission checks (use with care)',
 };
+
+/**
+ * The shared posture-selection prompt. Factored out so both batch first-run
+ * setup and `ratchet init`'s sandbox-permission offer present the same
+ * agent-agnostic posture choices from a single source of truth. Lazily imports
+ * `@inquirer/prompts`, matching `ratchet init`.
+ */
+export async function selectPosture(): Promise<PermissionPosture> {
+  const { select } = await import('@inquirer/prompts');
+  return select<PermissionPosture>({
+    message: 'Choose an agent permission posture for headless agent runs:',
+    default: DEFAULT_PERMISSION_POSTURE,
+    choices: PERMISSION_POSTURE_VALUES.map((value) => ({
+      value,
+      name: value,
+      description: POSTURE_DESCRIPTIONS[value],
+    })),
+  });
+}
 
 /**
  * The injectable prompt seam so the interactive flow is unit-testable without a
@@ -60,18 +79,7 @@ export interface FirstRunPrompts {
 }
 
 const defaultPrompts: FirstRunPrompts = {
-  async selectPosture() {
-    const { select } = await import('@inquirer/prompts');
-    return select<PermissionPosture>({
-      message: 'Choose an agent permission posture for headless batch runs:',
-      default: DEFAULT_PERMISSION_POSTURE,
-      choices: PERMISSION_POSTURE_VALUES.map((value) => ({
-        value,
-        name: value,
-        description: POSTURE_DESCRIPTIONS[value],
-      })),
-    });
-  },
+  selectPosture,
   async selectScope() {
     const { select } = await import('@inquirer/prompts');
     return select<FirstRunSaveScope>({

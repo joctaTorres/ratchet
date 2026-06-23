@@ -1,0 +1,157 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# A batch coordinates related changes across ordered phases. It references
+# changes by NAME and never owns them: changes live under .ratchet/changes/
+# like any other change and can be inspected, validated, and archived on their
+# own. Status is derived live from change state on disk — never stored here.
+#
+# Phases ship functional software behind an executable proof-of-work, so errors
+# surface early. A later phase is blocked until the prior phase's proof-of-work
+# passes. Changes are created lazily as the batch progresses: an entry with no
+# change directory yet is simply "pending", not an error.
+#
+# GOAL OF THIS BATCH
+# Ship a GitHub Actions pipeline that PUBLISHES `ratchet` to npm — so end users
+# can run `npx ratchet` — on pushes to `main`, but ONLY when every quality gate
+# is green: lint, unit/integration tests, a coverage threshold, e2e tests, and a
+# security layer. The "only when green" guarantee is not just YAML wiring: it is
+# a real, unit-tested release-decision module so the gate is provable, not hoped.
+#
+# ANTI-WATERFALL SHAPE (release path first, then thicken the gates)
+# The integration-heavy, riskiest part of a release pipeline is the publish path
+# itself. So phase 1 stands up the WHOLE pipeline shape end to end as a DRY-RUN
+# (`npm publish --dry-run`, nothing is actually released) gated behind lint+test,
+# and BORNS the tested release-decision module that is the spine of every later
+# phase. Phases 2–3 each harden ONE real gate the user asked for (coverage+e2e,
+# then security), still dry-run. Phase 4 flips dry-run to a real npm publish so
+# `npx ratchet` works. Each phase is observable on a real push to GitHub.
+
+name: ci-npx-release
+created: 2026-06-22
+
+# Project batch defaults (.ratchet/config.yaml `batch:`) are acceptable here, so
+# the `settings:` block is intentionally omitted.
+
+phases:
+  # ---------------------------------------------------------------------------
+  - name: gated-release-path-dry-run
+    goal: >-
+      Stand up the entire release pipeline END TO END as a safe dry-run. A
+      GitHub Actions workflow triggers on pushes and PRs: it installs deps, runs
+      the linter, and runs the test suite — going RED if either fails. On `main`
+      only, it then consults a NEW, unit-tested release-decision module that
+      answers "is a release allowed?" (true only when branch == main AND lint and
+      tests are green) and, when allowed, runs `npm publish --dry-run` so the
+      full publish path is exercised without releasing anything. This ships the
+      complete pipeline skeleton plus the tested "only when green" spine that
+      every later gate plugs into.
+    success: >-
+      A workflow at `.github/workflows/ci.yml` runs on push and pull_request:
+      install -> lint -> test, and a failing lint or test turns the run red and
+      blocks the release path. The release-decision module returns DENY unless
+      branch == main AND every wired gate signal is green, and returns ALLOW on a
+      green main build; on ALLOW the workflow runs `npm publish --dry-run` (no
+      real publish, no token needed). Unit/integration tests prove the module
+      denies on a non-main branch, denies when lint or tests are red, and allows
+      only when all green.
+    proofOfWork:
+      kind: integration
+      run: pnpm lint && pnpm vitest run test/ci
+      pass: >-
+        exit code 0 — lint is clean and the tests under `test/ci` assert (a) the
+        release-decision module denies unless branch == main AND lint+test are
+        green and allows only when all green, and (b) the parsed workflow runs
+        install -> lint -> test and wires a main-only release-gate step ahead of
+        an `npm publish --dry-run` (never a real publish).
+    changes:
+      - name: ci-quality-gate-workflow
+      - name: release-decision-module
+        after: [ci-quality-gate-workflow]
+      - name: gated-dry-run-publish
+        after: [release-decision-module]
+
+  # ---------------------------------------------------------------------------
+  - name: coverage-and-e2e-gates
+    goal: >-
+      Make missing test coverage and broken end-to-end behavior BLOCK the
+      release. Add a coverage step to CI that enforces a minimum threshold and an
+      e2e suite that exercises the built CLI the way a user would (a `npx`-style
+      smoke against `bin/ratchet.js`). Feed both signals into the existing
+      release-decision module so a coverage drop or an e2e failure flips the gate
+      to DENY — still dry-run, nothing is published yet.
+    success: >-
+      CI runs coverage with an enforced threshold and an e2e job that drives the
+      built CLI end to end; the release-decision module now additionally requires
+      coverage >= threshold AND e2e green, and a maintainer can watch the gate go
+      DENY when either regresses. The publish path remains `--dry-run`.
+    proofOfWork:
+      kind: blackbox
+      # Refined at phase entry against the real e2e harness and coverage wiring
+      # shipped here; the kind (blackbox e2e of the built CLI + gate decision) is
+      # the commitment.
+      run: bash test/e2e/release-gate.sh   # refine exact command at phase entry
+      pass: >-
+        the e2e run drives the built CLI like a user, asserts a passing run keeps
+        the gate at ALLOW (dry-run), and asserts that a forced coverage-below-
+        threshold or a failing e2e flips the release-decision module to DENY.
+    changes:
+      - name: coverage-threshold-gate
+      - name: e2e-cli-smoke
+      - name: wire-coverage-e2e-into-release-gate
+        after: [coverage-threshold-gate, e2e-cli-smoke]
+
+  # ---------------------------------------------------------------------------
+  - name: security-layer-gate
+    goal: >-
+      Add a security layer to CI as a hard gate on the release. Run a dependency
+      vulnerability audit and a secret scan (and prepare npm provenance) as a CI
+      job; wire its result into the release-decision module so a known
+      vulnerability or a leaked secret flips the gate to DENY. Still dry-run — no
+      real publish — so the security gate is proven before anything ships.
+    success: >-
+      CI has a security job (dependency audit + secret scan) that goes red on a
+      vulnerability or secret, and the release-decision module now also requires
+      the security signal green before ALLOW. Introducing a known-vulnerable dep
+      or a planted secret turns the run red and forces the gate to DENY.
+    proofOfWork:
+      kind: blackbox
+      run: bash test/e2e/security-gate.sh   # refine exact command at phase entry
+      pass: >-
+        the run asserts a clean tree keeps the gate ALLOW (dry-run), and that a
+        planted vulnerable dependency or secret makes the security job fail and
+        flips the release-decision module to DENY.
+    changes:
+      - name: dependency-audit-gate
+      - name: secret-scan-gate
+      - name: wire-security-into-release-gate
+        after: [dependency-audit-gate, secret-scan-gate]
+
+  # ---------------------------------------------------------------------------
+  - name: real-npm-publish-on-main
+    goal: >-
+      Flip the proven dry-run path into a REAL release: on a green push to
+      `main`, CI publishes `ratchet` to the npm registry (with provenance) so end
+      users can run `npx ratchet`. Every gate from earlier phases still governs
+      the publish — a red lint, test, coverage, e2e, or security signal, or any
+      non-main branch, must never publish. Version/tag handling and the npm token
+      secret are wired here.
+    success: >-
+      A green build on `main` publishes the package to npm and `npx ratchet
+      --version` runs the freshly published CLI; a non-main branch or ANY red
+      gate never publishes. The release is idempotent (a re-run of an already-
+      published version does not error the pipeline) and uses npm provenance.
+    proofOfWork:
+      kind: blackbox
+      run: bash test/e2e/npx-publish.sh   # refine exact command at phase entry
+      pass: >-
+        the run verifies the publish job is reachable ONLY when the release-
+        decision module returns ALLOW on `main`, performs a real (or staged-
+        registry) publish, and that `npx ratchet --version` then executes the
+        published CLI; a forced red gate or non-main ref is asserted to skip
+        publish entirely.
+    changes:
+      - name: gated-publish-job
+      - name: idempotent-version-guard
+        after: [gated-publish-job]
+      - name: real-npm-publish
+        after: [idempotent-version-guard]

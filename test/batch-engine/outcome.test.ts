@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { JournalEntry } from 'ratchet';
+import type { JournalEntry } from 'ratchet-ai';
 import { mapSessionToOutcome, type MapOutcomeInput } from '../../src/core/batch/engine/outcome.js';
 import type { ChangeDiskState } from '../../src/core/batch/engine/transition.js';
 import type { AgentSpawnResult } from '../../src/core/batch/engine/agent.js';

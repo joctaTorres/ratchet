@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ResolvedStepContext, BatchSettings, ProofOfWork, Transition } from 'ratchet';
+import type { ResolvedStepContext, BatchSettings, ProofOfWork, Transition } from 'ratchet-ai';
 import { buildAgentInstructions } from '../../src/core/batch/engine/instructions.js';
 
 const POW: ProofOfWork = { kind: 'integration', run: 'echo ok', pass: 'exit 0' };

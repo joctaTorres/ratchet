@@ -1,0 +1,283 @@
+# CI quality-gate workflow.
+#
+# Spine: checkout -> setup Node + pnpm -> install -> lint -> test, on every push
+# and pull request. A non-zero lint or test exit fails the job (GitHub Actions'
+# default `success()` step condition), turning the run red and short-circuiting
+# every step that follows — so the release path is never reached on a red build.
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  ci:
+    name: install -> lint -> test
+    runs-on: ubuntu-latest
+    # Lift the release-gate step's verdict into a job-level signal. The value is
+    # literally `decision.allowed` from the unit-tested release-decision module
+    # (the gate runner writes `release_allowed=true|false` to GITHUB_OUTPUT); the
+    # downstream `publish` job depends on this output to stay reachable ONLY when
+    # the decision is ALLOW on main. Absent/non-`true` (off main, or any red gate
+    # that skips the gate step) reads as "do not publish" — fail-closed.
+    outputs:
+      release_allowed: ${{ steps.release-gate.outputs.release_allowed }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # pnpm 11.5.1 (pinned via packageManager) requires Node >= 22.13, so the
+          # pnpm CLI itself fails to start under Node 20. Bump to 22 to satisfy it;
+          # the package still targets Node >= 20.19 at runtime (see engines).
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Single early build: every later gate step only needs `dist/` to exist, so
+      # build ONCE here rather than re-running `pnpm build` in each gate step. The
+      # gate runners (coverage/e2e/audit/secret-scan/release-gate) and the venv
+      # warm-up below all consume this one `dist/`. (cli-smoke.sh still rebuilds
+      # internally so it is runnable standalone — that is its own concern.)
+      - name: Build the package (dist/ for every later step)
+        run: pnpm build
+
+      # Warm the SWE-ReX Python venv before the test suite. One test drives the
+      # local sidecar runtime, whose first use lazily builds a pinned-swe-rex venv
+      # (pip install) under the cache dir. On a cold runner that build exceeds the
+      # 10s per-test timeout and the test flakes; locally the venv is already
+      # cached so it is instant. Prebuild it here (uv makes it fast and resilient)
+      # so the bootstrap is a cache hit at test time — same as a developer machine.
+      # This only PRIME the cache; it changes no test, threshold, or gate logic.
+      - name: Warm SWE-ReX venv (avoid cold-bootstrap test flake)
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          node -e "import('./dist/core/batch/engine/runtime/rex-bootstrap.js').then(m => { m.bootstrapRexRuntime({ locus: 'local' }); console.log('ReX venv warmed'); })"
+
+      - name: Lint
+        id: lint
+        run: pnpm lint
+
+      - name: Test
+        id: test
+        run: pnpm vitest run
+
+      # Coverage gate: re-run the suite collecting coverage (emitting the v8
+      # json-summary), then invoke the unit-tested coverage-gate runner, which
+      # exits non-zero when the measured total drops below the enforced
+      # threshold — turning the run red. Enforcement lives in that tested runner,
+      # not in vitest config. This sits AFTER `test`; its outcome feeds the
+      # release decision below as GATE_COVERAGE, so a coverage drop flips the
+      # gate to DENY.
+      - name: Coverage gate (enforce minimum threshold)
+        id: coverage
+        run: |
+          pnpm vitest run --coverage
+          node dist/core/ci/coverage-gate.js
+
+      # E2e gate: build the package and drive the BUILT CLI end to end the way a
+      # user running `npx ratchet` would (the smoke spawns `node bin/ratchet.js`
+      # as a subprocess against the fresh `dist/`), then invoke the unit-tested
+      # e2e-gate runner against the smoke's machine-readable result. The runner
+      # exits non-zero when any check failed (or the result is missing/malformed,
+      # fail-closed) — turning the run red. This sits AFTER `test`/`coverage`;
+      # its outcome feeds the release decision below as GATE_E2E, so a failing
+      # e2e run flips the gate to DENY.
+      - name: E2e gate (drive the built CLI end to end)
+        id: e2e
+        run: |
+          bash test/e2e/cli-smoke.sh
+          node dist/core/ci/e2e-gate.js
+
+      # Dependency-audit gate: run the package manager's vulnerability audit
+      # writing its machine-readable JSON report, then invoke the unit-tested
+      # dependency-audit-gate runner against that report. The raw `pnpm audit`
+      # exit is tolerated (`|| true`) because it goes non-zero on ANY advisory at
+      # ANY severity — too blunt to gate a release on; the tested runner owns the
+      # red/green decision, exiting non-zero only when a vulnerability at or above
+      # the configured severity (AUDIT_FAIL_ON, default `high`) is present —
+      # turning the run red. This sits AFTER `test` and OUTSIDE the release path:
+      # wiring its signal into the release decision is the separate
+      # `wire-security-into-release-gate` change, so no GATE_* is added here yet.
+      - name: Dependency-audit gate (fail on vulnerabilities at/above threshold)
+        id: audit
+        env:
+          AUDIT_REPORT: audit/audit-report.json
+        run: |
+          mkdir -p audit
+          pnpm audit --json > audit/audit-report.json || true
+          node dist/core/ci/dependency-audit-gate.js
+
+      # Secret-scan gate: run a secret scanner across the working tree writing
+      # its machine-readable JSON report, then invoke the unit-tested
+      # secret-scan-gate runner against that report. The raw scanner exit is
+      # tolerated (`|| true`) because a scanner's own exit is too blunt to gate a
+      # release on (it may go non-zero on warnings, or zero despite a finding,
+      # depending on flags); the tested runner owns the red/green decision,
+      # exiting non-zero when any non-allowlisted finding is present (or the
+      # report is missing/malformed, fail-closed) — turning the run red. This
+      # sits AFTER `test` and OUTSIDE the release path: wiring its signal into the
+      # release decision is the separate `wire-security-into-release-gate` change,
+      # so no GATE_* is added here yet.
+      # Install a pinned secret-scanner release binary onto the runner PATH. The
+      # scanner is NOT preinstalled on ubuntu-latest, so without this the
+      # secret-scan step's `... || true` swallows a "command not found", writes no
+      # report, and the fail-closed gate runner correctly goes red. Pinning the
+      # version keeps the scan reproducible. The tool name / org live in `env` (not
+      # the `run` body) so the structural workflow test still selects the actual
+      # scan step as the scanner step.
+      - name: Install secret scanner
+        env:
+          SCANNER: gitleaks
+          SCANNER_VERSION: 8.30.1
+        run: |
+          url="https://github.com/${SCANNER}/${SCANNER}/releases/download/v${SCANNER_VERSION}/${SCANNER}_${SCANNER_VERSION}_linux_x64.tar.gz"
+          curl -sSfL "$url" -o /tmp/scanner.tar.gz
+          tar -xzf /tmp/scanner.tar.gz -C /tmp "$SCANNER"
+          sudo install "/tmp/${SCANNER}" "/usr/local/bin/${SCANNER}"
+          "$SCANNER" version
+
+      - name: Secret-scan gate (fail on a leaked secret)
+        id: secret-scan
+        env:
+          SECRET_SCAN_REPORT: security/secret-scan-report.json
+          # Allowlist a deliberate fake-credential FIXTURE: this test file plants a
+          # `sk-live-…` string as input to assert the redactor MASKS it (it is never
+          # a real secret). gitleaks' generic-api-key rule flags it; exempt that one
+          # file via the gate's documented allowlist. The gate still fails closed on
+          # any non-allowlisted finding anywhere else — its logic is unchanged.
+          SECRET_SCAN_ALLOWLIST: test/core/batch/permissions-resolution.test.ts
+        run: |
+          mkdir -p security
+          gitleaks detect --no-git --source . --report-format json --report-path security/secret-scan-report.json || true
+          node dist/core/ci/secret-scan-gate.js
+
+      # === RELEASE PATH (main-only, dry-run) ===
+      # Reached only after the green install -> lint -> test spine above: a red
+      # lint or test fails the job (Actions' default `success()` condition) and
+      # short-circuits everything below, so this path never runs on a red build.
+      #
+      # The gate decision is NOT hand-rolled here — it is delegated to the
+      # unit-tested release-decision module via the release-gate runner. The
+      # `if: github.ref == 'refs/heads/main'` is belt-and-braces, keeping the
+      # publish path unreachable off `main` even before the runner runs (the
+      # module enforces main-only too). Later phases wire more gate signals into
+      # the runner's environment; this step never grows new branching.
+      - name: Release gate (consult release-decision module)
+        id: release-gate
+        if: github.ref == 'refs/heads/main'
+        env:
+          # The job only reaches this step when lint and test succeeded, so these
+          # resolve to `green`; the `|| 'red'` keeps the runner fail-closed if a
+          # future change relaxes the short-circuit (e.g. with `if: always()`).
+          GATE_LINT: ${{ steps.lint.outcome == 'success' && 'green' || 'red' }}
+          GATE_TEST: ${{ steps.test.outcome == 'success' && 'green' || 'red' }}
+          GATE_COVERAGE: ${{ steps.coverage.outcome == 'success' && 'green' || 'red' }}
+          GATE_E2E: ${{ steps.e2e.outcome == 'success' && 'green' || 'red' }}
+          # One combined security signal folded from BOTH security steps: green only
+          # when the dependency audit AND the secret scan succeeded, fail-closed to
+          # red when either did not. Keeps the spine's gate set aligned with the
+          # phase's single "security signal" framing while each underlying check
+          # stays an independently-red CI step above.
+          GATE_SECURITY: ${{ steps.audit.outcome == 'success' && steps.secret-scan.outcome == 'success' && 'green' || 'red' }}
+        run: |
+          node dist/core/ci/release-gate.js
+
+  # === GATED PUBLISH JOB (main-only, real provenance publish) ===
+  # The publish is promoted into its OWN job so the reachability guarantee
+  # ("publish only when the release-decision module returns ALLOW on main")
+  # becomes a property of the workflow GRAPH, not just in-job step ordering:
+  #
+  #   - `needs: [ci]` makes this job run ONLY after `ci` succeeds. A red
+  #     lint/test/coverage/e2e/security fails `ci`, which skips `publish`.
+  #   - `if: needs.ci.outputs.release_allowed == 'true'` gates on the proven
+  #     verdict the `ci` job lifted from the release-gate step's output (literally
+  #     `decision.allowed`). Off `main` the gate step is skipped, so the output is
+  #     absent/non-`true` and this job is skipped too — fail-closed.
+  #
+  # Either guard alone blocks publish; together they are belt-and-braces. This
+  # `real-npm-publish` slice flips the publish from a dry-run to a REAL provenance
+  # publish: the publish step now uploads to npm authenticated by the `NPM_TOKEN`
+  # secret, and the job holds `id-token: write` so npm can mint a provenance
+  # attestation. NEITHER gate is relaxed — only what happens once both are
+  # satisfied changes. The version guard (idempotency) still governs the actual
+  # upload via its `should_publish` output.
+  publish:
+    name: gated provenance publish
+    needs: [ci]
+    if: needs.ci.outputs.release_allowed == 'true'
+    runs-on: ubuntu-latest
+    # Least privilege, scoped to the one job that publishes: `id-token: write`
+    # lets npm provenance mint a signed attestation via GitHub's OIDC token;
+    # `contents: read` is the minimal repo access the checkout needs.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          # Point npm at the public registry so the `NODE_AUTH_TOKEN` injected at
+          # the publish step is honored for authentication.
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the package
+        run: pnpm build
+
+      # Idempotency guard: decide PUBLISH (new version) vs SKIP (the local
+      # version is already on the registry) via the unit-tested version-decision
+      # module, and expose it as the `should_publish` step output the publish
+      # step gates on. The runner ALWAYS exits 0 — a SKIP is a deliberate, green
+      # no-op, so re-running an already-published version never errors the
+      # pipeline. With no `PUBLISHED_VERSIONS` override set, the runner sources
+      # the already-published set from a real `npm view ratchet-ai versions`
+      # query (E404 -> first publish; an ambiguous failure fails safe to SKIP).
+      - name: Version guard (skip an already-published version)
+        id: version-guard
+        run: node dist/core/ci/version-guard.js
+
+      # Resolve the npm dist-tag the local version should publish under, via the
+      # unit-tested pure `resolveDistTag`: a prerelease (e.g. `0.1.0-beta.0`)
+      # resolves to its leading channel identifier (`beta`), a stable version to
+      # `latest`. This keeps a prerelease OFF the `latest` tag, so a plain
+      # `npm install ratchet-ai` never resolves to a beta. The runner prints the
+      # tag for the version read from `package.json`; capture it into the step
+      # output the publish command consumes.
+      - name: Resolve npm dist-tag
+        id: dist-tag
+        run: echo "tag=$(node dist/core/ci/dist-tag.js)" >> "$GITHUB_OUTPUT"
+
+      # Real provenance publish: uploads the package to npm with a signed
+      # provenance attestation (`--provenance`, requires the job's
+      # `id-token: write`) as a public package, authenticated by the `NPM_TOKEN`
+      # secret via `NODE_AUTH_TOKEN`. The `--tag` is the dynamically resolved
+      # dist-tag (a prerelease channel, or `latest` for a stable version), NOT
+      # hard-coded. Gated on the version guard's `should_publish` output: an
+      # already-published version skips this step while the job — and the whole
+      # pipeline — stays green (idempotent).
+      # NOTE: this step does not run `pnpm build` itself — `package.json`'s
+      # `prepack: pnpm build` runs on pack, so `dist/` is rebuilt fresh at publish
+      # time. Don't "fix" an apparent missing build here.
+      - name: Publish to npm (provenance)
+        if: steps.version-guard.outputs.should_publish == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public --tag ${{ steps.dist-tag.outputs.tag }}

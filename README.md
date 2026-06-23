@@ -111,7 +111,24 @@ The reverse block is a pure projection of the forward sidecars: it is **regenera
 
 ## Install
 
-Requires **Node.js ≥ 20.19** and **pnpm**.
+Requires **Node.js ≥ 20.19**.
+
+Install the published CLI from npm. The package is **`ratchet-ai`** (the names `ratchet` and `ratchet-cli` were already taken); the command it installs is **`ratchet`**.
+
+```bash
+# one-off, no install
+npx ratchet-ai@beta init --tools claude
+
+# or install the command globally
+npm install -g ratchet-ai@beta
+ratchet --version
+```
+
+> `ratchet-ai` is currently a **beta** prerelease, so pin the `@beta` tag — plain `ratchet-ai` will resolve to the latest stable once one ships.
+
+### From source (development)
+
+Also needs **pnpm**.
 
 ```bash
 git clone https://github.com/joctaTorres/ratchet.git

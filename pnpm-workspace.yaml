@@ -1,7 +1,10 @@
 packages:
   - '.'
+# esbuild ships a postinstall that fetches its native binary; pnpm 11 denies
+# build scripts by default and exits non-zero (ERR_PNPM_IGNORED_BUILDS) until the
+# dependency is explicitly allowed. esbuild is required by build.js, so allow it.
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
 onlyBuiltDependencies:
   - esbuild
 verifyDepsBeforeRun: false

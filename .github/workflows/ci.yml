@@ -96,6 +96,24 @@ jobs:
       # sits AFTER `test` and OUTSIDE the release path: wiring its signal into the
       # release decision is the separate `wire-security-into-release-gate` change,
       # so no GATE_* is added here yet.
+      # Install a pinned secret-scanner release binary onto the runner PATH. The
+      # scanner is NOT preinstalled on ubuntu-latest, so without this the
+      # secret-scan step's `... || true` swallows a "command not found", writes no
+      # report, and the fail-closed gate runner correctly goes red. Pinning the
+      # version keeps the scan reproducible. The tool name / org live in `env` (not
+      # the `run` body) so the structural workflow test still selects the actual
+      # scan step as the scanner step.
+      - name: Install secret scanner
+        env:
+          SCANNER: gitleaks
+          SCANNER_VERSION: 8.30.1
+        run: |
+          url="https://github.com/${SCANNER}/${SCANNER}/releases/download/v${SCANNER_VERSION}/${SCANNER}_${SCANNER_VERSION}_linux_x64.tar.gz"
+          curl -sSfL "$url" -o /tmp/scanner.tar.gz
+          tar -xzf /tmp/scanner.tar.gz -C /tmp "$SCANNER"
+          sudo install "/tmp/${SCANNER}" "/usr/local/bin/${SCANNER}"
+          "$SCANNER" version
+
       - name: Secret-scan gate (fail on a leaked secret)
         id: secret-scan
         env:

@@ -235,7 +235,7 @@ jobs:
       # no-op, so re-running an already-published version never errors the
       # pipeline. This slice FORCES the published set via `PUBLISHED_VERSIONS`
       # (kept empty here, so the dry-run path is exercised); `real-npm-publish`
-      # swaps that env source for a real `npm view ratchet versions` query.
+      # swaps that env source for a real `npm view ratchet-ai versions` query.
       - name: Version guard (skip an already-published version)
         id: version-guard
         env:

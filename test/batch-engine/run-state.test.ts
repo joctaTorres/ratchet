@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs, appendFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
-import { appendJournal } from 'ratchet';
+import { appendJournal } from 'ratchet-ai';
 import { readJournalTolerant } from '../../src/core/batch/engine/run-state.js';
 import {
   acquireBatchLock,

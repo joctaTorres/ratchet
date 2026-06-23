@@ -5,7 +5,7 @@ import {
   type BashRunner,
   type LlmJudge,
 } from '../../src/core/batch/engine/proof-of-work.js';
-import type { ProofOfWork } from 'ratchet';
+import type { ProofOfWork } from 'ratchet-ai';
 
 const POW = (over: Partial<ProofOfWork> = {}): ProofOfWork => ({
   kind: 'blackbox',

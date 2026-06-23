@@ -6,7 +6,7 @@ import {
   computeNextTransition,
   readChangeDiskState,
 } from '../../src/core/batch/engine/transition.js';
-import type { JournalEntry } from 'ratchet';
+import type { JournalEntry } from 'ratchet-ai';
 
 let projectRoot: string;
 let changesDir: string;

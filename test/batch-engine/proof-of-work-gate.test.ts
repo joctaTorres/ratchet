@@ -17,7 +17,7 @@ import {
   type LlmJudge,
   type ProofOfWorkResult,
 } from '../../src/core/batch/engine/proof-of-work.js';
-import type { ProofOfWork, ProofOfWorkPolicy } from 'ratchet';
+import type { ProofOfWork, ProofOfWorkPolicy } from 'ratchet-ai';
 
 const integrationPow = (over: Partial<ProofOfWork> = {}): ProofOfWork => ({
   kind: 'integration',

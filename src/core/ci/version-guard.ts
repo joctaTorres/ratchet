@@ -23,7 +23,7 @@
  * exhaustively unit-tested — in `version-decision.ts`; the runner just adapts
  * the workflow's world to that proven module. In this slice the published-set
  * source is the env var; `real-npm-publish` swaps it for a real
- * `npm view ratchet versions` query with no change to the decision.
+ * `npm view ratchet-ai versions` query with no change to the decision.
  */
 
 import { appendFileSync, readFileSync } from 'node:fs';

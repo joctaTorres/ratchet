@@ -17,7 +17,7 @@
  * version and the set of already-published versions and passes them in; this
  * module only decides. That is what makes the idempotency guarantee
  * exhaustively unit-testable. In this slice the published-version set is FORCED
- * via the environment; the swap to a real `npm view ratchet versions` query is
+ * via the environment; the swap to a real `npm view ratchet-ai versions` query is
  * the later `real-npm-publish` change and needs no change here.
  */
 

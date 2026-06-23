@@ -136,6 +136,12 @@ jobs:
         id: secret-scan
         env:
           SECRET_SCAN_REPORT: security/secret-scan-report.json
+          # Allowlist a deliberate fake-credential FIXTURE: this test file plants a
+          # `sk-live-…` string as input to assert the redactor MASKS it (it is never
+          # a real secret). gitleaks' generic-api-key rule flags it; exempt that one
+          # file via the gate's documented allowlist. The gate still fails closed on
+          # any non-allowlisted finding anywhere else — its logic is unchanged.
+          SECRET_SCAN_ALLOWLIST: test/core/batch/permissions-resolution.test.ts
         run: |
           mkdir -p security
           gitleaks detect --no-git --source . --report-format json --report-path security/secret-scan-report.json || true

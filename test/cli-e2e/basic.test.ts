@@ -152,6 +152,23 @@ describe('ratchet CLI e2e basics', () => {
       expect(await fileExists(cursorSkillPath)).toBe(false); // Not selected
     });
 
+    it('initializes with --tools gemini and generates into .gemini', async () => {
+      const projectDir = await prepareFixture('tmp-init');
+      const emptyProjectDir = path.join(projectDir, '..', 'empty-project');
+      await fs.mkdir(emptyProjectDir, { recursive: true });
+
+      const result = await runCLI(['init', '--tools', 'gemini'], { cwd: emptyProjectDir });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Ratchet Setup Complete');
+      expect(result.stdout).toContain('Gemini');
+
+      // Gemini is a first-class init tool: skills land in its .gemini directory.
+      const geminiSkillPath = path.join(emptyProjectDir, '.gemini/skills/ratchet-propose/SKILL.md');
+      const claudeSkillPath = path.join(emptyProjectDir, '.claude/skills/ratchet-propose/SKILL.md');
+      expect(await fileExists(geminiSkillPath)).toBe(true);
+      expect(await fileExists(claudeSkillPath)).toBe(false); // Not selected
+    });
+
     it('initializes with --tools none option', async () => {
       const projectDir = await prepareFixture('tmp-init');
       const emptyProjectDir = path.join(projectDir, '..', 'empty-project');

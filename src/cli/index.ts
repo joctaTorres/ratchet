@@ -277,6 +277,22 @@ program
     }
   });
 
+// Doctor command: validate external (non-npm) runtime dependencies
+program
+  .command('doctor')
+  .description('Validate external (non-npm) runtime dependencies (agent CLI, Python/uv, Docker)')
+  .option('--json', 'Output as a single JSON object (no spinner/decoration)')
+  .action(async (options?: { json?: boolean }) => {
+    try {
+      const { doctorCommand } = await import('../commands/doctor.js');
+      await doctorCommand({ json: options?.json });
+    } catch (error) {
+      console.log(); // Empty line for spacing
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
 // ═══════════════════════════════════════════════════════════
 // Workflow Commands (formerly experimental)
 // ═══════════════════════════════════════════════════════════

@@ -12,6 +12,7 @@ import {
   getRctProposeStandardSkillTemplate,
   getApplyBatchSkillTemplate,
   getProposeBatchSkillTemplate,
+  getBrainstormSkillTemplate,
   getEvalSkillTemplate,
   getRctApplyCommandTemplate,
   getRctArchiveCommandTemplate,
@@ -20,6 +21,7 @@ import {
   getRctProposeStandardCommandTemplate,
   getRctApplyBatchCommandTemplate,
   getRctProposeBatchCommandTemplate,
+  getRctBrainstormCommandTemplate,
   getRctEvalCommandTemplate,
   type SkillTemplate,
 } from '../templates/skill-templates.js';
@@ -58,6 +60,7 @@ export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemp
     { template: getRctProposeStandardSkillTemplate(), dirName: 'ratchet-propose-standard', workflowId: 'propose-standard' },
     { template: getApplyBatchSkillTemplate(), dirName: 'ratchet-apply-batch', workflowId: 'apply-batch' },
     { template: getProposeBatchSkillTemplate(), dirName: 'ratchet-propose-batch', workflowId: 'propose-batch' },
+    { template: getBrainstormSkillTemplate(), dirName: 'ratchet-brainstorm', workflowId: 'brainstorm' },
     { template: getEvalSkillTemplate(), dirName: 'ratchet-eval', workflowId: 'eval' },
   ];
 
@@ -82,6 +85,7 @@ export function getCommandTemplates(workflowFilter?: readonly string[]): Command
     { template: getRctProposeStandardCommandTemplate(), id: 'propose-standard' },
     { template: getRctApplyBatchCommandTemplate(), id: 'apply-batch' },
     { template: getRctProposeBatchCommandTemplate(), id: 'propose-batch' },
+    { template: getRctBrainstormCommandTemplate(), id: 'brainstorm' },
     { template: getRctEvalCommandTemplate(), id: 'eval' },
   ];
 

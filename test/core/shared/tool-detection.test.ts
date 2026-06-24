@@ -28,7 +28,7 @@ describe('tool-detection', () => {
 
   describe('SKILL_NAMES', () => {
     it('should contain the generated skill names', () => {
-      expect(SKILL_NAMES).toHaveLength(8);
+      expect(SKILL_NAMES).toHaveLength(9);
       expect(SKILL_NAMES).toContain('ratchet-propose');
       expect(SKILL_NAMES).toContain('ratchet-apply-change');
       expect(SKILL_NAMES).toContain('ratchet-verify-change');
@@ -36,6 +36,7 @@ describe('tool-detection', () => {
       expect(SKILL_NAMES).toContain('ratchet-propose-standard');
       expect(SKILL_NAMES).toContain('ratchet-apply-batch');
       expect(SKILL_NAMES).toContain('ratchet-propose-batch');
+      expect(SKILL_NAMES).toContain('ratchet-brainstorm');
       expect(SKILL_NAMES).toContain('ratchet-eval');
       expect(SKILL_NAMES).not.toContain('ratchet-explore');
     });

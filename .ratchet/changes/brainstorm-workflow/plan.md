@@ -153,12 +153,12 @@ tool's formatting (matching `/rct[:-]propose` and `/rct[:-]propose-batch`).
 - [x] 1.7 Ensure the body omits all REMOVED behaviors (writing-plans terminal,
   sub-project decomposition, design-doc write, spec self-review, written-spec
   review gate) — verify against the negative scenarios.
-- [ ] 2.1 Re-export the two new template getters from
+- [x] 2.1 Re-export the two new template getters from
   `src/core/templates/skill-templates.ts`.
-- [ ] 2.2 Register the skill and command entries in
+- [x] 2.2 Register the skill and command entries in
   `src/core/shared/skill-generation.ts` (`getSkillTemplates` + `getCommandTemplates`)
   with `workflowId`/`id` = `brainstorm`.
-- [ ] 2.3 Add `'brainstorm'` to `CORE_WORKFLOWS` and `ALL_WORKFLOWS` in
+- [x] 2.3 Add `'brainstorm'` to `CORE_WORKFLOWS` and `ALL_WORKFLOWS` in
   `src/core/profiles.ts` so `ratchet init` emits it for every agent.
 - [ ] 3.1 Add `test/core/templates/workflows/brainstorm.test.ts`: shared-body,
   agent-neutral phrasing, optional-with-fallback tooling, routing hand-off, and

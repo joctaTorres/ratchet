@@ -126,6 +126,19 @@ ratchet --version
 
 > `ratchet-ai` is currently a **beta** prerelease, so pin the `@beta` tag — plain `ratchet-ai` will resolve to the latest stable once one ships.
 
+### Requirements
+
+`npm install` only pulls the npm dependencies. The pieces that actually run code generation are external and must be installed separately:
+
+| Requirement | Why | Needed when |
+|---|---|---|
+| **Node.js ≥ 20.19** | Runs the `ratchet` CLI. | Always |
+| **A supported coding-agent CLI** — Claude Code (`claude`), Codex (`codex`), Gemini (`gemini`), or Cursor (`cursor-agent`) | ratchet drives a coding agent for batch changes; at least one must be on your PATH. Install it from the agent's own docs. | To run batch changes |
+| **Python 3.10+ (with `venv` + `pip`), or [`uv`](https://docs.astral.sh/uv/) (preferred)** | Bootstraps the isolated SWE-ReX sidecar runtime. `uv` is preferred for faster, more reliable builds. | To run batch changes |
+| **Docker** | Only needed for the `docker` execution locus. Local runs never use it. | Optional |
+
+Run **`ratchet doctor`** to validate your setup — it checks each of these and prints an actionable remedy for anything missing. `ratchet init` also runs these checks once, automatically, the first time you initialize a project (advisory only — it never blocks setup).
+
 ### From source (development)
 
 Also needs **pnpm**.

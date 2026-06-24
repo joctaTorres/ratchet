@@ -4,6 +4,7 @@ import path from 'path';
 import { claudeAdapter } from '../../../src/core/command-generation/adapters/claude.js';
 import { codexAdapter } from '../../../src/core/command-generation/adapters/codex.js';
 import { cursorAdapter } from '../../../src/core/command-generation/adapters/cursor.js';
+import { geminiAdapter } from '../../../src/core/command-generation/adapters/gemini.js';
 import { githubCopilotAdapter } from '../../../src/core/command-generation/adapters/github-copilot.js';
 import { opencodeAdapter } from '../../../src/core/command-generation/adapters/opencode.js';
 import type { CommandContent } from '../../../src/core/command-generation/types.js';
@@ -139,6 +140,37 @@ describe('command-generation/adapters', () => {
     });
   });
 
+  describe('geminiAdapter', () => {
+    it('should have correct toolId', () => {
+      expect(geminiAdapter.toolId).toBe('gemini');
+    });
+
+    it('should generate correct file path', () => {
+      const filePath = geminiAdapter.getFilePath('explore');
+      expect(filePath).toBe(path.join('.gemini', 'commands', 'rct-explore.md'));
+    });
+
+    it('should format file with description frontmatter', () => {
+      const output = geminiAdapter.formatFile(sampleContent);
+      expect(output).toContain('---\n');
+      expect(output).toContain('description: Enter explore mode for thinking');
+      expect(output).toContain('---\n\n');
+      expect(output).toContain('This is the command body.');
+    });
+
+    it('should transform colon-based command references to hyphen-based', () => {
+      const contentWithCommands: CommandContent = {
+        ...sampleContent,
+        body: 'Use /rct:propose to start, then /rct:apply to implement.',
+      };
+      const output = geminiAdapter.formatFile(contentWithCommands);
+      expect(output).toContain('/rct-propose');
+      expect(output).toContain('/rct-apply');
+      expect(output).not.toContain('/rct:propose');
+      expect(output).not.toContain('/rct:apply');
+    });
+  });
+
   describe('githubCopilotAdapter', () => {
     it('should have correct toolId', () => {
       expect(githubCopilotAdapter.toolId).toBe('github-copilot');
@@ -216,7 +248,7 @@ describe('command-generation/adapters', () => {
     });
 
     it('All supported adapters produce valid paths', () => {
-      const adapters = [claudeAdapter, codexAdapter, cursorAdapter, githubCopilotAdapter, opencodeAdapter];
+      const adapters = [claudeAdapter, codexAdapter, cursorAdapter, geminiAdapter, githubCopilotAdapter, opencodeAdapter];
       for (const adapter of adapters) {
         const filePath = adapter.getFilePath('test');
         expect(filePath.length).toBeGreaterThan(0);

@@ -9,6 +9,7 @@ import type { ToolCommandAdapter } from './types.js';
 import { claudeAdapter } from './adapters/claude.js';
 import { codexAdapter } from './adapters/codex.js';
 import { cursorAdapter } from './adapters/cursor.js';
+import { geminiAdapter } from './adapters/gemini.js';
 import { githubCopilotAdapter } from './adapters/github-copilot.js';
 import { opencodeAdapter } from './adapters/opencode.js';
 
@@ -23,6 +24,7 @@ export class CommandAdapterRegistry {
     CommandAdapterRegistry.register(claudeAdapter);
     CommandAdapterRegistry.register(codexAdapter);
     CommandAdapterRegistry.register(cursorAdapter);
+    CommandAdapterRegistry.register(geminiAdapter);
     CommandAdapterRegistry.register(githubCopilotAdapter);
     CommandAdapterRegistry.register(opencodeAdapter);
   }

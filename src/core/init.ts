@@ -175,6 +175,33 @@ export class InitCommand {
 
     // Display success message
     this.displaySuccessMessage(projectPath, validatedTools, results, configStatus);
+
+    // First-init only: run doctor in advisory, never-block mode. It surfaces any
+    // missing external (non-npm) dependencies right after setup, exactly once.
+    // It NEVER prompts, NEVER exits, and renders failures as warnings — a failing
+    // doctor must never abort first-time setup (interactive or non-interactive).
+    // Subsequent inits (extendMode === true) skip it. Best-effort: any error here
+    // is non-fatal so it can never break init.
+    if (!extendMode) {
+      await this.runFirstInitDoctor();
+    }
+  }
+
+  /**
+   * Run doctor advisorily after a FIRST init. Delegates to the shared advisory
+   * runner (warnings only, never prompts/exits) and swallows any error so the
+   * dependency check can never break setup. Surfaced under DEBUG so a real bug
+   * is not silently lost.
+   */
+  private async runFirstInitDoctor(): Promise<void> {
+    try {
+      const { runDoctorAdvisory } = await import('../commands/doctor.js');
+      runDoctorAdvisory();
+    } catch (err) {
+      if (process.env.DEBUG || process.env.RATCHET_DEBUG) {
+        console.debug('[init] doctor advisory skipped (non-fatal):', err);
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════

@@ -7,5 +7,6 @@
 export { claudeAdapter } from './claude.js';
 export { codexAdapter } from './codex.js';
 export { cursorAdapter } from './cursor.js';
+export { geminiAdapter } from './gemini.js';
 export { githubCopilotAdapter } from './github-copilot.js';
 export { opencodeAdapter } from './opencode.js';

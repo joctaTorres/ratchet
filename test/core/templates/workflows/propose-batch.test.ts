@@ -43,10 +43,17 @@ describe('propose-batch workflow templates', () => {
     expect(body).toContain('gate');
     expect(body).toContain('strategy');
 
-    // Gated chain-in into propose-change.
+    // Gated hand-off into apply-batch (direct + indirect paths).
     expect(body).toMatch(/gate/i);
-    expect(body).toContain('/rct:propose');
+    expect(body).toContain('/rct:apply-batch <name>');
+    // Direct: drive now, current session becomes the orchestrator.
+    expect(body).toMatch(/batch orchestrator/i);
+    // Indirect: defer; changes created lazily during `ratchet batch apply`.
     expect(body).toMatch(/ratchet batch apply/);
+    expect(body).toMatch(/created\s+lazily/i);
+    // No longer offers to propose phase-one changes as the next step.
+    expect(body).not.toContain('/rct:propose ');
+    expect(body).not.toMatch(/propose phase[- ]one('s)? (first )?change/i);
 
     // The four waterfall traps appear as rationale.
     expect(body).toMatch(/inflexibility to change/i);
@@ -80,10 +87,10 @@ describe('propose-batch workflow templates', () => {
     expect(body).toMatch(/stay valid|non-empty when present/i);
   });
 
-  it('renders the per-change success guidance into every registered tool command', () => {
+  it('renders the apply-batch hand-off into every registered tool command', () => {
     // The command is the genuinely per-tool surface: the shared body is
     // formatted into each registered tool's command file via its adapter. Render
-    // it through every adapter and assert the per-change success guidance
+    // it through every adapter and assert the gated apply-batch hand-off
     // survives each tool's formatting (frontmatter/path differ; body must not).
     const cmd = getRctProposeBatchCommandTemplate();
     const content: CommandContent = {
@@ -99,8 +106,12 @@ describe('propose-batch workflow templates', () => {
     expect(adapters.length).toBeGreaterThanOrEqual(5);
     for (const adapter of adapters) {
       const { fileContent } = generateCommand(content, adapter);
-      expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/per-change success/i);
-      expect(fileContent, `tool: ${adapter.toolId}`).toContain('`success`');
+      // Direct path: chain into apply-batch as the orchestrator. (Some adapters
+      // rewrite the `:` in `/rct:apply-batch` to `-`, so match either form.)
+      expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/\/rct[:-]apply-batch <name>/);
+      expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/batch orchestrator/i);
+      // Indirect path: defer; lazy change creation during `ratchet batch apply`.
+      expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/ratchet batch apply/);
     }
   });
 });

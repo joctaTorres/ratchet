@@ -163,10 +163,9 @@ function pickNextStep(
     if (!phase) continue;
     for (const change of phaseStatus.changes) {
       if (change.status === 'ready' || change.status === 'in-progress') {
-        // The picked intent carries the per-change success criterion (if any),
-        // which the engine surfaces to the agent — no extra manifest lookup.
-        const intent = phase.changes.find((c) => c.name === change.name);
-        return { phase, change: change.name, changeSuccess: intent?.success };
+        // The derived status already carries the per-change success criterion
+        // (if any), which the engine surfaces to the agent — no manifest re-lookup.
+        return { phase, change: change.name, changeSuccess: change.success };
       }
     }
   }

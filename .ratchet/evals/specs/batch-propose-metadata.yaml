@@ -1,0 +1,46 @@
+# Eval-spec binding for issue #19: a batch `apply` PROPOSE transition must stamp
+# `.ratchet.yaml` for the change it creates, so the change is discoverable by the
+# metadata-keyed discovery used by validate/list/archive — not only by the
+# looser directory-keyed `batch status`/`list`.
+#
+# Deterministic `check`, store-scoped (the feature lives in the permanent store
+# at features/batch-apply/apply-handoff.feature). The batch-apply fixture ships a
+# scripted agent (agent.sh) that — exactly like a real coding agent and exactly
+# as the bug was observed — scaffolds plan.md + features/ on PROPOSE but does NOT
+# write `.ratchet.yaml`. The engine must stamp it; the check proves it did.
+#
+# This case FAILS on the pre-fix engine (no `.ratchet.yaml`; `validate
+# add-login-api` reports `Unknown item`) and PASSES once the engine stamps the
+# metadata deterministically after propose.
+
+features/batch-apply/apply-handoff#propose-stamps-change-metadata-so-the-change-stays-discoverable:
+  fixture: batch-apply
+  kind: check
+  check:
+    pass: exit-zero
+    run: |
+      set -e
+      # The scripted agent drives a real PROPOSE without a live LLM. Like the
+      # real agent in the bug report, it writes plan.md + features/ directly and
+      # leaves no `.ratchet.yaml`.
+      export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent.sh"
+      ratchet batch apply q3-auth >/dev/null
+      change_dir=.ratchet/changes/add-login-api
+      # Propose ran: the change exists on disk with its plan + feature artifacts.
+      test -d "$change_dir"
+      test -f "$change_dir/plan.md"
+      test -d "$change_dir/features"
+      # The engine stamped the metadata file the agent omitted, and it is valid
+      # (carries a resolved schema field).
+      test -f "$change_dir/.ratchet.yaml"
+      grep -q "schema:" "$change_dir/.ratchet.yaml"
+      # Consistency (the core of issue #19): a change that is live in batch
+      # status is now reachable through the `.ratchet.yaml`-keyed discovery, so
+      # `validate` no longer reports it as an unknown item. (It may still pass or
+      # fail validation on its content — we assert only that it is DISCOVERED.)
+      out="$(ratchet validate add-login-api 2>&1 || true)"
+      if printf '%s' "$out" | grep -q "Unknown item"; then
+        echo "regression: change undiscoverable by validate after propose" >&2
+        printf '%s\n' "$out" >&2
+        exit 1
+      fi

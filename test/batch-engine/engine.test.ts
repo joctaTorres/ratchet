@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fsSync from 'fs';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -165,6 +166,40 @@ describe('RatchetBatchEngine.runStep', () => {
     expect(result.state).toBe('blocked');
     expect(result.blocker).toContain('no-such-agent');
     expect(result.blocker).toContain('fake'); // available adapters listed
+  });
+
+  it('stamps .ratchet.yaml for a propose-created change so it stays discoverable (issue #19)', async () => {
+    const changeDir = path.join(projectRoot, '.ratchet', 'changes', 'add-login-api');
+    // Simulate the PROPOSE agent writing artifacts directly on disk WITHOUT a
+    // `.ratchet.yaml` (the bug): a change dir with features/ + plan.md only.
+    const { engine } = engineWith({
+      report: (root, batch, change) => {
+        fsSync.mkdirSync(path.join(changeDir, 'features'), { recursive: true });
+        fsSync.writeFileSync(path.join(changeDir, 'plan.md'), '## Tasks\n- [ ] do it\n');
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
+    });
+
+    const result = await engine.runStep(context());
+    expect(result.state).toBe('advanced');
+    // The engine must have stamped the metadata file the agent omitted, so the
+    // change is discoverable by validate/list/archive (not just batch status).
+    await expect(fs.access(path.join(changeDir, '.ratchet.yaml'))).resolves.toBeUndefined();
+  });
+
+  it('does not overwrite an existing .ratchet.yaml on propose', async () => {
+    const changeDir = path.join(projectRoot, '.ratchet', 'changes', 'add-login-api');
+    await fs.mkdir(changeDir, { recursive: true });
+    const original = 'schema: ratchet\ncreated: 2020-01-01\n';
+    await fs.writeFile(path.join(changeDir, '.ratchet.yaml'), original);
+    const { engine } = engineWith({
+      report: (root, batch, change) => {
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
+    });
+    await engine.runStep(context());
+    const after = await fs.readFile(path.join(changeDir, '.ratchet.yaml'), 'utf-8');
+    expect(after).toBe(original); // left untouched (idempotent)
   });
 
   it('spawns a fresh agent per step (no carried context except the journal)', async () => {

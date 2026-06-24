@@ -10,6 +10,13 @@ Feature: Single-step apply handoff to the engine
     And it drives exactly one transition for one change
     And control returns to the caller without continuing to the next step
 
+  Scenario: Propose stamps change metadata so the change stays discoverable
+    Given a batch "q3-auth" with a ready step
+    When I run "ratchet batch apply q3-auth" and the propose transition runs
+    Then the change directory is created with its plan and feature artifacts
+    And the engine stamps a valid ".ratchet.yaml" the agent did not write
+    And the change is discoverable by the metadata-keyed validate, not an unknown item
+
   Scenario: The transition sequence per change is propose then apply then verify
     Given a change "add-login-api" with no directory yet
     When I run "ratchet batch apply q3-auth" three times for that change

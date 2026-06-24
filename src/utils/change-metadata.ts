@@ -178,6 +178,39 @@ export function readChangeMetadata(
   return parseResult.data;
 }
 
+/**
+ * Idempotently ensures a change directory carries a valid `.ratchet.yaml`.
+ *
+ * Discovery used by `validate`, `list --json`, and `archive` keys changes off
+ * the presence of `.ratchet.yaml` (see `getActiveChangeIds`). A change directory
+ * with `features/` and `plan.md` but no metadata stamp is therefore invisible to
+ * those commands even though directory-based views (`batch status`) still see it.
+ *
+ * The batch engine's PROPOSE step writes change artifacts directly on disk
+ * rather than going through `ratchet new change`, so this is the single place
+ * that guarantees the metadata stamp exists for every engine-created change,
+ * keeping a single discovery mechanism consistent across commands.
+ *
+ * No-ops when the directory does not exist or already has a metadata file. The
+ * schema is resolved exactly as `createChange` resolves it (project config →
+ * default). Returns true when it wrote a new metadata file, false otherwise.
+ *
+ * @param changeDir - The path to the change directory
+ * @param projectRoot - Optional project root for schema resolution
+ */
+export function ensureChangeMetadata(changeDir: string, projectRoot?: string): boolean {
+  if (!fs.existsSync(changeDir)) return false;
+
+  const metaPath = path.join(changeDir, METADATA_FILENAME);
+  if (fs.existsSync(metaPath)) return false;
+
+  const root = projectRoot ?? path.resolve(changeDir, '../../..');
+  const schema = resolveSchemaForChange(changeDir, undefined, root, { metadata: null });
+  const created = new Date().toISOString().split('T')[0];
+  writeChangeMetadata(changeDir, { schema, created }, root);
+  return true;
+}
+
 export interface ResolveSchemaForChangeOptions {
   metadata?: ChangeMetadata | null;
 }

@@ -160,12 +160,12 @@ tool's formatting (matching `/rct[:-]propose` and `/rct[:-]propose-batch`).
   with `workflowId`/`id` = `brainstorm`.
 - [x] 2.3 Add `'brainstorm'` to `CORE_WORKFLOWS` and `ALL_WORKFLOWS` in
   `src/core/profiles.ts` so `ratchet init` emits it for every agent.
-- [ ] 3.1 Add `test/core/templates/workflows/brainstorm.test.ts`: shared-body,
+- [x] 3.1 Add `test/core/templates/workflows/brainstorm.test.ts`: shared-body,
   agent-neutral phrasing, optional-with-fallback tooling, routing hand-off, and
   removed-behavior assertions.
-- [ ] 3.2 Add a registry-iterating render test that renders the command through
+- [x] 3.2 Add a registry-iterating render test that renders the command through
   every adapter and asserts the routing hand-off survives each tool's formatting
   (satisfies `multi-agent-surface.feature` registry-iteration scenario).
-- [ ] 3.3 Run `pnpm build` and the test suite; confirm `ratchet init` (or an
+- [x] 3.3 Run `pnpm build` and the test suite; confirm `ratchet init` (or an
   init-emission test) writes the skill + command to all per-agent paths in the
   table above.

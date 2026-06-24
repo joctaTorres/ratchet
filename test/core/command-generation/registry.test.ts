@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CommandAdapterRegistry } from '../../../src/core/command-generation/registry.js';
 
-const REGISTERED_TOOLS = ['claude', 'codex', 'cursor', 'github-copilot', 'opencode'] as const;
+const REGISTERED_TOOLS = ['claude', 'codex', 'cursor', 'gemini', 'github-copilot', 'opencode'] as const;
 
 describe('command-generation/registry', () => {
   describe('get', () => {
@@ -39,13 +39,13 @@ describe('command-generation/registry', () => {
   });
 
   describe('getAll', () => {
-    it('should return array of exactly the five supported adapters', () => {
+    it('should return array of exactly the supported adapters', () => {
       const adapters = CommandAdapterRegistry.getAll();
       expect(Array.isArray(adapters)).toBe(true);
       expect(adapters.length).toBe(REGISTERED_TOOLS.length);
     });
 
-    it('should include the five supported adapters', () => {
+    it('should include the supported adapters', () => {
       const toolIds = CommandAdapterRegistry.getAll().map((a) => a.toolId).sort();
       expect(toolIds).toEqual([...REGISTERED_TOOLS].sort());
     });

@@ -9,6 +9,7 @@ import {
   exitCodeFor,
 } from '../../../src/core/doctor/render.js';
 import { AGENT_BINARIES } from '../../../src/core/batch/engine/agent.js';
+import { AI_TOOLS } from '../../../src/core/config.js';
 import type {
   BootstrapDeps,
   RunResult,
@@ -287,12 +288,28 @@ describe('renderReport (human output)', () => {
 });
 
 describe('AGENT_BINARIES (single source of truth)', () => {
-  it('covers every batch-capable agent and maps cursor to cursor-agent', () => {
-    expect(AGENT_BINARIES).toMatchObject({
+  it('covers exactly the coding agents and maps cursor to cursor-agent', () => {
+    // Exact shape: derived from the agentBinary-marked init tools, nothing more.
+    expect({ ...AGENT_BINARIES }).toEqual({
       claude: 'claude',
       codex: 'codex',
-      gemini: 'gemini',
       cursor: 'cursor-agent',
+      gemini: 'gemini',
     });
+  });
+
+  it('is derived from the agentBinary-marked init tools (agents ⊆ init)', () => {
+    // Every AGENT_BINARIES id is an init tool that declares an agentBinary, and
+    // its binary equals that tool's agentBinary. Non-agent init tools
+    // (github-copilot, opencode) are excluded.
+    const agentTools = new Map(
+      AI_TOOLS.filter((t) => t.agentBinary).map((t) => [t.value, t.agentBinary])
+    );
+    expect(new Set(Object.keys(AGENT_BINARIES))).toEqual(new Set(agentTools.keys()));
+    for (const [id, binary] of Object.entries(AGENT_BINARIES)) {
+      expect(binary).toBe(agentTools.get(id));
+    }
+    expect(AGENT_BINARIES).not.toHaveProperty('github-copilot');
+    expect(AGENT_BINARIES).not.toHaveProperty('opencode');
   });
 });

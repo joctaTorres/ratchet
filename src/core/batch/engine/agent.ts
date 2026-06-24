@@ -16,6 +16,7 @@
 import { spawn } from 'node:child_process';
 import { resolvePermissionFlags } from '../runtime/agent-permissions.js';
 import type { ResolvedPermissionsPolicy } from '../permissions-policy.js';
+import { AI_TOOLS } from '../../config.js';
 
 /**
  * The narrow slice of step context an adapter may read when building a spawn
@@ -143,26 +144,28 @@ const BUILTIN_ADAPTERS: Record<string, AgentAdapter> = {
 export const DEFAULT_AGENT = 'claude';
 
 /**
- * The binary each built-in adapter spawns, keyed by agent id. Derived directly
- * from `BUILTIN_ADAPTERS` so it can never drift from what the engine actually
- * launches: this is the SINGLE source of truth for "which CLI does agent X need
- * on PATH". `doctor` iterates this to check every batch-capable agent (never
- * special-casing one), and the engine resolves spawns through the same adapters.
+ * The binary each coding agent needs on PATH, keyed by agent id. DERIVED FROM
+ * the `ratchet init` tool registry (`AI_TOOLS` in `src/core/config.ts`): an init
+ * tool is a coding agent iff it declares an `agentBinary`, and that binary is the
+ * single source of truth for "which CLI does agent X need on PATH".
  *
- * Note: this is intentionally the BATCH-capable set (agents with a headless
- * adapter). `ratchet init` config targets that lack a batch adapter (e.g.
- * github-copilot, opencode) are out of scope here by construction — they are not
- * in `BUILTIN_ADAPTERS`.
+ * This makes init the source of truth for which coding agents exist: adding an
+ * init tool with an `agentBinary` (and a matching spawn adapter in
+ * `BUILTIN_ADAPTERS`) automatically makes `doctor` probe it and the engine spawn
+ * it, with no edit here. `doctor` iterates this map to check every coding agent
+ * (never special-casing one). Init tools WITHOUT an `agentBinary` (e.g.
+ * github-copilot, opencode) are config targets, not spawnable agents, so they are
+ * excluded by construction.
+ *
+ * Invariant (enforced by the drift-guard test): the keys here === the
+ * `agentBinary`-marked `AI_TOOLS` ids === the `BUILTIN_ADAPTERS` keys, and each
+ * adapter's spawn command === its `AI_TOOLS` `agentBinary`.
  */
 export const AGENT_BINARIES: Readonly<Record<string, string>> = Object.freeze(
   Object.fromEntries(
-    Object.entries(BUILTIN_ADAPTERS).map(([id, adapter]) => [
-      id,
-      // CommandAgentAdapter is the only built-in shape; read its command via the
-      // request it builds, which is pure (no spawn). cwd/env are placeholders.
-      adapter
-        .buildRequest({ batch: '', change: '' }, '', '', {})
-        .command,
+    AI_TOOLS.filter((tool) => tool.agentBinary).map((tool) => [
+      tool.value,
+      tool.agentBinary as string,
     ])
   )
 );

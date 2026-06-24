@@ -16,7 +16,7 @@
 import { spawn } from 'node:child_process';
 import { resolvePermissionFlags } from '../runtime/agent-permissions.js';
 import type { ResolvedPermissionsPolicy } from '../permissions-policy.js';
-import { AI_TOOLS } from '../../config.js';
+import { AI_TOOLS, type AIToolOption } from '../../config.js';
 
 /**
  * The narrow slice of step context an adapter may read when building a spawn
@@ -120,9 +120,29 @@ class CommandAgentAdapter implements AgentAdapter {
 }
 
 /**
+ * The spawnable binary for an agent id, read from the `ratchet init` tool
+ * registry (`AI_TOOLS`). This keeps the CLI binary name a SINGLE literal source
+ * of truth in `config.ts`: the adapter argv below and `AGENT_BINARIES` both read
+ * it from here, so neither can drift from init. Throws at module load if an
+ * adapter references an id that init does not mark as a coding agent.
+ */
+function agentBinaryFor(id: string): string {
+  const tool = AI_TOOLS.find((t) => t.value === id);
+  if (!tool?.agentBinary) {
+    throw new Error(
+      `No agentBinary declared in AI_TOOLS for agent '${id}'. ` +
+        `Add the agent (with an agentBinary) to the init tool registry in config.ts.`
+    );
+  }
+  return tool.agentBinary;
+}
+
+/**
  * Built-in adapters for the coding agents ratchet supports. The argv shape is
  * the documented non-interactive ("print"/headless) invocation for each agent;
- * instructions go on stdin where the agent reads a prompt there.
+ * instructions go on stdin where the agent reads a prompt there. The binary each
+ * adapter spawns is read from `AI_TOOLS` (via `agentBinaryFor`), not hardcoded,
+ * so init stays the single source of truth for binary names.
  */
 const BUILTIN_ADAPTERS: Record<string, AgentAdapter> = {
   // claude emits structured stream-json (one NDJSON event per line) with partial
@@ -130,14 +150,14 @@ const BUILTIN_ADAPTERS: Record<string, AgentAdapter> = {
   // stream-json with `-p`; `--include-partial-messages` streams text deltas live.
   claude: new CommandAgentAdapter(
     'claude',
-    'claude',
+    agentBinaryFor('claude'),
     () => ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
     true,
     true
   ),
-  codex: new CommandAgentAdapter('codex', 'codex', () => ['exec', '-'], true),
-  gemini: new CommandAgentAdapter('gemini', 'gemini', () => ['-p'], true),
-  cursor: new CommandAgentAdapter('cursor', 'cursor-agent', () => ['-p'], true),
+  codex: new CommandAgentAdapter('codex', agentBinaryFor('codex'), () => ['exec', '-'], true),
+  gemini: new CommandAgentAdapter('gemini', agentBinaryFor('gemini'), () => ['-p'], true),
+  cursor: new CommandAgentAdapter('cursor', agentBinaryFor('cursor'), () => ['-p'], true),
 };
 
 /** The default agent when the resolved settings name none. */
@@ -163,10 +183,10 @@ export const DEFAULT_AGENT = 'claude';
  */
 export const AGENT_BINARIES: Readonly<Record<string, string>> = Object.freeze(
   Object.fromEntries(
-    AI_TOOLS.filter((tool) => tool.agentBinary).map((tool) => [
-      tool.value,
-      tool.agentBinary as string,
-    ])
+    AI_TOOLS.filter(
+      (tool): tool is AIToolOption & { agentBinary: string } =>
+        Boolean(tool.agentBinary)
+    ).map((tool) => [tool.value, tool.agentBinary])
   )
 );
 

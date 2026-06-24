@@ -4,6 +4,7 @@ import {
   type DoctorReport,
 } from '../../../src/core/doctor/index.js';
 import {
+  renderReport,
   serializeReport,
   exitCodeFor,
 } from '../../../src/core/doctor/render.js';
@@ -183,6 +184,29 @@ describe('runDoctorChecks', () => {
     expect(exitCodeFor(report)).toBe(1);
   });
 
+  it('missing-modules-fail: Python 3.10+ present but venv/pip missing → required fail naming them', () => {
+    const deps = new FakeDeps((command, args) => {
+      if (args.includes('--version')) {
+        return command === 'python3' ? ok('Python 3.12.1') : fail();
+      }
+      // `import venv` / `import pip` both fail for this interpreter.
+      if (args[0] === '-c') return fail('ModuleNotFoundError');
+      return ok();
+    });
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    // no uv on PATH
+
+    const report = runDoctorChecks(deps);
+    const runtime = check(report, 'runtime');
+    expect(runtime.status).toBe('fail');
+    expect(runtime.severity).toBe('required');
+    expect(runtime.detail).toContain('venv');
+    expect(runtime.detail).toContain('pip');
+    expect(runtime.remedy).toBeDefined();
+    expect(report.ok).toBe(false);
+    expect(exitCodeFor(report)).toBe(1);
+  });
+
   it('no-runtime-fail: neither uv nor any Python → required fail with remedy, non-zero', () => {
     const deps = new FakeDeps(() => fail()); // every probe fails (no interpreter)
     deps.toolsOnPath.add(CLAUDE_BIN);
@@ -232,6 +256,33 @@ describe('runDoctorChecks', () => {
     }
     const ids = parsed.checks.map((c: { id: string }) => c.id).sort();
     expect(ids).toEqual(['agent', 'docker', 'runtime']);
+  });
+});
+
+describe('renderReport (human output)', () => {
+  it('renders a passing report with a success summary and no remedy arrows', () => {
+    const deps = new FakeDeps(() => ok());
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    deps.toolsOnPath.add('uv');
+
+    const out = renderReport(runDoctorChecks(deps));
+    expect(out).toContain('Coding-agent CLI');
+    expect(out).toContain('SWE-ReX runtime');
+    expect(out).toContain('All required checks passed.');
+    // No remedy line (→) when nothing is failing.
+    expect(out).not.toContain('→');
+  });
+
+  it('renders a failing check with the fail glyph, its detail, and a remedy line', () => {
+    // No agent on PATH and no runtime → two required failures.
+    const deps = new FakeDeps(() => fail());
+
+    const report = runDoctorChecks(deps);
+    const out = renderReport(report);
+    expect(out).toContain('✗'); // fail glyph
+    expect(out).toContain('→'); // remedy arrow
+    expect(out).toMatch(/No supported coding-agent CLI/);
+    expect(out).toContain('required check'); // failure summary
   });
 });
 

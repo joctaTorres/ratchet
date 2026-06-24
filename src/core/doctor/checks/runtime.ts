@@ -22,6 +22,10 @@ import type { DoctorCheck } from '../types.js';
 
 const MIN = `${MIN_PYTHON.major}.${MIN_PYTHON.minor}`;
 
+/** Stable id + human label for this check (single source — used by every branch). */
+const ID = 'runtime';
+const LABEL = 'SWE-ReX runtime (uv / Python)';
+
 const INSTALL_REMEDY =
   `Install uv (https://docs.astral.sh/uv/) — preferred — or Python ${MIN}+ ` +
   `(https://www.python.org/downloads/) with the venv and pip modules, and ensure ` +
@@ -56,8 +60,8 @@ export function checkRuntime(deps: BootstrapDeps): DoctorCheck {
   // Python probe (uv provisions its own interpreter), so this passes outright.
   if (deps.hasOnPath('uv')) {
     return {
-      id: 'runtime',
-      label: 'SWE-ReX runtime (uv / Python)',
+      id: ID,
+      label: LABEL,
       status: 'pass',
       severity: 'required',
       detail: 'uv is installed and will be used as the preferred runtime provider.',
@@ -67,8 +71,8 @@ export function checkRuntime(deps: BootstrapDeps): DoctorCheck {
   const python = probePython(deps);
   if (!python) {
     return {
-      id: 'runtime',
-      label: 'SWE-ReX runtime (uv / Python)',
+      id: ID,
+      label: LABEL,
       status: 'fail',
       severity: 'required',
       detail:
@@ -85,8 +89,8 @@ export function checkRuntime(deps: BootstrapDeps): DoctorCheck {
 
   if (missing.length > 0) {
     return {
-      id: 'runtime',
-      label: 'SWE-ReX runtime (uv / Python)',
+      id: ID,
+      label: LABEL,
       status: 'fail',
       severity: 'required',
       detail:
@@ -97,8 +101,8 @@ export function checkRuntime(deps: BootstrapDeps): DoctorCheck {
   }
 
   return {
-    id: 'runtime',
-    label: 'SWE-ReX runtime (uv / Python)',
+    id: ID,
+    label: LABEL,
     status: 'pass',
     severity: 'required',
     detail: `Detected Python ${version ?? 'unknown'} (${python}) with venv and pip.`,

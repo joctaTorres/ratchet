@@ -142,6 +142,31 @@ const BUILTIN_ADAPTERS: Record<string, AgentAdapter> = {
 /** The default agent when the resolved settings name none. */
 export const DEFAULT_AGENT = 'claude';
 
+/**
+ * The binary each built-in adapter spawns, keyed by agent id. Derived directly
+ * from `BUILTIN_ADAPTERS` so it can never drift from what the engine actually
+ * launches: this is the SINGLE source of truth for "which CLI does agent X need
+ * on PATH". `doctor` iterates this to check every batch-capable agent (never
+ * special-casing one), and the engine resolves spawns through the same adapters.
+ *
+ * Note: this is intentionally the BATCH-capable set (agents with a headless
+ * adapter). `ratchet init` config targets that lack a batch adapter (e.g.
+ * github-copilot, opencode) are out of scope here by construction — they are not
+ * in `BUILTIN_ADAPTERS`.
+ */
+export const AGENT_BINARIES: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.entries(BUILTIN_ADAPTERS).map(([id, adapter]) => [
+      id,
+      // CommandAgentAdapter is the only built-in shape; read its command via the
+      // request it builds, which is pure (no spawn). cwd/env are placeholders.
+      adapter
+        .buildRequest({ batch: '', change: '' }, '', '', {})
+        .command,
+    ])
+  )
+);
+
 export class UnknownAgentError extends Error {
   constructor(
     public readonly requested: string,

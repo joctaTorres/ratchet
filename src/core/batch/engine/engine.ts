@@ -43,6 +43,8 @@ import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './cont
 import { computeNextTransition, readChangeDiskState } from './transition.js';
 import { withBatchLock } from './lock.js';
 import { readChangeJournalTolerant } from './run-state.js';
+import { ensureChangeMetadata } from '../../../utils/change-metadata.js';
+import path from 'node:path';
 
 /** Print one streamed line to the terminal (injectable so tests can assert it). */
 export type LinePrinter = (line: string) => void;
@@ -273,6 +275,21 @@ export class RatchetBatchEngine {
     const afterAll = readChangeJournalTolerant(projectRoot, batch, change);
     const sessionEntries = afterAll.slice(before);
     const sessionIndices = sessionEntries.map((_, i) => before + i);
+
+    // The PROPOSE step writes change artifacts directly on disk and does NOT go
+    // through `ratchet new change`, so it can leave the change without a
+    // `.ratchet.yaml` metadata stamp. Discovery for validate/list/archive keys
+    // off that file, so an unstamped change is `done` in batch status yet
+    // invisible to validate. Stamp it deterministically here so every
+    // engine-created change is discoverable through a single mechanism
+    // (no-op when the directory is absent or already stamped).
+    if (transition === 'propose') {
+      ensureChangeMetadata(
+        path.join(projectRoot, '.ratchet', 'changes', change),
+        projectRoot
+      );
+    }
+
     const diskAfter = readChangeDiskState(projectRoot, change);
 
     const parkForApproval = this.shouldParkForApproval(context, transition);

@@ -112,6 +112,11 @@ derive one from the objective.
      phases' \`changes\` are left empty** — a change intent with no change
      directory is a valid \`pending\`, which is what lets changes be created
      lazily. Do not decompose later phases up front.
+   - **Per-change success (optional)**: each phase-one change intent MAY also
+     carry a short, clear \`success\` criterion stating what "done" means for that
+     change specifically (distinct from the phase \`success\`). Keep it to one
+     line. It is **optional** — omit it and existing manifests stay valid; the
+     schema only requires it to be non-empty when present.
    - **Settings**: if the user wants a setting that differs from the project
      defaults, record it under the manifest \`settings\` block. Only these keys are
      accepted (the schema is strict — any other key fails validation): \`gate\`,

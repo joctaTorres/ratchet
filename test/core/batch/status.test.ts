@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { computeBatchStatus } from '../../../src/core/batch/status.js';
 import { parseBatchManifest } from '../../../src/core/batch/manifest.js';
+import { toJson } from '../../../src/commands/batch/status.js';
 
 let projectRoot: string;
 let changesDir: string;
@@ -160,6 +161,45 @@ describe('computeBatchStatus', () => {
     const c = findChange(status, 'add-user-model');
     expect(c.status).toBe('done');
     expect(c.parked).toBeUndefined();
+  });
+
+  it('carries a change intent success criterion into derived status (and JSON)', async () => {
+    const withSuccess = `
+name: ci-npx-release
+phases:
+  - name: foundation
+    goal: g
+    success: s
+    proofOfWork: { kind: integration, run: x, pass: '0' }
+    changes:
+      - name: release-decision-module
+        success: module returns DENY unless all gate signals are green
+`;
+    const status = await computeBatchStatus(projectRoot, parseBatchManifest(withSuccess));
+    const c = findChange(status, 'release-decision-module');
+    expect(c.success).toBe('module returns DENY unless all gate signals are green');
+    // It survives the actual `batch status --json` projection (toJson), not just
+    // a raw stringify of the derived status.
+    const json = JSON.parse(JSON.stringify(toJson(status, 'voluntary'))) as {
+      phases: { changes: { name: string; success?: string }[] }[];
+    };
+    const jsonChange = json.phases[0].changes.find(
+      (ch) => ch.name === 'release-decision-module'
+    );
+    expect(jsonChange?.success).toBe('module returns DENY unless all gate signals are green');
+  });
+
+  it('omits the success criterion in JSON when the change has none', async () => {
+    const status = await computeBatchStatus(projectRoot, parseBatchManifest(MANIFEST));
+    const c = findChange(status, 'add-user-model');
+    expect(c.success).toBeUndefined();
+    const json = JSON.parse(JSON.stringify(toJson(status, 'voluntary'))) as {
+      phases: { changes: { name: string; success?: string }[] }[];
+    };
+    const jsonChange = json.phases[0].changes.find(
+      (ch) => ch.name === 'add-user-model'
+    );
+    expect(jsonChange && 'success' in jsonChange).toBe(false);
   });
 
   it('gates a later phase until the prior phase is done', async () => {

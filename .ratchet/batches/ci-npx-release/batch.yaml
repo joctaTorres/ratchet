@@ -65,10 +65,19 @@ phases:
         an `npm publish --dry-run` (never a real publish).
     changes:
       - name: ci-quality-gate-workflow
+        success: >-
+          ci.yml runs on push and pull_request and goes red if lint or tests
+          fail, gating the release path
       - name: release-decision-module
         after: [ci-quality-gate-workflow]
+        success: >-
+          module returns DENY unless branch == main AND all gate signals are
+          green, ALLOW only when all green, with unit tests proving each case
       - name: gated-dry-run-publish
         after: [release-decision-module]
+        success: >-
+          on a green main build the workflow runs `npm publish --dry-run` behind
+          the release-decision gate — never a real publish, no token needed
 
   # ---------------------------------------------------------------------------
   - name: coverage-and-e2e-gates

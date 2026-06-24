@@ -82,3 +82,36 @@ describe('buildAgentInstructions — apply/verify avoid slash-commands', () => {
     expect(text.toLowerCase()).not.toContain('skill');
   });
 });
+
+describe('buildAgentInstructions — per-change success criterion', () => {
+  it('includes the change-success line when the intent declares one', () => {
+    const text = buildAgentInstructions(
+      context('apply', { changeSuccess: 'module returns DENY unless all gates green' })
+    );
+    expect(text).toContain('Change success criteria: module returns DENY unless all gates green');
+    // The phase goal and phase success criteria are still present.
+    expect(text).toContain('Phase goal:');
+    expect(text).toContain('Phase success criteria:');
+  });
+
+  it('omits the change-success line when the intent declares none', () => {
+    const text = buildAgentInstructions(context('apply'));
+    expect(text).not.toContain('Change success criteria:');
+    // The phase goal and phase success criteria are still present.
+    expect(text).toContain('Phase goal:');
+    expect(text).toContain('Phase success criteria:');
+  });
+
+  it('keeps the change-success line agent-neutral (names no coding agent)', () => {
+    const text = buildAgentInstructions(
+      context('apply', { changeSuccess: 'the gate denies on a non-main branch' })
+    );
+    const line = text
+      .split('\n')
+      .find((l) => l.startsWith('Change success criteria:'));
+    expect(line).toBeDefined();
+    expect(line!).not.toMatch(/\bClaude\b/);
+    expect(line!).not.toMatch(/\bCursor\b/);
+    expect(line!).not.toMatch(/\bCodex\b/);
+  });
+});

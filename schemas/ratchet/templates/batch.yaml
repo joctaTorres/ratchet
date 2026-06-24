@@ -31,7 +31,12 @@ phases:
       run: pnpm test           # a runnable command
       pass: exit code 0        # the pass condition
     # Change intents form a DAG via optional `after` edges. No edges = parallel.
+    # Each change MAY carry an optional `success`: a short, clear criterion for
+    # what "done" means for that change (distinct from the phase `success`).
+    # Omit it to keep the change valid — it is purely additive.
     changes:
       - name: add-first-change
+        # success: a short, clear criterion for what done means for this change
       # - name: add-second-change
       #   after: [add-first-change]
+      #   success: a short, clear criterion for what done means for this change

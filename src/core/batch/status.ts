@@ -52,6 +52,8 @@ export interface ChangeStatusInfo {
   archived: boolean;
   progress: TaskProgress;
   after: string[];
+  /** The change's own success criterion, if its intent declared one. */
+  success?: string;
   /** When blocked, the unmet (not-done) dependency names. */
   blockedBy: string[];
   /** Parked state overlaid from the run journal, if the step is halted. */
@@ -187,6 +189,7 @@ async function derivePhaseStatus(
       archived: base.archived,
       progress: base.progress,
       after: intent.after,
+      ...(intent.success ? { success: intent.success } : {}),
       blockedBy,
       parked,
     };

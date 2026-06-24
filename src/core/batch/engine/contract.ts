@@ -17,6 +17,8 @@ export type Transition = 'propose' | 'apply' | 'verify';
 export interface ResolvedStepContext {
   batch: string;
   change: string;
+  /** The picked change intent's own success criterion, if it declared one. */
+  changeSuccess?: string;
   transition: Transition;
   phase: {
     name: string;

@@ -41,7 +41,7 @@ export async function batchStatusCommand(
   printText(status);
 }
 
-function toJson(status: BatchStatusInfo, gate: string): unknown {
+export function toJson(status: BatchStatusInfo, gate: string): unknown {
   return {
     name: status.name,
     status: status.status,
@@ -66,6 +66,9 @@ function toJson(status: BatchStatusInfo, gate: string): unknown {
       changes: phase.changes.map((change) => ({
         name: change.name,
         status: change.status,
+        // The change's own success criterion, surfaced only when its intent
+        // declared one (omitted otherwise, like the derived status).
+        ...(change.success ? { success: change.success } : {}),
         progress: change.progress,
         after: change.after,
         blockedBy: change.blockedBy,

@@ -94,4 +94,58 @@ phases:
   it('constrains proof-of-work kinds', () => {
     expect(PROOF_OF_WORK_KINDS).toEqual(['integration', 'blackbox', 'llm-judge']);
   });
+
+  // Per-change success criterion (optional, non-empty) — manifest-schema.feature.
+  it('retains a change intent success criterion when present', () => {
+    const withSuccess = `
+name: ci-npx-release
+phases:
+  - name: foundation
+    goal: g
+    success: s
+    proofOfWork:
+      kind: integration
+      run: x
+      pass: y
+    changes:
+      - name: release-decision-module
+        success: module returns DENY unless all gate signals are green
+`;
+    const manifest = parseBatchManifest(withSuccess);
+    const intent = allChangeIntents(manifest).find(
+      (c) => c.name === 'release-decision-module'
+    );
+    expect(intent?.success).toBe('module returns DENY unless all gate signals are green');
+  });
+
+  it('keeps a change intent valid with no success criterion', () => {
+    const manifest = parseBatchManifest(VALID_MANIFEST);
+    expect(manifest.phases[0].changes[0].success).toBeUndefined();
+  });
+
+  it('rejects an empty success criterion, naming the offending field', () => {
+    const emptySuccess = `
+name: ci-npx-release
+phases:
+  - name: foundation
+    goal: g
+    success: s
+    proofOfWork:
+      kind: integration
+      run: x
+      pass: y
+    changes:
+      - name: release-decision-module
+        success: ''
+`;
+    try {
+      parseBatchManifest(emptySuccess);
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(BatchManifestError);
+      const msg = (err as Error).message;
+      expect(msg).toContain('success');
+      expect(msg).toMatch(/changes\.0\.success/);
+    }
+  });
 });

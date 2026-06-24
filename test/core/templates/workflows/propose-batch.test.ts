@@ -3,6 +3,9 @@ import {
   getProposeBatchSkillTemplate,
   getRctProposeBatchCommandTemplate,
 } from '../../../../src/core/templates/workflows/propose-batch.js';
+import { CommandAdapterRegistry } from '../../../../src/core/command-generation/registry.js';
+import { generateCommand } from '../../../../src/core/command-generation/generator.js';
+import type { CommandContent } from '../../../../src/core/command-generation/types.js';
 
 describe('propose-batch workflow templates', () => {
   it('exposes a skill template that guides authoring a batch manifest', () => {
@@ -64,5 +67,40 @@ describe('propose-batch workflow templates', () => {
     expect(command.tags).toEqual(['workflow', 'batch', 'experimental']);
     // Same shared body as the skill.
     expect(command.content).toBe(getProposeBatchSkillTemplate().instructions);
+  });
+
+  it('documents the optional per-change success criterion', () => {
+    const body = getProposeBatchSkillTemplate().instructions;
+    // States that each change intent may carry a short, clear `success`.
+    expect(body).toMatch(/per-change success/i);
+    expect(body).toContain('`success`');
+    expect(body).toMatch(/short, clear/i);
+    // Keeps the field optional so existing manifests stay valid.
+    expect(body).toMatch(/optional/i);
+    expect(body).toMatch(/stay valid|non-empty when present/i);
+  });
+
+  it('renders the per-change success guidance into every registered tool command', () => {
+    // The command is the genuinely per-tool surface: the shared body is
+    // formatted into each registered tool's command file via its adapter. Render
+    // it through every adapter and assert the per-change success guidance
+    // survives each tool's formatting (frontmatter/path differ; body must not).
+    const cmd = getRctProposeBatchCommandTemplate();
+    const content: CommandContent = {
+      id: 'rct-propose-batch',
+      name: cmd.name,
+      description: cmd.description,
+      category: cmd.category,
+      tags: cmd.tags,
+      body: cmd.content,
+    };
+
+    const adapters = CommandAdapterRegistry.getAll();
+    expect(adapters.length).toBeGreaterThanOrEqual(5);
+    for (const adapter of adapters) {
+      const { fileContent } = generateCommand(content, adapter);
+      expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/per-change success/i);
+      expect(fileContent, `tool: ${adapter.toolId}`).toContain('`success`');
+    }
   });
 });

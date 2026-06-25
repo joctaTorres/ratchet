@@ -38,11 +38,11 @@ export const ChangeIntentSchema = z.object({
   name: z.string().min(1, { error: 'change intent name is required' }),
   after: z.array(z.string()).default([]),
   /**
-   * Optional, short success criterion for THIS change — what "done" means for it,
-   * distinct from the phase-level `success`. Non-empty when present; omitting it
-   * keeps existing manifests valid (purely additive).
+   * Required, short definition of done for THIS change — what "done" means for
+   * it, distinct from the phase-level `success`. Must be non-empty: every change
+   * intent must state its own bar.
    */
-  success: z.string().min(1, { error: 'change intent success criterion must not be empty' }).optional(),
+  done: z.string().min(1, { error: 'change intent done criterion is required' }),
 });
 
 export const PhaseSchema = z.object({

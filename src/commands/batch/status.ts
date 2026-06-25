@@ -66,9 +66,9 @@ export function toJson(status: BatchStatusInfo, gate: string): unknown {
       changes: phase.changes.map((change) => ({
         name: change.name,
         status: change.status,
-        // The change's own success criterion, surfaced only when its intent
-        // declared one (omitted otherwise, like the derived status).
-        ...(change.success ? { success: change.success } : {}),
+        // The change's own definition of done — required on every change intent,
+        // so always present.
+        done: change.done,
         progress: change.progress,
         after: change.after,
         blockedBy: change.blockedBy,

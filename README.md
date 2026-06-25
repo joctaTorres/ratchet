@@ -238,7 +238,7 @@ intents; later phases stay as goal + proof, and their changes are created
 ```
 batch.yaml
 ├── phase 1  goal · success · proofOfWork{kind,run,pass}     ← decomposed now
-│     └── changes: DAG of { name, after: [...], success? }  ──▶ propose ▶ apply ▶ verify
+│     └── changes: DAG of { name, after: [...], done }  ──▶ propose ▶ apply ▶ verify
 ├── phase 2  goal · success · proofOfWork (refined at entry) ← changes: lazy
 └── phase 3  …
       ⮑ each phase boundary is a proof-of-work gate that unlocks the next
@@ -246,8 +246,8 @@ batch.yaml
 
 The manifest lives at `.ratchet/batches/<name>/batch.yaml` and **references
 changes by name — it never owns them**; status is derived live from disk. Each
-change intent may also carry an optional one-line `success` criterion of its own,
-distinct from the phase's. A batch is intent you can revise before applying.
+change intent carries a required one-line `done` criterion of its own, distinct
+from the phase's. A batch is intent you can revise before applying.
 
 ### The two batch workflows
 

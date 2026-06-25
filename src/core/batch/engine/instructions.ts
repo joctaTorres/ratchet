@@ -103,14 +103,11 @@ export function buildAgentInstructions(context: ResolvedStepContext): string {
     `Phase goal: ${context.phase.goal}`,
     `Phase success criteria: ${context.phase.success}`,
     `Phase proof-of-work (${context.phase.proofOfWork.kind}): run \`${context.phase.proofOfWork.run}\`, passes when ${context.phase.proofOfWork.pass}`,
+    // Per-change definition of done (required, always present). Agent-neutral:
+    // it states what "done" means for THIS change alongside the broader phase
+    // bar, naming no specific coding agent.
+    `Definition of done: ${context.changeDone}`,
   ];
-
-  // Per-change success criterion (optional). Agent-neutral: it states what
-  // "done" means for THIS change alongside the broader phase bar, naming no
-  // specific coding agent.
-  if (context.changeSuccess) {
-    sections.push(`Change success criteria: ${context.changeSuccess}`);
-  }
 
   sections.push('', transitionGuidance(context));
 

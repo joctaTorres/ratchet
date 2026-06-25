@@ -76,15 +76,15 @@ describe('propose-batch workflow templates', () => {
     expect(command.content).toBe(getProposeBatchSkillTemplate().instructions);
   });
 
-  it('documents the optional per-change success criterion', () => {
+  it('documents the required per-change done criterion', () => {
     const body = getProposeBatchSkillTemplate().instructions;
-    // States that each change intent may carry a short, clear `success`.
-    expect(body).toMatch(/per-change success/i);
-    expect(body).toContain('`success`');
+    // States that each change intent must carry a short, clear `done`.
+    expect(body).toMatch(/per-change done/i);
+    expect(body).toContain('`done`');
     expect(body).toMatch(/short, clear/i);
-    // Keeps the field optional so existing manifests stay valid.
-    expect(body).toMatch(/optional/i);
-    expect(body).toMatch(/stay valid|non-empty when present/i);
+    // The field is required (no longer an optional per-change success).
+    expect(body).toMatch(/required/i);
+    expect(body).not.toMatch(/per-change success/i);
   });
 
   it('renders the apply-batch hand-off into every registered tool command', () => {

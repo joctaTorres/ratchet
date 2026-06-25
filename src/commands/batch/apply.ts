@@ -114,7 +114,7 @@ export async function batchApplyCommand(
     return;
   }
 
-  const { phase, change, changeSuccess } = target;
+  const { phase, change, changeDone } = target;
 
   // Respect halts: a parked step does not advance until input is recorded.
   const parked = getParkedStep(projectRoot, batch, change);
@@ -123,7 +123,7 @@ export async function batchApplyCommand(
   const context: ResolvedStepContext = {
     batch,
     change,
-    changeSuccess,
+    changeDone,
     // Coarse hint only; the engine derives the authoritative transition from
     // richer on-disk state via the same `computeNextTransition` and overrides
     // this. `propose` is the neutral default for a not-yet-created change.
@@ -156,16 +156,16 @@ export async function batchApplyCommand(
 function pickNextStep(
   status: Awaited<ReturnType<typeof computeBatchStatus>>,
   manifestPhases: Phase[]
-): { phase: Phase; change: string; changeSuccess?: string } | undefined {
+): { phase: Phase; change: string; changeDone: string } | undefined {
   for (const phaseStatus of status.phases) {
     if (phaseStatus.gated) continue;
     const phase = manifestPhases.find((p) => p.name === phaseStatus.name);
     if (!phase) continue;
     for (const change of phaseStatus.changes) {
       if (change.status === 'ready' || change.status === 'in-progress') {
-        // The derived status already carries the per-change success criterion
-        // (if any), which the engine surfaces to the agent — no manifest re-lookup.
-        return { phase, change: change.name, changeSuccess: change.success };
+        // The derived status already carries the per-change definition of done,
+        // which the engine surfaces to the agent — no manifest re-lookup.
+        return { phase, change: change.name, changeDone: change.done };
       }
     }
   }

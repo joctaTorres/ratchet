@@ -148,6 +148,7 @@ describe('ratchet batch CLI e2e', () => {
         '      pass: "0"',
         '    changes:',
         '      - name: ok-change',
+        '        done: ok-change is done',
         '',
       ].join('\n'),
       'utf-8'
@@ -173,8 +174,10 @@ describe('ratchet batch CLI e2e', () => {
         '    proofOfWork: { kind: integration, run: x, pass: "0" }',
         '    changes:',
         '      - name: a',
+        '        done: a is done',
         '      - name: b',
         '        after: [a]',
+        '        done: b is done',
         '',
       ].join('\n'),
       'utf-8'

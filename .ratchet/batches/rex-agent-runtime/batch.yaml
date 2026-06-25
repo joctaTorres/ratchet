@@ -59,6 +59,10 @@ phases:
       pass: exit code 0 — new tests assert (a) propose instructions reference no skill and (b) zero-exit-no-report attaches the transcript/detail
     changes:
       - name: fix-headless-agent-contract
+        done: >-
+          propose instructions contain only steps a headless agent can perform
+          (no skill/slash-command), and a zero-exit-without-report surfaces the
+          captured transcript and on-disk evidence
 
   # ---------------------------------------------------------------------------
   - name: rex-local-runtime
@@ -81,8 +85,14 @@ phases:
       pass: exit code 0 — drives a step whose stub agent emits one line/second and asserts lines arrive incrementally (timestamps spread, not bunched) and the final exit code is captured
     changes:
       - name: python-sidecar-bootstrap
+        done: >-
+          the Python venv + swe-rex bootstrap succeeds, and a missing prereq
+          fails with a clear, actionable bootstrap message
       - name: rex-local-agent-runtime
         after: [python-sidecar-bootstrap]
+        done: >-
+          a step runs through the ReX LocalDeployment sidecar with output
+          streaming line-by-line and the exit code + transcript captured
 
   # ---------------------------------------------------------------------------
   - name: rich-stream-json-renderer
@@ -104,6 +114,10 @@ phases:
       pass: an LLM judge confirms the rendered output streams in real time and clearly shows assistant text, tool calls, tool results, and a final summary in a readable, polished form
     changes:
       - name: stream-json-rich-renderer
+        done: >-
+          the NDJSON event stream renders as polished real-time output (assistant
+          text, tool calls, tool results, final summary), degrading unknown
+          events to a raw line rather than crashing
 
   # ---------------------------------------------------------------------------
   - name: container-locus
@@ -124,6 +138,10 @@ phases:
       pass: exit code 0 — when Docker is present, a step runs in-container and the in-container marker is observed; when absent, the test SKIPs explicitly (never silently passes)
     changes:
       - name: rex-docker-locus
+        done: >-
+          locus=docker runs the identical step in a container (verified by an
+          in-container marker) with streaming + transcript intact, and Docker
+          absence yields a clear error rather than a hang
 
   # ---------------------------------------------------------------------------
   - name: remote-locus
@@ -143,3 +161,7 @@ phases:
       pass: exit code 0 — a step completes against the local REST server with streamed output and a captured exit code; a bad token surfaces a clear auth error
     changes:
       - name: rex-remote-locus
+        done: >-
+          locus=remote runs a step against a swerex-remote server over REST with
+          live streaming, transcript capture, and token auth — a bad token
+          surfaces a clear auth error

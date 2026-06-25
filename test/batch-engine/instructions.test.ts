@@ -12,6 +12,7 @@ function context(transition: Transition, over: Partial<ResolvedStepContext> = {}
   return {
     batch: 'rex-agent-runtime',
     change: 'add-login-api',
+    changeDone: 'the login endpoint authenticates a user',
     transition,
     phase: { name: 'p1', goal: 'g', success: 's', proofOfWork: POW },
     settings: settings(),
@@ -83,32 +84,31 @@ describe('buildAgentInstructions — apply/verify avoid slash-commands', () => {
   });
 });
 
-describe('buildAgentInstructions — per-change success criterion', () => {
-  it('includes the change-success line when the intent declares one', () => {
+describe('buildAgentInstructions — per-change definition of done', () => {
+  it('always includes the definition-of-done line alongside the phase block', () => {
     const text = buildAgentInstructions(
-      context('apply', { changeSuccess: 'module returns DENY unless all gates green' })
+      context('apply', { changeDone: 'module returns DENY unless all gates green' })
     );
-    expect(text).toContain('Change success criteria: module returns DENY unless all gates green');
+    expect(text).toContain('Definition of done: module returns DENY unless all gates green');
     // The phase goal and phase success criteria are still present.
     expect(text).toContain('Phase goal:');
     expect(text).toContain('Phase success criteria:');
   });
 
-  it('omits the change-success line when the intent declares none', () => {
+  it('emits no "Change success criteria" line', () => {
     const text = buildAgentInstructions(context('apply'));
-    expect(text).not.toContain('Change success criteria:');
-    // The phase goal and phase success criteria are still present.
-    expect(text).toContain('Phase goal:');
-    expect(text).toContain('Phase success criteria:');
+    expect(text).not.toContain('Change success criteria');
+    // The definition-of-done line is always present (required field).
+    expect(text).toContain('Definition of done:');
   });
 
-  it('keeps the change-success line agent-neutral (names no coding agent)', () => {
+  it('keeps the definition-of-done line agent-neutral (names no coding agent)', () => {
     const text = buildAgentInstructions(
-      context('apply', { changeSuccess: 'the gate denies on a non-main branch' })
+      context('apply', { changeDone: 'the gate denies on a non-main branch' })
     );
     const line = text
       .split('\n')
-      .find((l) => l.startsWith('Change success criteria:'));
+      .find((l) => l.startsWith('Definition of done:'));
     expect(line).toBeDefined();
     expect(line!).not.toMatch(/\bClaude\b/);
     expect(line!).not.toMatch(/\bCursor\b/);

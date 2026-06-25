@@ -6,3 +6,4 @@ phases:
     proofOfWork: { kind: integration, run: 'true', pass: "exit 0" }
     changes:
       - name: add-login-api
+        done: the login endpoint responds and the change verifies

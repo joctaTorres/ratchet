@@ -65,10 +65,19 @@ phases:
         an `npm publish --dry-run` (never a real publish).
     changes:
       - name: ci-quality-gate-workflow
+        done: >-
+          ci.yml runs on push and pull_request and goes red if lint or tests
+          fail, gating the release path
       - name: release-decision-module
         after: [ci-quality-gate-workflow]
+        done: >-
+          module returns DENY unless branch == main AND all gate signals are
+          green, ALLOW only when all green, with unit tests proving each case
       - name: gated-dry-run-publish
         after: [release-decision-module]
+        done: >-
+          on a green main build the workflow runs `npm publish --dry-run` behind
+          the release-decision gate — never a real publish, no token needed
 
   # ---------------------------------------------------------------------------
   - name: coverage-and-e2e-gates
@@ -96,9 +105,18 @@ phases:
         threshold or a failing e2e flips the release-decision module to DENY.
     changes:
       - name: coverage-threshold-gate
+        done: >-
+          CI enforces a minimum coverage threshold and the job goes red when
+          coverage falls below it
       - name: e2e-cli-smoke
+        done: >-
+          an e2e suite drives the built CLI end to end like a user and goes red
+          on a broken run
       - name: wire-coverage-e2e-into-release-gate
         after: [coverage-threshold-gate, e2e-cli-smoke]
+        done: >-
+          the release-decision module additionally requires coverage >= threshold
+          AND e2e green, flipping to DENY when either regresses
 
   # ---------------------------------------------------------------------------
   - name: security-layer-gate
@@ -122,9 +140,18 @@ phases:
         flips the release-decision module to DENY.
     changes:
       - name: dependency-audit-gate
+        done: >-
+          a CI dependency vulnerability audit runs and goes red on a known
+          vulnerability
       - name: secret-scan-gate
+        done: >-
+          a CI secret scan runs and goes red when a secret is detected in the
+          tree
       - name: wire-security-into-release-gate
         after: [dependency-audit-gate, secret-scan-gate]
+        done: >-
+          the release-decision module additionally requires the security signal
+          green before ALLOW, flipping to DENY on a vulnerability or secret
 
   # ---------------------------------------------------------------------------
   - name: real-npm-publish-on-main
@@ -151,7 +178,16 @@ phases:
         publish entirely.
     changes:
       - name: gated-publish-job
+        done: >-
+          a publish job runs on `main` ONLY when the release-decision module
+          returns ALLOW, and is skipped on a non-main branch or any red gate
       - name: idempotent-version-guard
         after: [gated-publish-job]
+        done: >-
+          re-running the pipeline on an already-published version does not error
+          the build
       - name: real-npm-publish
         after: [idempotent-version-guard]
+        done: >-
+          a green build on `main` publishes the package to npm with provenance so
+          `npx ratchet --version` runs the freshly published CLI

@@ -3,7 +3,7 @@ import { BatchDag, BatchDagError } from '../../../src/core/batch/dag.js';
 import type { ChangeIntent } from '../../../src/core/batch/manifest.js';
 
 function intent(name: string, after: string[] = []): ChangeIntent {
-  return { name, after };
+  return { name, after, done: `${name} is implemented` };
 }
 
 describe('BatchDag', () => {

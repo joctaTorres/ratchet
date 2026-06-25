@@ -103,9 +103,13 @@ export function buildAgentInstructions(context: ResolvedStepContext): string {
     `Phase goal: ${context.phase.goal}`,
     `Phase success criteria: ${context.phase.success}`,
     `Phase proof-of-work (${context.phase.proofOfWork.kind}): run \`${context.phase.proofOfWork.run}\`, passes when ${context.phase.proofOfWork.pass}`,
-    '',
-    transitionGuidance(context),
+    // Per-change definition of done (required, always present). Agent-neutral:
+    // it states what "done" means for THIS change alongside the broader phase
+    // bar, naming no specific coding agent.
+    `Definition of done: ${context.changeDone}`,
   ];
+
+  sections.push('', transitionGuidance(context));
 
   const strategy = strategyGuidance(context);
   if (strategy) sections.push('', strategy);

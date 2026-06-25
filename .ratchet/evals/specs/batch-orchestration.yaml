@@ -99,7 +99,8 @@ changes/batch-orchestration/features/batch-template/batch-template#validating-a-
         '      run: x' \
         '      pass: "0"' \
         '    changes:' \
-        '      - name: ok-change' > .ratchet/batches/badkind/batch.yaml
+        '      - name: ok-change' \
+        '        done: ok-change is done' > .ratchet/batches/badkind/batch.yaml
       if ratchet validate badkind >/tmp/bk.out 2>&1; then
         echo "expected validate to fail on a bad proofOfWork kind" >&2
         exit 1
@@ -125,8 +126,10 @@ changes/batch-orchestration/features/batch-template/batch-template#a-hand-edited
         '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
         '    changes:' \
         '      - name: a' \
+        '        done: a is done' \
         '      - name: b' \
-        '        after: [a]' > .ratchet/batches/by-hand/batch.yaml
+        '        after: [a]' \
+        '        done: b is done' > .ratchet/batches/by-hand/batch.yaml
       ratchet validate by-hand | grep -q "valid"
       name="$(ratchet batch status by-hand --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["name"])')"
       test "$name" = "by-hand"
@@ -213,8 +216,10 @@ changes/batch-orchestration/features/batch-manifest/dag-edges#a-cycle-in-after-e
         '    changes:' \
         '      - name: a' \
         '        after: [b]' \
+        '        done: a is done' \
         '      - name: b' \
-        '        after: [a]' > .ratchet/batches/cyclic/batch.yaml
+        '        after: [a]' \
+        '        done: b is done' > .ratchet/batches/cyclic/batch.yaml
       if ratchet validate cyclic >/tmp/cyc.out 2>&1; then
         echo "expected a cyclic after-edge to be rejected" >&2
         exit 1
@@ -240,7 +245,8 @@ changes/batch-orchestration/features/batch-manifest/dag-edges#an-after-edge-refe
         '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
         '    changes:' \
         '      - name: real-change' \
-        '        after: [ghost-change]' > .ratchet/batches/dangling/batch.yaml
+        '        after: [ghost-change]' \
+        '        done: real-change is done' > .ratchet/batches/dangling/batch.yaml
       if ratchet validate dangling >/tmp/dang.out 2>&1; then
         echo "expected an unknown after-reference to be rejected" >&2
         exit 1
@@ -266,8 +272,10 @@ changes/batch-orchestration/features/batch-manifest/dag-edges#serial-execution-i
         '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
         '    changes:' \
         '      - name: a' \
+        '        done: a is done' \
         '      - name: b' \
-        '        after: [a]' > .ratchet/batches/serial/batch.yaml
+        '        after: [a]' \
+        '        done: b is done' > .ratchet/batches/serial/batch.yaml
       # A chain of `after` edges serializes: only the head is ready, the tail is
       # blocked by its predecessor, and `next` is the head.
       ratchet validate serial | grep -q "valid"
@@ -295,7 +303,9 @@ changes/batch-orchestration/features/batch-manifest/dag-edges#parallel-execution
         '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
         '    changes:' \
         '      - name: a' \
-        '      - name: b' > .ratchet/batches/par/batch.yaml
+        '        done: a is done' \
+        '      - name: b' \
+        '        done: b is done' > .ratchet/batches/par/batch.yaml
       # No edges => both changes are independently ready (parallel), neither blocked.
       ratchet validate par | grep -q "valid"
       ratchet batch status par --json > /tmp/par.json
@@ -356,7 +366,8 @@ changes/batch-orchestration/features/batch-config/config#a-batch-manifest-overri
         '    success: s' \
         '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
         '    changes:' \
-        '      - name: a' > .ratchet/batches/q3-auth/batch.yaml
+        '      - name: a' \
+        '        done: a is done' > .ratchet/batches/q3-auth/batch.yaml
       ratchet batch config q3-auth --json > /tmp/cfg.json
       f() { python3 -c "import json;print(json.load(open('/tmp/cfg.json'))$1)"; }
       test "$(f "['settings']['gate']")" = "after-propose"
@@ -381,7 +392,8 @@ changes/batch-orchestration/features/batch-config/config#reading-effective-setti
         '    success: s' \
         '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
         '    changes:' \
-        '      - name: a' > .ratchet/batches/q3-auth/batch.yaml
+        '      - name: a' \
+        '        done: a is done' > .ratchet/batches/q3-auth/batch.yaml
       ratchet batch config q3-auth --json > /tmp/cfg.json
       f() { python3 -c "import json;print(json.load(open('/tmp/cfg.json'))$1)"; }
       test "$(f "['name']")" = "q3-auth"
@@ -592,7 +604,8 @@ changes/batch-orchestration/features/batch-report/report#a-propose-agent-volunta
         '    success: endpoint responds' \
         '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
         '    changes:' \
-        '      - name: add-login-api' > .ratchet/batches/demo/batch.yaml
+        '      - name: add-login-api' \
+        '        done: the login endpoint responds' > .ratchet/batches/demo/batch.yaml
       ratchet batch report demo --change add-login-api --blocker 'cookie or header sessions? changes the whole API surface' >/dev/null
       # The step is parked as blocked with that question and is NOT advanced.
       ratchet batch status demo --json | python3 -c "import sys,json; d=json.load(sys.stdin); c=[x for p in d['phases'] for x in p['changes'] if x['name']=='add-login-api'][0]; assert c['status']=='blocked', c; assert c['parked']['kind']=='blocked', c; assert 'cookie or header sessions' in c['parked']['reason'], c"
@@ -615,7 +628,8 @@ changes/batch-orchestration/features/batch-report/report#an-agent-signals-it-pro
         '    success: endpoint responds' \
         '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
         '    changes:' \
-        '      - name: add-login-api' > .ratchet/batches/demo/batch.yaml
+        '      - name: add-login-api' \
+        '        done: the login endpoint responds' > .ratchet/batches/demo/batch.yaml
       # Given the resolved gate is "after-propose".
       ratchet batch config demo --set gate=after-propose >/dev/null
       ratchet batch report demo --change add-login-api --complete 'proposal ready' --awaiting-approval >/dev/null
@@ -642,7 +656,8 @@ changes/batch-orchestration/features/batch-report/report#the-report-channel-work
         '    success: s' \
         '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }' \
         '    changes:' \
-        '      - name: add-login-api' > .ratchet/batches/demo/batch.yaml
+        '      - name: add-login-api' \
+        '        done: the login endpoint responds' > .ratchet/batches/demo/batch.yaml
       # Reporting requires only invoking the CLI; no interactive prompt. Run with
       # stdin closed so any prompt would EOF — it must still succeed.
       out="$(ratchet batch report demo --change add-login-api --status 'drafted 2 of 4 scenarios' </dev/null)"

@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { computeBatchStatus } from '../../../src/core/batch/status.js';
 import { parseBatchManifest } from '../../../src/core/batch/manifest.js';
+import { toJson } from '../../../src/commands/batch/status.js';
 
 let projectRoot: string;
 let changesDir: string;
@@ -41,10 +42,13 @@ phases:
       pass: '0'
     changes:
       - name: add-user-model
+        done: the user model exists and persists
       - name: add-login-api
         after: [add-user-model]
+        done: the login endpoint authenticates a user
       - name: add-oauth
         after: [add-user-model]
+        done: oauth login works end to end
 `;
 
 function findChange(status: Awaited<ReturnType<typeof computeBatchStatus>>, name: string) {
@@ -162,6 +166,46 @@ describe('computeBatchStatus', () => {
     expect(c.parked).toBeUndefined();
   });
 
+  it('carries a change intent done criterion into derived status (and JSON)', async () => {
+    const withDone = `
+name: ci-npx-release
+phases:
+  - name: foundation
+    goal: g
+    success: s
+    proofOfWork: { kind: integration, run: x, pass: '0' }
+    changes:
+      - name: release-decision-module
+        done: module returns DENY unless all gate signals are green
+`;
+    const status = await computeBatchStatus(projectRoot, parseBatchManifest(withDone));
+    const c = findChange(status, 'release-decision-module');
+    expect(c.done).toBe('module returns DENY unless all gate signals are green');
+    // It survives the actual `batch status --json` projection (toJson), not just
+    // a raw stringify of the derived status.
+    const json = JSON.parse(JSON.stringify(toJson(status, 'voluntary'))) as {
+      phases: { changes: { name: string; done?: string }[] }[];
+    };
+    const jsonChange = json.phases[0].changes.find(
+      (ch) => ch.name === 'release-decision-module'
+    );
+    expect(jsonChange?.done).toBe('module returns DENY unless all gate signals are green');
+  });
+
+  it('always carries done in JSON and never a per-change success key', async () => {
+    const status = await computeBatchStatus(projectRoot, parseBatchManifest(MANIFEST));
+    const c = findChange(status, 'add-user-model');
+    expect(c.done).toBe('the user model exists and persists');
+    const json = JSON.parse(JSON.stringify(toJson(status, 'voluntary'))) as {
+      phases: { changes: { name: string; done?: string; success?: string }[] }[];
+    };
+    const jsonChange = json.phases[0].changes.find(
+      (ch) => ch.name === 'add-user-model'
+    );
+    expect(jsonChange?.done).toBe('the user model exists and persists');
+    expect(jsonChange && 'success' in jsonChange).toBe(false);
+  });
+
   it('gates a later phase until the prior phase is done', async () => {
     const twoPhase = `
 name: q3-auth
@@ -172,12 +216,14 @@ phases:
     proofOfWork: { kind: integration, run: x, pass: '0' }
     changes:
       - name: c1
+        done: c1 is implemented and verifies
   - name: hardening
     goal: g2
     success: s2
     proofOfWork: { kind: blackbox, run: y, pass: '0' }
     changes:
       - name: c2
+        done: c2 is implemented and verifies
 `;
     const status = await computeBatchStatus(projectRoot, parseBatchManifest(twoPhase));
     const hardening = status.phases.find((p) => p.name === 'hardening')!;

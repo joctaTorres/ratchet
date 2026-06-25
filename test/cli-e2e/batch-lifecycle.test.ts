@@ -148,8 +148,10 @@ describe('batch manifest DAG validation (sad paths)', () => {
       '    changes:',
       '      - name: a',
       '        after: [b]',
+      '        done: a is done',
       '      - name: b',
       '        after: [a]',
+      '        done: b is done',
     ]);
     const result = await runCLI(['validate', 'cyclic'], { cwd });
     expect(result.exitCode).not.toBe(0);
@@ -172,6 +174,7 @@ describe('batch manifest DAG validation (sad paths)', () => {
       '    changes:',
       '      - name: real-change',
       '        after: [ghost-change]',
+      '        done: real-change is done',
     ]);
     const result = await runCLI(['validate', 'dangling'], { cwd });
     expect(result.exitCode).not.toBe(0);
@@ -192,10 +195,13 @@ describe('batch manifest DAG validation (sad paths)', () => {
       '    proofOfWork: { kind: integration, run: x, pass: "exit 0" }',
       '    changes:',
       '      - name: a',
+      '        done: a is done',
       '      - name: b',
       '        after: [a]',
+      '        done: b is done',
       '      - name: c',
       '        after: [a, b]',
+      '        done: c is done',
     ]);
     const result = await runCLI(['validate', 'acyclic'], { cwd });
     expect(result.exitCode).toBe(0);

@@ -5,8 +5,8 @@
  * objective, slices it into ordered vertical-slice phases, requires a success
  * criterion and an executable proof-of-work per phase, scaffolds the manifest
  * via `ratchet new batch <name>` with a shallow DAG (only phase one decomposed
- * into change intents), and then asks whether to chain into propose-change on
- * phase one now. Its only artifact is the manifest at
+ * into change intents), and then hands the user into apply-batch to drive the
+ * batch now. Its only artifact is the manifest at
  * `.ratchet/batches/<name>/batch.yaml` — never change directories.
  *
  * Like `batch.ts`, both the skill and the command share a single body constant.
@@ -108,10 +108,15 @@ derive one from the objective.
 
    - Each phase: \`name\`, \`goal\`, \`success\`, and \`proofOfWork: { kind, run, pass }\`.
    - **Shallow DAG**: phase one's \`changes\` carries concrete change intents,
-     each \`{ name, after: [<names>] }\`, where \`after\` edges form a DAG. **Later
+     each \`{ name, after: [<names>], done }\`, where \`after\` edges form a DAG. **Later
      phases' \`changes\` are left empty** — a change intent with no change
      directory is a valid \`pending\`, which is what lets changes be created
      lazily. Do not decompose later phases up front.
+   - **Per-change done (required)**: each phase-one change intent MUST carry a
+     short, clear \`done\` criterion stating what "done" means for that change
+     specifically (distinct from the phase \`success\`). Keep it to one line. It
+     is **required** and must be non-empty — a change intent without a \`done\`
+     fails validation.
    - **Settings**: if the user wants a setting that differs from the project
      defaults, record it under the manifest \`settings\` block. Only these keys are
      accepted (the schema is strict — any other key fails validation): \`gate\`,
@@ -122,21 +127,24 @@ derive one from the objective.
    generate any change directories under \`.ratchet/changes/\`, and do not produce
    any per-change planning artifacts at proposal time.
 
-5. **Ask whether to propose phase-one changes now (gated chain-in)**
+5. **Hand off to apply-batch to drive the batch now (gated)**
 
    After the manifest is written, present an **explicit gate** — never an
-   automatic action — asking whether to run the propose-change flow on phase
-   one's first change or changes now. Use a structured-question tool such as
+   automatic action — asking whether to drive the batch now by running the
+   apply-batch workflow on it. Use a structured-question tool such as
    AskUserQuestion if your agent has one, otherwise ask in plain prose:
-   > "The batch manifest is written. Want me to propose phase one's first
-   > change(s) now (run /rct:propose on them), or defer that to \`ratchet batch
-   > apply\`?"
+   > "The batch manifest is written. Want me to drive the batch now (run
+   > /rct:apply-batch on it in this session), or run apply-batch on it yourself
+   > later?"
 
-   - **If the user accepts**: chain into the propose-change flow (\`/rct:propose\`)
-     for phase one's first change or changes, so those changes are spec'd and
-     ready before this skill ends.
-   - **If the user declines**: stop **without creating any change directories**,
-     and explain that changes are created lazily during \`ratchet batch apply\`.
+   - **If the user accepts (drive directly)**: chain into the apply-batch
+     workflow (\`/rct:apply-batch <name>\`) for this batch in the current session.
+     That session then acts as the **batch orchestrator** — it runs only ratchet
+     CLI commands and does no coding itself.
+   - **If the user declines (defer to an indirect run)**: stop **without creating
+     any change directories**, and tell the user they can drive the batch later
+     by running apply-batch on it themselves. Explain that changes are created
+     lazily during \`ratchet batch apply\`.
 
 **Output**
 
@@ -146,8 +154,8 @@ After scaffolding, summarize:
   kind (noting phase one's concrete command vs. later phases' refine-at-entry
   proofs).
 - Which phase-one change intents were written and their \`after\` edges.
-- Whether phase-one changes were proposed now or deferred to \`ratchet batch
-  apply\`.
+- Whether you handed off to apply-batch to drive the batch now, or the user
+  deferred to run apply-batch on it later (\`ratchet batch apply\`).
 
 **Guardrails**
 - The objective must be understood before scaffolding.
@@ -156,7 +164,7 @@ After scaffolding, summarize:
   scaffolded. Phase one's proof is concrete; later phases' may be described.
 - Only phase one is decomposed into change intents; later phases stay goal+proof.
 - The only artifact is the manifest — never change directories at proposal time.
-- The chain-in is always gated: ask, never auto-create changes.
+- The apply-batch hand-off is always gated: ask, never auto-drive the batch.
 - \`propose-batch\` is only useful alongside the \`batch\` workflow; pair them.`;
 
 export function getProposeBatchSkillTemplate(): SkillTemplate {

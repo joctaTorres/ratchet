@@ -33,6 +33,7 @@ AI coding assistants are powerful but unpredictable when the spec lives only in 
 
 - **Behavior is the contract.** Requirements are Gherkin scenarios (`Given/When/Then`) — concrete, testable, and unambiguous for both humans and agents.
 - **Two artifacts, no ceremony.** A change is `features/` + `plan.md`. That's it.
+- **From fuzzy idea to spec.** Not sure of the shape yet? `/rct:brainstorm` explores the project, clarifies one question at a time, weighs 2–3 approaches, and designs the change with you — then recommends and routes into `propose` (one change) or `propose-batch` (a phased effort).
 - **A living spec that ratchets forward.** Archiving a change copies its features into a permanent `.ratchet/features/` store — your project's always-current behavioral spec.
 - **Big work ships in phases, not waterfalls.** [Batch orchestration](#batch-orchestration) slices an objective into ordered vertical-slice phases, each gated by an executable proof-of-work, and drives them to completion autonomously — changes are created lazily as the batch advances.
 - **The spec is also a regression suite.** [`ratchet eval`](#eval-suite) turns your `.feature` files into a scored, baseline-diffed eval run, judged against fixtures by the bundled engine — so behavior that passes today can't silently regress.
@@ -167,7 +168,7 @@ cd your-project
 ratchet init --tools claude          # scaffold .ratchet/ + agent skills/commands
 ```
 
-Then tell your agent what to build: `/rct:propose <your idea>`. Or drive it by hand:
+Then tell your agent what to build: `/rct:propose <your idea>` — or, when the shape isn't clear yet, start with `/rct:brainstorm <rough idea>` to explore and design first, then route into propose. Or drive it by hand:
 
 ```bash
 ratchet new change add-login                      # scaffold a change
@@ -191,11 +192,11 @@ ratchet archive add-login -y                      # sync features → store, arc
 └── config.yaml               # schema + project context/rules
 
 .claude/                      # (per selected tool)
-├── skills/ratchet-{propose,apply-change,verify-change,archive-change,propose-standard,propose-batch,apply-batch}/
-└── commands/rct/{propose,apply,verify,archive,propose-standard,propose-batch,apply-batch}.md
+├── skills/ratchet-{brainstorm,propose,apply-change,verify-change,archive-change,propose-standard,propose-batch,apply-batch}/
+└── commands/rct/{brainstorm,propose,apply,verify,archive,propose-standard,propose-batch,apply-batch}.md
 ```
 
-The `core` profile installed by a stock `ratchet init` ships the change workflows **plus** the batch workflows (`propose-batch` + `apply-batch`). `eval` is the one opt-in workflow — request it with a custom profile.
+The `core` profile installed by a stock `ratchet init` ships the change workflows, the `brainstorm` front door, **and** the batch workflows (`propose-batch` + `apply-batch`). `eval` is the one opt-in workflow — request it with a custom profile.
 
 **Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`.
 
@@ -237,28 +238,29 @@ intents; later phases stay as goal + proof, and their changes are created
 ```
 batch.yaml
 ├── phase 1  goal · success · proofOfWork{kind,run,pass}     ← decomposed now
-│     └── changes: DAG of { name, after: [...] }  ──▶ propose ▶ apply ▶ verify
+│     └── changes: DAG of { name, after: [...], done }  ──▶ propose ▶ apply ▶ verify
 ├── phase 2  goal · success · proofOfWork (refined at entry) ← changes: lazy
 └── phase 3  …
       ⮑ each phase boundary is a proof-of-work gate that unlocks the next
 ```
 
 The manifest lives at `.ratchet/batches/<name>/batch.yaml` and **references
-changes by name — it never owns them**; status is derived live from disk.
-There's no new schema: a batch is intent you can revise before applying.
+changes by name — it never owns them**; status is derived live from disk. Each
+change intent carries a required one-line `done` criterion of its own, distinct
+from the phase's. A batch is intent you can revise before applying.
 
 ### The two batch workflows
 
 | Workflow | Command | What it does |
 |---|---|---|
-| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox` / `llm-judge`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Ends with a gated offer to chain into `/rct:propose` on phase one. |
+| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox` / `llm-judge`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Ends with a **gated hand-off into `/rct:apply-batch`** to drive the batch now (this session as orchestrator) or defer it to a later run. |
 | **apply-batch** | `/rct:apply-batch <name>` | Autonomous orchestrator that drives the batch to completion. It **loops** `ratchet batch apply` (which stays single-step) until done, surfacing halts (blocked / awaiting-approval) and proof-of-work failures to you, recording your answers via `ratchet batch report`, then resuming. The orchestrator does **no coding itself** — it only runs `ratchet` CLI commands and talks to you; the coding happens inside the engine-spawned agent. |
 
 ```
 You: /rct:propose-batch ship a checkout flow
 AI:  Sliced into 3 vertical-slice phases, each with a proof-of-work.
      ✓ .ratchet/batches/checkout-flow/batch.yaml
-     Propose phase one's changes now, or defer to `ratchet batch apply`?
+     Drive the batch now with /rct:apply-batch, or run it yourself later?
 
 You: /rct:apply-batch checkout-flow
 AI:  Driving batch: checkout-flow
@@ -280,10 +282,9 @@ flowchart TD
     Refuse --> Slice
     Gate1 -->|Yes| Scaffold["📝 ratchet new batch<br/>then write batch.yaml"]
     Scaffold --> Manifest[("📄 batch.yaml<br/>phase 1 → change-intent DAG<br/>phases 2..n: goal + proof only")]
-    Manifest --> ChainGate{"🤝 Propose phase-one<br/>changes now?"}
-    ChainGate -->|Yes| Propose1["📐 /rct:propose<br/>phase-one changes"]
-    ChainGate -->|Defer| Apply
-    Propose1 --> Apply
+    Manifest --> ChainGate{"🤝 Drive the batch now<br/>via apply-batch?"}
+    ChainGate -->|"Yes, this session"| Apply
+    ChainGate -->|"Defer, run later"| Apply
 
     subgraph LOOP["🔁 /rct:apply-batch — autonomous orchestrator loop"]
         direction TB
@@ -310,7 +311,7 @@ flowchart TD
     classDef halt fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:#000000
 
     class Start,Finish startend
-    class Ask,Slice,Scaffold,Propose1,Status,Step,Pick,PAV,Unlock,Report proc
+    class Ask,Slice,Scaffold,Status,Step,Pick,PAV,Unlock,Report proc
     class Explore,Gate1,ChainGate,Done,Outcome,PoW decision
     class Manifest data
     class Refuse,Halt halt
@@ -392,6 +393,7 @@ manual verdict via `ratchet eval record` (a `fail` requires `--evidence`).
 
 | Workflow | What it does |
 |---|---|
+| **brainstorm** | Front door for an open-ended idea: explores context, clarifies one question at a time, weighs 2–3 approaches, designs section-by-section, then recommends + gates a route into `propose` or `propose-batch` (does no implementation itself) |
 | **propose** | Clarifies intent (explore-first when unclear), then generates `features/` + `plan.md` |
 | **apply** | Implements against each scenario's `Given/When/Then`, checking off plan tasks |
 | **verify** | Confirms the implementation satisfies every scenario and all tasks are done |
@@ -401,7 +403,7 @@ manual verdict via `ratchet eval record` (a `fail` requires `--evidence`).
 | **apply-batch** | Autonomously drives a batch to completion — loops the single-step `ratchet batch apply`, surfaces halts/approvals + proof-of-work failures, records answers, resumes |
 | **eval** | Runs the engine-backed eval, surfaces regressions first, and guides authoring bindings for unjudged cases |
 
-> `explore` exists as an internal stance used by **propose** — it is not a standalone command. `propose-batch` + `apply-batch` ship in the default `core` profile; `eval` is opt-in.
+> `explore` exists as an internal stance used by **propose** — it is not a standalone command (`brainstorm` is the standalone front door for open-ended design). `brainstorm`, `propose-batch`, + `apply-batch` all ship in the default `core` profile; `eval` is opt-in.
 
 ## Development
 

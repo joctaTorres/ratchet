@@ -6,6 +6,10 @@ phases:
     proofOfWork: { kind: integration, run: 'true', pass: "exit code 0" }
     changes:
       - name: done-change
+        done: the change has all tasks checked off
       - name: wip-change
+        done: the change is implemented and its tasks are checked off
       - name: pending-change
+        done: the change is created and its tasks are checked off
       - name: arch-change
+        done: the change is implemented and archived

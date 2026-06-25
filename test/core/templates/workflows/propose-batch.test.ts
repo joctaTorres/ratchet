@@ -3,6 +3,9 @@ import {
   getProposeBatchSkillTemplate,
   getRctProposeBatchCommandTemplate,
 } from '../../../../src/core/templates/workflows/propose-batch.js';
+import { CommandAdapterRegistry } from '../../../../src/core/command-generation/registry.js';
+import { generateCommand } from '../../../../src/core/command-generation/generator.js';
+import type { CommandContent } from '../../../../src/core/command-generation/types.js';
 
 describe('propose-batch workflow templates', () => {
   it('exposes a skill template that guides authoring a batch manifest', () => {
@@ -40,10 +43,17 @@ describe('propose-batch workflow templates', () => {
     expect(body).toContain('gate');
     expect(body).toContain('strategy');
 
-    // Gated chain-in into propose-change.
+    // Gated hand-off into apply-batch (direct + indirect paths).
     expect(body).toMatch(/gate/i);
-    expect(body).toContain('/rct:propose');
+    expect(body).toContain('/rct:apply-batch <name>');
+    // Direct: drive now, current session becomes the orchestrator.
+    expect(body).toMatch(/batch orchestrator/i);
+    // Indirect: defer; changes created lazily during `ratchet batch apply`.
     expect(body).toMatch(/ratchet batch apply/);
+    expect(body).toMatch(/created\s+lazily/i);
+    // No longer offers to propose phase-one changes as the next step.
+    expect(body).not.toContain('/rct:propose ');
+    expect(body).not.toMatch(/propose phase[- ]one('s)? (first )?change/i);
 
     // The four waterfall traps appear as rationale.
     expect(body).toMatch(/inflexibility to change/i);
@@ -64,5 +74,44 @@ describe('propose-batch workflow templates', () => {
     expect(command.tags).toEqual(['workflow', 'batch', 'experimental']);
     // Same shared body as the skill.
     expect(command.content).toBe(getProposeBatchSkillTemplate().instructions);
+  });
+
+  it('documents the required per-change done criterion', () => {
+    const body = getProposeBatchSkillTemplate().instructions;
+    // States that each change intent must carry a short, clear `done`.
+    expect(body).toMatch(/per-change done/i);
+    expect(body).toContain('`done`');
+    expect(body).toMatch(/short, clear/i);
+    // The field is required (no longer an optional per-change success).
+    expect(body).toMatch(/required/i);
+    expect(body).not.toMatch(/per-change success/i);
+  });
+
+  it('renders the apply-batch hand-off into every registered tool command', () => {
+    // The command is the genuinely per-tool surface: the shared body is
+    // formatted into each registered tool's command file via its adapter. Render
+    // it through every adapter and assert the gated apply-batch hand-off
+    // survives each tool's formatting (frontmatter/path differ; body must not).
+    const cmd = getRctProposeBatchCommandTemplate();
+    const content: CommandContent = {
+      id: 'rct-propose-batch',
+      name: cmd.name,
+      description: cmd.description,
+      category: cmd.category,
+      tags: cmd.tags,
+      body: cmd.content,
+    };
+
+    const adapters = CommandAdapterRegistry.getAll();
+    expect(adapters.length).toBeGreaterThanOrEqual(5);
+    for (const adapter of adapters) {
+      const { fileContent } = generateCommand(content, adapter);
+      // Direct path: chain into apply-batch as the orchestrator. (Some adapters
+      // rewrite the `:` in `/rct:apply-batch` to `-`, so match either form.)
+      expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/\/rct[:-]apply-batch <name>/);
+      expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/batch orchestrator/i);
+      // Indirect path: defer; lazy change creation during `ratchet batch apply`.
+      expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/ratchet batch apply/);
+    }
   });
 });

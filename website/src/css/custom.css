@@ -68,3 +68,19 @@
   font-weight: 700;
   letter-spacing: 0.02em;
 }
+
+/*
+  Center the footer link columns (Docs / More) so they align with the centered
+  "ratchet · MIT License" copyright. By default the Infima grid columns grow to
+  fill the row and sit left-aligned; size them to their content and center the
+  group instead.
+*/
+.footer__links {
+  justify-content: center;
+}
+
+.footer .footer__col {
+  flex: 0 0 auto;
+  padding: 0 2rem;
+  text-align: center;
+}

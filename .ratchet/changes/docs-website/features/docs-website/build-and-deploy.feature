@@ -18,10 +18,11 @@ Feature: Build and Cloudflare Pages deployment
     When the website is built with a broken internal link
     Then the build fails instead of producing a site with the broken link
 
-  Scenario: Cloudflare Pages git integration settings are documented
-    Given the website is deployed via Cloudflare Pages git integration
+  Scenario: Cloudflare Workers Builds settings are documented
+    Given the website is deployed via Cloudflare Workers Builds
     When "website/README.md" is read
     Then it documents the production branch as "main"
     And it documents the root directory as "website"
-    And it documents the build command and the build output directory "website/build"
+    And it documents the build command and the build output directory "build"
+    And it documents the deploy command "npx wrangler deploy"
     And it documents the "NODE_VERSION" build variable

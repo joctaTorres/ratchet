@@ -46,10 +46,33 @@
 }
 
 .logo {
-  width: 92px;
-  height: 92px;
+  width: 132px;
+  height: 132px;
   margin-bottom: 1.5rem;
   filter: drop-shadow(0 0 24px var(--rct-accent-soft));
+  /*
+    Two independent animations so they don't fight over `transform`: an
+    opacity-only fade-in for the page-load reveal (the shared .reveal class
+    animates translateY, which would clash with the rotation), plus a slow
+    anti-clockwise spin, like a gear easing backward.
+  */
+  opacity: 0;
+  animation: rctFadeIn 0.6s ease forwards, rctSpin 28s linear infinite;
+}
+
+@keyframes rctFadeIn {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rctSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
+  }
 }
 
 .title {
@@ -201,6 +224,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .reveal {
+    opacity: 1;
+    animation: none;
+  }
+  .logo {
     opacity: 1;
     animation: none;
   }

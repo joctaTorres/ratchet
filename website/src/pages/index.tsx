@@ -46,8 +46,7 @@ function Hero(): ReactNode {
         <img
           src={logoUrl}
           alt="ratchet logo"
-          className={clsx(styles.logo, styles.reveal)}
-          style={revealStyle(0)}
+          className={styles.logo}
         />
         <h1 className={clsx(styles.title, styles.reveal)} style={revealStyle(80)}>
           {siteConfig.title}

@@ -70,10 +70,11 @@
 }
 
 /*
-  Center the footer link columns (Docs / More) so they align with the centered
-  "ratchet · MIT License" copyright. By default the Infima grid columns grow to
-  fill the row and sit left-aligned; size them to their content and center the
-  group instead.
+  Center the footer link columns (Docs / More) as a side-by-side group so they
+  align with the centered "ratchet · MIT License" copyright below. Infima's
+  `.col` sets `width: 100%`, so the columns must be sized to their content
+  (overriding width/max-width) or they wrap and stack; `justify-content: center`
+  then centers the pair.
 */
 .footer__links {
   justify-content: center;
@@ -81,6 +82,8 @@
 
 .footer .footer__col {
   flex: 0 0 auto;
+  width: auto;
+  max-width: none;
   padding: 0 2rem;
   text-align: center;
 }

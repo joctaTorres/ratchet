@@ -8,6 +8,8 @@
 
 ratchet keeps a lean, behavior-first model: every change is just **two artifacts** — feature files and a plan — and completed work ratchets forward into a permanent, living feature store.
 
+📖 **[Read the documentation →](https://ratchet.pages.dev)** — reference docs, built from [`docs/`](docs/).
+
 ```
 You: /rct:propose add dark mode
 AI:  Created .ratchet/changes/add-dark-mode/

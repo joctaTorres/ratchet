@@ -2,6 +2,12 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
+// Single source of truth for the GitHub coordinates: the repository URL is
+// derived from these so a rename touches one place, not every link.
+const organizationName = 'joctaTorres';
+const projectName = 'ratchet';
+const repoUrl = `https://github.com/${organizationName}/${projectName}`;
+
 // The documentation site is a standalone Docusaurus app that renders the
 // repository-root `docs/` directory. Reference content lives one level up, in
 // `../docs`; this app only provides the site shell, theme, and landing page.
@@ -14,8 +20,8 @@ const config: Config = {
   url: 'https://ratchet.pages.dev',
   baseUrl: '/',
 
-  organizationName: 'joctaTorres',
-  projectName: 'ratchet',
+  organizationName,
+  projectName,
 
   // Ship no broken links: a bad internal link fails the (Cloudflare) build
   // instead of producing a site with a dead link.
@@ -78,7 +84,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://github.com/joctaTorres/ratchet',
+          href: repoUrl,
           label: 'GitHub',
           position: 'right',
         },
@@ -94,7 +100,7 @@ const config: Config = {
         {
           title: 'More',
           items: [
-            {label: 'GitHub', href: 'https://github.com/joctaTorres/ratchet'},
+            {label: 'GitHub', href: repoUrl},
           ],
         },
       ],

@@ -29,9 +29,11 @@ const FEATURES: {tag: string; title: string; body: string}[] = [
   },
 ];
 
-// Small helper so each revealed element can carry its own stagger delay.
+// Small helper so each revealed element can carry its own stagger delay. The
+// `--rct-delay` custom property is not part of the typed CSSProperties keys, so
+// the object is cast once rather than reaching for a per-key escape hatch.
 function revealStyle(delayMs: number): CSSProperties {
-  return {['--rct-delay' as string]: `${delayMs}ms`};
+  return {'--rct-delay': `${delayMs}ms`} as CSSProperties;
 }
 
 function Hero(): ReactNode {

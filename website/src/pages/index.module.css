@@ -102,6 +102,34 @@
   letter-spacing: 0.02em;
 }
 
+/* Install command — a machined, copy-friendly code block under the CTAs. */
+.install {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 2rem auto 0;
+  padding: 0.7rem 1.1rem;
+  border: 1px solid var(--rct-hairline);
+  border-radius: 6px;
+  background: var(--rct-bg-elevated);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.95rem;
+  text-align: left;
+  overflow-x: auto;
+}
+
+.install code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.installPrompt {
+  color: var(--rct-accent);
+  user-select: none;
+}
+
 /* Feature cards */
 .features {
   padding: 4rem 0 5rem;

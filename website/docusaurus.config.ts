@@ -23,10 +23,11 @@ const config: Config = {
   organizationName,
   projectName,
 
-  // Ship no broken links: a bad internal link fails the (Cloudflare) build
-  // instead of producing a site with a dead link.
+  // Ship no broken links: a bad link fails the (Cloudflare) build instead of
+  // producing a site with a dead link. Route links and relative markdown links
+  // are held to the same strictness.
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'warn',
+  onBrokenMarkdownLinks: 'throw',
 
   // Distinctive typefaces for the "machined" aesthetic: JetBrains Mono for the
   // mechanical/monospaced display headline and labels, Work Sans (a humanist

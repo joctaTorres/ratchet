@@ -70,6 +70,15 @@ function Hero(): ReactNode {
             GitHub ↗
           </Link>
         </div>
+        {/*
+          Install command. Kept agent-neutral: `npx ratchet-ai@beta init` with no
+          `--tools` value (the flag is optional; init prompts without it), so the
+          public landing page never special-cases a single coding agent.
+        */}
+        <pre className={clsx(styles.install, styles.reveal)} style={revealStyle(360)}>
+          <span className={styles.installPrompt}>$ </span>
+          <code>npx ratchet-ai@beta init</code>
+        </pre>
       </div>
     </header>
   );

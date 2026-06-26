@@ -53,23 +53,30 @@ To add a language without restructuring the site:
 4. Translate the content under `i18n/<locale>/` and the markdown under that
    locale's docs directory.
 
-## Deployment — Cloudflare Pages (git integration)
+## Deployment — Cloudflare Workers Builds (static assets)
 
-The site is deployed via **Cloudflare Pages git integration**: Cloudflare builds
-and deploys on every push, so the live site updates when `main` is updated. The
-build runs on Cloudflare's side — it is not part of the repository's GitHub
-Actions CI (`.github/workflows/ci.yml`).
+The site is deployed via **Cloudflare Workers Builds** with the static-assets
+handler (no Worker script): Cloudflare builds and deploys on every push, so the
+live site updates when `main` is updated. The build runs on Cloudflare's side —
+it is not part of the repository's GitHub Actions CI
+(`.github/workflows/ci.yml`). The contract is declared in `website/wrangler.toml`
+(the `[assets]` block) and mirrored in the dashboard.
 
-Configure these settings once in the Cloudflare Pages dashboard for the project:
+Configure these settings once in the Workers project (Workers & Pages → your
+project → Settings → Builds):
 
 | Setting                 | Value                       |
 | ----------------------- | --------------------------- |
 | Production branch       | `main`                      |
 | Root directory          | `website`                   |
 | Build command           | `pnpm install && pnpm build`|
-| Build output directory  | `website/build`             |
+| Build output directory  | `build`                     |
+| Deploy command          | `npx wrangler deploy`       |
 | Build variable          | `NODE_VERSION` = `22`       |
 
-Pull requests receive Cloudflare preview deployments automatically. No secrets
-are stored in the repository; the git integration is authorized once in the
-Cloudflare dashboard.
+`wrangler` runs inside the root directory (`website`), so `wrangler.toml`'s
+`[assets].directory = "./build"` resolves to `website/build`.
+`not_found_handling = "404-page"` serves `build/404.html` on a miss (Docusaurus
+emits it). Pull requests receive Cloudflare preview deployments automatically.
+No secrets are stored in the repository; the git connection is authorized once in
+the Cloudflare dashboard.

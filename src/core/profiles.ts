@@ -17,7 +17,7 @@ import type { Profile } from './global-config.js';
  * skill alongside the change workflows. 'eval' is the only workflow that remains
  * opt-in (see ALL_WORKFLOWS).
  */
-export const CORE_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'apply-batch', 'propose-batch', 'brainstorm'] as const;
+export const CORE_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'apply-batch', 'archive-batch', 'propose-batch', 'brainstorm'] as const;
 
 /**
  * All available workflows in the system.
@@ -28,7 +28,7 @@ export const CORE_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose
  * autonomous orchestrator, and its guided proposer 'propose-batch') are both
  * part of the default 'core' profile.
  */
-export const ALL_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'apply-batch', 'eval', 'propose-batch', 'brainstorm'] as const;
+export const ALL_WORKFLOWS = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'apply-batch', 'archive-batch', 'eval', 'propose-batch', 'brainstorm'] as const;
 
 /**
  * Workflow-id migration aliases.

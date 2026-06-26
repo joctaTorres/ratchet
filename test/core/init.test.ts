@@ -123,6 +123,7 @@ describe('InitCommand', () => {
         'ratchet-archive-change',
         'ratchet-propose-standard',
         'ratchet-apply-batch',
+        'ratchet-archive-batch',
         'ratchet-propose-batch',
       ];
 
@@ -166,6 +167,7 @@ describe('InitCommand', () => {
         'rct/archive.md',
         'rct/propose-standard.md',
         'rct/apply-batch.md',
+        'rct/archive-batch.md',
         'rct/propose-batch.md',
       ];
 

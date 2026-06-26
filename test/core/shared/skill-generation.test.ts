@@ -11,7 +11,7 @@ describe('skill-generation', () => {
   describe('getSkillTemplates', () => {
     it('should return the generated skill templates', () => {
       const templates = getSkillTemplates();
-      expect(templates).toHaveLength(9);
+      expect(templates).toHaveLength(10);
     });
 
     it('should have unique directory names', () => {
@@ -31,6 +31,7 @@ describe('skill-generation', () => {
       expect(dirNames).toContain('ratchet-propose');
       expect(dirNames).toContain('ratchet-propose-standard');
       expect(dirNames).toContain('ratchet-apply-batch');
+      expect(dirNames).toContain('ratchet-archive-batch');
       expect(dirNames).toContain('ratchet-propose-batch');
       expect(dirNames).toContain('ratchet-eval');
       // explore is internal-only and is never generated
@@ -137,7 +138,7 @@ describe('skill-generation', () => {
   describe('getCommandTemplates', () => {
     it('should return the generated command templates', () => {
       const templates = getCommandTemplates();
-      expect(templates).toHaveLength(9);
+      expect(templates).toHaveLength(10);
     });
 
     it('should have unique IDs', () => {
@@ -157,6 +158,7 @@ describe('skill-generation', () => {
       expect(ids).toContain('propose');
       expect(ids).toContain('propose-standard');
       expect(ids).toContain('apply-batch');
+      expect(ids).toContain('archive-batch');
       expect(ids).toContain('propose-batch');
       expect(ids).toContain('eval');
       // explore is internal-only and is never generated
@@ -191,7 +193,7 @@ describe('skill-generation', () => {
   describe('getCommandContents', () => {
     it('should return the generated command contents', () => {
       const contents = getCommandContents();
-      expect(contents).toHaveLength(9);
+      expect(contents).toHaveLength(10);
     });
 
     it('should have valid content structure', () => {

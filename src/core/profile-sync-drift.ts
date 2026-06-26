@@ -18,6 +18,7 @@ export const WORKFLOW_TO_SKILL_DIR: Record<WorkflowId, string> = {
   'archive': 'ratchet-archive-change',
   'propose-standard': 'ratchet-propose-standard',
   'apply-batch': 'ratchet-apply-batch',
+  'archive-batch': 'ratchet-archive-batch',
   'eval': 'ratchet-eval',
   'propose-batch': 'ratchet-propose-batch',
   'brainstorm': 'ratchet-brainstorm',

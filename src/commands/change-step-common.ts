@@ -9,8 +9,10 @@
 
 import chalk from 'chalk';
 import type { ProofOfWork } from '../core/batch/manifest.js';
+import type { BatchSettings } from '../core/batch/config.js';
 import type { ChangeStepContext, StepResult } from '../core/batch/engine/index.js';
 import { readChangeDiskState } from '../core/batch/engine/transition.js';
+import { readChangeJournalTolerantForLocus } from '../core/batch/engine/run-state.js';
 
 /** Options common to every headless single-change verb. */
 export interface ChangeStepCommonOptions {
@@ -61,6 +63,46 @@ export function syntheticPhase(
   success: string
 ): ChangeStepContext['phase'] {
   return { name, goal, success, proofOfWork: DEFAULT_PROOF_OF_WORK };
+}
+
+/** Inputs that vary between the headless verbs when building their step context. */
+export interface ChangeStepContextArgs {
+  projectRoot: string;
+  change: string;
+  /** Forced transition — the verb name IS the transition (and the phase name). */
+  transition: ChangeStepContext['transition'];
+  /** The change's definition of done surfaced in the instructions. */
+  changeDone: string;
+  /** Synthetic phase goal. */
+  goal: string;
+  /** Synthetic phase success criteria. */
+  success: string;
+  /** Resolved standalone settings (flag → project config → default). */
+  settings: BatchSettings;
+  /** Optional joined `-m` guidance block. */
+  guidance?: string;
+}
+
+/**
+ * Build the forced-transition `ChangeStepContext` shared verbatim by `propose`,
+ * `apply`, and `verify`. The verbs differ only by their forced transition,
+ * change-done text, and synthetic phase wording (plus their distinct precondition
+ * guards, which run before this); everything else — the synthetic phase, the
+ * change-local journal read, and the conditional guidance spread — is identical,
+ * so it lives here once. There is NO `batch`, so run state stays change-local
+ * under `.ratchet/changes/<change>/.run/`.
+ */
+export function buildChangeStepContext(args: ChangeStepContextArgs): ChangeStepContext {
+  const { projectRoot, change, transition, changeDone, goal, success, settings, guidance } = args;
+  return {
+    change,
+    changeDone,
+    transition,
+    phase: syntheticPhase(transition, goal, success),
+    settings,
+    journal: readChangeJournalTolerantForLocus(projectRoot, { change }, change),
+    ...(guidance ? { guidance } : {}),
+  };
 }
 
 /**

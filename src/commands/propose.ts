@@ -23,16 +23,11 @@ import { resolveCurrentPlanningHomeSync } from '../core/planning-home.js';
 import { RATCHET_DIR_NAME } from '../core/config.js';
 import { slugify } from '../core/eval/case-id.js';
 import { resolveChangeStepSettings } from '../core/batch/config.js';
+import { RatchetBatchEngine, type EngineDeps } from '../core/batch/engine/index.js';
 import {
-  RatchetBatchEngine,
-  type ChangeStepContext,
-  type EngineDeps,
-} from '../core/batch/engine/index.js';
-import { readChangeJournalTolerantForLocus } from '../core/batch/engine/run-state.js';
-import {
+  buildChangeStepContext,
   joinGuidance,
   renderStepResult,
-  syntheticPhase,
   type ChangeStepCommonOptions,
 } from './change-step-common.js';
 
@@ -90,19 +85,16 @@ export async function proposeCommand(
   const guidance = joinGuidance(options.message);
 
   // 4. Build a forced-propose context with NO batch — run state is change-local.
-  const context: ChangeStepContext = {
+  const context = buildChangeStepContext({
+    projectRoot,
     change,
-    changeDone: `The change "${change}" is created with feature files and a plan toward: ${objective.trim()}`,
     transition: 'propose',
-    phase: syntheticPhase(
-      'propose',
-      `Create a single change toward: ${objective.trim()}`,
-      'The change directory with feature files and a plan exists.'
-    ),
+    changeDone: `The change "${change}" is created with feature files and a plan toward: ${objective.trim()}`,
+    goal: `Create a single change toward: ${objective.trim()}`,
+    success: 'The change directory with feature files and a plan exists.',
     settings,
-    journal: readChangeJournalTolerantForLocus(projectRoot, { change }, change),
     ...(guidance ? { guidance } : {}),
-  };
+  });
 
   const engine = new RatchetBatchEngine(deps);
   const result = await engine.runChangeStep(context);

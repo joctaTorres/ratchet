@@ -18,17 +18,12 @@
 
 import { resolveCurrentPlanningHomeSync } from '../core/planning-home.js';
 import { resolveChangeStepSettings } from '../core/batch/config.js';
-import {
-  RatchetBatchEngine,
-  type ChangeStepContext,
-  type EngineDeps,
-} from '../core/batch/engine/index.js';
-import { readChangeJournalTolerantForLocus } from '../core/batch/engine/run-state.js';
+import { RatchetBatchEngine, type EngineDeps } from '../core/batch/engine/index.js';
 import {
   assertVerifyPreconditions,
+  buildChangeStepContext,
   joinGuidance,
   renderStepResult,
-  syntheticPhase,
   type ChangeStepCommonOptions,
 } from './change-step-common.js';
 
@@ -58,19 +53,16 @@ export async function verifyCommand(
   const guidance = joinGuidance(options.message);
 
   // 3. Build a forced-verify context with NO batch — run state is change-local.
-  const context: ChangeStepContext = {
+  const context = buildChangeStepContext({
+    projectRoot,
     change,
-    changeDone: `The change "${change}" is verified against its feature scenarios.`,
     transition: 'verify',
-    phase: syntheticPhase(
-      'verify',
-      `Verify change "${change}" against its feature scenarios.`,
-      'The implementation satisfies every feature scenario.'
-    ),
+    changeDone: `The change "${change}" is verified against its feature scenarios.`,
+    goal: `Verify change "${change}" against its feature scenarios.`,
+    success: 'The implementation satisfies every feature scenario.',
     settings,
-    journal: readChangeJournalTolerantForLocus(projectRoot, { change }, change),
     ...(guidance ? { guidance } : {}),
-  };
+  });
 
   const engine = new RatchetBatchEngine(deps);
   const result = await engine.runChangeStep(context);

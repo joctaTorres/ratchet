@@ -18,17 +18,12 @@
 
 import { resolveCurrentPlanningHomeSync } from '../core/planning-home.js';
 import { resolveChangeStepSettings } from '../core/batch/config.js';
-import {
-  RatchetBatchEngine,
-  type ChangeStepContext,
-  type EngineDeps,
-} from '../core/batch/engine/index.js';
-import { readChangeJournalTolerantForLocus } from '../core/batch/engine/run-state.js';
+import { RatchetBatchEngine, type EngineDeps } from '../core/batch/engine/index.js';
 import {
   assertApplyPreconditions,
+  buildChangeStepContext,
   joinGuidance,
   renderStepResult,
-  syntheticPhase,
   type ChangeStepCommonOptions,
 } from './change-step-common.js';
 
@@ -58,19 +53,16 @@ export async function applyCommand(
   const guidance = joinGuidance(options.message);
 
   // 3. Build a forced-apply context with NO batch — run state is change-local.
-  const context: ChangeStepContext = {
+  const context = buildChangeStepContext({
+    projectRoot,
     change,
-    changeDone: `The change "${change}" has all its planned tasks implemented and checked off.`,
     transition: 'apply',
-    phase: syntheticPhase(
-      'apply',
-      `Implement the planned tasks for change "${change}".`,
-      'Every "## Tasks" checkbox in the plan is checked off.'
-    ),
+    changeDone: `The change "${change}" has all its planned tasks implemented and checked off.`,
+    goal: `Implement the planned tasks for change "${change}".`,
+    success: 'Every "## Tasks" checkbox in the plan is checked off.',
     settings,
-    journal: readChangeJournalTolerantForLocus(projectRoot, { change }, change),
     ...(guidance ? { guidance } : {}),
-  };
+  });
 
   const engine = new RatchetBatchEngine(deps);
   const result = await engine.runChangeStep(context);

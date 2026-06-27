@@ -395,16 +395,26 @@ newCmd
 /** Accumulate a repeatable option (`-m a -m b`) into an array. */
 const collect = (value: string, previous: string[]): string[] => [...previous, value];
 
-program
-  .command('propose <objective>')
-  .helpGroup('Workflow:')
-  .description('Create a single change headlessly from a free-text objective')
-  .option('--name <change>', 'Explicit change name (overrides the derived slug)')
-  .option('-m, --message <guidance>', 'Extra guidance for the agent (repeatable)', collect, [])
-  .option('--agent <agent>', 'Override the coding agent for this step')
-  .option('--locus <locus>', 'Where the agent runs: local | docker | remote')
-  .option('--image <image>', 'Container image for locus docker')
-  .option('--json', 'Output as JSON')
+/**
+ * Apply the five flags shared by every headless change verb (`propose`/`apply`/
+ * `verify`) to a command and return it. Verb-unique flags (`--name`, `--force`)
+ * are declared at the call site before this so flag order stays identical.
+ */
+const withChangeStepFlags = (cmd: Command): Command =>
+  cmd
+    .option('-m, --message <guidance>', 'Extra guidance for the agent (repeatable)', collect, [])
+    .option('--agent <agent>', 'Override the coding agent for this step')
+    .option('--locus <locus>', 'Where the agent runs: local | docker | remote')
+    .option('--image <image>', 'Container image for locus docker')
+    .option('--json', 'Output as JSON');
+
+withChangeStepFlags(
+  program
+    .command('propose <objective>')
+    .helpGroup('Workflow:')
+    .description('Create a single change headlessly from a free-text objective')
+    .option('--name <change>', 'Explicit change name (overrides the derived slug)')
+)
   .action(async (objective: string, options: ProposeOptions) => {
     try {
       await proposeCommand(objective, options);
@@ -415,16 +425,13 @@ program
     }
   });
 
-program
-  .command('apply <change>')
-  .helpGroup('Workflow:')
-  .description('Implement a single existing change headlessly (forced apply step)')
-  .option('--force', 'Bypass the missing-plan precondition')
-  .option('-m, --message <guidance>', 'Extra guidance for the agent (repeatable)', collect, [])
-  .option('--agent <agent>', 'Override the coding agent for this step')
-  .option('--locus <locus>', 'Where the agent runs: local | docker | remote')
-  .option('--image <image>', 'Container image for locus docker')
-  .option('--json', 'Output as JSON')
+withChangeStepFlags(
+  program
+    .command('apply <change>')
+    .helpGroup('Workflow:')
+    .description('Implement a single existing change headlessly (forced apply step)')
+    .option('--force', 'Bypass the missing-plan precondition')
+)
   .action(async (change: string, options: ApplyOptions) => {
     try {
       await applyCommand(change, options);
@@ -435,16 +442,13 @@ program
     }
   });
 
-program
-  .command('verify <change>')
-  .helpGroup('Workflow:')
-  .description('Verify a single existing change headlessly (forced verify step)')
-  .option('--force', 'Bypass the unfinished-tasks precondition')
-  .option('-m, --message <guidance>', 'Extra guidance for the agent (repeatable)', collect, [])
-  .option('--agent <agent>', 'Override the coding agent for this step')
-  .option('--locus <locus>', 'Where the agent runs: local | docker | remote')
-  .option('--image <image>', 'Container image for locus docker')
-  .option('--json', 'Output as JSON')
+withChangeStepFlags(
+  program
+    .command('verify <change>')
+    .helpGroup('Workflow:')
+    .description('Verify a single existing change headlessly (forced verify step)')
+    .option('--force', 'Bypass the unfinished-tasks precondition')
+)
   .action(async (change: string, options: VerifyOptions) => {
     try {
       await verifyCommand(change, options);

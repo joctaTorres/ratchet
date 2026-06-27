@@ -10,13 +10,23 @@
  * retired id plus a new id (an accepted trade-off), never a silent mismatch.
  */
 
-/** Slugify a scenario name into a stable, url-ish token. */
-export function slugifyScenario(name: string): string {
-  const slug = name
+/**
+ * Kebab-case a free-text value into a stable, url-ish slug, or `''` when nothing
+ * sluggable remains. The shared transform behind {@link slugifyScenario} (which
+ * adds a non-empty fallback) and the propose verb's change-name derivation
+ * (which treats `''` as "no derivable name").
+ */
+export function slugify(value: string): string {
+  return value
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+/** Slugify a scenario name into a stable, url-ish token. */
+export function slugifyScenario(name: string): string {
+  const slug = slugify(name);
   return slug.length > 0 ? slug : 'scenario';
 }
 

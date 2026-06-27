@@ -48,6 +48,9 @@ import {
   type EvalReportOptions,
   type EvalBaselineOptions,
 } from '../commands/eval/index.js';
+import { proposeCommand, type ProposeOptions } from '../commands/propose.js';
+import { applyCommand, type ApplyOptions } from '../commands/apply.js';
+import { verifyCommand, type VerifyOptions } from '../commands/verify.js';
 import { maybeShowTelemetryNotice, trackCommand, shutdown } from '../telemetry/index.js';
 
 const program = new Command();
@@ -384,11 +387,79 @@ newCmd
   });
 
 // ═══════════════════════════════════════════════════════════
+// Headless Change Verbs (single change, no batch manifest)
+// ═══════════════════════════════════════════════════════════
+
+/** Accumulate a repeatable option (`-m a -m b`) into an array. */
+const collect = (value: string, previous: string[]): string[] => [...previous, value];
+
+program
+  .command('propose <objective>')
+  .helpGroup('Workflow:')
+  .description('Create a single change headlessly from a free-text objective')
+  .option('--name <change>', 'Explicit change name (overrides the derived slug)')
+  .option('-m, --message <guidance>', 'Extra guidance for the agent (repeatable)', collect, [])
+  .option('--agent <agent>', 'Override the coding agent for this step')
+  .option('--locus <locus>', 'Where the agent runs: local | docker | remote')
+  .option('--image <image>', 'Container image for locus docker')
+  .option('--json', 'Output as JSON')
+  .action(async (objective: string, options: ProposeOptions) => {
+    try {
+      await proposeCommand(objective, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('apply <change>')
+  .helpGroup('Workflow:')
+  .description('Implement a single existing change headlessly (forced apply step)')
+  .option('--force', 'Bypass the missing-plan precondition')
+  .option('-m, --message <guidance>', 'Extra guidance for the agent (repeatable)', collect, [])
+  .option('--agent <agent>', 'Override the coding agent for this step')
+  .option('--locus <locus>', 'Where the agent runs: local | docker | remote')
+  .option('--image <image>', 'Container image for locus docker')
+  .option('--json', 'Output as JSON')
+  .action(async (change: string, options: ApplyOptions) => {
+    try {
+      await applyCommand(change, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('verify <change>')
+  .helpGroup('Workflow:')
+  .description('Verify a single existing change headlessly (forced verify step)')
+  .option('--force', 'Bypass the unfinished-tasks precondition')
+  .option('-m, --message <guidance>', 'Extra guidance for the agent (repeatable)', collect, [])
+  .option('--agent <agent>', 'Override the coding agent for this step')
+  .option('--locus <locus>', 'Where the agent runs: local | docker | remote')
+  .option('--image <image>', 'Container image for locus docker')
+  .option('--json', 'Output as JSON')
+  .action(async (change: string, options: VerifyOptions) => {
+    try {
+      await verifyCommand(change, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+// ═══════════════════════════════════════════════════════════
 // Batch Orchestration Commands
 // ═══════════════════════════════════════════════════════════
 
 const batchCmd = program
   .command('batch')
+  .helpGroup('Workflow:')
   .description('Coordinate related changes across phases (batch orchestration)');
 
 // First-run agent-permissions setup: fires before any `batch *` subcommand the
@@ -526,6 +597,7 @@ batchCmd
 
 const evalCmd = program
   .command('eval')
+  .helpGroup('Workflow:')
   .description('Turn .feature files into a scored, baseline-diffed eval suite');
 
 const withScopeFlags = (cmd: Command): Command =>

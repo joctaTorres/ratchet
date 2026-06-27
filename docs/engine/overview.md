@@ -24,52 +24,63 @@ the headless verbs reuse `runChangeStep` directly with a forced transition.
 
 ```mermaid
 flowchart TB
-    subgraph CLI["CLI entry surfaces"]
-        BA["ratchet batch apply"]
-        HV["ratchet propose / apply / verify<br/>(headless verbs)"]
+    subgraph CLI["📥 CLI entry surfaces"]
+        BA["🛠️ ratchet batch apply"]
+        HV["👤 ratchet propose · apply · verify<br/>headless verbs"]
     end
 
-    subgraph ENGINE["RatchetBatchEngine · in-process · single-step"]
-        RS["runStep<br/>batch-facing"]
-        LOCK{{"per-batch lock"}}
-        CNT["computeNextTransition<br/>authoritative, from disk"]
-        PARK{"unresolved<br/>park?"}
-        RCS["runChangeStep<br/>change-scoped core"]
+    subgraph ENGINE["⚙️ RatchetBatchEngine — in-process · single-step"]
+        RS["🔁 runStep<br/>batch-facing"]
+        LOCK["🔒 acquire per-batch lock"]
+        CNT["🧭 computeNextTransition<br/>authoritative, from disk"]
+        PARK{"⏸️ unresolved<br/>park?"}
+        RCS["⚙️ runChangeStep<br/>change-scoped core"]
     end
 
-    subgraph RUNTIME["Agent runtime · SWE-ReX"]
-        RT{"locus"}
-        LOC["local · sidecar"]
-        DOC["docker · sidecar"]
-        REM["remote runtime"]
-        AGENT(["ONE coding agent<br/>claude · codex · gemini · cursor"])
+    subgraph RUNTIME["🌐 Agent runtime — SWE-ReX"]
+        RT{"📍 locus?"}
+        LOC["💻 local · sidecar"]
+        DOC["🐳 docker · sidecar"]
+        REM["📡 remote runtime"]
+        AGENT(["🤖 ONE coding agent<br/>claude · codex · gemini · cursor"])
     end
 
-    OUT["map session &rarr; outcome"]
-    JOURNAL[("journal.jsonl + state.json<br/>at run-state locus")]
-    RES(["StepResult<br/>advanced · blocked · awaiting-approval<br/>phase-gated · nothing-ready"])
+    OUT["🧮 map session to outcome"]
+    JOURNAL[("📓 journal.jsonl + state.json<br/>at run-state locus")]
+    RES(["🎯 StepResult<br/>advanced · blocked · awaiting-approval<br/>phase-gated · nothing-ready"])
 
     BA --> RS
-    RS --> LOCK --> CNT --> PARK
-    PARK -- yes --> RES
-    PARK -- no --> RCS
-    HV --> RCS
+    RS --> LOCK
+    LOCK --> CNT
+    CNT --> PARK
+    PARK -->|"⏸️ yes — return, no spawn"| RES
+    PARK -->|"▶️ no"| RCS
+    HV -->|"forced transition · no lock"| RCS
 
     RCS --> RT
-    RT --> LOC & DOC & REM
-    LOC & DOC & REM --> AGENT
+    RT --> LOC
+    RT --> DOC
+    RT --> REM
+    LOC --> AGENT
+    DOC --> AGENT
+    REM --> AGENT
     AGENT --> OUT
     OUT --> JOURNAL
     OUT --> RES
 
-    classDef entry fill:#1f6feb22,stroke:#1f6feb,color:#c9d1d9;
-    classDef core fill:#8957e522,stroke:#8957e5,color:#c9d1d9;
-    classDef runtime fill:#2ea04322,stroke:#2ea043,color:#c9d1d9;
-    classDef result fill:#bb800922,stroke:#bb8009,color:#c9d1d9;
+    classDef entry fill:#87CEEB,stroke:#1b4965,stroke-width:2px,color:#06263d;
+    classDef core fill:#90EE90,stroke:#1b5e20,stroke-width:2px,color:#06371a;
+    classDef decision fill:#FFD700,stroke:#7a5c00,stroke-width:2px,color:#3d2e00;
+    classDef runtime fill:#FFCC80,stroke:#8a4b00,stroke-width:2px,color:#5d3300;
+    classDef store fill:#E6E6FA,stroke:#4b3b8f,stroke-width:2px,color:#2a1452;
+    classDef result fill:#A5D6A7,stroke:#1b5e20,stroke-width:2px,color:#06371a;
+
     class BA,HV entry;
-    class RS,LOCK,CNT,PARK,RCS core;
-    class RT,LOC,DOC,REM,AGENT runtime;
-    class OUT,JOURNAL,RES result;
+    class RS,LOCK,CNT,RCS,OUT core;
+    class PARK,RT decision;
+    class LOC,DOC,REM,AGENT runtime;
+    class JOURNAL store;
+    class RES result;
 ```
 
 ## The two entry surfaces

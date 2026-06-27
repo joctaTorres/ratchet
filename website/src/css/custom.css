@@ -1,0 +1,89 @@
+/**
+ * Machined, dark-first theme for the ratchet documentation site.
+ *
+ * One sharp accent (heated-steel orange) against a near-black machined
+ * background, hairline rules, a monospaced display typeface (JetBrains Mono)
+ * paired with a humanist sans body (Work Sans). Infima's CSS variables are
+ * overridden so the theme carries across the docs as well as the landing page.
+ */
+
+:root {
+  /* Humanist sans body — explicitly not Inter/Roboto. */
+  --ifm-font-family-base: 'Work Sans', ui-sans-serif, system-ui, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', ui-monospace, 'SFMono-Regular',
+    monospace;
+
+  /* Heated-steel accent. */
+  --rct-accent: #ff6a1a;
+  --rct-accent-soft: rgba(255, 106, 26, 0.14);
+
+  --ifm-color-primary: #e85d12;
+  --ifm-color-primary-dark: #d15310;
+  --ifm-color-primary-darker: #c54e0f;
+  --ifm-color-primary-darkest: #a2400c;
+  --ifm-color-primary-light: #f56a1f;
+  --ifm-color-primary-lighter: #ff7530;
+  --ifm-color-primary-lightest: #ff8f54;
+
+  --ifm-code-font-size: 95%;
+  --ifm-heading-font-family: 'JetBrains Mono', ui-monospace, monospace;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+/* Dark is the design's home; tune the machined surfaces. */
+[data-theme='dark'] {
+  --rct-bg: #0b0c0e;
+  --rct-bg-elevated: #121419;
+  --rct-hairline: rgba(255, 255, 255, 0.08);
+  --rct-text-dim: #9aa0a6;
+
+  --ifm-color-primary: #ff6a1a;
+  --ifm-color-primary-dark: #f15f10;
+  --ifm-color-primary-darker: #e2580d;
+  --ifm-color-primary-darkest: #b9470b;
+  --ifm-color-primary-light: #ff7c38;
+  --ifm-color-primary-lighter: #ff8a4d;
+  --ifm-color-primary-lightest: #ffa470;
+
+  --ifm-background-color: var(--rct-bg);
+  --ifm-background-surface-color: var(--rct-bg-elevated);
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme='light'] {
+  --rct-bg: #f7f6f4;
+  --rct-bg-elevated: #ffffff;
+  --rct-hairline: rgba(15, 17, 21, 0.1);
+  --rct-text-dim: #5b6066;
+}
+
+/* Hairline under the sticky navbar reinforces the precision-instrument feel. */
+.navbar {
+  border-bottom: 1px solid var(--rct-hairline);
+  backdrop-filter: blur(8px);
+}
+
+.navbar__title {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/*
+  Center the footer link columns (Docs / More) as a side-by-side group so they
+  align with the centered "ratchet · MIT License" copyright below. Infima's
+  `.col` sets `width: 100%`, so the columns must be sized to their content
+  (overriding width/max-width) or they wrap and stack; `justify-content: center`
+  then centers the pair.
+*/
+.footer__links {
+  justify-content: center;
+}
+
+.footer .footer__col {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+  padding: 0 2rem;
+  text-align: center;
+}

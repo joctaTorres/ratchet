@@ -1,0 +1,237 @@
+/* Landing page — machined hero + capability cards. */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: 7rem 0 5rem;
+  background-color: var(--rct-bg);
+}
+
+/* Faint engineering grid + a heated-steel glow for atmosphere/depth. */
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--rct-hairline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--rct-hairline) 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 75%);
+  mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 75%);
+  pointer-events: none;
+}
+
+.hero::after {
+  content: '';
+  position: absolute;
+  top: -20%;
+  left: 50%;
+  width: 60rem;
+  height: 30rem;
+  transform: translateX(-50%);
+  background: radial-gradient(
+    ellipse at center,
+    var(--rct-accent-soft) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.heroInner {
+  position: relative;
+  text-align: center;
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.logo {
+  width: 132px;
+  height: 132px;
+  margin-bottom: 1.5rem;
+  filter: drop-shadow(0 0 24px var(--rct-accent-soft));
+  /*
+    Two independent animations so they don't fight over `transform`: an
+    opacity-only fade-in for the page-load reveal (the shared .reveal class
+    animates translateY, which would clash with the rotation), plus a slow
+    anti-clockwise spin, like a gear easing backward.
+  */
+  opacity: 0;
+  animation: rctFadeIn 0.6s ease forwards, rctSpin 28s linear infinite;
+}
+
+@keyframes rctFadeIn {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rctSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+.title {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 800;
+  font-size: clamp(2.75rem, 8vw, 5rem);
+  letter-spacing: 0.12em;
+  margin: 0;
+  line-height: 1;
+}
+
+.rule {
+  width: 4rem;
+  height: 2px;
+  margin: 1.25rem auto;
+  background: var(--rct-accent);
+}
+
+.tagline {
+  font-size: clamp(1.05rem, 2.5vw, 1.35rem);
+  color: var(--rct-text-dim);
+  max-width: 34rem;
+  margin: 0 auto 2.25rem;
+}
+
+.ctas {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* The primary CTA carries a subtle "ratchet tick" — a notched step on hover. */
+.ctaPrimary {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: transform 0.08s steps(2, end), box-shadow 0.2s ease;
+  box-shadow: 0 0 0 1px var(--rct-accent);
+}
+
+.ctaPrimary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 -1px var(--ifm-color-primary-darkest);
+}
+
+.ctaSecondary {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Install command — a machined, copy-friendly code block under the CTAs. */
+.install {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 2rem auto 0;
+  padding: 0.7rem 1.1rem;
+  border: 1px solid var(--rct-hairline);
+  border-radius: 6px;
+  background: var(--rct-bg-elevated);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.95rem;
+  text-align: left;
+  overflow-x: auto;
+}
+
+.install code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.installPrompt {
+  color: var(--rct-accent);
+  user-select: none;
+}
+
+/* Feature cards */
+.features {
+  padding: 4rem 0 5rem;
+}
+
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+}
+
+@media (max-width: 768px) {
+  .cardGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card {
+  border: 1px solid var(--rct-hairline);
+  border-radius: 8px;
+  padding: 1.75rem 1.5rem;
+  background: var(--rct-bg-elevated);
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.card:hover {
+  border-color: var(--rct-accent);
+  transform: translateY(-3px);
+}
+
+.cardTag {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--rct-accent);
+  letter-spacing: 0.04em;
+}
+
+.cardTitle {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 700;
+  font-size: 1.2rem;
+  margin: 0.6rem 0 0.5rem;
+}
+
+.cardBody {
+  color: var(--rct-text-dim);
+  font-size: 0.97rem;
+  margin: 0;
+}
+
+/* One orchestrated page-load: staggered reveal of hero pieces then cards. */
+@keyframes rctReveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal {
+  opacity: 0;
+  animation: rctReveal 0.6s ease forwards;
+  animation-delay: var(--rct-delay, 0ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    animation: none;
+  }
+  .logo {
+    opacity: 1;
+    animation: none;
+  }
+  .ctaPrimary {
+    transition: none;
+  }
+}

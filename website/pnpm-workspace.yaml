@@ -1,0 +1,19 @@
+# Make website/ a self-contained pnpm workspace root. pnpm resolves the nearest
+# pnpm-workspace.yaml walking up from the cwd, so this file wins over the
+# repository-root workspace: the documentation site installs and builds with its
+# own lockfile, fully isolated from the CLI package's workspace and CI.
+packages:
+  - '.'
+
+# pnpm 11 denies dependency build scripts by default and fails install with a
+# non-zero exit (ERR_PNPM_IGNORED_BUILDS) until each is explicitly decided.
+# core-js' postinstall is only a funding notice and is not needed to build the
+# site, so explicitly disallow it (a definitive decision keeps install green and
+# stops pnpm re-prompting), locally and on Cloudflare Pages.
+allowBuilds:
+  core-js: false
+
+# Docusaurus' own scripts otherwise trigger pnpm's deps-before-run check, which
+# re-runs `pnpm install`; disable it so the build does not re-install on every
+# invocation.
+verifyDepsBeforeRun: false

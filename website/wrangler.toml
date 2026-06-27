@@ -1,0 +1,34 @@
+# wrangler.toml — Cloudflare Workers Builds + Static Assets contract for the
+# ratchet documentation website.
+#
+# Project shape: Cloudflare Workers Builds with the static-assets handler (no
+# Worker script — Docusaurus' `build/` output is served directly via [assets]).
+# This is NOT a Cloudflare Pages project; the dashboard surface is
+# Workers & Pages -> Workers. Mirrors the sibling joc-thoughts project on the
+# same Cloudflare account (Cloudflare steers new projects to Workers + Static
+# Assets; Pages is in soft maintenance).
+#
+# Workers Builds dashboard contract (one-time manual setup; Workers project ->
+# Settings -> Builds):
+#   Root directory:          website
+#   Build command:           pnpm install && pnpm build
+#   Build output directory:  build               (matches [assets].directory)
+#   Deploy command:          npx wrangler deploy (REQUIRED in Workers Builds)
+#   Node.js version:         22 (NODE_VERSION=22; wrangler@4 requires Node >= 22)
+#   Production branch:       main
+#
+# Because the build root directory is `website`, wrangler runs inside `website/`
+# and resolves `./build` to `website/build`. Deploys ride on `git push` to
+# `main` once the Workers project is connected to this repo: the build container
+# runs the build command (producing build/) then the deploy command, which
+# uploads the [assets] directory.
+
+name = "ratchet-docs"
+compatibility_date = "2026-05-02"
+
+# Serve build/ as static files with no Worker script. not_found_handling =
+# "404-page" makes the runtime serve build/404.html on a miss (Docusaurus emits
+# one), matching the prior Pages 404 behavior.
+[assets]
+directory = "./build"
+not_found_handling = "404-page"

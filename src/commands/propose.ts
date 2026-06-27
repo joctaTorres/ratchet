@@ -93,7 +93,7 @@ export async function proposeCommand(
     goal: `Create a single change toward: ${objective.trim()}`,
     success: 'The change directory with feature files and a plan exists.',
     settings,
-    ...(guidance ? { guidance } : {}),
+    guidance,
   });
 
   const engine = new RatchetBatchEngine(deps);

@@ -61,7 +61,7 @@ export async function verifyCommand(
     goal: `Verify change "${change}" against its feature scenarios.`,
     success: 'The implementation satisfies every feature scenario.',
     settings,
-    ...(guidance ? { guidance } : {}),
+    guidance,
   });
 
   const engine = new RatchetBatchEngine(deps);

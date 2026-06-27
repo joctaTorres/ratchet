@@ -61,7 +61,7 @@ export async function applyCommand(
     goal: `Implement the planned tasks for change "${change}".`,
     success: 'Every "## Tasks" checkbox in the plan is checked off.',
     settings,
-    ...(guidance ? { guidance } : {}),
+    guidance,
   });
 
   const engine = new RatchetBatchEngine(deps);

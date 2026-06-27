@@ -11,7 +11,7 @@ import {
 describe('profiles', () => {
   describe('CORE_WORKFLOWS', () => {
     it('should contain the default core workflows', () => {
-      expect(CORE_WORKFLOWS).toEqual(['propose', 'apply', 'verify', 'archive', 'propose-standard', 'apply-batch', 'propose-batch', 'brainstorm']);
+      expect(CORE_WORKFLOWS).toEqual(['propose', 'apply', 'verify', 'archive', 'propose-standard', 'apply-batch', 'archive-batch', 'propose-batch', 'brainstorm']);
     });
 
     it('should be a subset of ALL_WORKFLOWS', () => {
@@ -22,6 +22,7 @@ describe('profiles', () => {
 
     it('should include the batch workflows by default', () => {
       expect(CORE_WORKFLOWS).toContain('apply-batch');
+      expect(CORE_WORKFLOWS).toContain('archive-batch');
       expect(CORE_WORKFLOWS).toContain('propose-batch');
     });
 
@@ -32,11 +33,11 @@ describe('profiles', () => {
 
   describe('ALL_WORKFLOWS', () => {
     it('should contain all workflows', () => {
-      expect(ALL_WORKFLOWS).toHaveLength(9);
+      expect(ALL_WORKFLOWS).toHaveLength(10);
     });
 
     it('should contain expected workflow IDs', () => {
-      const expected = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'apply-batch', 'eval', 'propose-batch', 'brainstorm'];
+      const expected = ['propose', 'apply', 'verify', 'archive', 'propose-standard', 'apply-batch', 'archive-batch', 'eval', 'propose-batch', 'brainstorm'];
       expect([...ALL_WORKFLOWS]).toEqual(expected);
     });
   });

@@ -13,6 +13,7 @@ export { getVerifyChangeSkillTemplate, getRctVerifyCommandTemplate } from './wor
 export { getRctProposeSkillTemplate, getRctProposeCommandTemplate } from './workflows/propose.js';
 export { getRctProposeStandardSkillTemplate, getRctProposeStandardCommandTemplate } from './workflows/propose-standard.js';
 export { getApplyBatchSkillTemplate, getRctApplyBatchCommandTemplate } from './workflows/apply-batch.js';
+export { getArchiveBatchSkillTemplate, getRctArchiveBatchCommandTemplate } from './workflows/archive-batch.js';
 export { getProposeBatchSkillTemplate, getRctProposeBatchCommandTemplate } from './workflows/propose-batch.js';
 export { getBrainstormSkillTemplate, getRctBrainstormCommandTemplate } from './workflows/brainstorm.js';
 export { getEvalSkillTemplate, getRctEvalCommandTemplate } from './workflows/eval.js';

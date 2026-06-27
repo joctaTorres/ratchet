@@ -66,7 +66,7 @@ const APPLY_BATCH_BODY = `Drive a Ratchet batch to completion as an autonomous o
       - **Failed / proof-of-work hard-gate failure** -> **STOP.** Surface the failure clearly to the user. Do **not** paper over it or retry blindly. The engine gates; you surface the gate result.
 
 4. **Stop conditions**
-   - **Batch complete** -> summarize the finished batch for the user (phases, changes, what landed) and celebrate.
+   - **Batch complete** -> summarize the finished batch for the user (phases, changes, what landed) and celebrate. Then point the user at the **terminal step**: archive the batch to close its lifecycle and clear it from the active list, by running \`ratchet batch archive "<name>"\` (or the \`/rct:archive-batch <name>\` workflow). That cascades the change-archive flow over every member change and moves the batch under the archive.
    - **Halt needing the user** -> surfaced as above; resume after recorded input/approval.
    - **Hard failure** -> surfaced clearly; stop and hand control back to the user.
 

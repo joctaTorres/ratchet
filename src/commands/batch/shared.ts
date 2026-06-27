@@ -12,6 +12,9 @@ export function listBatchNames(projectRoot: string): string[] {
   return readdirSync(batchesDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
+    // The reserved `archive/` directory holds archived batches, not an active
+    // batch — never list or resolve it as one.
+    .filter((name) => name !== 'archive')
     .filter((name) => batchExists(projectRoot, name))
     .sort();
 }

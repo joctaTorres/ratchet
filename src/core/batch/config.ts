@@ -485,6 +485,48 @@ export function validateRemoteSettings(settings: BatchSettings): string | null {
   );
 }
 
+/** Explicit per-invocation overrides for a standalone change step. */
+export interface ChangeStepSettingOverrides {
+  agent?: string;
+  locus?: string;
+  image?: string;
+}
+
+/**
+ * Resolve effective settings for a STANDALONE change step — one driven with no
+ * batch manifest (the headless propose/apply/verify verbs). Settings cascade
+ * `flag → project config → built-in default`: start from
+ * `resolveBatchSettings(projectRoot)` (project config ← default, no manifest),
+ * then apply each provided override (`agent` / `locus` / `image`).
+ *
+ * Every override is validated through {@link validateSetting} so an invalid value
+ * throws an actionable error BEFORE any agent is spawned (e.g. an unknown locus
+ * names the allowed values). The returned `BatchSettings` feeds `runChangeStep`
+ * directly, and `selectRuntime` keys off `locus`/`image` exactly as for a batch.
+ */
+export function resolveChangeStepSettings(
+  projectRoot: string,
+  overrides: ChangeStepSettingOverrides = {}
+): BatchSettings {
+  const { settings } = resolveBatchSettings(projectRoot);
+  const writable = settings as { [K in keyof BatchSettings]: BatchSettings[K] };
+
+  const applyOverride = (key: 'agent' | 'locus' | 'image', value: string | undefined): void => {
+    if (value === undefined) return;
+    const validation = validateSetting(key, value);
+    if (!validation.ok) {
+      throw new Error(validation.error);
+    }
+    (writable[key] as BatchSettings[typeof key]) = value as BatchSettings[typeof key];
+  };
+
+  applyOverride('agent', overrides.agent);
+  applyOverride('locus', overrides.locus);
+  applyOverride('image', overrides.image);
+
+  return settings;
+}
+
 function configFilePath(projectRoot: string): string {
   const yamlPath = path.join(projectRoot, RATCHET_DIR_NAME, 'config.yaml');
   if (existsSync(yamlPath)) return yamlPath;

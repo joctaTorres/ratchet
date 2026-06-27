@@ -1,0 +1,1 @@
+{"at":"2026-06-27T17:32:34.227Z","change":"workflow-help-section","kind":"blocker","message":"Agent exited with code 0 without reporting completion, but a change directory and plan.md were created on disk — review and resume.","transition":"propose"}

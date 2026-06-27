@@ -22,8 +22,13 @@
  * single-transition semantics.
  */
 
-import { appendJournal, type JournalEntryKind } from '../journal.js';
-import type { ResolvedStepContext, StepResult, Transition } from './contract.js';
+import { appendJournalForLocus, type JournalEntryKind, type RunLocus } from '../journal.js';
+import type {
+  ResolvedStepContext,
+  ChangeStepContext,
+  StepResult,
+  Transition,
+} from './contract.js';
 import {
   resolveAdapter,
   UnknownAgentError,
@@ -42,7 +47,10 @@ import { mapSessionToOutcome } from './outcome.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
 import { computeNextTransition, readChangeDiskState } from './transition.js';
 import { withBatchLock } from './lock.js';
-import { readChangeJournalTolerant } from './run-state.js';
+import {
+  readChangeJournalTolerant,
+  readChangeJournalTolerantForLocus,
+} from './run-state.js';
 import { ensureChangeMetadata } from '../../../utils/change-metadata.js';
 import path from 'node:path';
 
@@ -151,7 +159,7 @@ export class RatchetBatchEngine {
    * event channel are otherwise locus-agnostic — streaming and rendering are
    * identical regardless of locus, because every runtime emits the same events.
    */
-  private selectRuntime(projectRoot: string, context: ResolvedStepContext): AgentRuntime {
+  private selectRuntime(projectRoot: string, context: ChangeStepContext): AgentRuntime {
     if (this.runtimeOverride) return this.runtimeOverride;
     const locus = context.settings.locus ?? 'local';
     // The enum is validated upstream, so an unknown locus here is a programming
@@ -185,15 +193,22 @@ export class RatchetBatchEngine {
 
     // 1. Single-flight: refuse a second concurrent step for the same batch.
     return withBatchLock(projectRoot, batch, async () => {
-      const outcome = await this.runStepLocked(projectRoot, context);
-      return toStepResult(outcome);
+      return this.runStepLocked(projectRoot, context);
     });
   }
 
+  /**
+   * The batch-facing step: hold the per-batch lock, derive the authoritative
+   * transition from on-disk state, honor an unresolved park, then DELEGATE the
+   * actual spawn-and-map to the change-scoped core `runChangeStep`. The lock,
+   * transition derivation, and park-precedence are deliberately runStep's
+   * responsibility and stay OUTSIDE the core so headless verbs (which force a
+   * transition and own no batch lock) can reuse the same spawn path.
+   */
   private async runStepLocked(
     projectRoot: string,
     context: ResolvedStepContext
-  ): Promise<EngineStepOutcome> {
+  ): Promise<StepResult> {
     const { batch, change } = context;
 
     // Determine the transition from on-disk state (authoritative), falling back
@@ -204,40 +219,76 @@ export class RatchetBatchEngine {
     const transition: Transition =
       computeNextTransition(projectRoot, change, journal) ?? context.transition;
 
-    // Honor an unresolved park: do not advance until input is recorded.
+    // Honor an unresolved park: do not advance until input is recorded. This is
+    // checked BEFORE delegation, so `runChangeStep` is never entered (no agent
+    // spawned) while a park is unresolved.
     const park = this.checkPark(context, transition);
-    if (park) return park;
+    if (park) return toStepResult(park);
 
-    // 2-3. Build instructions + the spawn request for this single transition.
-    //      A `RATCHET_BATCH_AGENT_CMD` override stands in for the agent; otherwise
-    //      the configured adapter is resolved (rejecting unknowns before any spawn).
-    const stepContext: ResolvedStepContext = { ...context, transition };
-    const instructions = buildAgentInstructions(stepContext);
+    // Hand the derived/forced transition to the change-scoped core, which spawns
+    // the single agent and maps the outcome. `ResolvedStepContext` is the
+    // batch-facing boundary; we adapt it into a `ChangeStepContext` here.
+    const changeStep: ChangeStepContext = { ...context, transition };
+    return this.runChangeStep(changeStep);
+  }
+
+  /**
+   * The change-scoped engine core: spawn EXACTLY ONE agent for the FORCED
+   * transition `ctx.transition` on a single change, snapshot the journal delta,
+   * and map the session to a structured `StepResult`. It does NOT take the batch
+   * lock and does NOT re-derive the transition (`computeNextTransition` is never
+   * called here) — both remain the caller's concern. This is the shared path
+   * batch apply delegates to and the headless propose/apply/verify verbs spawn
+   * directly.
+   */
+  async runChangeStep(ctx: ChangeStepContext): Promise<StepResult> {
+    const projectRoot = this.projectRoot();
+    const { batch, change, transition } = ctx;
+
+    // Honor an unresolved park BEFORE any spawn. A headless caller enters the core
+    // directly (the batch path already park-checks in `runStepLocked` and never
+    // delegates while parked), so the core must also refuse to advance until input
+    // is recorded — otherwise a standalone parked change would spawn an agent.
+    const park = this.checkPark(ctx, transition);
+    if (park) return toStepResult(park);
+
+    // Resolve the run-state locus: under the batch dir when a batch drives this
+    // step, else change-locally (`.ratchet/changes/<change>/.run/`) for a
+    // standalone change with no manifest.
+    const locus: RunLocus = batch ? { batch } : { change };
+
+    // Build instructions + the spawn request for this single forced transition.
+    // A `RATCHET_BATCH_AGENT_CMD` override stands in for the agent; otherwise the
+    // configured adapter is resolved (rejecting unknowns before any spawn).
+    const instructions = buildAgentInstructions(ctx);
     // Thread the batch name through the env so the runtime can place the temp
-    // prompt file under `.ratchet/batches/<batch>/.run/<id>/`.
-    const env = { ...process.env, RATCHET_BATCH_NAME: batch };
+    // prompt file under `.ratchet/batches/<batch>/.run/<id>/`. With no batch the
+    // runtime falls back to the change-local `.run/`, so the var is omitted.
+    const env: NodeJS.ProcessEnv = batch
+      ? { ...process.env, RATCHET_BATCH_NAME: batch }
+      : { ...process.env };
     let request;
     let emitsStreamJson = false;
     try {
-      const built = this.buildSpawnRequest(stepContext, instructions, projectRoot, env);
+      const built = this.buildSpawnRequest(ctx, instructions, projectRoot, env);
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
-        return {
+        return toStepResult({
           state: 'failed',
           change,
           transition,
           blocker: err.message,
           message: err.message,
-        };
+        });
       }
       throw err;
     }
 
     // Snapshot journal length and on-disk change state so we can isolate this
     // session's entries and measure the artifact delta (e.g. apply progress).
-    const before = readChangeJournalTolerant(projectRoot, batch, change).length;
+    const before = readChangeJournalTolerantForLocus(projectRoot, locus, change).length;
     const diskBefore = readChangeDiskState(projectRoot, change);
 
     // Route through the streaming runtime: each stdout line is PRINTED live as it
@@ -250,7 +301,7 @@ export class RatchetBatchEngine {
     // Rendering is display-only — the runtime accumulates the raw NDJSON into
     // `AgentSpawnResult.stdout` independently, so the mapped transcript is
     // untouched.
-    const runtime = this.selectRuntime(projectRoot, stepContext);
+    const runtime = this.selectRuntime(projectRoot, ctx);
     const renderer = emitsStreamJson ? makeStreamJsonRenderer(this.printLine) : undefined;
     const onEvent = (e: AgentEvent): void => {
       if (e.kind === 'stdout' && e.line !== undefined) {
@@ -271,8 +322,8 @@ export class RatchetBatchEngine {
     // Belt-and-braces: flush in case the runtime resolved without an exit event.
     renderer?.flush();
 
-    // 4. Read the entries the agent wrote during this session and map them.
-    const afterAll = readChangeJournalTolerant(projectRoot, batch, change);
+    // Read the entries the agent wrote during this session and map them.
+    const afterAll = readChangeJournalTolerantForLocus(projectRoot, locus, change);
     const sessionEntries = afterAll.slice(before);
     const sessionIndices = sessionEntries.map((_, i) => before + i);
 
@@ -292,7 +343,7 @@ export class RatchetBatchEngine {
 
     const diskAfter = readChangeDiskState(projectRoot, change);
 
-    const parkForApproval = this.shouldParkForApproval(context, transition);
+    const parkForApproval = this.shouldParkForApproval(ctx, transition);
 
     const outcome = mapSessionToOutcome({
       change,
@@ -304,9 +355,10 @@ export class RatchetBatchEngine {
       diskEvidence: { before: diskBefore, after: diskAfter },
     });
 
-    // 5. Record a journal entry for the transition outcome (the agent may not
-    //    have reported one, e.g. on failure), so resume sees this step.
-    appendJournal(projectRoot, batch, {
+    // Record a journal entry for the transition outcome (the agent may not have
+    // reported one, e.g. on failure), so resume sees this step. Written at the
+    // resolved locus — the batch run dir, or the change-local `.run/`.
+    appendJournalForLocus(projectRoot, locus, {
       change,
       kind: outcomeKind(outcome.state),
       message:
@@ -316,7 +368,7 @@ export class RatchetBatchEngine {
       transition,
     });
 
-    return outcome;
+    return toStepResult(outcome);
   }
 
   /**
@@ -328,7 +380,7 @@ export class RatchetBatchEngine {
    * `RATCHET_EVAL_AGENT_CMD` in the eval judge.
    */
   private buildSpawnRequest(
-    context: ResolvedStepContext,
+    context: ChangeStepContext,
     instructions: string,
     projectRoot: string,
     env: NodeJS.ProcessEnv
@@ -355,7 +407,7 @@ export class RatchetBatchEngine {
    * proceed — the instructions builder folds the answer/feedback into context.
    */
   private checkPark(
-    context: ResolvedStepContext,
+    context: ChangeStepContext,
     transition: Transition
   ): EngineStepOutcome | undefined {
     const resume = context.resume;
@@ -391,7 +443,7 @@ export class RatchetBatchEngine {
    * approval (autonomous still parks on agent blockers, handled in mapping).
    */
   private shouldParkForApproval(
-    context: ResolvedStepContext,
+    context: ChangeStepContext,
     transition: Transition
   ): boolean {
     if (transition !== 'propose') return false;

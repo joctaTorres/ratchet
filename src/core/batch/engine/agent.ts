@@ -25,7 +25,8 @@ import { AI_TOOLS, type AIToolOption } from '../../config.js';
  * build a minimal, fully-typed value instead of casting.
  */
 export interface AgentRequestContext {
-  batch: string;
+  /** Run-state locus only; optional so a standalone (no-batch) step is assignable. */
+  batch?: string;
   change: string;
   /**
    * The narrow slice of resolved settings an adapter reads. `ResolvedStepContext`

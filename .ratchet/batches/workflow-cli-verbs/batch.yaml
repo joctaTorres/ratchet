@@ -1,0 +1,104 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# A batch coordinates related changes across ordered phases. It references
+# changes by NAME and never owns them: changes live under .ratchet/changes/
+# like any other change and can be inspected, validated, and archived on their
+# own. Status is derived live from change state on disk — never stored here.
+#
+# Phases ship functional software behind an executable proof-of-work, so errors
+# surface early. A later phase is blocked until the prior phase's proof-of-work
+# passes. Changes are created lazily as the batch progresses: an entry with no
+# change directory yet is simply "pending", not an error.
+
+name: workflow-cli-verbs
+created: 2026-06-27
+
+# Project defaults are acceptable; no settings overrides.
+
+phases:
+  - name: propose-headless
+    goal: >-
+      Ship `ratchet propose "<objective>"` as a first-class CLI verb that
+      spawns a fresh agent via the engine to create a single change headlessly.
+      Delivering this verb forces extracting a change-scoped engine core
+      (ChangeStepContext + runChangeStep) that batch apply also delegates to,
+      plus project-level settings resolution and change-local run state.
+    success: >-
+      Running `ratchet propose "<objective>"` resolves settings, derives the
+      change name (or honours --name), spawns one agent for a FORCED propose
+      transition with -m guidance appended, and writes run state under
+      .ratchet/changes/<change>/.run/ — while `ratchet batch apply` still
+      produces identical behaviour by delegating to the same core.
+    proofOfWork:
+      kind: integration
+      run: pnpm vitest run test/core/batch/engine/change-step.test.ts test/cli/propose.test.ts
+      pass: >-
+        exit code 0 — runChangeStep spawns a stubbed agent for the forced
+        propose transition with resolved settings and appended -m guidance, the
+        propose command derives/overrides the change name, AND existing batch
+        apply behaviour still passes by delegating to runChangeStep.
+    changes:
+      - name: change-step-core
+        done: >-
+          Engine exposes runChangeStep(ctx) that spawns one agent for a forced
+          transition on a single change; batch apply's runStep delegates to it
+          and existing batch-apply tests still pass.
+      - name: standalone-settings-and-state
+        after: [change-step-core]
+        done: >-
+          runChangeStep resolves adapter/locus/image via flag → project config →
+          default, and reads/writes journal + resume under
+          .ratchet/changes/<change>/.run/ with no batch manifest present.
+      - name: propose-command
+        after: [change-step-core, standalone-settings-and-state]
+        done: >-
+          `ratchet propose "<objective>"` spawns an agent via runChangeStep with
+          a forced propose transition, deriving the change name (or --name) and
+          appending -m guidance; refuses if the change already exists.
+
+  - name: apply-verify-loop
+    goal: >-
+      Ship `ratchet apply <change>` and `ratchet verify <change>` as forced
+      single-step verbs on the change-scoped core, completing the headless
+      propose → apply → verify loop on one change.
+    success: >-
+      A user can run propose → apply → verify against a single change with no
+      batch manifest; apply forces the apply transition and errors without a
+      plan, verify forces the verify transition and errors with unfinished
+      tasks, each overridable with --force, both accepting -m guidance and
+      resuming from change-local run state.
+    proofOfWork:
+      kind: integration
+      run: refine at phase entry (integration tests over apply/verify with a stubbed agent adapter)
+      pass: >-
+        exit code 0 — apply/verify force their transitions, enforce
+        preconditions with a --force escape hatch, append -m guidance, and
+        resume from .ratchet/changes/<change>/.run/.
+    changes:
+      - name: apply-verify-verbs
+        done: >-
+          `ratchet apply <change>` and `ratchet verify <change>` ship as forced
+          single-step verbs on runChangeStep with precondition checks + --force,
+          repeatable -m guidance, and change-local resume; batch apply untouched.
+
+  - name: workflow-help-section
+    goal: >-
+      Group propose, apply, verify, batch, and eval under a dedicated
+      "Workflow" heading in the top-level `ratchet` help via Commander v14
+      help groups, so the core loop is discoverable without docs.
+    success: >-
+      Running `ratchet` (no args) renders a "Workflow:" section listing
+      propose, apply, verify (in workflow order) followed by batch and eval,
+      without disturbing the placement of unrelated commands.
+    proofOfWork:
+      kind: blackbox
+      run: refine at phase entry (blackbox assertion over `ratchet --help` output)
+      pass: >-
+        the help output contains a "Workflow" heading grouping propose, apply,
+        verify, batch, and eval in the expected order.
+    changes:
+      - name: workflow-help-section
+        done: >-
+          `ratchet` (and `ratchet --help`) renders a "Workflow:" heading
+          grouping propose, apply, verify, batch, eval in order, via Commander
+          v14 help groups, with unrelated commands' placement unchanged.

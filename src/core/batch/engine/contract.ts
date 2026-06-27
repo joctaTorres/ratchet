@@ -38,6 +38,56 @@ export interface ResolvedStepContext {
   };
 }
 
+/**
+ * The change-scoped subset the engine core needs to drive ONE forced transition
+ * on a single change — no batch derivation, no transition re-computation.
+ *
+ * It is what `runChangeStep` consumes: the same fields a batch step resolves
+ * (`change`, `changeDone`, `phase`, `settings`, `journal`, optional `resume`)
+ * but with a **forced** `transition` the core spawns the agent for verbatim
+ * instead of deriving it from disk. `batch` is the run-state locus only and is
+ * now OPTIONAL: when set, the journal/run files live under
+ * `.ratchet/batches/<batch>/run/` (the batch apply path); when absent, they live
+ * change-locally under `.ratchet/changes/<change>/.run/` (the standalone path a
+ * headless verb drives with no manifest present).
+ */
+export interface ChangeStepContext {
+  /**
+   * Run-state locus only. When set, the journal/run files live under
+   * `.ratchet/batches/<batch>/run/`; when absent, they live change-locally under
+   * `.ratchet/changes/<change>/.run/`.
+   */
+  batch?: string;
+  change: string;
+  /** The picked change intent's own definition of done (required). */
+  changeDone: string;
+  /** A forced transition — `runChangeStep` does not re-derive it from disk. */
+  transition: Transition;
+  phase: {
+    name: string;
+    goal: string;
+    success: string;
+    proofOfWork: ProofOfWork;
+  };
+  settings: BatchSettings;
+  /** Prior journal entries for this change (resume context). */
+  journal: JournalEntry[];
+  /**
+   * Optional free-text guidance appended verbatim to the agent instructions as
+   * an "Additional guidance:" block (e.g. the headless propose verb's `-m`
+   * values). Left undefined by `batch apply`, so batch instructions stay
+   * byte-identical.
+   */
+  guidance?: string;
+  /** Resume context when the step was parked. */
+  resume?: {
+    kind: 'blocked' | 'awaiting-approval';
+    reason: string;
+    answer?: string;
+    feedback?: string;
+  };
+}
+
 export type StepState =
   | 'advanced'
   | 'blocked'

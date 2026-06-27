@@ -8,9 +8,9 @@
  * (the agent's single communication channel — no interactive prompt required).
  */
 
-import type { ResolvedStepContext } from './contract.js';
+import type { ChangeStepContext } from './contract.js';
 
-function reportChannel(batch: string, change: string): string {
+function reportChannel(batch: string | undefined, change: string): string {
   return [
     'Communicate ONLY by running these shell commands (do not prompt interactively):',
     `  ratchet batch report ${batch} --change ${change} --status "<progress note>"`,
@@ -22,7 +22,7 @@ function reportChannel(batch: string, change: string): string {
   ].join('\n');
 }
 
-function strategyGuidance(context: ResolvedStepContext): string {
+function strategyGuidance(context: ChangeStepContext): string {
   if (context.transition !== 'propose') return '';
   if (context.settings.strategy === 'vertical-slice') {
     return [
@@ -37,7 +37,7 @@ function strategyGuidance(context: ResolvedStepContext): string {
   ].join('\n');
 }
 
-function transitionGuidance(context: ResolvedStepContext): string {
+function transitionGuidance(context: ChangeStepContext): string {
   switch (context.transition) {
     case 'propose':
       return [
@@ -70,7 +70,19 @@ function transitionGuidance(context: ResolvedStepContext): string {
   }
 }
 
-function resumeGuidance(context: ResolvedStepContext): string {
+/**
+ * Free-text guidance the caller appended to this step (e.g. the propose verb's
+ * `-m` values). Rendered as an "Additional guidance:" block for the forced
+ * transition. Absent (the batch path leaves `guidance` undefined) → empty, so
+ * batch instructions are unchanged.
+ */
+function additionalGuidance(context: ChangeStepContext): string {
+  const guidance = context.guidance?.trim();
+  if (!guidance) return '';
+  return ['Additional guidance:', guidance].join('\n');
+}
+
+function resumeGuidance(context: ChangeStepContext): string {
   const resume = context.resume;
   if (!resume) return '';
   if (resume.kind === 'blocked' && resume.answer) {
@@ -93,7 +105,7 @@ function resumeGuidance(context: ResolvedStepContext): string {
   return '';
 }
 
-export function buildAgentInstructions(context: ResolvedStepContext): string {
+export function buildAgentInstructions(context: ChangeStepContext): string {
   const sections = [
     `You are advancing the ratchet batch "${context.batch}".`,
     `Perform EXACTLY ONE transition: ${context.transition.toUpperCase()} for change "${context.change}".`,
@@ -113,6 +125,9 @@ export function buildAgentInstructions(context: ResolvedStepContext): string {
 
   const strategy = strategyGuidance(context);
   if (strategy) sections.push('', strategy);
+
+  const guidance = additionalGuidance(context);
+  if (guidance) sections.push('', guidance);
 
   const resume = resumeGuidance(context);
   if (resume) sections.push('', resume);

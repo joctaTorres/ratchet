@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
 import path from 'path';
 import { getBatchDir } from './manifest.js';
+import { RATCHET_DIR_NAME } from '../config.js';
 
 export type JournalEntryKind =
   | 'progress'
@@ -53,23 +54,63 @@ export interface RunState {
   parked: Record<string, ParkedStep>;
 }
 
+/**
+ * Where one step's run state (journal + parked state) lives. A batch step keeps
+ * it under `.ratchet/batches/<batch>/run/`; a standalone change step with no
+ * manifest keeps it under `.ratchet/changes/<change>/.run/`. The locus selects
+ * the directory only — the journal/state shapes are identical either way.
+ */
+export type RunLocus = { batch: string } | { change: string };
+
+/** Resolve the run-state directory for either a batch or a change locus. */
+export function runDirForLocus(projectRoot: string, locus: RunLocus): string {
+  return 'batch' in locus
+    ? path.join(getBatchDir(projectRoot, locus.batch), 'run')
+    : path.join(projectRoot, RATCHET_DIR_NAME, 'changes', locus.change, '.run');
+}
+
+/** Resolve the journal file path for either locus. */
+export function journalPathForLocus(projectRoot: string, locus: RunLocus): string {
+  return path.join(runDirForLocus(projectRoot, locus), 'journal.jsonl');
+}
+
 function runDir(projectRoot: string, batch: string): string {
-  return path.join(getBatchDir(projectRoot, batch), 'run');
+  return runDirForLocus(projectRoot, { batch });
 }
 
 function journalPath(projectRoot: string, batch: string): string {
-  return path.join(runDir(projectRoot, batch), 'journal.jsonl');
+  return journalPathForLocus(projectRoot, { batch });
 }
 
 function statePath(projectRoot: string, batch: string): string {
   return path.join(runDir(projectRoot, batch), 'state.json');
 }
 
-function ensureRunDir(projectRoot: string, batch: string): void {
-  const dir = runDir(projectRoot, batch);
+function ensureDir(dir: string): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
+}
+
+function ensureRunDir(projectRoot: string, batch: string): void {
+  ensureDir(runDir(projectRoot, batch));
+}
+
+/**
+ * Append an entry to the run journal at the given locus (batch or change). The
+ * batch-scoped {@link appendJournal} delegates here with a `{ batch }` locus; the
+ * standalone change path passes a `{ change }` locus.
+ */
+export function appendJournalForLocus(
+  projectRoot: string,
+  locus: RunLocus,
+  entry: Omit<JournalEntry, 'at'> & { at?: string }
+): JournalEntry {
+  const dir = runDirForLocus(projectRoot, locus);
+  ensureDir(dir);
+  const full: JournalEntry = { at: entry.at ?? new Date().toISOString(), ...entry };
+  appendFileSync(path.join(dir, 'journal.jsonl'), JSON.stringify(full) + '\n', 'utf-8');
+  return full;
 }
 
 /** Append an entry to the batch's run journal. */
@@ -78,10 +119,7 @@ export function appendJournal(
   batch: string,
   entry: Omit<JournalEntry, 'at'> & { at?: string }
 ): JournalEntry {
-  ensureRunDir(projectRoot, batch);
-  const full: JournalEntry = { at: entry.at ?? new Date().toISOString(), ...entry };
-  appendFileSync(journalPath(projectRoot, batch), JSON.stringify(full) + '\n', 'utf-8');
-  return full;
+  return appendJournalForLocus(projectRoot, { batch }, entry);
 }
 
 /** Read the full journal (oldest first). */

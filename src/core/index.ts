@@ -21,12 +21,17 @@ export {
   RatchetBatchEngine,
   type EngineDeps,
   type ResolvedStepContext,
+  type ChangeStepContext,
   type StepResult,
   type StepState,
   type Transition,
 } from './batch/engine/index.js';
 export {
   appendJournal,
+  appendJournalForLocus,
+  runDirForLocus,
+  journalPathForLocus,
+  type RunLocus,
   readJournal,
   readJournalForChange,
   readRunState,
@@ -44,6 +49,8 @@ export {
   type RunState,
 } from './batch/journal.js';
 export {
+  resolveChangeStepSettings,
+  type ChangeStepSettingOverrides,
   type BatchSettings,
   type Gate,
   type Strategy,

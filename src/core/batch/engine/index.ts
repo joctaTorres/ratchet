@@ -9,6 +9,7 @@
 
 export type {
   ResolvedStepContext,
+  ChangeStepContext,
   StepResult,
   StepState,
   Transition,
@@ -64,6 +65,8 @@ export {
 } from './lock.js';
 export {
   readJournalTolerant,
+  readJournalTolerantForLocus,
   readChangeJournalTolerant,
+  readChangeJournalTolerantForLocus,
 } from './run-state.js';
 export { toStepResult, type EngineStepOutcome } from './context.js';

@@ -97,3 +97,13 @@ Implements `features/standalone/change-local-run-state.feature` and
       `test/cli-e2e/batch-bundled-engine.test.ts`); confirm all pass — batch
       apply still writes run state under `.ratchet/batches/<batch>/run/` and its
       behaviour is unchanged.
+- [x] **Documentation (mandatory — `documentation` standard, "Reference
+      documentation").** Create the Reference entries
+      `docs/engine/standalone-settings.md` (the `resolveChangeStepSettings`
+      resolver — `flag → project config → default`, overridable keys, validation)
+      and `docs/engine/run-state.md` (the `RunLocus` batch-or-change run-state
+      locus and the locus-aware journal functions). Public-API-only change — no
+      command/flag yet calls these — so `README.md` needs no edit here; the
+      `.ratchet/changes/<change>/.run/` run state and standalone settings are
+      surfaced in `README.md` by the headless verbs that consume them
+      (`propose-command`, `apply-verify-verbs`).

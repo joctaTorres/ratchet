@@ -67,3 +67,11 @@ Implements `features/change-step/run-change-step-core.feature` and
       `test/cli-e2e/batch-bundled-engine.test.ts`); confirm all pass — batch
       behaviour (lock, transition derivation, parking, persisted outcome)
       unchanged.
+- [x] **Documentation (mandatory — `documentation` standard, "Reference
+      documentation").** Create the Reference entry
+      `docs/engine/change-step.md` documenting the change-scoped engine core this
+      change adds: the `ChangeStepContext` type, `RatchetBatchEngine.runChangeStep(ctx)`
+      (one forced transition, one agent, no lock, no transition derivation), and
+      `runStep`'s delegation to it. This is a public-API-only change with no new
+      user-facing command/flag, so `README.md` needs no edit — no surface it
+      documents is added or altered.

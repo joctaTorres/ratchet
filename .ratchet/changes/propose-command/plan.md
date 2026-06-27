@@ -94,3 +94,11 @@ Implements `features/propose/propose-command.feature` and
       propose via `runChangeStep` with appended `-m` guidance and standalone
       settings, derives/overrides the name, refuses on conflict, AND the
       existing batch-apply delegation through `runChangeStep` still passes.
+- [x] **Documentation (mandatory — `documentation` standard, "Reference
+      documentation").** Create `docs/commands/propose.md` (the `ratchet propose`
+      command: synopsis, every flag — `--name`, repeatable `-m`, `--agent`,
+      `--locus`, `--image`, `--json` — name derivation, refuse-if-exists guard,
+      standalone settings, and change-local run state) and update `README.md`:
+      add the `propose "<objective>"` row to the Commands table and the
+      "Headless workflow verbs" subsection covering `propose`/`apply`/`verify`,
+      their flags, and the `.ratchet/changes/<change>/.run/` run state.

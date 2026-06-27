@@ -216,6 +216,9 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `list` | List active changes (or `--specs` for the feature store) |
 | `view` | Interactive dashboard of changes and features |
 | `archive [name]` | Sync features into the store and archive the change |
+| `propose "<objective>"` | Headlessly create a single change from a free-text objective (`--name`, repeatable `-m`, `--agent`/`--locus`/`--image`, `--json`) |
+| `apply <change>` | Headlessly implement an existing change — forced apply step (`--force`, repeatable `-m`, `--agent`/`--locus`/`--image`, `--json`) |
+| `verify <change>` | Headlessly verify an existing change — forced verify step (`--force`, repeatable `-m`, `--agent`/`--locus`/`--image`, `--json`) |
 | `new batch <name>` | Scaffold a batch manifest (`.ratchet/batches/<name>/batch.yaml`) |
 | `batch status [name]` | Live phase/change status derived from disk, incl. parked gates/blockers (`--json`) |
 | `batch view` / `batch list` | Rich dashboards of a batch (or all batches) |
@@ -227,6 +230,23 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
 | `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
+
+In `ratchet --help`, the workflow commands `propose`, `apply`, `verify`, `batch`, and `eval` are gathered (in that order) under a single **`Workflow:`** heading; every other command keeps its default placement.
+
+### Headless workflow verbs
+
+`propose`, `apply`, and `verify` drive the `propose → apply → verify` loop on a **single change with no batch manifest**. Each runs exactly one agent for a **forced** transition through the bundled engine's change-scoped core (`runChangeStep`) — the same single-step path `batch apply` delegates to — and keeps run state **change-locally** under `.ratchet/changes/<change>/.run/` (`journal.jsonl` + `state.json`), never under `.ratchet/batches/`, so a blocked or awaiting-approval step stays resumable.
+
+```bash
+ratchet propose "add a dark-mode toggle"     # derive a change name, scaffold features + plan
+ratchet apply add-a-dark-mode-toggle         # implement the planned tasks
+ratchet verify add-a-dark-mode-toggle        # check the implementation against its scenarios
+```
+
+- **`propose "<objective>"`** derives a kebab-case change name from the objective (or `--name <change>`), refuses to clobber an existing change, and runs a forced `propose`. A blank/unsluggable objective with no `--name` fails with no spawn.
+- **`apply <change>`** requires the change to exist and (unless `--force`) to have a `plan.md`.
+- **`verify <change>`** requires the change to exist and (unless `--force`) every `## Tasks` checkbox to be checked.
+- All three accept repeatable **`-m, --message`** guidance (joined into one block for the agent), **`--json`**, and the standalone settings flags **`--agent`**, **`--locus`** (`local`/`docker`/`remote`), and **`--image`** — which resolve `flag → project config → default` (no manifest), validated before any agent is spawned.
 
 ## Batch orchestration
 

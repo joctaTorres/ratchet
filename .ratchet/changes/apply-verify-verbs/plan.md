@@ -111,3 +111,12 @@ Implements `features/apply/apply-command.feature`,
       appended `-m` guidance, enforce their preconditions with a `--force`
       escape hatch, resume from change-local run state, AND the existing
       propose + batch-apply suites still pass (batch apply untouched).
+- [x] **Documentation (mandatory — `documentation` standard, "Reference
+      documentation").** Create `docs/commands/apply.md` and
+      `docs/commands/verify.md` (the `ratchet apply` / `ratchet verify` commands:
+      synopsis, every flag — `--force`, repeatable `-m`, `--agent`, `--locus`,
+      `--image`, `--json` — the exists + has-plan / exists + tasks-all-done
+      preconditions with the `--force` escape hatch, and change-local run state)
+      and update `README.md`: add the `apply <change>` and `verify <change>` rows
+      to the Commands table and the corresponding bullets in the "Headless
+      workflow verbs" subsection.

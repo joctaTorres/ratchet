@@ -74,3 +74,10 @@ Implements `features/help/workflow-help-section.feature`.
       renders for both `ratchet --help` and no-args help, lists
       propose/apply/verify/batch/eval in order, and the existing suites still
       pass.
+- [x] **Documentation (mandatory — `documentation` standard, "Reference
+      documentation").** Create `docs/commands/workflow-help.md` (the `Workflow:`
+      help group: its five members and order — `propose` → `apply` → `verify` →
+      `batch` → `eval` — the unrelated commands left in the default group, and the
+      `.helpGroup('Workflow:')` mechanism) and update `README.md` with the note
+      that `propose`/`apply`/`verify`/`batch`/`eval` render under the `Workflow:`
+      heading in `ratchet --help`.

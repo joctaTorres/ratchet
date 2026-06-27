@@ -13,29 +13,44 @@ import type { JournalEntry } from '../journal.js';
 
 export type Transition = 'propose' | 'apply' | 'verify';
 
-/** Everything the engine needs to drive one transition, resolved by the CLI. */
-export interface ResolvedStepContext {
-  batch: string;
+/** Phase framing surfaced in the agent instructions for one step. */
+export interface StepPhase {
+  name: string;
+  goal: string;
+  success: string;
+  proofOfWork: ProofOfWork;
+}
+
+/** Resume context carried when a step was parked. */
+export interface StepResume {
+  kind: 'blocked' | 'awaiting-approval';
+  reason: string;
+  answer?: string;
+  feedback?: string;
+}
+
+/**
+ * Fields shared verbatim by both step contexts — the resolved batch step and the
+ * forced single-change step. `batch` is intentionally NOT here: it is required on
+ * `ResolvedStepContext` but only an optional run-state locus on
+ * `ChangeStepContext`, so each declares it with its own cardinality.
+ */
+interface BaseStepContext {
   change: string;
   /** The picked change intent's own definition of done (required). */
   changeDone: string;
   transition: Transition;
-  phase: {
-    name: string;
-    goal: string;
-    success: string;
-    proofOfWork: ProofOfWork;
-  };
+  phase: StepPhase;
   settings: BatchSettings;
   /** Prior journal entries for this change (resume context). */
   journal: JournalEntry[];
   /** Resume context when the step was parked. */
-  resume?: {
-    kind: 'blocked' | 'awaiting-approval';
-    reason: string;
-    answer?: string;
-    feedback?: string;
-  };
+  resume?: StepResume;
+}
+
+/** Everything the engine needs to drive one transition, resolved by the CLI. */
+export interface ResolvedStepContext extends BaseStepContext {
+  batch: string;
 }
 
 /**
@@ -51,27 +66,13 @@ export interface ResolvedStepContext {
  * change-locally under `.ratchet/changes/<change>/.run/` (the standalone path a
  * headless verb drives with no manifest present).
  */
-export interface ChangeStepContext {
+export interface ChangeStepContext extends BaseStepContext {
   /**
    * Run-state locus only. When set, the journal/run files live under
    * `.ratchet/batches/<batch>/run/`; when absent, they live change-locally under
    * `.ratchet/changes/<change>/.run/`.
    */
   batch?: string;
-  change: string;
-  /** The picked change intent's own definition of done (required). */
-  changeDone: string;
-  /** A forced transition — `runChangeStep` does not re-derive it from disk. */
-  transition: Transition;
-  phase: {
-    name: string;
-    goal: string;
-    success: string;
-    proofOfWork: ProofOfWork;
-  };
-  settings: BatchSettings;
-  /** Prior journal entries for this change (resume context). */
-  journal: JournalEntry[];
   /**
    * Optional free-text guidance appended verbatim to the agent instructions as
    * an "Additional guidance:" block (e.g. the headless propose verb's `-m`
@@ -79,13 +80,6 @@ export interface ChangeStepContext {
    * byte-identical.
    */
   guidance?: string;
-  /** Resume context when the step was parked. */
-  resume?: {
-    kind: 'blocked' | 'awaiting-approval';
-    reason: string;
-    answer?: string;
-    feedback?: string;
-  };
 }
 
 export type StepState =

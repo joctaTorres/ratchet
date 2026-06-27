@@ -15,6 +15,63 @@ one [agent](./agent-runtime.md) for the chosen transition, maps the session to a
 structured result, and returns. The autonomous loop that calls it repeatedly is
 the `apply-batch` skill, not the CLI.
 
+## Architecture at a glance
+
+Both entry surfaces converge on the change-scoped core, which spawns a single
+agent through the SWE-ReX runtime and maps the session to a `StepResult`. Only
+`runStep` (the batch-facing surface) takes the lock and derives the transition;
+the headless verbs reuse `runChangeStep` directly with a forced transition.
+
+```mermaid
+flowchart TB
+    subgraph CLI["CLI entry surfaces"]
+        BA["ratchet batch apply"]
+        HV["ratchet propose / apply / verify<br/>(headless verbs)"]
+    end
+
+    subgraph ENGINE["RatchetBatchEngine · in-process · single-step"]
+        RS["runStep<br/>batch-facing"]
+        LOCK{{"per-batch lock"}}
+        CNT["computeNextTransition<br/>authoritative, from disk"]
+        PARK{"unresolved<br/>park?"}
+        RCS["runChangeStep<br/>change-scoped core"]
+    end
+
+    subgraph RUNTIME["Agent runtime · SWE-ReX"]
+        RT{"locus"}
+        LOC["local · sidecar"]
+        DOC["docker · sidecar"]
+        REM["remote runtime"]
+        AGENT(["ONE coding agent<br/>claude · codex · gemini · cursor"])
+    end
+
+    OUT["map session &rarr; outcome"]
+    JOURNAL[("journal.jsonl + state.json<br/>at run-state locus")]
+    RES(["StepResult<br/>advanced · blocked · awaiting-approval<br/>phase-gated · nothing-ready"])
+
+    BA --> RS
+    RS --> LOCK --> CNT --> PARK
+    PARK -- yes --> RES
+    PARK -- no --> RCS
+    HV --> RCS
+
+    RCS --> RT
+    RT --> LOC & DOC & REM
+    LOC & DOC & REM --> AGENT
+    AGENT --> OUT
+    OUT --> JOURNAL
+    OUT --> RES
+
+    classDef entry fill:#1f6feb22,stroke:#1f6feb,color:#c9d1d9;
+    classDef core fill:#8957e522,stroke:#8957e5,color:#c9d1d9;
+    classDef runtime fill:#2ea04322,stroke:#2ea043,color:#c9d1d9;
+    classDef result fill:#bb800922,stroke:#bb8009,color:#c9d1d9;
+    class BA,HV entry;
+    class RS,LOCK,CNT,PARK,RCS core;
+    class RT,LOC,DOC,REM,AGENT runtime;
+    class OUT,JOURNAL,RES result;
+```
+
 ## The two entry surfaces
 
 ### `runStep` — batch-facing

@@ -28,11 +28,20 @@ export interface ChangeStepCommonOptions {
  * verbs frame the step with a default integration proof. `runChangeStep` does
  * not execute proof-of-work (it only spawns the agent), so this is display-only
  * context surfaced in the instructions.
+ *
+ * The `run`/`pass` strings are deliberately ECOSYSTEM-AGNOSTIC: ratchet runs
+ * inside arbitrary user repositories, so a shipped default must name no package
+ * manager, test runner, or build tool (see the `generalizable-defaults`
+ * standard). There is no project-derived proof-of-work command to source from
+ * (project config only carries a proof-of-work *policy*, not a command), so this
+ * is a neutral, self-labelled placeholder instructing the agent to use whatever
+ * checks the consuming project already defines — never a literal command from
+ * ratchet's own toolchain.
  */
 export const DEFAULT_PROOF_OF_WORK: ProofOfWork = {
   kind: 'integration',
-  run: 'pnpm vitest run',
-  pass: 'exit 0',
+  run: "this project's own test/check command (use whatever this repository already uses)",
+  pass: "this project's own tests and checks report success",
 };
 
 /** Join one-or-more `-m` values into a single guidance block (undefined if none). */

@@ -29,6 +29,12 @@ const config: Config = {
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'throw',
 
+  // Enable Mermaid diagrams in reference docs (```mermaid fenced blocks).
+  markdown: {
+    mermaid: true,
+  },
+  themes: ['@docusaurus/theme-mermaid'],
+
   // Distinctive typefaces for the "machined" aesthetic: JetBrains Mono for the
   // mechanical/monospaced display headline and labels, Work Sans (a humanist
   // sans — deliberately not Inter/Roboto) for body text.

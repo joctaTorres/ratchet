@@ -32,7 +32,9 @@ prerelease, so the `@beta` tag is required.
 ## Where to start
 
 - **Commands** — what each `ratchet` command does and the flags it accepts.
-- **Configuration** — the keys ratchet reads and the artifacts it generates.
-- **Standards** — the project standards every change must follow.
+- **Engine API** — the bundled, in-process engine that advances change work and
+  spawns coding agents through the SWE-ReX agent runtime.
+- **Configuration** — the `.ratchet/config.yaml` keys ratchet reads and the
+  artifacts it generates.
 
 More reference content is published here as it is added under `docs/`.

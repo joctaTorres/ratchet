@@ -233,6 +233,16 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 
 In `ratchet --help`, the workflow commands `propose`, `apply`, `verify`, `batch`, and `eval` are gathered (in that order) under a single **`Workflow:`** heading; every other command keeps its default placement.
 
+### Reference documentation
+
+Full per-command and internals reference lives in [`docs/`](docs/) and is published at [ratchet-ai.dev](https://ratchet-ai.dev/). It is organized into three areas:
+
+- **[Commands](docs/commands/)** — one Reference entry per command and flag: `init`, `update`, `list`, `view`, `status`, `instructions`, `validate`, `doctor`, `archive`, `template`, `new`, the headless `propose`/`apply`/`verify` verbs, and the `batch` and `eval` groups.
+- **[Engine API](docs/engine/)** — the bundled in-process engine and the SWE-ReX agent runtime that every workflow verb spawns through: [engine overview](docs/engine/overview.md), [change-step core](docs/engine/change-step.md), [agent runtime (SWE-ReX)](docs/engine/agent-runtime.md), [run-state locus](docs/engine/run-state.md), and [standalone settings](docs/engine/standalone-settings.md).
+- **[Configuration](docs/configuration/)** — the [`.ratchet/config.yaml`](docs/configuration/config-yaml.md) keys and the [generated artifacts](docs/configuration/generated-artifacts.md) `init`/`update` write to disk.
+
+Per the project's `documentation` standard, every code change that touches a command, flag, config key, generated artifact, or engine behavior updates the matching `docs/` entry and this README in the same change.
+
 ### Headless workflow verbs
 
 `propose`, `apply`, and `verify` drive the `propose → apply → verify` loop on a **single change with no batch manifest**. Each runs exactly one agent for a **forced** transition through the bundled engine's change-scoped core (`runChangeStep`) — the same single-step path `batch apply` delegates to — and keeps run state **change-locally** under `.ratchet/changes/<change>/.run/` (`journal.jsonl` + `state.json`), never under `.ratchet/batches/`, so a blocked or awaiting-approval step stays resumable.

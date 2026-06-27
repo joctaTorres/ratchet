@@ -32,7 +32,8 @@ import {
   loadBatchManifest,
   allChangeIntents,
 } from './manifest.js';
-import { computeBatchStatus } from './status.js';
+import { computeBatchStatus, type BatchStatusInfo } from './status.js';
+import { moveDirectory } from '../../utils/move-directory.js';
 
 /** Archives a single member change. Defaults to the shared `ArchiveCommand`. */
 export type ChangeArchiver = (changeName: string) => Promise<void>;
@@ -67,42 +68,6 @@ export interface BatchArchiveResult {
   aborted?: boolean;
 }
 
-/**
- * Recursively copy a directory. Used when fs.rename fails (e.g. EPERM on Windows).
- */
-async function copyDirRecursive(src: string, dest: string): Promise<void> {
-  await fs.mkdir(dest, { recursive: true });
-  const entries = await fs.readdir(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      await copyDirRecursive(srcPath, destPath);
-    } else {
-      await fs.copyFile(srcPath, destPath);
-    }
-  }
-}
-
-/**
- * Move a directory from src to dest, falling back to copy-then-remove when
- * fs.rename fails with EPERM (Windows, file watchers) or EXDEV (cross-device).
- * Mirrors the helper in `src/core/archive.ts`.
- */
-async function moveDirectory(src: string, dest: string): Promise<void> {
-  try {
-    await fs.rename(src, dest);
-  } catch (err: any) {
-    const code = err?.code;
-    if (code === 'EPERM' || code === 'EXDEV') {
-      await copyDirRecursive(src, dest);
-      await fs.rm(src, { recursive: true, force: true });
-    } else {
-      throw err;
-    }
-  }
-}
-
 /** YYYY-MM-DD for today. */
 function getArchiveDate(): string {
   return new Date().toISOString().split('T')[0];
@@ -116,6 +81,45 @@ function isChangeArchived(projectRoot: string, changeName: string): boolean {
 
 function changeExists(projectRoot: string, changeName: string): boolean {
   return existsSync(path.join(projectRoot, RATCHET_DIR_NAME, 'changes', changeName));
+}
+
+/**
+ * Done gate: any non-`done` change (in-progress, blocked, parked, pending)
+ * counts as incomplete. When the batch is not fully done, warn and name the
+ * incomplete changes, then require confirmation unless `yes` forces it. Returns
+ * true to proceed with archiving, false to abort.
+ */
+async function confirmIncompleteBatch(
+  batchName: string,
+  status: BatchStatusInfo,
+  options: BatchArchiveOptions,
+  log: (message: string) => void
+): Promise<boolean> {
+  const incomplete = status.phases
+    .flatMap((phase) => phase.changes)
+    .filter((change) => change.status !== 'done')
+    .map((change) => change.name);
+
+  if (incomplete.length === 0) {
+    return true;
+  }
+
+  log(
+    `Warning: ${incomplete.length} incomplete change(s): ${incomplete.join(', ')}`
+  );
+
+  if (options.yes) {
+    log(`Continuing due to --yes flag.`);
+    return true;
+  }
+
+  const confirmFn =
+    options.confirm ??
+    (async (message: string) => {
+      const { confirm } = await import('@inquirer/prompts');
+      return confirm({ message, default: false });
+    });
+  return confirmFn(`Archive incomplete batch '${batchName}'?`);
 }
 
 /**
@@ -150,40 +154,18 @@ export async function archiveBatch(
     `Batch status: ${status.status} (${status.doneCount}/${status.changeCount} changes done)`
   );
 
-  // Done gate: any non-`done` change (in-progress, blocked, parked, pending)
-  // counts as incomplete. Warn, name them, and confirm unless forced.
-  const incomplete = status.phases
-    .flatMap((phase) => phase.changes)
-    .filter((change) => change.status !== 'done')
-    .map((change) => change.name);
-
-  if (incomplete.length > 0) {
-    log(
-      `Warning: ${incomplete.length} incomplete change(s): ${incomplete.join(', ')}`
-    );
-    if (!options.yes) {
-      const confirmFn =
-        options.confirm ??
-        (async (message: string) => {
-          const { confirm } = await import('@inquirer/prompts');
-          return confirm({ message, default: false });
-        });
-      const proceed = await confirmFn(
-        `Archive incomplete batch '${batchName}'?`
-      );
-      if (!proceed) {
-        log('Archive cancelled.');
-        return {
-          batchName,
-          archivedChanges: [],
-          skippedArchived: [],
-          skippedPending: [],
-          aborted: true,
-        };
-      }
-    } else {
-      log(`Continuing due to --yes flag.`);
-    }
+  // Done gate: warn + confirm on an incomplete batch (handled in a helper to
+  // keep this function's control flow flat).
+  const proceed = await confirmIncompleteBatch(batchName, status, options, log);
+  if (!proceed) {
+    log('Archive cancelled.');
+    return {
+      batchName,
+      archivedChanges: [],
+      skippedArchived: [],
+      skippedPending: [],
+      aborted: true,
+    };
   }
 
   // Resolve the batch archive destination and refuse to overwrite an existing

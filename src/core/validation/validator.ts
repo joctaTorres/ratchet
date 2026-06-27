@@ -15,7 +15,8 @@ import {
   MAX_WHY_SECTION_LENGTH,
   VALIDATION_MESSAGES
 } from './constants.js';
-import { loadStandards } from '../standards.js';
+import { loadStandards, loadLayeredStandards } from '../standards.js';
+import { resolveCurrentPlanningHomeSync } from '../planning-home.js';
 import { readDeclaredStandardTags } from '../../utils/change-metadata.js';
 
 export class Validator {
@@ -302,7 +303,8 @@ export class Validator {
     const root = projectRoot ?? path.resolve(changeDir, '../../..');
     const issues: ValidationIssue[] = [];
 
-    // Resolve every standard's tag (explicit or file-name fallback).
+    // Duplicate-tag detection is scoped to the change's own home library — tag
+    // uniqueness is a per-library invariant, not a cross-home one.
     const standards = loadStandards(root);
     const seenTags = new Set<string>();
     const reportedDuplicates = new Set<string>();
@@ -321,9 +323,24 @@ export class Validator {
       }
     }
 
+    // Resolution of a change's declared tags validates against the *layered*
+    // set (the home's own standards plus any inherited from parent homes), so a
+    // module change may declare a root-defined tag. For a root home the layered
+    // set equals its own library, keeping single-home behavior identical.
+    const resolvableTags = new Set<string>(seenTags);
+    try {
+      const home = resolveCurrentPlanningHomeSync({ startPath: root, allowImplicitRepoRoot: false });
+      for (const standard of loadLayeredStandards(home)) {
+        resolvableTags.add(standard.tag);
+      }
+    } catch {
+      // No resolvable home (e.g. a bare change dir in tests) — fall back to the
+      // home-local set already collected above.
+    }
+
     // Check that every tag the change references resolves to a standard.
     for (const tag of readDeclaredStandardTags(changeDir)) {
-      if (!seenTags.has(tag)) {
+      if (!resolvableTags.has(tag)) {
         issues.push({
           level: 'ERROR',
           path: 'standards',

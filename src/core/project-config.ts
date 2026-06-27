@@ -4,6 +4,7 @@ import path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { PermissionsPolicySchema } from './batch/permissions-policy.js';
+import { toPosix } from './planning-home.js';
 
 /**
  * Zod schema for project configuration.
@@ -40,6 +41,22 @@ export const ProjectConfigSchema = z.object({
     )
     .optional()
     .describe('Per-artifact rules, keyed by artifact ID'),
+
+  // Optional (root config only): registry of expected module paths, relative to
+  // the root. Filesystem discovery is the source of truth — this list only
+  // produces lint warnings for mismatches in either direction.
+  modules: z
+    .array(z.string())
+    .optional()
+    .describe('Expected module paths relative to the root planning home (lint allowlist)'),
+
+  // Optional (module config only): override for this module's name. Defaults to
+  // the module's path relative to the root.
+  name: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Override for this module's name (defaults to its relative path)"),
 
   // Optional: project-level defaults for batch orchestration. Per-manifest
   // overrides win over these (see effective-settings resolution in
@@ -98,6 +115,90 @@ const MAX_CONTEXT_SIZE = 50 * 1024; // 50KB hard limit
  * @param projectRoot - The root directory of the project (where `ratchet/` lives)
  * @returns Parsed config or null if file doesn't exist
  */
+/**
+ * Parse the `rules` field: a map of artifact ID -> non-empty string array.
+ * Empty-string rules are dropped (with a warning); a non-object value is
+ * rejected. Returns the parsed map, or undefined when nothing valid remains.
+ * Warnings are emitted as a side effect so the caller stays orchestration-only.
+ */
+function parseRulesField(raw: unknown): Record<string, string[]> | undefined {
+  // Guard against null since typeof null === 'object'.
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    console.warn(`Invalid 'rules' field in config (must be object)`);
+    return undefined;
+  }
+
+  const parsedRules: Record<string, string[]> = {};
+  let hasValidRules = false;
+  for (const [artifactId, rules] of Object.entries(raw)) {
+    const rulesArrayResult = z.array(z.string()).safeParse(rules);
+    if (!rulesArrayResult.success) {
+      console.warn(
+        `Rules for '${artifactId}' must be an array of strings, ignoring this artifact's rules`
+      );
+      continue;
+    }
+    const validRules = rulesArrayResult.data.filter((r) => r.length > 0);
+    if (validRules.length > 0) {
+      parsedRules[artifactId] = validRules;
+      hasValidRules = true;
+    }
+    if (validRules.length < rulesArrayResult.data.length) {
+      console.warn(`Some rules for '${artifactId}' are empty strings, ignoring them`);
+    }
+  }
+
+  return hasValidRules ? parsedRules : undefined;
+}
+
+/**
+ * Parse the `modules` registry (root config): an array of non-empty,
+ * trimmed strings. Returns undefined when invalid or empty.
+ */
+function parseModulesField(raw: unknown): string[] | undefined {
+  const modulesResult = z.array(z.string()).safeParse(raw);
+  if (!modulesResult.success) {
+    console.warn(`Invalid 'modules' field in config (must be an array of strings)`);
+    return undefined;
+  }
+  const validModules = modulesResult.data.map((m) => m.trim()).filter((m) => m.length > 0);
+  return validModules.length > 0 ? validModules : undefined;
+}
+
+/**
+ * Parse the module `name` override (module config): a non-empty trimmed string.
+ * Returns undefined when invalid.
+ */
+function parseNameField(raw: unknown): string | undefined {
+  const nameResult = z.string().min(1).safeParse(typeof raw === 'string' ? raw.trim() : raw);
+  if (nameResult.success) {
+    return nameResult.data;
+  }
+  console.warn(`Invalid 'name' field in config (must be a non-empty string)`);
+  return undefined;
+}
+
+/**
+ * Parse the `context` field: a string within the {@link MAX_CONTEXT_SIZE}
+ * byte limit. Returns undefined when invalid or oversized.
+ */
+function parseContextField(raw: unknown): string | undefined {
+  const contextResult = z.string().safeParse(raw);
+  if (!contextResult.success) {
+    console.warn(`Invalid 'context' field in config (must be string)`);
+    return undefined;
+  }
+  const contextSize = Buffer.byteLength(contextResult.data, 'utf-8');
+  if (contextSize > MAX_CONTEXT_SIZE) {
+    console.warn(
+      `Context too large (${(contextSize / 1024).toFixed(1)}KB, limit: ${MAX_CONTEXT_SIZE / 1024}KB)`
+    );
+    console.warn(`Ignoring context field`);
+    return undefined;
+  }
+  return contextResult.data;
+}
+
 export function readProjectConfig(projectRoot: string): ProjectConfig | null {
   // Try both .yaml and .yml, prefer .yaml
   let configPath = path.join(projectRoot, RATCHET_DIR_NAME, 'config.yaml');
@@ -130,61 +231,26 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
 
     // Parse context field with size limit
     if (raw.context !== undefined) {
-      const contextField = z.string();
-      const contextResult = contextField.safeParse(raw.context);
-
-      if (contextResult.success) {
-        const contextSize = Buffer.byteLength(contextResult.data, 'utf-8');
-        if (contextSize > MAX_CONTEXT_SIZE) {
-          console.warn(
-            `Context too large (${(contextSize / 1024).toFixed(1)}KB, limit: ${MAX_CONTEXT_SIZE / 1024}KB)`
-          );
-          console.warn(`Ignoring context field`);
-        } else {
-          config.context = contextResult.data;
-        }
-      } else {
-        console.warn(`Invalid 'context' field in config (must be string)`);
-      }
+      const context = parseContextField(raw.context);
+      if (context !== undefined) config.context = context;
     }
 
-    // Parse rules field using Zod
+    // Parse rules field (map of artifact ID -> non-empty string array).
     if (raw.rules !== undefined) {
-      const rulesField = z.record(z.string(), z.array(z.string()));
+      const rules = parseRulesField(raw.rules);
+      if (rules !== undefined) config.rules = rules;
+    }
 
-      // First check if it's an object structure (guard against null since typeof null === 'object')
-      if (typeof raw.rules === 'object' && raw.rules !== null && !Array.isArray(raw.rules)) {
-        const parsedRules: Record<string, string[]> = {};
-        let hasValidRules = false;
+    // Parse modules registry (root config).
+    if (raw.modules !== undefined) {
+      const modules = parseModulesField(raw.modules);
+      if (modules !== undefined) config.modules = modules;
+    }
 
-        for (const [artifactId, rules] of Object.entries(raw.rules)) {
-          const rulesArrayResult = z.array(z.string()).safeParse(rules);
-
-          if (rulesArrayResult.success) {
-            // Filter out empty strings
-            const validRules = rulesArrayResult.data.filter((r) => r.length > 0);
-            if (validRules.length > 0) {
-              parsedRules[artifactId] = validRules;
-              hasValidRules = true;
-            }
-            if (validRules.length < rulesArrayResult.data.length) {
-              console.warn(
-                `Some rules for '${artifactId}' are empty strings, ignoring them`
-              );
-            }
-          } else {
-            console.warn(
-              `Rules for '${artifactId}' must be an array of strings, ignoring this artifact's rules`
-            );
-          }
-        }
-
-        if (hasValidRules) {
-          config.rules = parsedRules;
-        }
-      } else {
-        console.warn(`Invalid 'rules' field in config (must be object)`);
-      }
+    // Parse module name override (module config).
+    if (raw.name !== undefined) {
+      const name = parseNameField(raw.name);
+      if (name !== undefined) config.name = name;
     }
 
     // Parse batch field using Zod (project-level batch defaults)
@@ -324,4 +390,60 @@ export function suggestSchemas(
   message += `\nFix: Edit .ratchet/config.yaml and change 'schema: ${invalidSchemaName}' to a valid schema name`;
 
   return message;
+}
+
+/**
+ * Detect whether a home's `.ratchet/config.yaml` exists but cannot be parsed
+ * into a YAML object. Returns an error message in that case, else `undefined`.
+ * Used by root aggregation to degrade a broken module to a warning rather than
+ * failing the whole listing.
+ *
+ * @param homeRoot - The planning-home root (parent of `.ratchet`).
+ */
+export function configLoadError(homeRoot: string): string | undefined {
+  let configPath = path.join(homeRoot, RATCHET_DIR_NAME, 'config.yaml');
+  if (!existsSync(configPath)) {
+    configPath = path.join(homeRoot, RATCHET_DIR_NAME, 'config.yml');
+    if (!existsSync(configPath)) {
+      return undefined; // No config is fine.
+    }
+  }
+  try {
+    const content = readFileSync(configPath, 'utf-8');
+    const raw = parseYaml(content);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return 'config.yaml is not a valid YAML object';
+    }
+  } catch (error) {
+    return `config.yaml could not be parsed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return undefined;
+}
+
+/**
+ * Read a module's `name:` override from its `.ratchet/config.yaml`. Returns
+ * `undefined` when absent or unparseable, so callers fall back to the relative
+ * path. Never throws.
+ *
+ * @param moduleRoot - The module's planning-home root (parent of `.ratchet`).
+ */
+export function readModuleName(moduleRoot: string): string | undefined {
+  const config = readProjectConfig(moduleRoot);
+  const name = config?.name;
+  return typeof name === 'string' && name.trim().length > 0 ? name.trim() : undefined;
+}
+
+/**
+ * Read the root config's `modules:` registry. Returns `undefined` when no
+ * registry is declared (so callers can distinguish "no registry" from "empty
+ * registry") and a normalized POSIX-style list otherwise.
+ *
+ * @param rootRoot - The root planning-home root (parent of `.ratchet`).
+ */
+export function readModuleRegistry(rootRoot: string): string[] | undefined {
+  const config = readProjectConfig(rootRoot);
+  if (!config?.modules) {
+    return undefined;
+  }
+  return config.modules.map((m) => toPosix(m).replace(/^\/+/, '').replace(/\/+$/, ''));
 }

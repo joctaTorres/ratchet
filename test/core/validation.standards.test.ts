@@ -105,4 +105,25 @@ describe('Validator.validateStandards', () => {
     const report = new Validator().validateStandards(dir, root);
     expect(report.valid).toBe(true);
   });
+
+  it('validates a module change tag against the layered (inherited) set', async () => {
+    // Root defines "testing"; the module declares it without redefining it.
+    await writeStandard('testing.md', 'testing');
+    await fs.mkdir(path.join(root, RATCHET_DIR_NAME, 'changes'), { recursive: true });
+
+    const moduleRoot = path.join(root, 'packages', 'api');
+    await fs.mkdir(path.join(moduleRoot, RATCHET_DIR_NAME, 'changes'), { recursive: true });
+    const moduleChangeDir = path.join(moduleRoot, RATCHET_DIR_NAME, 'changes', 'add-auth');
+    await writeFile(
+      path.join(moduleChangeDir, '.ratchet.yaml'),
+      'schema: ratchet\nstandards:\n  - testing\n'
+    );
+
+    // Resolve projectRoot from the module change dir (../../.. = module root).
+    const report = new Validator().validateStandards(moduleChangeDir);
+    expect(report.valid).toBe(true);
+    expect(
+      report.issues.some((i) => /Unknown standard tag "testing"/.test(i.message))
+    ).toBe(false);
+  });
 });

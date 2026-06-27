@@ -16,6 +16,12 @@ import fg from 'fast-glob';
 import * as yaml from 'yaml';
 import { RATCHET_DIR_NAME } from './config.js';
 import { getStandardsDir, loadStandards } from './standards.js';
+import {
+  type PlanningHome,
+  getParentPlanningHome,
+  getRootPlanningHome,
+} from './planning-home.js';
+import { discoverModulesSafe } from './module-discovery.js';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -461,24 +467,68 @@ async function regenerateReverseLinks(
   }
 }
 
+function storeDirFor(homeRoot: string): string {
+  return path.join(homeRoot, RATCHET_DIR_NAME, FEATURES_SUBDIR);
+}
+
+/**
+ * Build a reverse index across a set of homes, qualifying each implementing
+ * feature with the owning module name (`<module>: <capability>/<file>`); root
+ * features stay unqualified. This is the source for layered reverse links so a
+ * root standard's `## Implemented by` block can list features from any module.
+ */
+async function buildQualifiedReverseIndex(
+  homes: Array<{ storeDir: string; moduleName?: string }>
+): Promise<Map<string, string[]>> {
+  const index = new Map<string, Set<string>>();
+  for (const home of homes) {
+    const local = await buildReverseIndex(home.storeDir);
+    for (const [tag, features] of local) {
+      let set = index.get(tag);
+      if (!set) {
+        set = new Set<string>();
+        index.set(tag, set);
+      }
+      for (const feature of features) {
+        set.add(home.moduleName ? `${home.moduleName}: ${feature}` : feature);
+      }
+    }
+  }
+
+  const result = new Map<string, string[]>();
+  for (const [tag, set] of index) {
+    result.set(tag, [...set].sort((a, b) => a.localeCompare(b)));
+  }
+  return result;
+}
+
 /**
  * Materialize a change's standard links into the permanent store. Runs after
  * `applyFeatures` (store + tombstones already applied) and before the change is
  * moved to the archive.
  *
- * - Forward link: writes/updates the per-capability sidecar
- *   `.ratchet/features/<capability>/.ratchet.yaml`, mapping each feature file to
- *   the change's declared `tags`; tombstoned features are removed.
- * - Reverse link: regenerates the `## Implemented by` block in every standard by
- *   scanning all sidecars, so the reverse link never goes stale.
+ * - Forward link: writes/updates the per-capability sidecar in the change's own
+ *   home store, mapping each feature file to the change's declared `tags`;
+ *   tombstoned features are removed. Always module-local.
+ * - Reverse link: regenerates the `## Implemented by` block in the standard's
+ *   *defining* home. For a single-home repo this is just that repo's standards.
+ *   When `home` is provided and is a module (or a root with modules), the
+ *   reverse index spans the root and every module, qualifying module features
+ *   by module name, and each standard is regenerated in the home that defines
+ *   it — so an inherited root standard collects module features in the root
+ *   file, while a module-local standard stays within the module.
  *
- * When the change declares no standards (`tags` empty), this is a no-op: no
- * sidecar is written and no standard file is touched.
+ * When the change declares no standards (`tags` empty), this is a no-op.
+ *
+ * @param root - The change's home root (parent of `.ratchet`).
+ * @param home - The resolved planning home, when nesting is in play. Omit for
+ *   the legacy single-home path (reverse links scoped to `root`).
  */
 export async function materializeStandardLinks(
   root: string,
   changeName: string,
-  tags: string[]
+  tags: string[],
+  home?: PlanningHome
 ): Promise<void> {
   if (tags.length === 0) {
     // A change with no declared standards must not touch the store links.
@@ -486,13 +536,67 @@ export async function materializeStandardLinks(
   }
 
   const changeDir = path.join(root, RATCHET_DIR_NAME, 'changes', changeName);
-  const storeDir = path.join(root, RATCHET_DIR_NAME, FEATURES_SUBDIR);
+  const storeDir = storeDirFor(root);
 
   const updates = await findFeatureUpdates(changeDir, storeDir);
   const tombstones = await readTombstones(changeDir);
 
+  // Forward links are always written into the change's own home store.
   await updateForwardLinks(storeDir, updates, tombstones, tags);
 
-  const reverse = await buildReverseIndex(storeDir);
-  await regenerateReverseLinks(root, reverse);
+  // Reverse links: regenerate the `## Implemented by` block in each standard's
+  // defining home. Without a planning home, or for a plain single-home repo,
+  // this is exactly the legacy behavior (scan `root`'s store, regenerate
+  // `root`'s standards). The nested-monorepo layering is isolated in
+  // `regenerateLayeredReverseLinks`.
+  const isNested = home !== undefined && getParentPlanningHome(home) !== null;
+  const rootHome = home && (isNested || home === getRootPlanningHome(home))
+    ? getRootPlanningHome(home)
+    : undefined;
+
+  // Discovery failure (e.g. a duplicate module name) is non-fatal: fall back to
+  // the single-home reverse-link path rather than crashing the archive.
+  const modules = rootHome ? await discoverModulesSafe(rootHome) : [];
+
+  if (!rootHome || modules.length === 0) {
+    // Single-home (or no discovered modules): pure projection of root's store.
+    const reverse = await buildReverseIndex(storeDir);
+    await regenerateReverseLinks(root, reverse);
+    return;
+  }
+
+  await regenerateLayeredReverseLinks(rootHome, modules);
+}
+
+/**
+ * Regenerate the `## Implemented by` reverse-link blocks across a nested
+ * monorepo (root + discovered modules). Isolated from the legacy single-home
+ * path in {@link materializeStandardLinks} so the layering logic lives in one
+ * place.
+ *
+ * Each home's standards are regenerated from a reverse index built relative to
+ * that home: the home's own features are listed unqualified, while features
+ * contributed by *other* modules are qualified by their module name. This keeps
+ * a module-local standard's entries local, while an inherited root standard
+ * collects module features qualified by module name.
+ */
+async function regenerateLayeredReverseLinks(
+  rootHome: PlanningHome,
+  modules: Array<{ home: PlanningHome; moduleName: string }>
+): Promise<void> {
+  // Every home that could define a standard: the root and every module.
+  const allHomes: Array<{ root: string; moduleName?: string }> = [
+    { root: rootHome.root },
+    ...modules.map((m) => ({ root: m.home.root, moduleName: m.moduleName })),
+  ];
+
+  for (const defining of allHomes) {
+    const homesForIndex = allHomes.map((h) => ({
+      storeDir: storeDirFor(h.root),
+      // Unqualified when the contributing home is the one we're regenerating.
+      moduleName: h.root === defining.root ? undefined : h.moduleName,
+    }));
+    const reverse = await buildQualifiedReverseIndex(homesForIndex);
+    await regenerateReverseLinks(defining.root, reverse);
+  }
 }

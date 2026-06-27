@@ -15,6 +15,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as yaml from 'yaml';
 import { RATCHET_DIR_NAME } from './config.js';
+import { getParentPlanningHome, type PlanningHome } from './planning-home.js';
 
 /**
  * A single standard document from the standards library.
@@ -109,4 +110,36 @@ export function loadStandards(projectRoot: string): StandardDoc[] {
         content: body,
       };
     });
+}
+
+/**
+ * Load the standards visible to a planning home, layering the parent chain
+ * root-first and letting nearer homes shadow farther ones by `tag`.
+ *
+ * For a root (parent-less) home this is exactly `loadStandards(home.root)`, so
+ * single-home repos and root changes behave identically to today and never see
+ * a module's standards. For a module home, root standards are loaded first and
+ * the module's own standards are applied last, so a module standard with a
+ * colliding tag wins by whole-document replacement (no merge).
+ *
+ * @returns Layered standards, sorted by `tag` for deterministic output.
+ */
+export function loadLayeredStandards(home: PlanningHome): StandardDoc[] {
+  // Build the chain from this home up to the root.
+  const chain: PlanningHome[] = [];
+  let current: PlanningHome | null = home;
+  while (current) {
+    chain.push(current);
+    current = getParentPlanningHome(current);
+  }
+
+  // Apply root-first so nearer homes (earlier in `chain`) win on tag collision.
+  const byTag = new Map<string, StandardDoc>();
+  for (const node of chain.reverse()) {
+    for (const standard of loadStandards(node.root)) {
+      byTag.set(standard.tag, standard);
+    }
+  }
+
+  return [...byTag.values()].sort((a, b) => a.tag.localeCompare(b.tag));
 }

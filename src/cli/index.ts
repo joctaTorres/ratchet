@@ -226,10 +226,11 @@ program
 program
   .command('view')
   .description('Display an interactive dashboard of specs and changes')
-  .action(async () => {
+  .option('--module <name>', 'Target a nested module planning home by name')
+  .action(async (options?: { module?: string }) => {
     try {
       const viewCommand = new ViewCommand();
-      await viewCommand.execute('.');
+      await viewCommand.execute('.', { module: options?.module });
     } catch (error) {
       console.log(); // Empty line for spacing
       ora().fail(`Error: ${(error as Error).message}`);
@@ -243,7 +244,8 @@ program
   .option('-y, --yes', 'Skip confirmation prompts')
   .option('--skip-features', 'Skip feature store updates (useful for infrastructure, tooling, or doc-only changes)')
   .option('--no-validate', 'Skip validation (not recommended, requires confirmation)')
-  .action(async (changeName?: string, options?: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean }) => {
+  .option('--module <name>', 'Target a nested module planning home by name')
+  .action(async (changeName?: string, options?: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean; module?: string }) => {
     try {
       const archiveCommand = new ArchiveCommand();
       await archiveCommand.execute(changeName, options);
@@ -303,6 +305,7 @@ program
   .description('Display artifact completion status for a change')
   .option('--change <id>', 'Change name to show status for')
   .option('--schema <name>', 'Schema override (auto-detected from config.yaml)')
+  .option('--module <name>', 'Target a nested module planning home by name')
   .option('--json', 'Output as JSON')
   .action(async (options: StatusOptions) => {
     try {
@@ -320,6 +323,7 @@ program
   .description('Output enriched instructions for creating an artifact or applying tasks')
   .option('--change <id>', 'Change name')
   .option('--schema <name>', 'Schema override (auto-detected from config.yaml)')
+  .option('--module <name>', 'Target a nested module planning home by name')
   .option('--json', 'Output as JSON')
   .action(async (artifactId: string | undefined, options: InstructionsOptions) => {
     try {
@@ -358,6 +362,7 @@ newCmd
   .description('Create a new change directory')
   .option('--description <text>', 'Description to add to README.md')
   .option('--schema <name>', `Workflow schema to use (default: ${DEFAULT_SCHEMA})`)
+  .option('--module <name>', 'Target a nested module planning home by name')
   .option('--json', 'Output as JSON')
   .action(async (name: string, options: NewChangeOptions) => {
     try {

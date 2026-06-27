@@ -6,6 +6,8 @@ import { Validator } from './validation/validator.js';
 import chalk from 'chalk';
 import { applyFeatures, materializeStandardLinks } from './features-apply.js';
 import { readDeclaredStandardTags } from '../utils/change-metadata.js';
+import { resolveCurrentPlanningHomeSync, type PlanningHome } from './planning-home.js';
+import { resolvePlanningHomeForCommand } from './module-discovery.js';
 
 /**
  * Recursively copy a directory. Used when fs.rename fails (e.g. EPERM on Windows).
@@ -47,9 +49,12 @@ async function moveDirectory(src: string, dest: string): Promise<void> {
 export class ArchiveCommand {
   async execute(
     changeName?: string,
-    options: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean } = {}
+    options: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean; cwd?: string; module?: string } = {}
   ): Promise<void> {
-    const targetPath = '.';
+    // Resolve the planning home (nearest-wins, or the named `--module` from the
+    // root). The rest of archive operates on the resolved home.
+    const planningHome = await this.resolvePlanningHome(options);
+    const targetPath = planningHome.root;
     const changesDir = path.join(targetPath, RATCHET_DIR_NAME, 'changes');
     const archiveDir = path.join(changesDir, 'archive');
 
@@ -235,7 +240,7 @@ export class ArchiveCommand {
         // the standards. A change that declares no standards is a no-op here.
         const tags = readDeclaredStandardTags(changeDir);
         if (tags.length > 0) {
-          await materializeStandardLinks(targetPath, changeName, tags);
+          await materializeStandardLinks(targetPath, changeName, tags, planningHome);
           console.log(`Standard links materialized for: ${tags.join(', ')}`);
         }
       }
@@ -262,6 +267,20 @@ export class ArchiveCommand {
     await moveDirectory(changeDir, archivePath);
 
     console.log(`Change '${changeName}' archived as '${archiveName}'.`);
+  }
+
+  /**
+   * Resolve the planning home this archive operates on. Without `--module` this
+   * walks up from the cwd (nearest-wins); with `--module` it addresses the
+   * named module from the root home.
+   */
+  private async resolvePlanningHome(
+    options: { cwd?: string; module?: string }
+  ): Promise<PlanningHome> {
+    const startPath = options.cwd ?? '.';
+    return options.module
+      ? resolvePlanningHomeForCommand({ module: options.module, startPath })
+      : resolveCurrentPlanningHomeSync({ startPath });
   }
 
   private async selectChange(changesDir: string): Promise<string | null> {

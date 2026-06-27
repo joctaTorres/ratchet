@@ -12,6 +12,21 @@ export interface PlanningHome {
   changesDir: string;
   batchesDir: string;
   defaultSchema: string;
+  /**
+   * The enclosing planning home, if any. A home whose walk-up finds another
+   * `.ratchet` directory above it is a *module*; the topmost home is the
+   * *root*. Resolved lazily via {@link getParentPlanningHome} (continuing the
+   * walk-up past this home's root) so single-home repos pay nothing and keep
+   * identical behavior. `undefined` means "not yet resolved"; a resolved home
+   * with no enclosing home reports `null`.
+   */
+  parent?: PlanningHome | null;
+  /**
+   * The module name for a home that has a parent: the POSIX-style relative path
+   * from the root home to this home, unless overridden by `name:` in the
+   * module's `config.yaml`. Undefined for root (parent-less) homes.
+   */
+  moduleName?: string;
 }
 
 export interface ResolvePlanningHomeOptions {
@@ -102,6 +117,89 @@ export function resolveCurrentPlanningHomeSync(
   }
 
   return repoPlanningHome(FileSystemUtils.canonicalizeExistingPath(searchStart));
+}
+
+/**
+ * Normalize a path to POSIX separators (`/`). Use this whenever a path is split
+ * on or compared as `/`, especially for `fast-glob` results: fast-glob always
+ * emits `/`, but `path.sep` is `\` on Windows, so a bare `rel.split(path.sep)`
+ * is a silent no-op there. Naming the conversion makes that contract explicit
+ * and removes the duplicated `.split(path.sep).join('/')` idiom across the
+ * callers (module discovery, project-config registry, relative module paths).
+ */
+export function toPosix(p: string): string {
+  return p.split(path.sep).join('/');
+}
+
+/**
+ * The POSIX-style relative path from a root home to a descendant home, used as
+ * the default module name (e.g. `packages/api`).
+ */
+export function relativeModulePath(rootRoot: string, moduleRoot: string): string {
+  return toPosix(relativePlanningPath(rootRoot, moduleRoot));
+}
+
+/**
+ * Lazily resolve the enclosing planning home by continuing the walk-up past the
+ * given home's root. Returns `null` when the home is the topmost `.ratchet`
+ * (i.e. the root). The result is memoized on `planningHome.parent`.
+ *
+ * Single-home repositories resolve to `null` here and gain no module behavior.
+ */
+export function getParentPlanningHome(planningHome: PlanningHome): PlanningHome | null {
+  if (planningHome.parent !== undefined) {
+    return planningHome.parent;
+  }
+
+  const above = path.dirname(planningHome.root);
+  let parentRoot: string | null = null;
+  if (above !== planningHome.root) {
+    parentRoot = findRepoPlanningRootSync(above);
+  }
+
+  const parent = parentRoot ? repoPlanningHome(parentRoot) : null;
+  planningHome.parent = parent;
+  return parent;
+}
+
+/**
+ * Whether a home is a module (it has an enclosing planning home). Resolves the
+ * parent lazily as a side effect, so callers can rely on `moduleName` after.
+ */
+export function isModulePlanningHome(planningHome: PlanningHome): boolean {
+  return getParentPlanningHome(planningHome) !== null;
+}
+
+/**
+ * The module name for a home: the POSIX-style relative path from the root home
+ * to this home, memoized on `planningHome.moduleName`. Returns `undefined` for
+ * a root (parent-less) home. A module's `config.yaml` `name:` override is
+ * applied by discovery (see `discoverModules`), not here.
+ */
+export function getModuleName(planningHome: PlanningHome): string | undefined {
+  if (planningHome.moduleName !== undefined) {
+    return planningHome.moduleName;
+  }
+  const root = getRootPlanningHome(planningHome);
+  if (root === planningHome) {
+    return undefined;
+  }
+  const name = relativeModulePath(root.root, planningHome.root);
+  planningHome.moduleName = name;
+  return name;
+}
+
+/**
+ * Resolve the root (topmost) planning home for a given home by walking parents.
+ */
+export function getRootPlanningHome(planningHome: PlanningHome): PlanningHome {
+  let current = planningHome;
+  let parent = getParentPlanningHome(current);
+  while (parent) {
+    current = parent;
+    parent = getParentPlanningHome(current);
+  }
+  return current;
 }
 
 export function getChangeDir(planningHome: PlanningHome, changeName: string): string {

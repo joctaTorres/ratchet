@@ -28,12 +28,14 @@ import {
   batchListCommand,
   batchReportCommand,
   batchApplyCommand,
+  batchArchiveCommand,
   newBatchCommand,
   type BatchStatusOptions,
   type BatchConfigOptions,
   type BatchViewOptions,
   type BatchReportOptions,
   type BatchApplyOptions,
+  type BatchArchiveOptions,
   type NewBatchOptions,
 } from '../commands/batch/index.js';
 import {
@@ -513,6 +515,21 @@ batchCmd
   .action(async (name: string | undefined, options: BatchApplyOptions) => {
     try {
       await batchApplyCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('archive [name]')
+  .description('Archive a completed batch: cascade change-archive, then move the batch')
+  .option('-y, --yes', 'Skip the incomplete-batch confirmation prompt')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchArchiveOptions) => {
+    try {
+      await batchArchiveCommand(name, options);
     } catch (error) {
       console.log();
       ora().fail(`Error: ${(error as Error).message}`);

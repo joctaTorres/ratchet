@@ -22,3 +22,6 @@ export type { BatchApplyOptions } from './apply.js';
 
 export { newBatchCommand } from './new-batch.js';
 export type { NewBatchOptions } from './new-batch.js';
+
+export { batchArchiveCommand } from './archive.js';
+export type { BatchArchiveOptions } from './archive.js';

@@ -24,7 +24,13 @@ export type JournalEntryKind =
   | 'completion'
   | 'answer'
   | 'reject'
-  | 'proof-of-work';
+  | 'proof-of-work'
+  // Append-only supersession marker: invalidates the latest recorded
+  // `proof-of-work` for a phase so the next `batch apply` re-runs its boundary
+  // proof. The original record is never rewritten; the fold (see
+  // `proofRecordsFromEntries`) treats this marker as removing the phase from the
+  // current record map.
+  | 'proof-of-work-invalidated';
 
 /**
  * Durable record of one phase's proof-of-work verdict, journaled at the phase
@@ -272,8 +278,22 @@ export function clearParkedStep(
  * key (`decompositionJournalKey`, which is the bare phase name) so the proof
  * reader never picks up a decomposition completion for the same phase.
  */
+const PROOF_OF_WORK_KEY_PREFIX = 'proof-of-work:';
+
 export function proofOfWorkJournalKey(phase: string): string {
-  return `proof-of-work:${phase}`;
+  return `${PROOF_OF_WORK_KEY_PREFIX}${phase}`;
+}
+
+/**
+ * Inverse of {@link proofOfWorkJournalKey}: recover the phase from a proof
+ * journal key, or `undefined` if the key is not a proof key. Used by the fold to
+ * learn which phase an invalidation marker targets (the marker carries only the
+ * phase name, via its key — no toolchain detail).
+ */
+function phaseFromProofOfWorkJournalKey(change: string): string | undefined {
+  return change.startsWith(PROOF_OF_WORK_KEY_PREFIX)
+    ? change.slice(PROOF_OF_WORK_KEY_PREFIX.length)
+    : undefined;
 }
 
 /**
@@ -296,10 +316,33 @@ export function recordProofOfWork(
 }
 
 /**
+ * Append a `proof-of-work-invalidated` marker for a phase to the batch run
+ * journal. The journal stays append-only: the original `proof-of-work` record is
+ * left in place (audit trail preserved) and this marker simply supersedes it, so
+ * the single reader ({@link proofRecordsFromEntries}) drops the phase from the
+ * current record map and the next `batch apply` re-runs the phase's configured
+ * boundary proof-of-work.
+ */
+export function recordProofOfWorkInvalidation(
+  projectRoot: string,
+  batch: string,
+  phase: string
+): JournalEntry {
+  return appendJournal(projectRoot, batch, {
+    change: proofOfWorkJournalKey(phase),
+    kind: 'proof-of-work-invalidated',
+    message: `Invalidated recorded proof-of-work for phase '${phase}'; the next batch apply re-runs its boundary proof.`,
+  });
+}
+
+/**
  * Fold a journal entry list to the latest recorded proof-of-work outcome per
  * phase. The entries are scanned in append order, so a later proof entry for the
  * same phase overwrites an earlier one — "latest wins" falls out of that order.
- * Non-proof entries (and proof entries missing a record) are ignored.
+ * A `proof-of-work-invalidated` marker deletes its phase from the map (a later
+ * real `proof-of-work` record for the same phase re-adds it), so a recorded
+ * verdict can be superseded without rewriting the append-only journal. Non-proof
+ * entries (and proof entries missing a record) are ignored.
  *
  * Pure over the entries it is given: `computeBatchStatus` derives the phase gate
  * from the very journal it already receives via this helper, with no extra disk
@@ -312,6 +355,9 @@ export function proofRecordsFromEntries(
   for (const entry of entries) {
     if (entry.kind === 'proof-of-work' && entry.proof) {
       byPhase.set(entry.proof.phase, entry.proof);
+    } else if (entry.kind === 'proof-of-work-invalidated') {
+      const phase = phaseFromProofOfWorkJournalKey(entry.change);
+      if (phase !== undefined) byPhase.delete(phase);
     }
   }
   return byPhase;

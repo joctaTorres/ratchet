@@ -225,6 +225,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `batch config [name]` | Resolved batch settings: project defaults + manifest overrides + agent permissions |
 | `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step) |
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
+| `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
 | `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|check\|agent`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
@@ -394,7 +395,7 @@ features/cli/status#status-as-json:
   setup: pnpm install         # optional: runs ONCE into a cached working copy
   check:
     run: ratchet status --json
-    pass: contains:applyRequires   # exit-zero | contains:<text> | regex:<pattern>
+    pass: contains:applyRequires   # exit-zero (or "exit code 0 — ..." prose) | contains:<text> | regex:<pattern>
 
 features/cli/status#status-as-text:
   fixture: verify-sample

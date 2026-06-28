@@ -32,8 +32,11 @@ type RunLocus = { batch: string } | { change: string };
 | `state.json` | Current parked steps (`blocked` / `awaiting-approval`) for resume. |
 
 A `JournalEntry` has a `kind` of `progress`, `blocker`, `needs-input`,
-`completion`, `answer`, `reject`, or `proof-of-work`. A `proof-of-work` entry
-additionally carries a `proof` field holding the recorded verdict.
+`completion`, `answer`, `reject`, `proof-of-work`, or
+`proof-of-work-invalidated`. A `proof-of-work` entry additionally carries a
+`proof` field holding the recorded verdict; a `proof-of-work-invalidated` entry
+is an append-only marker (carrying only the phase, via its key) that supersedes
+the latest recorded proof for that phase so the boundary re-runs.
 
 ## Locus-aware functions
 
@@ -101,7 +104,17 @@ function recordProofOfWork(
   record: ProofOfWorkRecord
 ): JournalEntry;
 
+// Writer: append a superseding invalidation marker for a phase (append-only;
+// the original proof-of-work entry is left in place). Backs `batch rerun-proof`.
+function recordProofOfWorkInvalidation(
+  projectRoot: string,
+  batch: string,
+  phase: string
+): JournalEntry;
+
 // Pure reader: fold any journal entry list to the latest record per phase.
+// A `proof-of-work-invalidated` marker deletes its phase from the map; a later
+// real `proof-of-work` record for the same phase re-adds it.
 function proofRecordsFromEntries(
   entries: JournalEntry[]
 ): Map<string, ProofOfWorkRecord>;
@@ -129,6 +142,24 @@ identical. `readLatestProofOfWork` returns the latest record for one phase, or
 recorded" phase set from `readProofOfWorkByPhase` so the boundary proof runs at
 most once per boundary, and reads the same records to cite a failing proof that is
 holding a later phase shut.
+
+### Superseding a recorded proof (re-run)
+
+A recorded verdict is durable, but it can be **superseded** without rewriting the
+append-only journal. The `ratchet batch rerun-proof [name] --phase <phase>` verb
+(see [commands: `batch rerun-proof`](../commands/batch.md#batch-rerun-proof))
+calls `recordProofOfWorkInvalidation`, which appends a
+`proof-of-work-invalidated` marker keyed by the same `proof-of-work:<phase>` key.
+Because the fold is order-sensitive — `proof-of-work` **adds** a phase, the marker
+**deletes** it, and a newer `proof-of-work` re-adds it — the phase simply
+disappears from the current record map after a marker. Both consumers therefore
+re-open by construction: `computeBatchStatus` sees no recorded verdict for the
+phase (gate **re-opens**) and `pickNextStep` re-includes the phase's boundary
+proof-of-work step (it is no longer in the "already recorded" set), so the next
+`batch apply` re-runs the phase's configured `proofOfWork.run` and records a fresh
+verdict. The original `proof-of-work` entry is never deleted — the audit trail of
+the prior verdict is preserved. When no proof is recorded for the phase, the verb
+is a no-op and appends nothing.
 
 ### Blackbox proof of the gate
 

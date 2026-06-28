@@ -17,6 +17,9 @@ export type { BatchViewOptions } from './view.js';
 export { batchReportCommand } from './report.js';
 export type { BatchReportOptions } from './report.js';
 
+export { batchRerunProofCommand } from './rerun-proof.js';
+export type { BatchRerunProofOptions } from './rerun-proof.js';
+
 export { batchApplyCommand } from './apply.js';
 export type { BatchApplyOptions } from './apply.js';
 

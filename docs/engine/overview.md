@@ -378,10 +378,11 @@ it once all changes in a phase are done:
 
 | Condition string | Passes when |
 |---|---|
-| `""` / `exit 0` / `exit-zero` | Command exits 0. |
+| `""` / `exit 0` / `exit-zero` / `exit code 0` | Command exits 0. |
+| leading exit-zero directive (e.g. `exit code 0 — new tests pass`, `exit-zero: suite green`) | Command exits 0. A condition that *begins* with an `exit 0` / `exit-zero` / `exit code 0` directive — optionally followed by punctuation/prose — gates on the exit status and is **not** substring-matched against stdout. |
 | `contains:<text>` | Command exits 0 and stdout contains `<text>`. |
 | `regex:<pattern>` | Command exits 0 and stdout matches the regex. |
-| anything else | Treated as substring: command exits 0 and stdout contains the string. |
+| anything else (not an exit-code directive) | Treated as substring: command exits 0 and stdout contains the string. |
 
 **Gate policy** (`ProofOfWorkPolicy`):
 
@@ -408,6 +409,7 @@ flowchart TB
     GATE{"recorded<br/>gatePassed?"}
     NEXT["🛠️ select Q's outstanding change"]
     BLOCK["❌ Q stays gated<br/>apply cites P's failing proof"]
+    RERUN["🔄 batch rerun-proof --phase P<br/>append proof-of-work-invalidated marker<br/>(append-only · original record kept)"]
 
     PICK --> REC
     REC -->|"no — runs once per boundary"| RUN
@@ -416,18 +418,21 @@ flowchart TB
     REC -->|"yes"| GATE
     GATE -->|"true — passed, or warn"| NEXT
     GATE -->|"false — hard-gate failure"| BLOCK
+    RERUN -.->|"fold drops P from record map → REC re-reads 'no'"| REC
 
     classDef run fill:#FFCC80,stroke:#8a4b00,stroke-width:2px,color:#5d3300;
     classDef gate fill:#E1BEE7,stroke:#6a1b9a,stroke-width:2px,color:#3d0a52;
     classDef store fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue;
     classDef todo fill:#FFE0B2,stroke:#8a4b00,stroke-width:2px,color:#5d3300;
     classDef error fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black;
+    classDef override fill:#B3E5FC,stroke:#01579b,stroke-width:2px,color:#012e4d;
 
     class PICK,RUN run;
     class REC,GATE gate;
     class JOURNAL store;
     class NEXT todo;
     class BLOCK error;
+    class RERUN override;
 ```
 
 The executed command is the phase's **configured** `proofOfWork.run`, run in the
@@ -437,6 +442,17 @@ journaled as a `proof-of-work` entry carrying a `ProofOfWorkRecord`, and the nex
 `batch apply` reads the recorded set (`readProofOfWorkByPhase`). The verdict
 therefore survives across the stateless single-step apply invocations. See
 [Run-state locus](./run-state.md#proof-of-work-records).
+
+A recorded verdict is **not permanent**. When a proof was recorded `FAILED` for a
+fixable cause (a misconfigured `pass`, a flaky run, an env fix), the operator runs
+`ratchet batch rerun-proof [name] --phase P` (see [commands: `batch
+rerun-proof`](../commands/batch.md#batch-rerun-proof)). It appends an append-only
+`proof-of-work-invalidated` marker that **supersedes** the record — the original
+entry is left in place for the audit trail. Because the single record fold
+(`proofRecordsFromEntries`) treats the marker as removing `P` from the record map,
+the next `batch apply` sees `P` as not-recorded (the `REC` decision re-reads
+"no"), re-runs `P`'s **configured** boundary proof, and records a fresh verdict
+that re-derives the gate. No journal surgery, no second gate path.
 
 The recorded verdict **drives the phase gate**. `computeBatchStatus` derives `Q`'s
 gate from `P`'s recorded `gatePassed`: a failing `hard-gate` proof

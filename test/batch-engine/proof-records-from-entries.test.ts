@@ -49,6 +49,15 @@ function otherEntry(change: string): JournalEntry {
   };
 }
 
+function invalidationEntry(phase: string): JournalEntry {
+  return {
+    at: '2026-06-28T00:00:00.000Z',
+    change: proofOfWorkJournalKey(phase),
+    kind: 'proof-of-work-invalidated',
+    message: `Invalidated recorded proof-of-work for phase '${phase}'.`,
+  };
+}
+
 describe('proofRecordsFromEntries', () => {
   it('returns the latest recorded proof per phase from a journal', () => {
     const byPhase = proofRecordsFromEntries([
@@ -81,5 +90,33 @@ describe('proofRecordsFromEntries', () => {
   it('omits a phase that has no recorded proof', () => {
     const byPhase = proofRecordsFromEntries([proofEntry({ phase: 'p1' })]);
     expect(byPhase.has('p2')).toBe(false);
+  });
+
+  it('deletes a phase from the map when an invalidation marker follows its record', () => {
+    const byPhase = proofRecordsFromEntries([
+      proofEntry({ phase: 'p1', passed: false, gatePassed: false }),
+      invalidationEntry('p1'),
+    ]);
+    expect(byPhase.has('p1')).toBe(false);
+  });
+
+  it('re-adds a phase when a newer real verdict follows its invalidation marker', () => {
+    const byPhase = proofRecordsFromEntries([
+      proofEntry({ phase: 'p1', passed: false, gatePassed: false, reason: 'nonzero-exit' }),
+      invalidationEntry('p1'),
+      proofEntry({ phase: 'p1', passed: true, gatePassed: true }),
+    ]);
+    expect(byPhase.get('p1')!.passed).toBe(true);
+    expect(byPhase.get('p1')!.gatePassed).toBe(true);
+  });
+
+  it('scopes invalidation to its own phase (a sibling record is untouched)', () => {
+    const byPhase = proofRecordsFromEntries([
+      proofEntry({ phase: 'p1', passed: true, gatePassed: true }),
+      proofEntry({ phase: 'p2', passed: false, gatePassed: false }),
+      invalidationEntry('p1'),
+    ]);
+    expect(byPhase.has('p1')).toBe(false);
+    expect(byPhase.get('p2')!.gatePassed).toBe(false);
   });
 });

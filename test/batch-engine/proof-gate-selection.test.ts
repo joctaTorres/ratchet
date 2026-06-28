@@ -20,7 +20,9 @@ import os from 'os';
 import {
   appendJournal,
   recordProofOfWork,
+  recordProofOfWorkInvalidation,
   readLatestProofOfWork,
+  readProofOfWorkByPhase,
   type ProofOfWorkRecord,
 } from '../../src/core/batch/journal.js';
 import { computeBatchStatus, type BatchStatusInfo } from '../../src/core/batch/status.js';
@@ -140,6 +142,42 @@ describe('proof-derived gate: status and selection agree', () => {
 
     const result = selectRunnableStep(selectableFromStatus(status));
     expect(result.step).toEqual({ phase: 'p2', change: 'second' });
+  });
+});
+
+describe('invalidation re-opens the gate and re-offers the boundary step', () => {
+  it('after an invalidation marker, p2 is no longer proof-gated and pickNextStep re-offers p1 boundary proof', async () => {
+    await markDone('first');
+    recordProofOfWork(
+      projectRoot,
+      BATCH,
+      'p1',
+      record({ passed: false, gatePassed: false, reason: 'nonzero-exit', detail: 'command exited 7' })
+    );
+    const manifest = loadBatchManifest(projectRoot, BATCH);
+
+    // Precondition: the recorded failing proof gates p2 shut and strands p2.
+    let status = await computeBatchStatus(projectRoot, manifest);
+    const p2Before = status.phases.find((p) => p.name === 'p2')!;
+    expect(p2Before.gated).toBe(true);
+    let recordedPhases = new Set(readProofOfWorkByPhase(projectRoot, BATCH).keys());
+    expect(pickNextStep(status, manifest.phases, recordedPhases)).toBeUndefined();
+
+    // Invalidate p1's recorded proof (append-only supersession marker).
+    recordProofOfWorkInvalidation(projectRoot, BATCH, 'p1');
+
+    // The gate re-opens by construction (both consumers read the same fold):
+    status = await computeBatchStatus(projectRoot, manifest);
+    const p2After = status.phases.find((p) => p.name === 'p2')!;
+    expect(p2After.gated).toBe(false);
+
+    // p1 is no longer in the recorded-proof set, so selection re-offers p1's
+    // boundary proof-of-work step before any p2 change.
+    recordedPhases = new Set(readProofOfWorkByPhase(projectRoot, BATCH).keys());
+    expect(recordedPhases.has('p1')).toBe(false);
+    const target = pickNextStep(status, manifest.phases, recordedPhases);
+    expect(target).toMatchObject({ kind: 'proof-of-work' });
+    expect((target as { phase: { name: string } }).phase.name).toBe('p1');
   });
 });
 

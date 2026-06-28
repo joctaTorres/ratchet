@@ -436,6 +436,64 @@ carries the decomposed phase's name. When nothing is
 ready, `{ state: 'nothing-ready', message: '...' }`. When a step is pre-checked
 as parked, `{ state: 'parked', change, reason, hint }`.
 
+## `batch rerun-proof`
+
+Invalidate a phase's recorded proof-of-work so the next `batch apply` re-runs
+that phase's configured boundary proof.
+
+### Synopsis
+
+```bash
+ratchet batch rerun-proof [name] --phase <phase> [--json]
+```
+
+`[name]` defaults to the current active batch when omitted. `--phase` is
+**required**.
+
+### Options
+
+| Option | Argument | Description |
+|---|---|---|
+| `--phase` | `<phase>` | **Required.** The phase whose recorded proof-of-work to invalidate. Must be a phase declared in the manifest. |
+| `--json` | | Output the result as JSON (`{ batch, phase, invalidated }`). |
+
+### Behavior
+
+A phase's boundary proof-of-work runs **at most once**: `batch apply` journals a
+durable `proof-of-work` verdict, and the gate reads that verdict forever after.
+When a verdict was recorded `FAILED` for a fixable reason (a misconfigured `pass`
+condition, a flaky run, an environment fix), the next phase stays permanently
+blocked. `batch rerun-proof` is the **supported** operator override that replaces
+hand-editing the append-only run journal.
+
+It appends a **superseding `proof-of-work-invalidated` marker** keyed by the same
+`proof-of-work:<phase>` key the recorder uses. The journal stays append-only —
+the original `proof-of-work` entry is left in place (the audit trail is
+preserved). The single record reader (`proofRecordsFromEntries`, read by both the
+phase gate and boundary-step selection) treats the later marker as **removing**
+the phase from the current record map, so the next `batch apply` re-runs the
+phase's own configured `proofOfWork.run` boundary proof and records a fresh
+verdict that re-derives the gate. The marker carries only the phase name — no
+toolchain or command detail.
+
+- **Recorded proof present** (failing or passing): appends the marker and reports
+  that the phase's recorded proof was invalidated; the next `batch apply` re-runs
+  the boundary instead of advancing into the next phase.
+- **No recorded proof for the phase**: a **no-op** — nothing is appended, the run
+  journal is left unchanged, and the command reports there is nothing to
+  invalidate (`invalidated: false` in JSON).
+- **Missing `--phase`**: exits with an actionable error naming the missing flag;
+  nothing is appended.
+- **Unknown phase** (not in the manifest): exits with an error stating the phase
+  is not part of the batch; nothing is appended.
+
+This is an orchestration override only: it journals a marker that changes which
+boundary step the engine next offers. It spawns no agent and defines no second
+"done" — the boundary proof still runs via the normal `batch apply` path. See
+[engine: phase gates and
+proof-of-work](../engine/overview.md#phase-gates-and-proof-of-work) and
+[run-state: proof-of-work records](../engine/run-state.md#proof-of-work-records-phase-boundary-verdicts).
+
 ## `batch archive`
 
 Archive a completed batch: cascade change-archive over member changes, then

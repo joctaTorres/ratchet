@@ -27,6 +27,7 @@ import {
   batchViewCommand,
   batchListCommand,
   batchReportCommand,
+  batchRerunProofCommand,
   batchApplyCommand,
   batchArchiveCommand,
   newBatchCommand,
@@ -34,6 +35,7 @@ import {
   type BatchConfigOptions,
   type BatchViewOptions,
   type BatchReportOptions,
+  type BatchRerunProofOptions,
   type BatchApplyOptions,
   type BatchArchiveOptions,
   type NewBatchOptions,
@@ -576,6 +578,21 @@ batchCmd
   .action(async (name: string | undefined, options: BatchReportOptions) => {
     try {
       await batchReportCommand(name, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+batchCmd
+  .command('rerun-proof [name]')
+  .description("Invalidate a phase's recorded proof-of-work so the next apply re-runs it")
+  .option('--phase <phase>', 'Phase whose recorded proof-of-work to invalidate (required)')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: BatchRerunProofOptions) => {
+    try {
+      await batchRerunProofCommand(name, options);
     } catch (error) {
       console.log();
       ora().fail(`Error: ${(error as Error).message}`);

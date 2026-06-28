@@ -21,7 +21,7 @@
  */
 
 import type { JournalEntry } from '../journal.js';
-import type { Transition } from './contract.js';
+import type { StepKind } from './contract.js';
 import type { AgentSpawnResult } from './agent.js';
 import type { EngineStepOutcome } from './context.js';
 import type { ChangeDiskState } from './transition.js';
@@ -40,7 +40,7 @@ export interface DiskEvidence {
 
 export interface MapOutcomeInput {
   change: string;
-  transition: Transition;
+  transition: StepKind;
   /** Journal entries the agent appended during this session (this change). */
   sessionEntries: JournalEntry[];
   /** Absolute indices of those entries in the full journal (for journalRefs). */
@@ -58,7 +58,7 @@ export interface MapOutcomeInput {
  * pre-computed snapshots.
  */
 function describeProgress(
-  transition: Transition,
+  transition: StepKind,
   evidence: DiskEvidence
 ): string | undefined {
   const { before, after } = evidence;

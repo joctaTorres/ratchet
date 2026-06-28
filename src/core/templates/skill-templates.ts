@@ -15,5 +15,6 @@ export { getRctProposeStandardSkillTemplate, getRctProposeStandardCommandTemplat
 export { getApplyBatchSkillTemplate, getRctApplyBatchCommandTemplate } from './workflows/apply-batch.js';
 export { getArchiveBatchSkillTemplate, getRctArchiveBatchCommandTemplate } from './workflows/archive-batch.js';
 export { getProposeBatchSkillTemplate, getRctProposeBatchCommandTemplate } from './workflows/propose-batch.js';
+export { getDecomposePhaseSkillTemplate, getRctDecomposePhaseCommandTemplate } from './workflows/decompose-phase.js';
 export { getBrainstormSkillTemplate, getRctBrainstormCommandTemplate } from './workflows/brainstorm.js';
 export { getEvalSkillTemplate, getRctEvalCommandTemplate } from './workflows/eval.js';

@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { computeBatchStatus } from '../../../src/core/batch/status.js';
 import { parseBatchManifest } from '../../../src/core/batch/manifest.js';
+import { appendJournal } from '../../../src/core/batch/journal.js';
 import { toJson } from '../../../src/commands/batch/status.js';
 
 let projectRoot: string;
@@ -28,6 +29,16 @@ async function makeChange(name: string, plan: string): Promise<void> {
 async function archive(name: string): Promise<void> {
   const dir = path.join(changesDir, 'archive', name);
   await fs.mkdir(dir, { recursive: true });
+}
+
+/** Journal a verify completion for a change so it satisfies the done-rule. */
+function journalVerify(batch: string, change: string): void {
+  appendJournal(projectRoot, batch, {
+    change,
+    kind: 'completion',
+    message: 'verified',
+    transition: 'verify',
+  });
 }
 
 const MANIFEST = `
@@ -68,12 +79,28 @@ describe('computeBatchStatus', () => {
     expect(findChange(status, 'add-oauth').status).toBe('blocked');
   });
 
-  it('counts a fully-checked change as done and readies dependents', async () => {
+  it('counts a fully-checked AND verified change as done and readies dependents', async () => {
     await makeChange('add-user-model', '## Tasks\n- [x] one\n- [x] two\n');
+    journalVerify('q3-auth', 'add-user-model');
     const status = await computeBatchStatus(projectRoot, parseBatchManifest(MANIFEST));
     expect(findChange(status, 'add-user-model').status).toBe('done');
     expect(findChange(status, 'add-login-api').status).toBe('ready');
     expect(findChange(status, 'add-oauth').status).toBe('ready');
+  });
+
+  it('reports a fully-checked but unverified change as awaiting-verify (NOT done) and keeps dependents blocked', async () => {
+    await makeChange('add-user-model', '## Tasks\n- [x] one\n- [x] two\n');
+    // No verify completion journaled: the verify gate has not run.
+    const status = await computeBatchStatus(projectRoot, parseBatchManifest(MANIFEST));
+    const c = findChange(status, 'add-user-model');
+    expect(c.status).toBe('awaiting-verify');
+    expect(c.status).not.toBe('done');
+    // awaiting-verify is not done, so dependents are not yet readied.
+    expect(findChange(status, 'add-login-api').status).toBe('blocked');
+    // It is the batch's next actionable step (verify must run).
+    expect(status.next).toEqual({ phase: 'foundation', change: 'add-user-model' });
+    // It is progress, not a finished change.
+    expect(status.doneCount).toBe(0);
   });
 
   it('counts an archived change as done', async () => {
@@ -146,6 +173,7 @@ describe('computeBatchStatus', () => {
 
   it('ignores a stale park on a change that is already done', async () => {
     await makeChange('add-user-model', '## Tasks\n- [x] one\n- [x] two\n');
+    journalVerify('q3-auth', 'add-user-model');
     const runState = {
       parked: {
         'add-user-model': {

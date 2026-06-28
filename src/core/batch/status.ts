@@ -2,11 +2,17 @@
  * Batch Status (derived live from disk)
  *
  * The manifest holds intent only; progress is never stored. Status is computed
- * the way `ratchet view` already does it:
- *   - no change directory yet            -> pending (NOT an error: lazy creation)
- *   - change dir exists, partial tasks   -> in-progress
- *   - change dir exists, all tasks done  -> done
- *   - change archived                    -> done
+ * live from disk PLUS the run journal, under the single journal-aware definition
+ * of done (see `hasJournaledVerify`/`isChangeDone` in engine/transition):
+ *   - no change directory yet                       -> pending (lazy creation)
+ *   - change dir exists, partial tasks              -> in-progress
+ *   - all tasks checked, NO journaled verify        -> awaiting-verify (NOT done)
+ *   - all tasks checked AND journaled verify        -> done
+ *   - change archived                               -> done
+ *
+ * `awaiting-verify` is the in-between state the two old divergent done-rules hid:
+ * status must not report a change done on task-checkboxes alone while the
+ * transition logic still wants a verify gate to run.
  *
  * Phase status aggregates its change intents plus the prior-phase proof-of-work
  * gate; batch status aggregates phases.
@@ -18,12 +24,15 @@ import { RATCHET_DIR_NAME } from '../config.js';
 import { getTaskProgressForChange, type TaskProgress } from '../../utils/task-progress.js';
 import { BatchDag } from './dag.js';
 import type { BatchManifest, Phase, ChangeIntent } from './manifest.js';
-import type { ParkedKind, RunState } from './journal.js';
+import type { JournalEntry, ParkedKind, RunState } from './journal.js';
+import { readJournal } from './journal.js';
+import { hasJournaledVerify } from './engine/transition.js';
 
 export type ChangeStatus =
   | 'pending'
   | 'ready'
   | 'in-progress'
+  | 'awaiting-verify'
   | 'done'
   | 'blocked'
   | 'awaiting-approval';
@@ -78,8 +87,14 @@ export interface BatchStatusInfo {
   progress: TaskProgress;
   changeCount: number;
   doneCount: number;
-  /** The next actionable step, if any (first ready, ungated change). */
-  next?: { phase: string; change: string };
+  /**
+   * The next actionable step, if any. Usually the first ready, ungated change
+   * (`change` set). A reachable, ungated phase whose `changes` list is still
+   * empty is surfaced as a decomposition step instead: `decompose: true` with no
+   * `change` (the concrete intents are authored by the follow-on decomposition
+   * run, not here).
+   */
+  next?: { phase: string; change?: string; decompose?: boolean };
   status: 'empty' | 'pending' | 'in-progress' | 'done';
 }
 
@@ -99,25 +114,58 @@ function changeExists(projectRoot: string, changeName: string): boolean {
   return existsSync(changePath);
 }
 
-/** Derive a single change's on-disk status (ignoring DAG/phase gating). */
+interface ChangeBase {
+  exists: boolean;
+  archived: boolean;
+  progress: TaskProgress;
+  /** True iff truly done under the single journal-aware rule (verified/archived). */
+  done: boolean;
+  /** True iff tasks are all checked but no verify completion is journaled yet. */
+  awaitingVerify: boolean;
+}
+
+/**
+ * Derive a single change's on-disk status (ignoring DAG/phase gating), honoring
+ * the ONE journal-aware definition of done. `journal` is this change's run-journal
+ * entries: tasks all checked + a journaled verify completion => done; tasks all
+ * checked + no journaled verify => `awaitingVerify` (NOT done); partial tasks =>
+ * neither; archived => done. The verify-completion rule itself lives in
+ * `hasJournaledVerify` (engine/transition), so status never re-derives it.
+ */
 async function deriveChangeBase(
   projectRoot: string,
-  intent: ChangeIntent
-): Promise<{ exists: boolean; archived: boolean; progress: TaskProgress; done: boolean }> {
+  intent: ChangeIntent,
+  journal: JournalEntry[]
+): Promise<ChangeBase> {
   const changesDir = path.join(projectRoot, RATCHET_DIR_NAME, 'changes');
   const archived = isArchived(projectRoot, intent.name);
   if (archived) {
-    return { exists: false, archived: true, progress: { total: 0, completed: 0 }, done: true };
+    return {
+      exists: false,
+      archived: true,
+      progress: { total: 0, completed: 0 },
+      done: true,
+      awaitingVerify: false,
+    };
   }
 
   const exists = changeExists(projectRoot, intent.name);
   if (!exists) {
-    return { exists: false, archived: false, progress: { total: 0, completed: 0 }, done: false };
+    return {
+      exists: false,
+      archived: false,
+      progress: { total: 0, completed: 0 },
+      done: false,
+      awaitingVerify: false,
+    };
   }
 
   const progress = await getTaskProgressForChange(changesDir, intent.name);
-  const done = progress.total > 0 && progress.completed === progress.total;
-  return { exists: true, archived: false, progress, done };
+  const allChecked = progress.total > 0 && progress.completed === progress.total;
+  const verified = hasJournaledVerify(journal);
+  const done = allChecked && verified;
+  const awaitingVerify = allChecked && !verified;
+  return { exists: true, archived: false, progress, done, awaitingVerify };
 }
 
 async function derivePhaseStatus(
@@ -125,15 +173,15 @@ async function derivePhaseStatus(
   phase: Phase,
   gated: boolean,
   gatedBy: string | undefined,
-  runState: RunState
+  runState: RunState,
+  journal: JournalEntry[]
 ): Promise<PhaseStatusInfo> {
-  // First pass: derive each change's on-disk base + collect the done set.
-  const bases = new Map<
-    string,
-    Awaited<ReturnType<typeof deriveChangeBase>>
-  >();
+  // First pass: derive each change's on-disk base + collect the done set. Each
+  // change sees only its own journal entries for the verify-gate check.
+  const bases = new Map<string, ChangeBase>();
   for (const intent of phase.changes) {
-    bases.set(intent.name, await deriveChangeBase(projectRoot, intent));
+    const changeJournal = journal.filter((e) => e.change === intent.name);
+    bases.set(intent.name, await deriveChangeBase(projectRoot, intent, changeJournal));
   }
 
   const doneSet = new Set(
@@ -151,6 +199,10 @@ async function derivePhaseStatus(
     let status: ChangeStatus;
     if (base.done) {
       status = 'done';
+    } else if (base.awaitingVerify) {
+      // Tasks all checked but no journaled verify completion yet: the verify gate
+      // has not run. Explicitly NOT done — the single journal-aware done-rule.
+      status = 'awaiting-verify';
     } else if (base.exists && base.progress.total > 0) {
       status = 'in-progress';
     } else if (blockedBy.length > 0) {
@@ -195,9 +247,16 @@ async function derivePhaseStatus(
     };
   });
 
+  // `allDone` stays keyed on `status === 'done'` ONLY: a phase holding an
+  // `awaiting-verify` change is NOT done (its verify gate must still run).
   const allDone = changes.length > 0 && changes.every((c) => c.status === 'done');
+  // `awaiting-verify` is actionable work (a runnable verify step), so it counts
+  // as progress for the phase rollup, not as finished.
   const anyProgress = changes.some(
-    (c) => c.status === 'in-progress' || c.status === 'done'
+    (c) =>
+      c.status === 'in-progress' ||
+      c.status === 'awaiting-verify' ||
+      c.status === 'done'
   );
 
   let status: PhaseStatusInfo['status'];
@@ -239,7 +298,8 @@ async function derivePhaseStatus(
 export async function computeBatchStatus(
   projectRoot: string,
   manifest: BatchManifest,
-  runState: RunState = { parked: {} }
+  runState: RunState = { parked: {} },
+  journal: JournalEntry[] = readJournal(projectRoot, manifest.name)
 ): Promise<BatchStatusInfo> {
   const phases: PhaseStatusInfo[] = [];
   let priorPhaseDone = true;
@@ -252,7 +312,8 @@ export async function computeBatchStatus(
       phase,
       gated,
       gated ? priorPhaseName : undefined,
-      runState
+      runState,
+      journal
     );
     phases.push(phaseStatus);
     priorPhaseDone = phaseStatus.status === 'done';
@@ -264,7 +325,7 @@ export async function computeBatchStatus(
   let completed = 0;
   let changeCount = 0;
   let doneCount = 0;
-  let next: { phase: string; change: string } | undefined;
+  let next: { phase: string; change?: string; decompose?: boolean } | undefined;
 
   for (const phase of phases) {
     for (const change of phase.changes) {
@@ -275,19 +336,52 @@ export async function computeBatchStatus(
       if (
         !next &&
         !phase.gated &&
-        (change.status === 'ready' || change.status === 'in-progress')
+        (change.status === 'ready' ||
+          change.status === 'in-progress' ||
+          // An `awaiting-verify` change has a runnable next step (verify); it is
+          // the gate that must run before the change can be done, so it is the
+          // batch's next actionable step.
+          change.status === 'awaiting-verify')
       ) {
         next = { phase: phase.name, change: change.name };
       }
     }
   }
 
+  // A reachable, ungated phase whose `changes` list is empty is undecomposed: an
+  // outstanding decomposition step, NOT vacuously complete. Both this seam and
+  // `selectRunnableStep` key off the same two facts — "phase decomposed?"
+  // (`changes.length > 0`) and "phase reachable?" (ungated) — so status and
+  // selection cannot disagree about whether a reachable empty phase is work.
+  // `derivePhaseStatus` already reports such a phase as `pending` (not `done`);
+  // this folds that fact into the batch-level done rule. A still-gated empty
+  // phase is NOT outstanding yet — the unfinished prior-phase change comes first.
+  const reachableUndecomposed = phases.find(
+    (p) => p.changes.length === 0 && !p.gated
+  );
+
+  // Surface the first reachable undecomposed phase as the decomposition step when
+  // no change-level next was found, so the apply loop has a step to act on. We
+  // carry only the phase (no `change`); the concrete intents are authored by the
+  // follow-on decomposition run, not invented here.
+  if (!next && reachableUndecomposed) {
+    next = { phase: reachableUndecomposed.name, decompose: true };
+  }
+
   let status: BatchStatusInfo['status'];
   if (changeCount === 0) {
+    // Brand-new batch with no actionable change intents anywhere: empty.
     status = 'empty';
-  } else if (doneCount === changeCount) {
+  } else if (doneCount === changeCount && !reachableUndecomposed) {
+    // Done ONLY when every declared change is done AND no reachable phase is
+    // still undecomposed. A reachable empty phase keeps the batch out of `done`.
     status = 'done';
-  } else if (doneCount > 0 || phases.some((p) => p.status === 'in-progress')) {
+  } else if (
+    doneCount > 0 ||
+    phases.some((p) => p.status === 'in-progress') ||
+    reachableUndecomposed
+  ) {
+    // A reachable undecomposed phase is in-flight decomposition work.
     status = 'in-progress';
   } else {
     status = 'pending';

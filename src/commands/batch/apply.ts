@@ -15,9 +15,13 @@ import { resolveBatchSettings } from '../../core/batch/config.js';
 import {
   RatchetBatchEngine,
   computeNextTransition,
+  decompositionJournalKey,
   type ResolvedStepContext,
+  type DecompositionStepContext,
+  type PriorPhaseResult,
   type StepResult,
 } from '../../core/batch/engine/index.js';
+import type { BatchStatusInfo } from '../../core/batch/status.js';
 import {
   getParkedStep,
   readJournalForChange,
@@ -114,6 +118,15 @@ export async function batchApplyCommand(
     return;
   }
 
+  // A reachable, ungated phase whose `changes` are still empty is a decomposition
+  // step: spawn ONE agent (delegating to the canonical decomposition skill) to
+  // author that phase's concrete change intents into batch.yaml, then return. The
+  // next apply selects the new changes as ordinary propose/apply/verify steps.
+  if (target.kind === 'decompose') {
+    await runDecomposition(projectRoot, batch, engine, status, target.phase, settings, options);
+    return;
+  }
+
   const { phase, change, changeDone } = target;
 
   // Respect halts: a parked step does not advance until input is recorded.
@@ -153,23 +166,116 @@ export async function batchApplyCommand(
   renderResult(projectRoot, batch, manifest.phases, result, options);
 }
 
-function pickNextStep(
+/**
+ * The next runnable step `batch apply` acts on: either a concrete CHANGE step
+ * (drives `engine.runStep`) or a phase DECOMPOSE step (drives
+ * `engine.runDecompositionStep`). The two are distinguished by `kind` so
+ * `batchApplyCommand` routes each to the right engine entry point.
+ */
+export type ApplyTarget =
+  | { kind: 'change'; phase: Phase; change: string; changeDone: string }
+  | { kind: 'decompose'; phase: Phase };
+
+/**
+ * Pick the next runnable step for `batch apply`: the first ungated phase's first
+ * change whose derived status is `ready`, `in-progress`, or `awaiting-verify`.
+ * When no ungated change is runnable, surface a reachable, ungated EMPTY phase as
+ * a decomposition step (from `computeBatchStatus.next`, which sets `decompose`
+ * only once no change-level next exists — so a still-gated empty phase is never
+ * picked). Exported so the selection seam is testable directly (the real seam
+ * `batch apply` runs over `computeBatchStatus`), not only via the pure
+ * `selectRunnableStep`.
+ */
+export function pickNextStep(
   status: Awaited<ReturnType<typeof computeBatchStatus>>,
   manifestPhases: Phase[]
-): { phase: Phase; change: string; changeDone: string } | undefined {
+): ApplyTarget | undefined {
   for (const phaseStatus of status.phases) {
     if (phaseStatus.gated) continue;
     const phase = manifestPhases.find((p) => p.name === phaseStatus.name);
     if (!phase) continue;
     for (const change of phaseStatus.changes) {
-      if (change.status === 'ready' || change.status === 'in-progress') {
+      if (
+        change.status === 'ready' ||
+        change.status === 'in-progress' ||
+        // `awaiting-verify` is selectable: its runnable next step is the verify
+        // gate, which must run before the change can be done (the engine derives
+        // `verify` via `computeNextTransition`). Skipping it would strand verify.
+        change.status === 'awaiting-verify'
+      ) {
         // The derived status already carries the per-change definition of done,
         // which the engine surfaces to the agent — no manifest re-lookup.
-        return { phase, change: change.name, changeDone: change.done };
+        return { kind: 'change', phase, change: change.name, changeDone: change.done };
       }
     }
   }
+
+  // No runnable change anywhere. A reachable, ungated phase with empty `changes`
+  // is the outstanding decomposition step (`computeBatchStatus` already ordered
+  // change-before-decompose and gated-after-ungated, so `next.decompose` is set
+  // only when this is genuinely next).
+  if (status.next?.decompose && status.next.phase) {
+    const phase = manifestPhases.find((p) => p.name === status.next!.phase);
+    if (phase) return { kind: 'decompose', phase };
+  }
   return undefined;
+}
+
+/**
+ * The prior phases' shipped results for a phase about to be decomposed: every
+ * phase before it (in manifest order) with concrete change intents, each change
+ * carried as its name + definition of done. This is the context the engine hands
+ * the canonical decomposition skill as the basis for authoring the new phase's
+ * intents (`delegated-lifecycle`: context-preserving delegation).
+ */
+function priorPhaseResults(status: BatchStatusInfo, phaseName: string): PriorPhaseResult[] {
+  const results: PriorPhaseResult[] = [];
+  for (const phaseStatus of status.phases) {
+    if (phaseStatus.name === phaseName) break;
+    if (phaseStatus.changes.length === 0) continue;
+    results.push({
+      phase: phaseStatus.name,
+      changes: phaseStatus.changes.map((c) => ({ name: c.name, done: c.done })),
+    });
+  }
+  return results;
+}
+
+/**
+ * Drive ONE phase-decomposition step: honor a halt on the phase-keyed park, build
+ * the decomposition context (the empty phase + the prior phases' shipped
+ * results), hand it to the engine's phase-scoped entry point, then persist and
+ * render the outcome through the same paths a change step uses.
+ */
+async function runDecomposition(
+  projectRoot: string,
+  batch: string,
+  engine: RatchetBatchEngine,
+  status: BatchStatusInfo,
+  phase: Phase,
+  settings: ResolvedStepContext['settings'],
+  options: BatchApplyOptions
+): Promise<void> {
+  // A decomposition has no change; its journal/park state is keyed by the phase.
+  const key = decompositionJournalKey(phase.name);
+  const parked = getParkedStep(projectRoot, batch, key);
+  if (precheckPark(parked, key, options)) return;
+
+  const context: DecompositionStepContext = {
+    batch,
+    phase: {
+      name: phase.name,
+      goal: phase.goal,
+      success: phase.success,
+      proofOfWork: phase.proofOfWork,
+    },
+    priorResults: priorPhaseResults(status, phase.name),
+    settings,
+  };
+
+  const result = await engine.runDecompositionStep(context);
+  persistStepOutcome(projectRoot, batch, key, result);
+  renderResult(projectRoot, batch, [], result, options);
 }
 
 function notAdvanced(

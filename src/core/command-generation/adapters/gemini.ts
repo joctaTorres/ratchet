@@ -22,6 +22,11 @@ export const geminiAdapter: ToolCommandAdapter = {
     return path.join('.gemini', 'commands', `rct-${commandId}.md`);
   },
 
+  // Gemini commands are file-based and invoked as /rct-<id> (hyphen form).
+  getInvocation(commandId: string): string {
+    return `/rct-${commandId}`;
+  },
+
   formatFile(content: CommandContent): string {
     // Transform command references from colon to hyphen format for consistency
     // with the other file-based agents.

@@ -4,6 +4,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { archiveBatch } from '../../../src/core/batch/archive.js';
+import { appendJournal } from '../../../src/core/batch/journal.js';
 
 let projectRoot: string;
 let batchesDir: string;
@@ -63,12 +64,24 @@ phases:
   );
 }
 
-/** Create a member change with all tasks done (or not). */
+/**
+ * Create a member change. `done: true` means done under the single journal-aware
+ * rule — all tasks checked AND a verify completion journaled; `done: false`
+ * leaves a task open (in-progress).
+ */
 async function makeChange(name: string, done: boolean): Promise<void> {
   const dir = path.join(changesDir, name);
   await fs.mkdir(dir, { recursive: true });
   const tasks = done ? '- [x] one\n- [x] two\n' : '- [x] one\n- [ ] two\n';
   await fs.writeFile(path.join(dir, 'plan.md'), `## Tasks\n${tasks}`, 'utf-8');
+  if (done) {
+    appendJournal(projectRoot, BATCH_NAME, {
+      change: name,
+      kind: 'completion',
+      message: 'verified',
+      transition: 'verify',
+    });
+  }
 }
 
 /** Mark a member change as already archived under changes/archive. */

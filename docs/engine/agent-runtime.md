@@ -252,6 +252,186 @@ Permission flags resolved from the active policy (see
 [Agent permissions](#agent-permissions) below) are appended to the base args
 after the adapter's own argv.
 
+## Skill-in-spawn-locus guarantee
+
+Defined in `src/core/batch/engine/skill-locus.ts`.
+
+Engine-spawned change-verb agents delegate the lifecycle to the canonical ratchet
+skill rather than re-authoring it inline (see the `delegated-lifecycle` standard):
+the spawned-agent prompt tells a headless agent to invoke `/rct:<transition>
+<change>`. That delegation is only safe if the rct command for the transition
+**actually exists** in the locus where the agent runs. Before spawning, the engine
+therefore guarantees that command is present — rendering it when absent, verifying
+it when present, and failing loudly (never spawning) when it cannot. This is a
+render-or-fail **precondition**, evaluated inside `runChangeStep` **before** the
+spawn request is built and before the runtime is selected/invoked.
+
+The engine drives **two** spawn kinds, both routed through this one guarantee
+(`ensureCommandInSpawnLocus`, with `ensureSkillInSpawnLocus` as the per-change
+wrapper):
+
+- **Change-scoped** propose/apply/verify spawns (`runChangeStep`) — delegate to
+  `/rct:<transition> <change>`.
+- **Phase-scoped** decomposition spawns (`runDecompositionStep`) — delegate to
+  `/rct:decompose-phase <phase>` to author a reachable empty phase's concrete
+  change intents into `batch.yaml`. The guarantee renders/verifies the
+  `decompose-phase` command the same way before that spawn.
+
+The prompt itself now **delegates** to that command: `buildAgentInstructions`
+emits the `/rct:<transition> <change>` invocation instead of a hand-built inline
+recipe — see [Agent instructions](#agent-instructions) below. This guarantee is
+its precondition: it ensures the command the prompt names actually exists in the
+spawn locus before the agent is told to run it.
+
+The caller's `-m` guidance and any resolved resume answer are injected as
+ARGUMENTS of that `/rct:<transition> <change>` invocation — handed to the skill
+as `$ARGUMENTS` rather than floated off in a detached block (see
+[Agent instructions](#agent-instructions) below for the argument-injection
+contract).
+
+### Step kind → rct command
+
+The forced transition selects exactly its own canonical rct command, kept in one
+place (`rctCommandIdForTransition`) so it stays aligned with the prompt-delegation
+change; the phase-scoped decomposition step uses its own single-source id
+(`DECOMPOSE_COMMAND_ID`):
+
+| Step kind | rct command |
+|---|---|
+| `propose` | `/rct:propose` |
+| `apply` | `/rct:apply` |
+| `verify` | `/rct:verify` |
+| `decompose` (phase) | `/rct:decompose-phase` |
+
+### Per-agent command path
+
+The command file path is resolved through the **command-generation registry**
+(`src/core/command-generation/`), never a hard-coded single-agent path. The
+guarantee resolves the configured spawn agent's adapter (default `claude`) and
+computes the path via `adapter.getFilePath(<command-id>)`, then renders the file
+from the **shared** command definition (`getCommandContents` → `adapter.formatFile`)
+— the same content `ratchet init` writes, so there is one author of the lifecycle
+text. The applicable set is the batch-engine spawnable agents (the `BUILTIN_ADAPTERS`):
+
+| Agent | Rendered command path (apply) |
+|---|---|
+| `claude` | `.claude/commands/rct/apply.md` |
+| `cursor` | `.cursor/commands/rct-apply.md` |
+| `gemini` | `.gemini/commands/rct-apply.md` |
+| `codex` | `<CODEX_HOME>/prompts/rct-apply.md` (global-scoped, absolute) |
+
+`github-copilot` and `opencode` have command-generation adapters but **no
+batch-engine spawn adapter**, so `resolveAdapter` rejects them with
+`UnknownAgentError` before any spawn — they can never be the spawn agent and are
+out of scope for this spawn-time guarantee.
+
+### Behavior and the bootstrap-failure contract
+
+`ensureSkillInSpawnLocus(ctx, projectRoot, deps)` (side effects through an
+injectable `exists`/`writeText` seam, mirroring `rex-bootstrap.ts`):
+
+- **Absent** → render the command from the shared definition into the spawn locus,
+  then spawn.
+- **Present** → verify and leave the existing file untouched (no re-render), then
+  spawn.
+- **Unrenderable locus** (`remote` — the agent runs in a remote workdir the engine
+  does not control on disk) → throw `SkillLocusError`. `local` and `docker` are
+  renderable (docker bind-mounts the project root, so a file rendered there is
+  visible in the container).
+- **Render/write failure** → throw `SkillLocusError` naming the failing path and
+  the underlying detail.
+
+A `SkillLocusError` short-circuits the step to a blocked/failed `StepResult`
+carrying the actionable message — the **same** bootstrap-error contract as
+`UnknownAgentError` / the locus `failingRuntime` path: no agent is spawned, the
+message is surfaced live on the engine's line sink, no new outcome state is
+introduced, and the step stays resumable. The message names the missing rct
+command, the spawn locus, and the remedy, and never instructs the agent to invoke
+a skill it cannot run.
+
+### Spawn flow
+
+```mermaid
+flowchart TD
+  A["runChangeStep(ctx)<br/>forced transition"] --> B{"park<br/>unresolved?"}
+  B -- yes --> P["blocked / awaiting-approval<br/>(no spawn)"]
+  B -- no --> G["ensureSkillInSpawnLocus<br/>render-or-fail precondition"]
+  G --> D{"locus<br/>renderable?"}
+  D -- "no (remote)" --> E["SkillLocusError →<br/>blocked/failed (no spawn)"]
+  D -- yes --> H{"command<br/>present?"}
+  H -- yes --> V["verify, leave untouched"]
+  H -- "no" --> R{"render<br/>succeeds?"}
+  R -- no --> E
+  R -- yes --> V
+  V --> S["buildSpawnRequest →<br/>selectRuntime → spawn agent"]
+
+  classDef start fill:#0b3d91,stroke:#cfe2ff,stroke-width:2px,color:#ffffff
+  classDef guard fill:#7a4f01,stroke:#ffe8a3,stroke-width:2px,color:#ffffff
+  classDef fail fill:#7a0b1e,stroke:#ffc9d2,stroke-width:2px,color:#ffffff
+  classDef ok fill:#0b5d2e,stroke:#bff0d0,stroke-width:2px,color:#ffffff
+  class A start
+  class B,D,H,R guard
+  class P,E fail
+  class G,V,S ok
+```
+
+The guarantee adds no user-facing command, flag, or config key — it is internal
+engine behavior — so `README.md` needs no edit.
+
+## Agent instructions
+
+Defined in `src/core/batch/engine/instructions.ts` (`buildAgentInstructions`).
+
+The spawned-agent prompt **delegates** each transition to the canonical ratchet
+skill rather than re-authoring the lifecycle inline (`delegated-lifecycle`
+standard: the engine orchestrates the lifecycle, it does not re-author it).
+`transitionGuidance` no longer hand-builds the propose/apply/verify steps (no
+"write files directly on disk", no inline `## Tasks` recipe); instead it emits a
+single instruction to invoke `/rct:<transition> <change>`, which loads
+`.ratchet/standards/` and authors/advances the change to its canonical definition
+of done.
+
+- **Command id** comes from the single-source `rctCommandIdForTransition` map
+  (shared with the [skill-in-spawn-locus guarantee](#skill-in-spawn-locus-guarantee)),
+  so the invocation and the rendered command can never drift.
+- **Invocation token** is resolved from the **configured spawn agent's** command
+  adapter via `adapter.getInvocation(<command-id>)` — claude `/rct:<id>`,
+  cursor/gemini/codex `/rct-<id>` — never a hard-coded literal, because the syntax
+  genuinely differs per agent (`multi-agent-support`). The surrounding prose names
+  no coding agent.
+- **Delegation is context-preserving.** The invocation sits alongside the prompt's
+  existing top block — phase goal/success/proof-of-work and the per-change
+  `Definition of done:` line — plus any strategy guidance. It is never reduced to
+  a bare, context-free skill call.
+- **Caller guidance and resume answer ride along as invocation ARGUMENTS.** The
+  caller's `-m` guidance and any resolved resume answer/feedback are appended to
+  the invocation by `invocationArguments`, so the agent passes them to the skill
+  as `$ARGUMENTS` rather than reading them from a detached prose block
+  (`delegated-lifecycle`: "it hands that context to the skill as arguments").
+  The parts join with a single newline into one contiguous block glued to the
+  invocation, distinct from the blank-line-separated sections around it. When
+  both a `-m` message and a resume answer exist, both are injected (neither
+  dropped); the answer/feedback no longer re-appears in the resume block, which
+  keeps only the intent framing (the original question/proposal plus the
+  incorporate-the-answer / revise-don't-restart directive). With no guidance and
+  no resume context — the plain `batch apply` path — the invocation stays the
+  bare `/rct:<transition> <change>` with no trailing argument noise.
+- **Argument injection stays agent-neutral.** Only the trailing arguments are
+  appended; the invocation TOKEN still resolves from the configured spawn agent's
+  adapter (claude `/rct:<id>`, cursor/gemini/codex `/rct-<id>`), so injecting a
+  guidance argument never smuggles in another agent's syntax.
+
+The **decomposition** spawn has its own prompt builder,
+`buildDecompositionInstructions`, following the same delegation contract: it emits
+`/rct:decompose-phase <phase>` (token resolved through the configured agent's
+adapter) and injects the empty phase's goal/success/proof-of-work plus the prior
+phases' shipped results as the delegation context — never an inline re-description
+of the decomposition steps. A decomposition has no change, so its report channel
+and journal key are the **phase name** (`decompositionJournalKey`).
+
+This change adds no user-facing command, flag, or config key — it is internal
+prompt-builder behavior — so `README.md` needs no edit.
+
 ## Streaming
 
 Defined in `src/core/batch/engine/runtime/stream-json-renderer.ts`.

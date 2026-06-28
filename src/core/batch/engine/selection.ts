@@ -14,7 +14,14 @@ export interface SelectableChange {
   name: string;
   /** `after` dependency names within the same phase. */
   after: string[];
-  /** True when the change is already done (verified/archived). */
+  /**
+   * True when the change is done under the ONE journal-aware rule — fed from the
+   * same predicate as status and transition (`isChangeDone` in transition.ts):
+   * archived, or tasks all checked AND a verify completion journaled. A
+   * tasks-checked-but-unverified change is therefore `done: false`, so selection
+   * picks it and verify runs as the gate before done — selection and the
+   * next-transition logic agree by construction.
+   */
   done: boolean;
   /** True when the change has an unresolved park (blocked/awaiting input). */
   parked: boolean;
@@ -25,11 +32,28 @@ export interface SelectablePhase {
   /** True when a prior phase still gates this one. */
   gated: boolean;
   changes: SelectableChange[];
+  /**
+   * True when the phase has concrete change intents yet to act on (i.e. it is
+   * decomposed). Derived from `changes.length > 0`; when omitted it falls back to
+   * exactly that, so callers need not set it. A reachable (ungated) phase that is
+   * NOT decomposed is an outstanding decomposition step, not vacuously done.
+   */
+  decomposed?: boolean;
 }
 
 export interface SelectedStep {
   phase: string;
-  change: string;
+  /**
+   * The selected change, when the step advances a concrete change intent. Absent
+   * on a decomposition step (the phase has no concrete change intents yet).
+   */
+  change?: string;
+  /**
+   * True when this is a decomposition step: a reachable, ungated phase whose
+   * `changes` list is empty. The follow-on `drive-decomposition-step` change
+   * consumes this to spawn the agent that authors the phase's concrete intents.
+   */
+  decompose?: boolean;
 }
 
 export type NoStepReason =
@@ -53,18 +77,37 @@ export function selectRunnableStep(phases: SelectablePhase[]): SelectionResult {
     return { reason: 'empty' };
   }
 
-  const allDone = phases.every((p) => p.changes.every((c) => c.done));
+  // A phase is decomposed when it has concrete change intents. Keyed off
+  // `changes.length > 0` — the SAME fact `computeBatchStatus` uses — so status
+  // and selection cannot disagree about whether a reachable empty phase is work.
+  const isDecomposed = (p: SelectablePhase) =>
+    p.decomposed ?? p.changes.length > 0;
+
+  // `all-done` ONLY when every phase is decomposed AND all its changes are done.
+  // The old rule used `phase.changes.every((c) => c.done)`, which an empty phase
+  // satisfies VACUOUSLY — masking the undecomposed phase as finished.
+  const allDone = phases.every(
+    (p) => isDecomposed(p) && p.changes.every((c) => c.done)
+  );
   if (allDone) return { reason: 'all-done' };
 
   let sawBlockedOrParked = false;
   let sawGatedWithWork = false;
 
   for (const phase of phases) {
-    const phaseHasWork = phase.changes.some((c) => !c.done);
+    const decomposed = isDecomposed(phase);
+    // An undecomposed reachable phase is outstanding work even with no changes.
+    const phaseHasWork = !decomposed || phase.changes.some((c) => !c.done);
 
     if (phase.gated) {
       if (phaseHasWork) sawGatedWithWork = true;
       continue;
+    }
+
+    // Reachable (ungated) but undecomposed: the outstanding decomposition step.
+    // The follow-on change spawns the agent that authors this phase's intents.
+    if (!decomposed) {
+      return { step: { phase: phase.name, decompose: true } };
     }
 
     const doneSet = new Set(

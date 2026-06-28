@@ -39,6 +39,7 @@ export const COMMAND_IDS = [
   'apply-batch',
   'archive-batch',
   'propose-batch',
+  'decompose-phase',
   'brainstorm',
   'eval',
 ] as const;

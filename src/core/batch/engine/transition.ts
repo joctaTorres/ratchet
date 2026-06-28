@@ -102,7 +102,38 @@ export function readChangeDiskState(projectRoot: string, change: string): Change
 }
 
 /**
- * Compute the next transition for a change purely from its on-disk state.
+ * The single home of the verify-completion rule: a change's verify gate is
+ * satisfied iff the run journal carries a `completion` entry for the `verify`
+ * transition. `computeNextTransition` (here) and the journal-aware done
+ * derivation in `status.ts` both consult THIS predicate, so "done requires a
+ * journaled verify" lives in exactly one place (delegated-lifecycle: "'Done' has
+ * one definition" — computed once, honored by every consumer).
+ */
+export function hasJournaledVerify(journal: JournalEntry[] = []): boolean {
+  return journal.some(
+    (e) => e.kind === 'completion' && e.transition === 'verify'
+  );
+}
+
+/**
+ * THE one journal-aware definition of done, consumed by status derivation, step
+ * selection, and `computeNextTransition` alike — none re-derive done on their
+ * own. A change is done iff it is archived, OR its plan tasks are all checked
+ * (`disk.applied`) AND a verify completion has been journaled for it. An
+ * all-tasks-checked change with no journaled verify is therefore NOT done; it is
+ * the in-between `awaiting-verify` state (surfaced in `status.ts`).
+ */
+export function isChangeDone(
+  disk: ChangeDiskState,
+  journal: JournalEntry[] = []
+): boolean {
+  if (disk.archived) return true;
+  return disk.applied && hasJournaledVerify(journal);
+}
+
+/**
+ * Compute the next transition for a change purely from its on-disk state plus the
+ * journal-aware verify gate.
  *
  * Returns `undefined` when the change is already verified/archived (nothing
  * runnable for it).
@@ -126,8 +157,5 @@ export function computeNextTransition(
 
   // Tasks all done. If a verify completion was already journaled, the change is
   // verified and there is nothing more to do; otherwise the next step is verify.
-  const verified = journal.some(
-    (e) => e.kind === 'completion' && e.transition === 'verify'
-  );
-  return verified ? undefined : 'verify';
+  return hasJournaledVerify(journal) ? undefined : 'verify';
 }

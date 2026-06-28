@@ -72,7 +72,7 @@ Each command is a Markdown file with YAML frontmatter. The file path and frontma
 
 ### Workflows: core profile vs. eval opt-in
 
-The `core` profile (the default) installs nine workflows. The `eval` workflow is opt-in and only installed when a `custom` profile explicitly lists it.
+The `core` profile (the default) installs ten workflows. The `eval` workflow is opt-in and only installed when a `custom` profile explicitly lists it.
 
 **Core profile workflows** (installed by `ratchet init` by default):
 
@@ -87,6 +87,14 @@ The `core` profile (the default) installs nine workflows. The `eval` workflow is
 | `apply-batch` | `ratchet-apply-batch` | `apply-batch` |
 | `archive-batch` | `ratchet-archive-batch` | `archive-batch` |
 | `propose-batch` | `ratchet-propose-batch` | `propose-batch` |
+| `decompose-phase` | `ratchet-decompose-phase` | `decompose-phase` |
+
+The `decompose-phase` command is also the artifact the batch engine renders into
+the spawn locus when `batch apply` drives a phase decomposition (it delegates to
+`/rct:decompose-phase <phase>` to author a reachable empty phase's change intents
+into `batch.yaml`). Like every command it is generated for every tool above at the
+tool's command path (e.g. claude `.claude/commands/rct/decompose-phase.md`, cursor
+`.cursor/commands/rct-decompose-phase.md`).
 
 **Opt-in workflow** (custom profile only):
 

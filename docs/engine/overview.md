@@ -35,6 +35,7 @@ flowchart TB
         CNT["🧭 computeNextTransition<br/>authoritative, from disk"]
         PARK{"⏸️ unresolved<br/>park?"}
         RCS["⚙️ runChangeStep<br/>change-scoped core"]
+        RDS["🧩 runDecompositionStep<br/>phase-scoped · authors intents"]
     end
 
     subgraph RUNTIME["🌐 Agent runtime — SWE-ReX"]
@@ -49,7 +50,8 @@ flowchart TB
     JOURNAL[("📓 journal.jsonl + state.json<br/>at run-state locus")]
     RES(["🎯 StepResult<br/>advanced · blocked · awaiting-approval<br/>phase-gated · nothing-ready"])
 
-    BA --> RS
+    BA -->|"change step"| RS
+    BA -->|"reachable empty phase"| RDS
     RS --> LOCK
     LOCK --> CNT
     CNT --> PARK
@@ -58,6 +60,7 @@ flowchart TB
     HV -->|"forced transition · no lock"| RCS
 
     RCS --> RT
+    RDS -->|"per-batch lock · delegate to decompose-phase skill"| RT
     RT --> LOC
     RT --> DOC
     RT --> REM
@@ -76,7 +79,7 @@ flowchart TB
     classDef result fill:#A5D6A7,stroke:#1b5e20,stroke-width:2px,color:#06371a;
 
     class BA,HV entry;
-    class RS,LOCK,CNT,RCS,OUT core;
+    class RS,LOCK,CNT,RCS,RDS,OUT core;
     class PARK,RT decision;
     class LOC,DOC,REM,AGENT runtime;
     class JOURNAL store;
@@ -124,6 +127,39 @@ exactly the verb's own transition. Run state is kept change-locally under
 `.ratchet/changes/<change>/.run/`. See [Standalone settings](./standalone-settings.md)
 for how settings are resolved without a manifest.
 
+### `runDecompositionStep` — phase-scoped
+
+```ts
+runDecompositionStep(context: DecompositionStepContext): Promise<StepResult>
+```
+
+Called by `ratchet batch apply` when the next runnable step is a reachable,
+ungated phase whose `changes` list is still empty (a **decomposition step**, not
+a change step). Unlike the change path it is keyed off the **phase**, not a
+change: it carries no `change` and no `transition`. Its responsibilities mirror
+`runStep` but author a phase's intents rather than advance a change:
+
+1. Acquires the **per-batch single-flight lock** (same lock as `runStep`).
+2. Guarantees the canonical decomposition command (`decompose-phase`) is present
+   in the spawn locus (same render-or-fail discipline as the per-change
+   transitions — see [Skill in spawn locus](./agent-runtime.md#skill-in-spawn-locus-guarantee)).
+3. Builds **decomposition instructions** that delegate to the canonical
+   `decompose-phase` skill (`/rct:decompose-phase <phase>`, resolved per agent),
+   injecting the empty phase's goal/success/proof-of-work and the prior phases'
+   shipped results as context (`delegated-lifecycle`: the engine orchestrates the
+   spawn; the skill authors the intents).
+4. Spawns **exactly one** agent through the same runtime selection,
+   streaming/rendering, and journal-delta snapshot the change path uses.
+5. Maps the session to a `StepResult` (`transition: 'decompose'`). It **never**
+   calls `computeNextTransition` and **never** authors `batch.yaml` itself — the
+   skill writes the phase's concrete change intents.
+
+A decomposition has no change, so its journal/park state is keyed by the **phase
+name** (the decomposition agent reports with `ratchet batch report <batch>
+--change <phase> ...`). Once the intents are authored, the next `batch apply`
+selects the phase's first ready change as an ordinary propose/apply/verify step —
+the loop continues with no manual stop/propose/resume detour (#30).
+
 ## Single-step contract
 
 `batch apply` advances exactly **one** transition per invocation. No internal
@@ -152,6 +188,42 @@ result as the authoritative transition, falling back to `context.transition` onl
 when the function returns `undefined` (i.e., the change is already done).
 `runChangeStep` never calls it.
 
+## The single journal-aware done-rule
+
+"Done" has **one** definition, computed in one place
+(`hasJournaledVerify` / `isChangeDone` in
+`src/core/batch/engine/transition.ts`) and honored uniformly by status
+derivation (`computeBatchStatus`), step selection (`selectRunnableStep` /
+`pickNextStep`), and `computeNextTransition`. A change is done only when its plan
+tasks are all checked **and** the run journal carries a `completion` entry for
+the `verify` transition — or the change is archived.
+
+The in-between state — tasks all checked but **no journaled verify** — is the
+derived `awaiting-verify` status (`ChangeStatus` in `src/core/batch/status.ts`).
+It is explicitly NOT done: status reports `awaiting-verify`, and `verify` is the
+next runnable transition, so verify actually runs as a gate before a change is
+done rather than being skipped on task-checkboxes alone.
+
+```mermaid
+flowchart TB
+    P["📝 propose<br/>no change dir / no plan"]
+    A["🛠️ apply<br/>plan present, tasks open"]
+    AV["⧖ awaiting-verify<br/>all tasks checked, no journaled verify"]
+    D["✅ done<br/>tasks checked AND verify completion journaled, or archived"]
+
+    P -->|"plan.md created"| A
+    A -->|"every task checkbox checked"| AV
+    AV -->|"verify step journals a verify completion"| D
+
+    classDef todo fill:#FFE0B2,stroke:#8a4b00,stroke-width:2px,color:#5d3300;
+    classDef gate fill:#E1BEE7,stroke:#6a1b9a,stroke-width:2px,color:#3d0a52;
+    classDef done fill:#A5D6A7,stroke:#1b5e20,stroke-width:2px,color:#06371a;
+
+    class P,A todo;
+    class AV gate;
+    class D done;
+```
+
 ## Step selection
 
 `selectRunnableStep` (`src/core/batch/engine/selection.ts`) picks the first
@@ -169,23 +241,93 @@ interface SelectableChange {
 
 interface SelectablePhase {
   name: string;
-  gated: boolean;  // prior phase not yet complete
+  gated: boolean;     // prior phase not yet complete
   changes: SelectableChange[];
+  decomposed?: boolean; // has concrete change intents; defaults to changes.length > 0
 }
 ```
 
 Selection proceeds in phase order:
 
 1. Skip any phase where `gated` is `true`.
-2. Within an ungated phase, build the set of `done` changes.
-3. Iterate changes in manifest order; select the first change where:
+2. If an ungated phase is **undecomposed** (`decomposed` is `false`, i.e. its
+   `changes` list is empty), return it as a decomposition step
+   (`{ step: { phase, decompose: true } }`) — a reachable empty phase is
+   outstanding work, not vacuously done.
+3. Within an ungated, decomposed phase, build the set of `done` changes.
+4. Iterate changes in manifest order; select the first change where:
    - every `after[]` dependency name is in the `done` set, and
    - the change is not `done`, and
    - the change is not `parked`.
-4. Return `{ step: { phase, change } }` on the first match.
+5. Return `{ step: { phase, change } }` on the first match.
+
+Because `done` is the [single journal-aware
+predicate](#the-single-journal-aware-done-rule), an `awaiting-verify` change
+(tasks all checked, no journaled verify) is `done: false` and is therefore
+**selectable** — selection schedules its `verify` transition as the gate that
+must run before it can be done, rather than skipping it on task-checkboxes
+alone. `batch apply`'s `pickNextStep` mirrors this on the derived status: it
+returns a change whose status is `ready`, `in-progress`, **or**
+`awaiting-verify`, so the same verify gate is scheduled through the CLI seam.
 
 When no runnable step is found, `SelectionResult.reason` is one of:
-`all-done` | `all-gated` | `all-blocked-or-parked` | `empty`.
+`all-done` | `all-gated` | `all-blocked-or-parked` | `empty`. `all-done` is
+returned **only** when every reachable phase is decomposed and all its changes
+are done — a reachable phase with an empty `changes` list keeps selection out of
+`all-done` (it is returned as a decomposition step instead). This mirrors the
+batch-done rule in [batch status](#batch-status-and-the-decomposition-step):
+status and selection key off the same two facts — "phase decomposed?"
+(`changes.length > 0`) and "phase reachable?" (ungated) — so they cannot disagree
+about whether a reachable empty phase is outstanding work.
+
+## Batch status and the decomposition step
+
+A multi-phase batch is `done` only once **every reachable phase is decomposed AND
+all its changes are done**. The old done arithmetic counted only declared change
+intents (`doneCount === changeCount`), so a later phase with an empty `changes`
+list contributed zero and the batch flipped `done` the moment the first phase's
+changes finished — even though the later phase had no concrete intents yet
+(#30). `computeBatchStatus` now folds in whether any reachable (ungated) phase is
+still undecomposed: such a phase keeps the batch `in-progress` and is surfaced as
+`next` (a decomposition step carrying the phase, no `change`).
+
+```mermaid
+flowchart TB
+    PC["🛠️ phase changes done<br/>every declared change verified/archived"]
+    Q{"reachable phase with<br/>empty changes?"}
+    DEC["🧩 decomposition step<br/>ungated phase, empty changes<br/>(status in-progress · next: decompose phase)"]
+    SPAWN["🤖 batch apply → runDecompositionStep<br/>spawn ONE agent · delegate to decompose-phase skill"]
+    AUTH["📝 skill authors phase's change intents<br/>into batch.yaml (each with a done)"]
+    BD["✅ batch done<br/>every reachable phase decomposed<br/>AND all changes done"]
+
+    PC --> Q
+    Q -->|"yes — ungated, undecomposed"| DEC
+    Q -->|"no — all phases decomposed"| BD
+    DEC --> SPAWN
+    SPAWN --> AUTH
+    AUTH -->|"phase now decomposed; loop drives its changes"| PC
+
+    classDef todo fill:#FFE0B2,stroke:#8a4b00,stroke-width:2px,color:#5d3300;
+    classDef gate fill:#E1BEE7,stroke:#6a1b9a,stroke-width:2px,color:#3d0a52;
+    classDef run fill:#FFCC80,stroke:#8a4b00,stroke-width:2px,color:#5d3300;
+    classDef done fill:#A5D6A7,stroke:#1b5e20,stroke-width:2px,color:#06371a;
+
+    class PC todo;
+    class Q,DEC gate;
+    class SPAWN,AUTH run;
+    class BD done;
+```
+
+`batch apply` **drives** the decomposition natively: when `pickNextStep` surfaces
+a decomposition step it calls `runDecompositionStep`, which spawns one agent that
+delegates to the canonical `decompose-phase` skill to author the phase's concrete
+change intents into `batch.yaml` from the prior phases' shipped results. The next
+`batch apply` then selects the phase's first ready change — no manual
+stop/propose/resume detour (#30).
+
+A still-**gated** empty phase (its prior phase has unfinished work) is NOT
+surfaced as a decomposition step yet — the unfinished prior-phase change is
+selected first.
 
 ## Phase gates and proof-of-work
 
@@ -254,8 +396,8 @@ type StepState =
 
 interface StepResult {
   state: StepState;
-  change: string;
-  transition: Transition; // 'propose' | 'apply' | 'verify'
+  change: string;          // the decomposed phase's name on a decomposition step
+  transition: StepKind;    // 'propose' | 'apply' | 'verify' | 'decompose'
   blocker?: string;         // present when state is 'blocked'
   approvalRequest?: string; // present when state is 'awaiting-approval'
   journalRefs?: number[];   // indices of journal entries this step wrote
@@ -327,8 +469,12 @@ Headless verbs call `runChangeStep` directly and do not acquire this lock.
 ratchet batch apply <name>
 │
 ├─ 1. Load manifest + batch settings
-├─ 2. computeBatchStatus → pickNextStep → select first ready/in-progress change
-│      (skips gated phases; picks first change with deps done and not parked)
+├─ 2. computeBatchStatus → pickNextStep → select first ready/in-progress/
+│      awaiting-verify change (skips gated phases; picks first change with deps
+│      done and not parked) — an awaiting-verify change schedules its verify gate.
+│      If no change is runnable but a reachable phase has empty `changes`,
+│      pickNextStep returns a DECOMPOSE target → engine.runDecompositionStep
+│      (spawns one agent delegating to the decompose-phase skill), then exit
 │
 ├─ 3. Pre-check park (CLI): if unresolved blocked/awaiting-approval → print hint, exit
 │

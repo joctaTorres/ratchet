@@ -19,6 +19,11 @@ export const githubCopilotAdapter: ToolCommandAdapter = {
     return path.join('.github', 'prompts', `rct-${commandId}.prompt.md`);
   },
 
+  // GitHub Copilot prompts are named rct-<id>, invoked as /rct-<id>.
+  getInvocation(commandId: string): string {
+    return `/rct-${commandId}`;
+  },
+
   formatFile(content: CommandContent): string {
     return `---
 description: ${content.description}

@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } fr
 import path from 'path';
 import { getBatchDir } from './manifest.js';
 import { RATCHET_DIR_NAME } from '../config.js';
+import type { ProofOfWorkPolicy } from './config.js';
 
 export type JournalEntryKind =
   | 'progress'
@@ -22,7 +23,28 @@ export type JournalEntryKind =
   | 'needs-input'
   | 'completion'
   | 'answer'
-  | 'reject';
+  | 'reject'
+  | 'proof-of-work';
+
+/**
+ * Durable record of one phase's proof-of-work verdict, journaled at the phase
+ * boundary by the apply host loop. Defined here (not as the engine's runtime
+ * `ProofOfWorkResult`) so the on-disk record shape stays decoupled from the
+ * engine internals; `apply.ts` maps a `ProofOfWorkResult` into this record.
+ */
+export interface ProofOfWorkRecord {
+  /** Name of the phase whose proof-of-work ran. */
+  phase: string;
+  /** True when the proof-of-work command/judge passed. */
+  passed: boolean;
+  /** True when the policy lets the phase complete despite a failure (`warn`). */
+  gatePassed: boolean;
+  policy: ProofOfWorkPolicy;
+  /** Machine-readable pass/fail reason from the run. */
+  reason: string;
+  /** Human-readable explanation of the verdict. */
+  detail: string;
+}
 
 export interface JournalEntry {
   /** ISO timestamp. */
@@ -32,6 +54,8 @@ export interface JournalEntry {
   message: string;
   /** Optional transition this entry relates to (propose|apply|verify). */
   transition?: string;
+  /** Present only on `proof-of-work` entries: the recorded verdict. */
+  proof?: ProofOfWorkRecord;
 }
 
 export type ParkedKind = 'blocked' | 'awaiting-approval';
@@ -235,4 +259,81 @@ export function clearParkedStep(
   const state = readRunState(projectRoot, batch);
   delete state.parked[change];
   writeRunState(projectRoot, batch, state);
+}
+
+// -----------------------------------------------------------------------------
+// Proof-of-work records (phase-boundary verdicts)
+// -----------------------------------------------------------------------------
+
+/**
+ * The journal `change` key a phase's proof-of-work entry reports under. A proof
+ * record has no change, so — like a decomposition entry — it is keyed by phase;
+ * the `proof-of-work:` prefix keeps it from colliding with the decomposition
+ * key (`decompositionJournalKey`, which is the bare phase name) so the proof
+ * reader never picks up a decomposition completion for the same phase.
+ */
+export function proofOfWorkJournalKey(phase: string): string {
+  return `proof-of-work:${phase}`;
+}
+
+/**
+ * Append a phase's proof-of-work verdict to the batch run journal. The
+ * append-only journal already survives across the stateless single-step apply
+ * invocations, so the verdict lives here rather than in a new file.
+ */
+export function recordProofOfWork(
+  projectRoot: string,
+  batch: string,
+  phase: string,
+  record: ProofOfWorkRecord
+): JournalEntry {
+  return appendJournal(projectRoot, batch, {
+    change: proofOfWorkJournalKey(phase),
+    kind: 'proof-of-work',
+    message: record.detail,
+    proof: record,
+  });
+}
+
+/**
+ * Fold a journal entry list to the latest recorded proof-of-work outcome per
+ * phase. The entries are scanned in append order, so a later proof entry for the
+ * same phase overwrites an earlier one — "latest wins" falls out of that order.
+ * Non-proof entries (and proof entries missing a record) are ignored.
+ *
+ * Pure over the entries it is given: `computeBatchStatus` derives the phase gate
+ * from the very journal it already receives via this helper, with no extra disk
+ * read, so its injected-journal tests stay deterministic.
+ */
+export function proofRecordsFromEntries(
+  entries: JournalEntry[]
+): Map<string, ProofOfWorkRecord> {
+  const byPhase = new Map<string, ProofOfWorkRecord>();
+  for (const entry of entries) {
+    if (entry.kind === 'proof-of-work' && entry.proof) {
+      byPhase.set(entry.proof.phase, entry.proof);
+    }
+  }
+  return byPhase;
+}
+
+/**
+ * The latest recorded proof-of-work outcome per phase, read from disk. Delegates
+ * to {@link proofRecordsFromEntries} over the full run journal so the on-disk and
+ * in-memory (status) gate derivations stay identical.
+ */
+export function readProofOfWorkByPhase(
+  projectRoot: string,
+  batch: string
+): Map<string, ProofOfWorkRecord> {
+  return proofRecordsFromEntries(readJournal(projectRoot, batch));
+}
+
+/** The latest recorded proof-of-work outcome for one phase, or undefined. */
+export function readLatestProofOfWork(
+  projectRoot: string,
+  batch: string,
+  phase: string
+): ProofOfWorkRecord | undefined {
+  return readProofOfWorkByPhase(projectRoot, batch).get(phase);
 }

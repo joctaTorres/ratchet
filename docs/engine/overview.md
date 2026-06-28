@@ -241,7 +241,7 @@ interface SelectableChange {
 
 interface SelectablePhase {
   name: string;
-  gated: boolean;     // prior phase not yet complete
+  gated: boolean;     // prior phase incomplete, or its recorded hard-gate proof failed
   changes: SelectableChange[];
   decomposed?: boolean; // has concrete change intents; defaults to changes.length > 0
 }
@@ -269,6 +269,19 @@ must run before it can be done, rather than skipping it on task-checkboxes
 alone. `batch apply`'s `pickNextStep` mirrors this on the derived status: it
 returns a change whose status is `ready`, `in-progress`, **or**
 `awaiting-verify`, so the same verify gate is scheduled through the CLI seam.
+
+Before returning a runnable change in phase `Q`, `pickNextStep` interposes the
+immediately-preceding phase `P`'s **proof-of-work** as a boundary step: `P` is
+`done` (else `Q` would be gated), so when `P` has no recorded proof outcome yet,
+`pickNextStep` returns a `{ kind: 'proof-of-work'; phase: P }` target *before*
+`Q`'s change. The set of already-recorded phases is passed in (built from
+`readProofOfWorkByPhase`), so the boundary runs once. Once `P`'s proof is
+recorded, the next apply consults the recorded verdict: a passing proof (or
+`warn`) advances into `Q`, while a failing `hard-gate` proof leaves `Q` `gated`
+and `pickNextStep` returns no `Q` change — `batchApplyCommand`'s no-step branch
+then cites `P`'s failing proof. The first phase has no predecessor, so it yields
+no proof step. See [Phase gates and
+proof-of-work](#phase-gates-and-proof-of-work).
 
 When no runnable step is found, `SelectionResult.reason` is one of:
 `all-done` | `all-gated` | `all-blocked-or-parked` | `empty`. `all-done` is
@@ -378,9 +391,62 @@ it once all changes in a phase are done:
 | `warn` | A failed proof is recorded but the phase is allowed to complete. |
 
 `gatePassed` is `true` when the proof passed, or when the policy is `warn`.
-Proof-of-work is not currently invoked inside `runStep`; the single-step path
-advances changes only. Wiring proof-of-work into the gate belongs to the future
-host loop.
+
+#### Execution at the phase boundary
+
+`batch apply` is `runProofOfWork`'s live caller. When phase `P`'s changes are all
+done and the next reachable phase `Q` still has outstanding work, the host loop
+(`pickNextStep` / `batchApplyCommand` in `src/commands/batch/apply.ts`) runs `P`'s
+proof-of-work **at the boundary** before entering `Q`:
+
+```mermaid
+flowchart TB
+    PICK["⚙️ pickNextStep<br/>phase P done · phase Q has work"]
+    REC{"P's proof<br/>already recorded?"}
+    RUN["⚙️ runProofAtBoundary → runProofOfWork<br/>P's configured proofOfWork.run in project root<br/>resolved policy · P's success criteria"]
+    JOURNAL["💾 recordProofOfWork<br/>journal ProofOfWorkRecord<br/>(phase, passed, gatePassed, policy, reason, detail)"]
+    GATE{"recorded<br/>gatePassed?"}
+    NEXT["🛠️ select Q's outstanding change"]
+    BLOCK["❌ Q stays gated<br/>apply cites P's failing proof"]
+
+    PICK --> REC
+    REC -->|"no — runs once per boundary"| RUN
+    RUN --> JOURNAL
+    JOURNAL -.->|"apply returns; next apply reads the record"| GATE
+    REC -->|"yes"| GATE
+    GATE -->|"true — passed, or warn"| NEXT
+    GATE -->|"false — hard-gate failure"| BLOCK
+
+    classDef run fill:#FFCC80,stroke:#8a4b00,stroke-width:2px,color:#5d3300;
+    classDef gate fill:#E1BEE7,stroke:#6a1b9a,stroke-width:2px,color:#3d0a52;
+    classDef store fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue;
+    classDef todo fill:#FFE0B2,stroke:#8a4b00,stroke-width:2px,color:#5d3300;
+    classDef error fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black;
+
+    class PICK,RUN run;
+    class REC,GATE gate;
+    class JOURNAL store;
+    class NEXT todo;
+    class BLOCK error;
+```
+
+The executed command is the phase's **configured** `proofOfWork.run`, run in the
+project root — ratchet injects no package manager, test runner, or command string
+of its own. The boundary check runs **at most once per boundary**: the verdict is
+journaled as a `proof-of-work` entry carrying a `ProofOfWorkRecord`, and the next
+`batch apply` reads the recorded set (`readProofOfWorkByPhase`). The verdict
+therefore survives across the stateless single-step apply invocations. See
+[Run-state locus](./run-state.md#proof-of-work-records).
+
+The recorded verdict **drives the phase gate**. `computeBatchStatus` derives `Q`'s
+gate from `P`'s recorded `gatePassed`: a failing `hard-gate` proof
+(`gatePassed: false`) keeps `Q` `blocked` with a `gatedBy` report citing `P`'s
+failing proof and its detail, while a passing proof — or any `warn` verdict, which
+the recorder always stores as `gatePassed: true` — opens `Q`. Both selection seams
+(`pickNextStep` and the pure `selectRunnableStep`) read that single derived gate,
+so what status reports `blocked` is exactly what selection refuses to run. Under
+`warn` the failure is surfaced when the boundary proof runs (rendered as
+`⚠ failed (warn)`) but never blocks progression.
 
 ## Outcomes
 

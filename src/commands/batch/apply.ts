@@ -16,10 +16,13 @@ import {
   RatchetBatchEngine,
   computeNextTransition,
   decompositionJournalKey,
+  runProofOfWork,
   type ResolvedStepContext,
   type DecompositionStepContext,
   type PriorPhaseResult,
   type StepResult,
+  type ProofOfWorkResult,
+  type RunProofOfWorkDeps,
 } from '../../core/batch/engine/index.js';
 import type { BatchStatusInfo } from '../../core/batch/status.js';
 import {
@@ -27,12 +30,25 @@ import {
   readJournalForChange,
   parkStep,
   clearParkedStep,
+  recordProofOfWork,
+  readProofOfWorkByPhase,
   type ParkedStep,
+  type ProofOfWorkRecord,
 } from '../../core/batch/journal.js';
 import { resolveBatchName } from './shared.js';
 
 export interface BatchApplyOptions {
   json?: boolean;
+}
+
+/**
+ * Test/embedding seam. Production callers pass nothing: the project root is
+ * resolved from the planning home and the boundary proof-of-work runs via the
+ * real bash runner. Tests override `projectRoot` and may inject proof `deps`.
+ */
+export interface BatchApplyDeps {
+  projectRoot?: string;
+  proof?: RunProofOfWorkDeps;
 }
 
 /**
@@ -92,9 +108,10 @@ function persistStepOutcome(
 
 export async function batchApplyCommand(
   name: string | undefined,
-  options: BatchApplyOptions = {}
+  options: BatchApplyOptions = {},
+  deps: BatchApplyDeps = {}
 ): Promise<void> {
-  const projectRoot = resolveCurrentPlanningHomeSync().root;
+  const projectRoot = deps.projectRoot ?? resolveCurrentPlanningHomeSync().root;
   const batch = resolveBatchName(projectRoot, name);
   const manifest = loadBatchManifest(projectRoot, batch);
   const { settings } = resolveBatchSettings(projectRoot, manifest);
@@ -103,13 +120,26 @@ export async function batchApplyCommand(
   // The engine is bundled into this package; construct it and run in-process.
   const engine = new RatchetBatchEngine();
 
+  // The latest recorded proof per phase. Its keys are the phases whose boundary
+  // proof-of-work has already run (so the boundary runs at most once and the next
+  // apply skips past it); the records themselves let the no-step branch cite a
+  // failing proof that is holding a later phase shut.
+  const proofByPhase = readProofOfWorkByPhase(projectRoot, batch);
+  const recordedProofPhases = new Set(proofByPhase.keys());
+
   // Find the next ready, ungated step.
-  const target = pickNextStep(status, manifest.phases);
+  const target = pickNextStep(status, manifest.phases, recordedProofPhases);
   if (!target) {
+    // When nothing is runnable because a phase is held shut by the prior phase's
+    // failing `hard-gate` proof, cite that proof (the same gate `computeBatchStatus`
+    // derived) instead of the generic "everything is gated" message.
+    const proofBlock = proofBlockReason(status, proofByPhase);
     const text =
       status.status === 'done'
         ? chalk.green('Nothing to do — all changes are done.')
-        : chalk.dim('No ready step. Everything is blocked, gated, or parked.');
+        : proofBlock
+          ? chalk.red(`No ready step — blocked by ${proofBlock}`)
+          : chalk.dim('No ready step. Everything is blocked, gated, or parked.');
     if (options.json) {
       console.log(JSON.stringify({ state: 'nothing-ready', message: text }, null, 2));
     } else {
@@ -124,6 +154,16 @@ export async function batchApplyCommand(
   // next apply selects the new changes as ordinary propose/apply/verify steps.
   if (target.kind === 'decompose') {
     await runDecomposition(projectRoot, batch, engine, status, target.phase, settings, options);
+    return;
+  }
+
+  // A `proof-of-work` target is the prior phase's boundary check: run that
+  // phase's configured proof-of-work once, journal the verdict, and return. The
+  // next apply consults the recorded verdict: a passing proof advances into the
+  // phase with work, while a failing `hard-gate` proof keeps that phase blocked
+  // (the gate `computeBatchStatus` derives from the record).
+  if (target.kind === 'proof-of-work') {
+    await runProofAtBoundary(projectRoot, batch, target.phase, settings, options, deps.proof);
     return;
   }
 
@@ -174,11 +214,20 @@ export async function batchApplyCommand(
  */
 export type ApplyTarget =
   | { kind: 'change'; phase: Phase; change: string; changeDone: string }
-  | { kind: 'decompose'; phase: Phase };
+  | { kind: 'decompose'; phase: Phase }
+  | { kind: 'proof-of-work'; phase: Phase };
 
 /**
  * Pick the next runnable step for `batch apply`: the first ungated phase's first
  * change whose derived status is `ready`, `in-progress`, or `awaiting-verify`.
+ *
+ * Boundary proof-of-work: before returning a runnable change in phase `Q`, the
+ * immediately-preceding phase `P` (which is `done` — that is *why* `Q` is
+ * ungated) has its proof-of-work run once. If `P` exists and is not yet in
+ * `recordedProofPhases`, a `proof-of-work` target for `P` is returned *before*
+ * `Q`'s change; once `P`'s proof is recorded, the next call skips straight to
+ * `Q`'s change. The first phase has no predecessor, so it yields no proof step.
+ *
  * When no ungated change is runnable, surface a reachable, ungated EMPTY phase as
  * a decomposition step (from `computeBatchStatus.next`, which sets `decompose`
  * only once no change-level next exists — so a still-gated empty phase is never
@@ -188,9 +237,11 @@ export type ApplyTarget =
  */
 export function pickNextStep(
   status: Awaited<ReturnType<typeof computeBatchStatus>>,
-  manifestPhases: Phase[]
+  manifestPhases: Phase[],
+  recordedProofPhases: ReadonlySet<string> = new Set()
 ): ApplyTarget | undefined {
-  for (const phaseStatus of status.phases) {
+  for (let i = 0; i < status.phases.length; i++) {
+    const phaseStatus = status.phases[i];
     if (phaseStatus.gated) continue;
     const phase = manifestPhases.find((p) => p.name === phaseStatus.name);
     if (!phase) continue;
@@ -203,6 +254,16 @@ export function pickNextStep(
         // `verify` via `computeNextTransition`). Skipping it would strand verify.
         change.status === 'awaiting-verify'
       ) {
+        // Boundary: run the immediately-preceding phase's proof-of-work once
+        // before entering this phase's outstanding work. The predecessor is
+        // `done` (else this phase would be gated), so the boundary is real.
+        const predecessor =
+          i > 0
+            ? manifestPhases.find((p) => p.name === status.phases[i - 1].name)
+            : undefined;
+        if (predecessor && !recordedProofPhases.has(predecessor.name)) {
+          return { kind: 'proof-of-work', phase: predecessor };
+        }
         // The derived status already carries the per-change definition of done,
         // which the engine surfaces to the agent — no manifest re-lookup.
         return { kind: 'change', phase, change: change.name, changeDone: change.done };
@@ -217,6 +278,33 @@ export function pickNextStep(
   if (status.next?.decompose && status.next.phase) {
     const phase = manifestPhases.find((p) => p.name === status.next!.phase);
     if (phase) return { kind: 'decompose', phase };
+  }
+  return undefined;
+}
+
+/**
+ * If a phase is gated shut because the immediately-preceding phase's recorded
+ * `hard-gate` proof-of-work failed, return that phase's `gatedBy` report (which
+ * names the prior phase and cites the failing proof's detail). Returns undefined
+ * when no phase is proof-blocked — e.g. a phase is gated only because its prior
+ * phase still has outstanding work, which is the generic gated case.
+ *
+ * This reads the gate `computeBatchStatus` already derived (`phase.gated`) and
+ * matches it to the recorded failing verdict; it does not re-derive the gate, so
+ * the no-step message and the status gate cannot disagree.
+ */
+function proofBlockReason(
+  status: BatchStatusInfo,
+  proofByPhase: ReadonlyMap<string, ProofOfWorkRecord>
+): string | undefined {
+  for (let i = 1; i < status.phases.length; i++) {
+    const phase = status.phases[i];
+    if (!phase.gated) continue;
+    const predecessor = status.phases[i - 1];
+    const rec = proofByPhase.get(predecessor.name);
+    if (rec && !rec.gatePassed) {
+      return phase.gatedBy ?? `${predecessor.name} — proof-of-work failed: ${rec.detail}`;
+    }
   }
   return undefined;
 }
@@ -276,6 +364,66 @@ async function runDecomposition(
   const result = await engine.runDecompositionStep(context);
   persistStepOutcome(projectRoot, batch, key, result);
   renderResult(projectRoot, batch, [], result, options);
+}
+
+/**
+ * Run ONE phase's proof-of-work at the boundary and journal the verdict. The
+ * executed command is the phase's *configured* `proofOfWork.run`, run in the
+ * project root (`generalizable-defaults`: no ratchet-shipped command, package
+ * manager, or test runner) with the resolved policy and the phase's success
+ * criteria. The engine's runtime `ProofOfWorkResult` is mapped to the durable
+ * `ProofOfWorkRecord` and persisted so the verdict survives across the stateless
+ * single-step apply invocations. Recording — not gating — is this slice's job:
+ * `pickNextStep` already skips a phase whose proof is recorded, so this runs at
+ * most once per boundary.
+ */
+async function runProofAtBoundary(
+  projectRoot: string,
+  batch: string,
+  phase: Phase,
+  settings: ResolvedStepContext['settings'],
+  options: BatchApplyOptions,
+  proofDeps?: RunProofOfWorkDeps
+): Promise<void> {
+  const result = await runProofOfWork(
+    phase.proofOfWork,
+    settings.proofOfWork,
+    projectRoot,
+    phase.success,
+    proofDeps
+  );
+  const record: ProofOfWorkRecord = {
+    phase: phase.name,
+    passed: result.passed,
+    gatePassed: result.gatePassed,
+    policy: result.policy,
+    reason: result.reason,
+    detail: result.detail,
+  };
+  recordProofOfWork(projectRoot, batch, phase.name, record);
+  renderProofOutcome(phase.name, result, options);
+}
+
+/** Render a boundary proof-of-work verdict (JSON or a single rich line). */
+function renderProofOutcome(
+  phase: string,
+  result: ProofOfWorkResult,
+  options: BatchApplyOptions
+): void {
+  if (options.json) {
+    console.log(JSON.stringify({ state: 'proof-of-work', phase, ...result }, null, 2));
+    return;
+  }
+  const head = chalk.bold(`\nProof-of-work: ${phase} (${result.policy})`);
+  console.log(head);
+  if (result.passed) {
+    console.log(chalk.green(`✓ passed — ${result.detail}`));
+  } else if (result.gatePassed) {
+    // `warn` policy: surface the failure but do not present it as a hard stop.
+    console.log(chalk.yellow(`⚠ failed (warn) — ${result.detail}`));
+  } else {
+    console.log(chalk.red(`✗ failed — ${result.detail}`));
+  }
 }
 
 function notAdvanced(

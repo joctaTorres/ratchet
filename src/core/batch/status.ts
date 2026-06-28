@@ -25,7 +25,7 @@ import { getTaskProgressForChange, type TaskProgress } from '../../utils/task-pr
 import { BatchDag } from './dag.js';
 import type { BatchManifest, Phase, ChangeIntent } from './manifest.js';
 import type { JournalEntry, ParkedKind, RunState } from './journal.js';
-import { readJournal } from './journal.js';
+import { readJournal, proofRecordsFromEntries } from './journal.js';
 import { hasJournaledVerify } from './engine/transition.js';
 
 export type ChangeStatus =
@@ -74,9 +74,17 @@ export interface PhaseStatusInfo {
   goal: string;
   success: string;
   changes: ChangeStatusInfo[];
-  /** True until the prior phase's proof-of-work is satisfied (all done). */
+  /**
+   * True while a prior phase gates this one: either the prior phase still has
+   * work, or it is done but its recorded boundary proof-of-work failed
+   * (`gatePassed: false`). See `computeBatchStatus` for the full gate rule.
+   */
   gated: boolean;
-  /** Name of the prior phase gating this one, if gated. */
+  /**
+   * Why this phase is gated, if it is: the bare prior-phase name when that phase
+   * still has work, or a message citing the prior phase's failing proof-of-work
+   * (and its detail) when a recorded `hard-gate` proof closed the gate.
+   */
   gatedBy?: string;
   status: 'pending' | 'in-progress' | 'done' | 'blocked';
 }
@@ -284,16 +292,28 @@ async function derivePhaseStatus(
 /**
  * Compute the full derived status for a batch manifest.
  *
- * Phase gating: phase N is gated until phase N-1 is `done` (all its changes
- * done — a stand-in for "prior phase proof-of-work passed", which the engine
- * actually executes; the CLI models the gate).
+ * Phase gating derives from the prior phase's RECORDED proof-of-work outcome,
+ * not from "all changes done" alone. Walking phases in order, the gate for phase
+ * N consults phase N-1 (`P`) and its latest recorded boundary proof `rec`
+ * (folded from the run `journal` via `proofRecordsFromEntries`, so the gate is
+ * derived from the same entries this function is given — no extra disk read):
+ *   - `P` not done                  -> gated; `gatedBy` is the bare prior name
+ *                                       (the prior phase still has work).
+ *   - `P` done, no `rec` yet         -> gate OPEN. The boundary proof has not run;
+ *                                       the phase is reachable so the boundary
+ *                                       proof-of-work step can run. No verdict is
+ *                                       asserted before one exists.
+ *   - `P` done, `rec.gatePassed`     -> gate OPEN (passed, or `warn` — see below).
+ *   - `P` done, `!rec.gatePassed`    -> gate CLOSED: phase `blocked`, `gatedBy`
+ *                                       cites `P`'s failing proof and its detail.
  *
- * DEFERRED (by design): this `priorPhaseDone` gate does NOT yet consult
- * `runProofOfWork`'s `gatePassed`. Proof-of-work execution is implemented and
- * unit-tested in `engine/proof-of-work.ts` but is wired in by the future
- * host/internal loop, not by the single-step `batch apply` path. Until then a
- * `hard-gate` proof-of-work cannot block a phase here; the gate is "prior phase
- * all changes done". See the `runProofOfWork` docstring for the seam.
+ * Because the recorder folds policy into `gatePassed` (`warn` always records
+ * `gatePassed: true`), consulting that one boolean expresses both policies: a
+ * failing proof under `warn` never closes the gate. This is the single gate rule;
+ * `pickNextStep` reads the derived `gated` and `selectRunnableStep` receives it
+ * as input, so status and selection agree on the proof-derived gate by
+ * construction. The boundary proof itself is executed and recorded by
+ * `batch apply` (see `engine/proof-of-work.ts`'s `runProofOfWork`).
  */
 export async function computeBatchStatus(
   projectRoot: string,
@@ -302,16 +322,33 @@ export async function computeBatchStatus(
   journal: JournalEntry[] = readJournal(projectRoot, manifest.name)
 ): Promise<BatchStatusInfo> {
   const phases: PhaseStatusInfo[] = [];
+  // Latest recorded proof per phase, derived from the same journal status reads.
+  const proofByPhase = proofRecordsFromEntries(journal);
   let priorPhaseDone = true;
   let priorPhaseName: string | undefined;
 
   for (const phase of manifest.phases) {
-    const gated = !priorPhaseDone;
+    let gated = false;
+    let gatedBy: string | undefined;
+    if (!priorPhaseDone) {
+      // Prior phase still has outstanding work: gated the old way.
+      gated = true;
+      gatedBy = priorPhaseName;
+    } else if (priorPhaseName) {
+      // Prior phase is done: the gate now turns on its recorded boundary proof.
+      // No record yet keeps the gate open so the boundary proof step can run; a
+      // recorded failing (`!gatePassed`) verdict closes it with a clear reason.
+      const rec = proofByPhase.get(priorPhaseName);
+      if (rec && !rec.gatePassed) {
+        gated = true;
+        gatedBy = `${priorPhaseName} — proof-of-work failed: ${rec.detail}`;
+      }
+    }
     const phaseStatus = await derivePhaseStatus(
       projectRoot,
       phase,
       gated,
-      gated ? priorPhaseName : undefined,
+      gatedBy,
       runState,
       journal
     );

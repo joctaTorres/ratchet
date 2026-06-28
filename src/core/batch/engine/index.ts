@@ -67,6 +67,7 @@ export {
   evaluatePassCondition,
   realBashRunner,
   type ProofOfWorkResult,
+  type RunProofOfWorkDeps,
   type BashRunner,
   type LlmJudge,
   type JudgeVerdict,

@@ -223,9 +223,11 @@ describe('drive-decomposition-step: apply drives a ready empty phase natively', 
     await engine.runDecompositionStep(decompositionContext());
 
     // (d) selection now advances the first NEW change, not the decomposition step.
+    // p1's proof is treated as already recorded here so the boundary proof step
+    // (its own concern, covered separately) does not mask the decomposition flow.
     const manifest = loadBatchManifest(projectRoot, BATCH);
     const status = await computeBatchStatus(projectRoot, manifest);
-    const target = pickNextStep(status, manifest.phases);
+    const target = pickNextStep(status, manifest.phases, new Set(['p1']));
     expect(target!.kind).toBe('change');
     expect(target).toMatchObject({ kind: 'change', change: 'second' });
 
@@ -309,7 +311,12 @@ describe('drive-decomposition-step: apply drives a ready empty phase natively', 
     manifest = loadBatchManifest(projectRoot, BATCH);
     status = await computeBatchStatus(projectRoot, manifest);
     expect(status.status).not.toBe('done');
-    expect(pickNextStep(status, manifest.phases)).toMatchObject({ kind: 'change', change: 'second' });
+    // p1's boundary proof treated as recorded so this asserts the decomposition
+    // flow, not the (separately covered) proof-of-work boundary step.
+    expect(pickNextStep(status, manifest.phases, new Set(['p1']))).toMatchObject({
+      kind: 'change',
+      change: 'second',
+    });
 
     await markDone('second');
     status = await computeBatchStatus(projectRoot, manifest);

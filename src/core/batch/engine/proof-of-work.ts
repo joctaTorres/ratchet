@@ -153,12 +153,17 @@ export interface RunProofOfWorkDeps {
  * bash pass-condition (`proofOfWork.pass`) which only applies to the
  * integration/blackbox kinds.
  *
- * DEFERRED (by design): this function has no live caller yet. The single-step
- * `batch apply` path advances changes only; phase gating in `computeBatchStatus`
- * is currently modeled as "prior phase all changes done" and does not consult
- * `gatePassed`. Wiring proof-of-work into the gate belongs to the future
- * host/internal loop (the engine is single-step by design; looping is a separate
- * planned change). See `status.ts` `computeBatchStatus` for the matching note.
+ * LIVE CALLER: `batch apply` (`runProofAtBoundary` in `src/commands/batch/apply.ts`)
+ * runs this at the phase boundary — when a phase's changes are all done and the
+ * next reachable phase still has work — and journals the verdict as a durable
+ * `ProofOfWorkRecord` (see `journal.ts`). It executes at most once per boundary.
+ *
+ * GATED ON: the recorded verdict now drives the phase gate. `computeBatchStatus`
+ * derives the next phase's gate from the prior phase's recorded `gatePassed`: a
+ * failing `hard-gate` proof (`gatePassed: false`) keeps the next phase `blocked`
+ * with a report citing the failing proof, while a passing proof (or `warn`, which
+ * records `gatePassed: true`) opens it. Both selection seams read that single
+ * derived gate, so a recorded failure blocks progression by construction.
  */
 export async function runProofOfWork(
   proofOfWork: ProofOfWork,

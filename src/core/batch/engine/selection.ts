@@ -29,7 +29,14 @@ export interface SelectableChange {
 
 export interface SelectablePhase {
   name: string;
-  /** True when a prior phase still gates this one. */
+  /**
+   * True when a prior phase gates this one. Callers populate it from
+   * `computeBatchStatus`'s derived `phase.gated`, which now folds in the prior
+   * phase's recorded boundary proof-of-work: a phase whose predecessor is done
+   * but whose recorded `hard-gate` proof failed (`gatePassed: false`) is `gated`.
+   * Selection therefore refuses a proof-blocked phase by construction — it reads
+   * the same gate status reports, never re-deriving it.
+   */
   gated: boolean;
   changes: SelectableChange[];
   /**
@@ -71,6 +78,12 @@ export interface SelectionResult {
  * Select the first runnable change across phases in order: skip gated phases,
  * then within a phase pick the first change whose deps are all done, that is not
  * itself done, and not parked. Returns a reason when nothing is runnable.
+ *
+ * `gated` folds in the prior phase's recorded proof-of-work (see
+ * `SelectablePhase.gated`): a phase held shut by a failing `hard-gate` proof is
+ * skipped here exactly as status reports it `blocked`, so the step this seam
+ * refuses to run is precisely the one status reports as gated — they agree by
+ * construction because both read the single gate `computeBatchStatus` derived.
  */
 export function selectRunnableStep(phases: SelectablePhase[]): SelectionResult {
   if (phases.length === 0 || phases.every((p) => p.changes.length === 0)) {

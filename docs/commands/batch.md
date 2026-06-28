@@ -356,6 +356,22 @@ Execution sequence:
    (see below). If neither exists, prints a "nothing ready" message and exits
    (without error).
 
+   **Proof-of-work boundary step.** Before returning a runnable change in a phase
+   `Q`, `batch apply` interposes the immediately-preceding phase `P`'s
+   proof-of-work as a boundary step. `P` is `done` (else `Q` would be gated), so
+   when `P` has no recorded proof verdict yet, `batch apply` runs `P`'s
+   **configured** `proofOfWork.run` in the project root (with the resolved policy
+   and `P`'s success criteria), journals the verdict as a `proof-of-work` entry,
+   and returns. The verdict is recorded once per boundary. The first phase has no
+   predecessor, so no proof runs there. The recorded verdict then **drives the
+   gate**: the next `batch apply` derives `Q`'s gate from `P`'s recorded
+   `gatePassed`. A passing proof (or `warn`) advances into `Q`'s change; a failing
+   `hard-gate` proof keeps `Q` blocked, `batch apply` advances no `Q` change, and
+   its "no ready step" output cites `P`'s failing proof instead of the generic
+   gated message. The block persists across separate stateless `batch apply`
+   invocations. See [engine: phase gates and
+   proof-of-work](../engine/overview.md#phase-gates-and-proof-of-work).
+
    **Decomposition step.** When the next runnable step is a reachable phase whose
    `changes` are still empty, `batch apply` spawns one agent that delegates to the
    canonical `decompose-phase` skill (`/rct:decompose-phase <phase>`, resolved per

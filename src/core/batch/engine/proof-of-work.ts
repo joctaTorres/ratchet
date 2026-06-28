@@ -79,12 +79,26 @@ export interface ProofOfWorkResult {
  *
  * Pass conditions are intentionally simple and declarative (the manifest author
  * writes them):
- *   - "exit 0" / "exit-zero" / "" -> passes when the command exits 0
+ *   - "" / "exit 0" / "exit-zero" / "exit code 0" -> passes when the command
+ *     exits 0. A *leading* exit-zero directive is recognized even when followed
+ *     by punctuation/prose, e.g. "exit code 0 — new tests pass" or
+ *     "exit-zero: suite green"; such a condition gates on the exit status and is
+ *     NOT substring-matched against stdout.
  *   - `contains:<text>`           -> passes when stdout contains <text>
  *   - `regex:<pattern>`           -> passes when stdout matches the pattern
- * Anything else is treated as substring-in-stdout, with exit 0 still required.
+ * Anything else (a bare string that is not an exit-code directive) is treated as
+ * substring-in-stdout, with exit 0 still required.
  */
 type PassEvaluation = { passed: boolean; reason: ProofOfWorkPassReason | ProofOfWorkFailReason };
+
+/**
+ * Matches a pass condition that *begins* with an exit-zero directive: `exit`,
+ * an optional `code` and `-`/space separators, then `0` or `zero`, terminated by
+ * end-of-string or a non-alphanumeric boundary (whitespace or punctuation such
+ * as `—`, `:`, `,`). Recognizes `exit 0`, `exit-zero`, `exit code 0`, and prose
+ * forms like `Exit 0, then ...` or `EXIT CODE 0 — everything passes`.
+ */
+const EXIT_ZERO_DIRECTIVE = /^exit(?:[- ]?code)?[- ]?(?:0|zero)(?![a-z0-9])/i;
 
 /** Pass when exit 0; otherwise fail as nonzero-exit. */
 function exitZeroHandler(exitedZero: boolean): PassEvaluation {
@@ -115,7 +129,7 @@ export function evaluatePassCondition(pass: string, result: BashResult): PassEva
   const exitedZero = result.exitCode === 0;
   const condition = pass.trim();
 
-  if (condition === '' || /^exit[- ]?0$/i.test(condition) || /^exit-zero$/i.test(condition)) {
+  if (condition === '' || EXIT_ZERO_DIRECTIVE.test(condition)) {
     return exitZeroHandler(exitedZero);
   }
   if (condition.startsWith('contains:')) {

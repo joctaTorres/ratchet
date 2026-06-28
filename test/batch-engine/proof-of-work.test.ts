@@ -33,6 +33,58 @@ describe('evaluatePassCondition', () => {
   it('supports regex: conditions', () => {
     expect(evaluatePassCondition('regex:\\d+ passing', { exitCode: 0, stdout: '12 passing', stderr: '' }).passed).toBe(true);
   });
+
+  it('recognizes a leading exit-zero prose directive and gates on exit, not stdout substring', () => {
+    const prose = 'exit code 0 — new tests assert the slice works';
+    // exit 0 with stdout that does NOT contain the prose sentence -> still passes
+    const ok = evaluatePassCondition(prose, { exitCode: 0, stdout: 'totally unrelated output\n', stderr: '' });
+    expect(ok.passed).toBe(true);
+    expect(ok.reason).toBe('pass-condition-met');
+  });
+
+  it('fails a leading exit-zero prose directive on a non-zero exit', () => {
+    const prose = 'exit code 0 — new tests assert the slice works';
+    const r = evaluatePassCondition(prose, { exitCode: 1, stdout: '', stderr: 'boom' });
+    expect(r.passed).toBe(false);
+    expect(r.reason).toBe('nonzero-exit');
+  });
+
+  it('recognizes leading exit-zero directives regardless of form', () => {
+    const conditions = [
+      'exit 0',
+      'exit-zero',
+      'exit code 0',
+      'Exit 0, then the suite is green',
+      'exit-zero: integration suite green',
+      'EXIT CODE 0 — everything passes',
+    ];
+    for (const condition of conditions) {
+      // stdout deliberately unrelated: a recognized directive must gate on exit only
+      const r = evaluatePassCondition(condition, { exitCode: 0, stdout: 'unrelated\n', stderr: '' });
+      expect(r.passed, condition).toBe(true);
+      expect(r.reason, condition).toBe('pass-condition-met');
+    }
+  });
+
+  it('treats a bare non-exit-code string as a stdout substring default', () => {
+    // passes when stdout contains the bare string
+    const hit = evaluatePassCondition('all checks green', {
+      exitCode: 0,
+      stdout: 'all checks green now\n',
+      stderr: '',
+    });
+    expect(hit.passed).toBe(true);
+    expect(hit.reason).toBe('pass-condition-met');
+
+    // fails (pass-condition-unmet, not nonzero-exit) on exit 0 when stdout lacks it
+    const miss = evaluatePassCondition('all checks green', {
+      exitCode: 0,
+      stdout: 'something else\n',
+      stderr: '',
+    });
+    expect(miss.passed).toBe(false);
+    expect(miss.reason).toBe('pass-condition-unmet');
+  });
 });
 
 const SUCCESS = 'the slice works end to end';

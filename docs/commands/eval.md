@@ -262,9 +262,11 @@ alphabetical sort order wins and a warning is emitted.
 
 | Value | Passes when |
 |---|---|
-| `exit-zero` | Command exits with code 0. |
+| `exit-zero` / `exit 0` / `exit code 0` | Command exits with code 0. |
+| leading exit-zero directive (e.g. `exit code 0 — tests pass`, `exit-zero: suite green`) | Command exits with code 0. A condition that *begins* with an `exit 0` / `exit-zero` / `exit code 0` directive — optionally followed by punctuation/prose — gates on the exit status and is **not** matched against stdout. |
 | `contains:<text>` | Stdout contains the literal text after the prefix. |
 | `regex:<pattern>` | Stdout matches the regex pattern after the prefix. |
+| anything else (not an exit-code directive) | Treated as a stdout substring: command exits 0 and stdout contains the string. |
 
 ### Agent binding
 

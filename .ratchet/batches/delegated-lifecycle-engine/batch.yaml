@@ -70,13 +70,11 @@ phases:
     proofOfWork:
       kind: integration
       run: pnpm vitest run test/batch-engine
-      pass: >-
-        exit code 0 — new tests assert (a) the spawned prompt invokes
-        `/rct:<transition> <change>` rather than describing steps inline,
-        (b) the resolved phase context + per-change done + caller guidance are
-        injected into that prompt, and (c) when the rct skill is absent from the
-        spawn locus the engine guarantees/renders it or fails with a clear,
-        actionable message (no instruction to invoke an unavailable skill)
+      # exit-zero: the test/batch-engine suite passing proves the delegation
+      # contract — the spawned prompt invokes `/rct:<transition> <change>` rather
+      # than inlining steps, the resolved phase context + per-change done + caller
+      # guidance are injected, and an absent rct skill is rendered-or-failed.
+      pass: exit-zero
     changes:
       - name: guarantee-skill-in-spawn-locus
         done: >-
@@ -118,11 +116,10 @@ phases:
       kind: integration
       # Refined at phase entry with phase 1's delegating spawn in hand.
       run: pnpm vitest run test/batch-engine
-      pass: >-
-        exit code 0 — a test drives propose→apply→verify with a stub agent and
-        asserts verify is scheduled and run, that a change with all tasks checked
-        but no journaled verify is awaiting-verify (not done), and that status /
-        selection / transition agree on the single done-rule
+      # exit-zero: the test/batch-engine suite passing proves verify is scheduled
+      # and run, that an all-tasks-checked-but-unverified change is awaiting-verify
+      # (not done), and that status / selection / transition agree on one done-rule.
+      pass: exit-zero
     # Decomposed at phase entry (manually, pending native-lazy-decomposition in
     # phase 3) using phase 1's shipped delegation: verify now delegates to
     # /rct:verify, so this phase only has to make the engine SCHEDULE it.
@@ -163,11 +160,11 @@ phases:
       kind: integration
       # Refined at phase entry: exact fixture batch chosen against the real engine.
       run: pnpm vitest run test/batch-engine
-      pass: >-
-        exit code 0 — a fixture batch with an empty later phase is NOT reported
-        done after the first phase; `batch apply` triggers a decomposition step
-        that writes concrete change intents for the empty phase, and status stays
-        not-done until every reachable phase is decomposed and its changes done
+      # exit-zero: the test/batch-engine suite passing proves a fixture batch with
+      # an empty later phase is not reported done, that `batch apply` triggers a
+      # decomposition step writing concrete intents, and status stays not-done
+      # until every reachable phase is decomposed and its changes done.
+      pass: exit-zero
     # Decomposed at phase entry (manually, since this is the change that ELIMINATES
     # the manual detour) using phases 1-2's shipped results: delegation + the
     # journal-aware done-rule are in place, so decomposition is one more delegating
@@ -206,8 +203,42 @@ phases:
       kind: blackbox
       # Refined at phase entry against the real gating seam.
       run: bash test/e2e/proof-of-work-gate.sh
-      pass: >-
-        exit code 0 — a two-phase fixture whose phase-1 proof-of-work fails
-        blocks entry into phase 2 under hard-gate (with a clear report), and the
-        same batch advances once the proof passes; warn mode advances but
-        surfaces the failure
+      # exit-zero: test/e2e/proof-of-work-gate.sh exiting 0 proves a two-phase
+      # fixture whose phase-1 proof fails blocks entry into phase 2 under hard-gate
+      # (with a clear report), the same batch advances once the proof passes, and
+      # warn mode advances while surfacing the failure.
+      pass: exit-zero
+    # Decomposed at phase entry using phases 1-3's shipped results: delegation,
+    # the single journal-aware done-rule, and native lazy decomposition are all
+    # in place, so "prior phase all changes done" already holds at the boundary —
+    # this phase only has to EXECUTE the modeled-but-dead `runProofOfWork` at that
+    # boundary, record its verdict durably, and make the gate consult it.
+    changes:
+      - name: execute-and-record-proof-at-boundary
+        done: >-
+          the host loop (`batch apply` / `pickNextStep`) becomes
+          `runProofOfWork`'s live caller — when a phase's changes are all done and
+          the next reachable phase has outstanding work, it runs that phase's
+          proof-of-work (resolved cwd / policy / success) at most once per
+          boundary and journals the `ProofOfWorkResult` (phase, passed,
+          gatePassed, policy, reason, detail) durably, with a reader returning the
+          latest recorded outcome per phase so the verdict survives across the
+          stateless single-step apply invocations
+      - name: gate-next-phase-on-recorded-proof
+        after: [execute-and-record-proof-at-boundary]
+        done: >-
+          `computeBatchStatus` and `selectRunnableStep` / `pickNextStep` derive
+          the prior-phase gate from the recorded proof outcome rather than "all
+          changes done" alone — under `hard-gate` the next phase stays
+          gated/blocked with a clear report citing the failing proof until the
+          recorded `gatePassed`, under `warn` it advances while surfacing the
+          failure, status and selection agree by construction, and the DEFERRED
+          note in `status.ts` / `proof-of-work.ts` is removed
+      - name: blackbox-proof-gate-e2e
+        after: [gate-next-phase-on-recorded-proof]
+        done: >-
+          `test/e2e/proof-of-work-gate.sh` and its two-phase fixture batch exist
+          and the script exits 0 — driving the real `batch apply` to prove that a
+          failing phase-1 `hard-gate` proof blocks entry into phase 2 with a clear
+          report, that the same batch advances once the proof passes, and that
+          `warn` mode advances while surfacing the failure

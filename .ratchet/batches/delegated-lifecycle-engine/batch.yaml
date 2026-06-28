@@ -1,0 +1,213 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# A batch coordinates related changes across ordered phases. It references
+# changes by NAME and never owns them: changes live under .ratchet/changes/
+# like any other change and can be inspected, validated, and archived on their
+# own. Status is derived live from change state on disk — never stored here.
+#
+# Phases ship functional software behind an executable proof-of-work, so errors
+# surface early. A later phase is blocked until the prior phase's proof-of-work
+# passes. Changes are created lazily as the batch progresses: an entry with no
+# change directory yet is simply "pending", not an error.
+#
+# GOAL OF THIS BATCH
+# Make `ratchet batch apply` and the headless propose/apply/verify verbs honor
+# the `delegated-lifecycle` standard: the engine ORCHESTRATES the change
+# lifecycle but never RE-AUTHORS it. Today the engine hand-builds a parallel,
+# context-only inline prompt (`src/core/batch/engine/instructions.ts`) that
+# bypasses the standards-aware skill path entirely — so batch/headless agents
+# never see `.ratchet/standards/` (#32 claims 1 & 3), and the engine carries a
+# second, divergent definition of "done" (`status.ts` task-checkboxes vs
+# `transition.ts` journaled-verify) that makes the verify gate unreachable
+# (#32 claim 2). It also stops at "done" when later phases are undecomposed
+# instead of driving lazy decomposition (#30), and the proof-of-work gate is
+# modeled but never executed.
+#
+# DESIGN DECISION (see .ratchet/standards/delegated-lifecycle.md)
+#   The engine's spawned-agent prompt DELEGATES to the canonical skill — it tells
+#   the headless agent to invoke `/rct:<transition> <change>` — and INJECTS the
+#   CLI invocation's resolved prompt + arguments (phase goal/success/proof-of-
+#   work, per-change definition of done, `-m` guidance, resume answers) alongside
+#   that invocation. The skill is the single author of lifecycle semantics
+#   (including standards loading and the definition of done).
+#
+#   This SUPERSEDES `rex-agent-runtime` phase 1 (`honest-headless-contract`),
+#   which took the opposite stance ("stop telling a headless agent to use the
+#   /rct:propose skill it cannot invoke"). Resolution: delegation is viable
+#   ONLY IF the skill is guaranteed present in the spawn locus — so phase 1 here
+#   makes "the rct skill is rendered/available where the engine spawns" an
+#   explicit, enforced precondition (render-or-fail), de-risking the very concern
+#   rex-agent-runtime raised. rex-agent-runtime needs reconciling against this.
+
+name: delegated-lifecycle-engine
+created: 2026-06-28
+
+settings:
+  strategy: vertical-slice # each phase is a thin end-to-end slice
+  proofOfWork: hard-gate   # a phase blocks the next until its proof-of-work passes
+
+phases:
+  # ---------------------------------------------------------------------------
+  - name: delegated-change-verbs
+    goal: >-
+      Make the change-verb spawn path (batch apply + headless
+      propose/apply/verify) delegate to the canonical rct skill instead of
+      hand-building an inline prompt — and guarantee the skill is actually
+      available where the engine spawns the agent. The engine ensures the rct
+      skill/command for the transition is rendered in the spawn locus (or fails
+      with a clear, actionable message), then emits a prompt that instructs the
+      agent to invoke `/rct:<transition> <change>` with the resolved phase
+      context, per-change definition of done, caller guidance, and any resume
+      answer injected as arguments.
+    success: >-
+      Running `ratchet apply <change>` (and a batch propose/apply/verify step)
+      spawns a headless agent that HAS the rct skill available, is told to invoke
+      `/rct:<transition> <change>`, and receives the resolved phase goal/success/
+      proof-of-work + per-change done + `-m` guidance + resume answer in its
+      prompt — so the skill path loads `.ratchet/standards/` and authors the
+      change. A spawn locus missing the skill fails with a clear bootstrap
+      message rather than instructing the agent to invoke a skill it cannot run.
+    proofOfWork:
+      kind: integration
+      run: pnpm vitest run test/batch-engine
+      pass: >-
+        exit code 0 — new tests assert (a) the spawned prompt invokes
+        `/rct:<transition> <change>` rather than describing steps inline,
+        (b) the resolved phase context + per-change done + caller guidance are
+        injected into that prompt, and (c) when the rct skill is absent from the
+        spawn locus the engine guarantees/renders it or fails with a clear,
+        actionable message (no instruction to invoke an unavailable skill)
+    changes:
+      - name: guarantee-skill-in-spawn-locus
+        done: >-
+          before spawning a change-verb agent, the engine guarantees the rct
+          skill/command for the transition is present in the spawn locus (renders
+          it or verifies it), failing with a clear, actionable bootstrap message
+          when it cannot — never spawning a delegation the agent cannot run
+      - name: delegate-change-verb-prompt
+        after: [guarantee-skill-in-spawn-locus]
+        done: >-
+          `buildAgentInstructions` emits a `/rct:<transition> <change>` skill
+          invocation for propose/apply/verify instead of the inline step
+          descriptions in `transitionGuidance`
+      - name: inject-invocation-context
+        after: [delegate-change-verb-prompt]
+        done: >-
+          the delegating prompt injects the resolved phase goal/success/proof-of-
+          work, the per-change definition of done, the caller's `-m` guidance, and
+          any resume answer alongside the skill invocation — never a bare,
+          context-free `/rct:<transition>` call
+
+  # ---------------------------------------------------------------------------
+  - name: single-definition-of-done
+    goal: >-
+      Collapse the engine's two divergent done-rules into one. `status.ts` marks
+      a change done on plan-task checkboxes alone while `transition.ts` expects a
+      journaled verify completion — so verify is never selected and never runs.
+      Make "done" mean tasks complete AND a journaled verify completion, honored
+      uniformly by status, selection, and transition, so verify actually runs as
+      a gate before a change is done (#32 claim 2; `delegated-lifecycle` "Done
+      has one definition").
+    success: >-
+      Driving a change through `ratchet batch apply` (and the headless verbs)
+      schedules a verify step after apply: the change reports an
+      awaiting-verify state until a verify completion is journaled, and only then
+      becomes done. `ratchet batch status` reflects the same single done-rule;
+      an all-tasks-checked-but-unverified change is NOT reported done.
+    proofOfWork:
+      kind: integration
+      # Refined at phase entry with phase 1's delegating spawn in hand.
+      run: pnpm vitest run test/batch-engine
+      pass: >-
+        exit code 0 — a test drives propose→apply→verify with a stub agent and
+        asserts verify is scheduled and run, that a change with all tasks checked
+        but no journaled verify is awaiting-verify (not done), and that status /
+        selection / transition agree on the single done-rule
+    # Decomposed at phase entry (manually, pending native-lazy-decomposition in
+    # phase 3) using phase 1's shipped delegation: verify now delegates to
+    # /rct:verify, so this phase only has to make the engine SCHEDULE it.
+    changes:
+      - name: journal-aware-done
+        done: >-
+          `status.ts` derives a change whose tasks are all checked but which has
+          no journaled verify completion as a new `awaiting-verify` status (not
+          `done`); the `ChangeStatus` union and every consumer (batch status/view,
+          phase + batch aggregation) handle the new state without regressing the
+          existing done/blocked/ready states
+      - name: schedule-and-run-verify
+        after: [journal-aware-done]
+        done: >-
+          selection (`pickNextStep` / `selectRunnableStep`) returns an
+          `awaiting-verify` change so `ratchet batch apply` runs its `verify`
+          transition (delegating to `/rct:verify`), and a change becomes `done`
+          only once that verify completion is journaled — status, selection, and
+          transition all honoring the one done-rule
+
+  # ---------------------------------------------------------------------------
+  - name: native-lazy-decomposition
+    goal: >-
+      Make `ratchet batch apply` drive lazy phase decomposition natively instead
+      of reporting "done" when later phases are still undecomposed (#30). A
+      ready, ungated phase with empty `changes` becomes a decomposition step that
+      spawns an agent (delegating to the canonical skill, per phase 1) to author
+      that phase's concrete change intents from the prior phase's shipped
+      results — then the loop continues into the new changes. Batch `done` means
+      every reachable phase is decomposed AND all changes are done.
+    success: >-
+      A multi-phase batch whose later phases have empty `changes` does NOT report
+      done after the first phase: `ratchet batch apply` decomposes the next ready
+      phase automatically and drives it to completion, with no manual
+      stop/propose/resume detour. `ratchet batch status` reports done only once
+      every reachable phase is decomposed and all changes are done.
+    proofOfWork:
+      kind: integration
+      # Refined at phase entry: exact fixture batch chosen against the real engine.
+      run: pnpm vitest run test/batch-engine
+      pass: >-
+        exit code 0 — a fixture batch with an empty later phase is NOT reported
+        done after the first phase; `batch apply` triggers a decomposition step
+        that writes concrete change intents for the empty phase, and status stays
+        not-done until every reachable phase is decomposed and its changes done
+    # Decomposed at phase entry (manually, since this is the change that ELIMINATES
+    # the manual detour) using phases 1-2's shipped results: delegation + the
+    # journal-aware done-rule are in place, so decomposition is one more delegating
+    # spawn and "done" already means "every reachable phase done".
+    changes:
+      - name: empty-phase-is-not-done
+        done: >-
+          status/selection recognize a ready, ungated phase with empty `changes`
+          as an outstanding decomposition step (not terminal): a batch with such a
+          phase is NOT reported `done`, and the batch is `done` only once every
+          reachable phase is decomposed AND all its changes are done — fixing the
+          false-done where the engine counted only declared change intents
+      - name: drive-decomposition-step
+        after: [empty-phase-is-not-done]
+        done: >-
+          `ratchet batch apply` runs the decomposition of a ready empty phase by
+          spawning an agent that delegates to the canonical skill (per phase 1) to
+          author that phase's concrete change intents (each with a `done`) into
+          `batch.yaml` from the prior phase's shipped results, then the loop
+          continues into the new changes — no manual stop/propose/resume detour
+
+  # ---------------------------------------------------------------------------
+  - name: execute-proof-of-work-gate
+    goal: >-
+      Wire the modeled-but-dead proof-of-work execution (`runProofOfWork`,
+      currently with no live caller) into the phase boundary so a later phase is
+      actually blocked until the prior phase's proof-of-work command runs and
+      passes — making `proofOfWork: hard-gate` real rather than declarative.
+    success: >-
+      With `proofOfWork: hard-gate`, `ratchet batch apply` runs the prior phase's
+      proof-of-work command at the phase boundary and refuses to advance into the
+      next phase until it passes; a failing proof blocks progression with a clear
+      report, and a passing proof unblocks it. `warn` surfaces a failing proof
+      without blocking.
+    proofOfWork:
+      kind: blackbox
+      # Refined at phase entry against the real gating seam.
+      run: bash test/e2e/proof-of-work-gate.sh
+      pass: >-
+        exit code 0 — a two-phase fixture whose phase-1 proof-of-work fails
+        blocks entry into phase 2 under hard-gate (with a clear report), and the
+        same batch advances once the proof passes; warn mode advances but
+        surfaces the failure

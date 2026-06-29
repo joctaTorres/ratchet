@@ -132,6 +132,30 @@ phases:
         pnpm build && pnpm vitest run --coverage &&
         COVERAGE_THRESHOLD=87 node dist/core/ci/coverage-gate.js
       pass: exit-zero
+    # Decomposed at phase entry from phase 2's shipped results (command groups
+    # covered, floor at 80): two parallel test-writing changes feed a
+    # floor-ratchet change, mirroring phase 2's pattern.
+    changes:
+      - name: core-util-tests
+        done: >-
+          core/migration.ts, core/change-status-policy.ts and
+          core/shared/config-schema.ts have unit tests covering their main
+          behaviors and key branches per the `testing` standard (right layer,
+          tmpdir fixture isolation where they touch the filesystem, `.feature`
+          mirrored in the header); the full vitest suite is green.
+      - name: utils-helper-tests
+        done: >-
+          utils/match.ts, utils/item-discovery.ts and utils/task-progress.ts have
+          unit tests covering their branches per the `testing` standard; the full
+          vitest suite is green.
+      - name: ratchet-floor-to-87
+        after: [core-util-tests, utils-helper-tests]
+        done: >-
+          With the core utilities and helpers covered, raise
+          DEFAULT_COVERAGE_THRESHOLD to the floor the suite now clears (target
+          ~87) with the gate unit tests updated for the new floor (green
+          at/above, red below) and docs/engine/coverage-gate.md + README updated
+          per the documentation standard; the gate exits 0 at the raised floor.
 
   # ---------------------------------------------------------------------------
   # PHASE 4 — Cover CLI entry + large files; reach the 95% target

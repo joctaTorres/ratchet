@@ -40,7 +40,13 @@ export default defineConfig({
         'bin/',
         '*.config.ts',
         'build.js',
-        'test/**'
+        'test/**',
+        // Untracked, local-only vendored reference checkouts of other tools live
+        // under `.agents/` (gitignored). They are not this repo's code, so they
+        // must never be instrumented — `all: true` would otherwise drag the
+        // measured total down by tens of thousands of foreign, untested lines.
+        // A no-op in CI (where `.agents/` does not exist).
+        '.agents/**'
       ]
     },
     testTimeout: 10000,

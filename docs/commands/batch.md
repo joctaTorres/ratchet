@@ -16,6 +16,15 @@ stores intent only and never accumulates progress.
 (`propose` → `apply` → `verify`) through the bundled engine. The autonomous
 loop lives in the `apply-batch` skill, not in the CLI.
 
+Selection treats an `awaiting-verify` change as runnable work: when a change's
+tasks are all checked but no verify completion is journaled yet, `batch apply`
+selects it and runs its `verify` transition — delegating to the canonical
+`/rct:verify <change>` skill — as the gate that must pass before the change
+becomes `done`. Selection, status, and next-transition computation all honor the single
+journal-aware definition of done (see the `batch status` change-status table
+below), so an all-tasks-checked-but-unverified change is never treated as done
+and is never skipped.
+
 ## Manifest structure
 
 ```yaml
@@ -41,7 +50,7 @@ phases:
     goal: <phase goal>
     success: <success criteria>
     proofOfWork:
-      kind: integration       # integration | blackbox | llm-judge
+      kind: integration       # integration | blackbox  (llm-judge not yet supported)
       run: <bash command>
       pass: <pass condition>
     changes:
@@ -106,31 +115,56 @@ Reads the manifest, reads the run-state journal, and derives status for each
 change without consulting the batch manifest for progress (the manifest stores
 intent only).
 
-Change statuses:
+Change statuses (the `Symbol` column is the glyph used in `batch status` and
+`batch view` text output):
 
-| Status | Meaning |
-|---|---|
-| `pending` | No change directory exists yet. |
-| `ready` | Dependencies met; change not yet started. |
-| `in-progress` | Change directory exists; tasks partially complete. |
-| `done` | All tasks complete, or change is archived. |
-| `blocked` | Dependency unmet, OR an agent voluntarily parked the step with a blocker. |
-| `awaiting-approval` | Agent completed propose and parked for approval (after-propose/every-phase gate). |
+| Status | Symbol | Meaning |
+|---|---|---|
+| `pending` | `·` | No change directory exists yet. |
+| `ready` | `○` | Dependencies met; change not yet started. |
+| `in-progress` | `◉` | Change directory exists; tasks partially complete. |
+| `awaiting-verify` | `⧖` | All tasks complete but **no verify completion is journaled yet** — the verify gate has not run, so the change is NOT done. |
+| `done` | `✓` | All tasks complete **and** a verify completion is journaled for the change, or the change is archived. |
+| `blocked` | `✗` | Dependency unmet, OR an agent voluntarily parked the step with a blocker. |
+| `awaiting-approval` | `⏸` | Agent completed propose and parked for approval (after-propose/every-phase gate). |
+
+"Done" has a **single journal-aware definition** shared by status derivation,
+step selection, and next-transition computation: a change is done only when its
+plan tasks are all checked AND the run journal carries a `completion` entry for
+the `verify` transition (or the change is archived). An all-tasks-checked change
+with no journaled verify is reported `awaiting-verify` — it is the batch's next
+actionable step, because `verify` is the transition that must run before it can
+be done.
 
 Phase gating: phase N is gated (status `blocked`) until phase N−1 reports
 `done` for all its changes.
 
+**A multi-phase batch is `done` only once every reachable phase is decomposed
+AND all its changes are done.** Phases are decomposed lazily: a later phase may
+start with an empty `changes` list (no concrete change intents yet). A ready,
+ungated phase with empty `changes` is an **outstanding decomposition step**, not
+terminal — the batch is NOT reported `done` while such a phase remains, even when
+every *declared* change is done. Status and step selection agree by construction:
+both treat a reachable empty phase as work (status reports `in-progress` and
+`next` points at the phase as a decomposition step; selection returns that phase
+rather than `all-done`). A still-gated empty phase is not surfaced yet — the
+unfinished prior-phase change is selected first.
+
 **Text output** lists each phase and its changes with status symbols, task
 progress counters, `after` edges, and parked step details (blocker message or
-approval summary). The next actionable step is printed at the end.
+approval summary). The next actionable step is printed at the end — a reachable
+empty phase prints as `Next: decompose phase <name>`.
 
 **JSON output** (`--json`): the root object includes `name`, `status`,
 `progress` (`{ completed, total }`), `changeCount`, `doneCount`, `gate`
-(resolved setting), `next` (`{ phase, change }` or `null`), and `phases`. Each
+(resolved setting), `next` (`{ phase, change }` for a change step, or
+`{ phase, decompose: true }` for a reachable empty phase, or `null`), and
+`phases`. Each
 phase includes `name`, `goal`, `success`, `status`, `gated`, `gatedBy`, and
 `changes`. Each change includes `name`, `status`, `done`, `progress`, `after`,
-`blockedBy`, `exists`, `archived`, `blocked`, `awaitingApproval`, and `parked`
-(`{ kind, reason, answer?, feedback? }` or `null`).
+`blockedBy`, `exists`, `archived`, `blocked`, `awaitingApproval`,
+`awaitingVerify` (`true` when tasks are all checked but no verify completion is
+journaled), and `parked` (`{ kind, reason, answer?, feedback? }` or `null`).
 
 ## `batch view`
 
@@ -314,9 +348,53 @@ The autonomous apply loop is the `apply-batch` skill.
 Execution sequence:
 
 1. **Select next step.** Iterates phases in declaration order, skipping gated
-   phases. Within each ungated phase, picks the first change with status `ready`
-   or `in-progress`. If no such step exists, prints a "nothing ready" message and
-   exits (without error).
+   phases. Within each ungated phase, picks the first change with status `ready`,
+   `in-progress`, or `awaiting-verify` (an all-tasks-checked change with no
+   journaled verify is selected so its `verify` gate runs before `done`). If no
+   change is runnable but a reachable, ungated phase has
+   an empty `changes` list, that phase is selected as a **decomposition step**
+   (see below). If neither exists, prints a "nothing ready" message and exits
+   (without error).
+
+   **Proof-of-work boundary step.** Before returning a runnable change in a phase
+   `Q`, `batch apply` interposes the immediately-preceding phase `P`'s
+   proof-of-work as a boundary step. `P` is `done` (else `Q` would be gated), so
+   when `P` has no recorded proof verdict yet, `batch apply` runs `P`'s
+   **configured** `proofOfWork.run` in the project root (with the resolved policy
+   and `P`'s success criteria), journals the verdict as a `proof-of-work` entry,
+   and returns. The verdict is recorded once per boundary. The first phase has no
+   predecessor, so no proof runs there. The recorded verdict then **drives the
+   gate**: the next `batch apply` derives `Q`'s gate from `P`'s recorded
+   `gatePassed`. A passing proof (or `warn`) advances into `Q`'s change; a failing
+   `hard-gate` proof keeps `Q` blocked, `batch apply` advances no `Q` change, and
+   its "no ready step" output cites `P`'s failing proof instead of the generic
+   gated message. The block persists across separate stateless `batch apply`
+   invocations. See [engine: phase gates and
+   proof-of-work](../engine/overview.md#phase-gates-and-proof-of-work).
+
+   **Terminal-phase proof.** The **last** phase has no following phase `Q` to
+   trigger its boundary proof. So once every change in the batch is done and
+   nothing is left to decompose, `batch apply` surfaces and runs the terminal
+   phase's proof-of-work the same way — and the batch is **not `done`** until that
+   proof is recorded as satisfied (`gatePassed: true`). A failing terminal
+   `hard-gate` proof keeps the batch `in-progress` with nothing auto-runnable: the
+   no-step output cites the failing terminal proof and the operator must
+   `batch rerun-proof` (or fix the cause). A **single-phase** batch therefore gates
+   on its one phase's proof before reporting `done`. The predecessor's boundary
+   proof also runs **before a decomposition step** (an undecomposed phase is
+   entered off its predecessor's slice).
+
+   **Decomposition step.** When the next runnable step is a reachable phase whose
+   `changes` are still empty, `batch apply` spawns one agent that delegates to the
+   canonical `decompose-phase` skill (`/rct:decompose-phase <phase>`, resolved per
+   agent) to author that phase's concrete change intents into `batch.yaml` from
+   the prior phases' shipped results — the engine orchestrates the spawn, the
+   skill authors the intents (it creates no change directories). The agent reports
+   under the phase name (`ratchet batch report <batch> --change <phase> ...`), and
+   the resulting `StepResult` has `transition: 'decompose'`. The next `batch
+   apply` then selects the phase's first ready change as an ordinary
+   propose/apply/verify step, so a multi-phase batch with later empty phases is
+   driven to completion with no manual stop/propose/resume detour.
 
 2. **Park precheck.** If the selected step is parked as `blocked` without a
    recorded answer, or as `awaiting-approval` without approval or feedback, the
@@ -331,10 +409,14 @@ Execution sequence:
    for the same batch. An already-locked batch returns immediately.
 
 5. **Spawn agent.** The bundled `RatchetBatchEngine` spawns exactly one coding
-   agent for the derived transition (`propose`, `apply`, or `verify`). The engine
-   is in-process — no separate install or activation is required. The agent
-   receives structured instructions including phase goal, success criteria, proof-
-   of-work description, change definition of done, and resume context (if any).
+   agent for the derived transition (`propose`, `apply`, or `verify`) — or, for a
+   decomposition step, for the phase decomposition (`decompose`). The engine is
+   in-process — no separate install or activation is required. The agent receives
+   structured instructions including phase goal, success criteria, proof-of-work
+   description, change definition of done (change steps) or the prior phases'
+   shipped results (decomposition steps), and resume context (if any). Every spawn
+   delegates to the canonical rct skill for that step rather than re-describing it
+   inline.
 
 6. **Map outcome.** Session journal entries and the on-disk change-state delta
    are mapped to a `StepResult`:
@@ -360,9 +442,69 @@ Execution sequence:
 | `autonomous` | Agent may park on blockers; no approval gate. |
 
 **JSON output**: the raw `StepResult` object (`state`, `change`, `transition`,
-`blocker?`, `approvalRequest?`, `journalRefs?`, `message?`). When nothing is
+`blocker?`, `approvalRequest?`, `journalRefs?`, `message?`). `transition` is
+`propose` | `apply` | `verify` | `decompose`; on a decomposition step `change`
+carries the decomposed phase's name. When nothing is
 ready, `{ state: 'nothing-ready', message: '...' }`. When a step is pre-checked
 as parked, `{ state: 'parked', change, reason, hint }`.
+
+## `batch rerun-proof`
+
+Invalidate a phase's recorded proof-of-work so the next `batch apply` re-runs
+that phase's configured boundary proof.
+
+### Synopsis
+
+```bash
+ratchet batch rerun-proof [name] --phase <phase> [--json]
+```
+
+`[name]` defaults to the current active batch when omitted. `--phase` is
+**required**.
+
+### Options
+
+| Option | Argument | Description |
+|---|---|---|
+| `--phase` | `<phase>` | **Required.** The phase whose recorded proof-of-work to invalidate. Must be a phase declared in the manifest. |
+| `--json` | | Output the result as JSON (`{ batch, phase, invalidated }`). |
+
+### Behavior
+
+A phase's boundary proof-of-work runs **at most once**: `batch apply` journals a
+durable `proof-of-work` verdict, and the gate reads that verdict forever after.
+When a verdict was recorded `FAILED` for a fixable reason (a misconfigured `pass`
+condition, a flaky run, an environment fix), the next phase stays permanently
+blocked. `batch rerun-proof` is the **supported** operator override that replaces
+hand-editing the append-only run journal.
+
+It appends a **superseding `proof-of-work-invalidated` marker** keyed by the same
+`proof-of-work:<phase>` key the recorder uses. The journal stays append-only —
+the original `proof-of-work` entry is left in place (the audit trail is
+preserved). The single record reader (`proofRecordsFromEntries`, read by both the
+phase gate and boundary-step selection) treats the later marker as **removing**
+the phase from the current record map, so the next `batch apply` re-runs the
+phase's own configured `proofOfWork.run` boundary proof and records a fresh
+verdict that re-derives the gate. The marker carries only the phase name — no
+toolchain or command detail.
+
+- **Recorded proof present** (failing or passing): appends the marker and reports
+  that the phase's recorded proof was invalidated; the next `batch apply` re-runs
+  the boundary instead of advancing into the next phase.
+- **No recorded proof for the phase**: a **no-op** — nothing is appended, the run
+  journal is left unchanged, and the command reports there is nothing to
+  invalidate (`invalidated: false` in JSON).
+- **Missing `--phase`**: exits with an actionable error naming the missing flag;
+  nothing is appended.
+- **Unknown phase** (not in the manifest): exits with an error stating the phase
+  is not part of the batch; nothing is appended.
+
+This is an orchestration override only: it journals a marker that changes which
+boundary step the engine next offers. It spawns no agent and defines no second
+"done" — the boundary proof still runs via the normal `batch apply` path. See
+[engine: phase gates and
+proof-of-work](../engine/overview.md#phase-gates-and-proof-of-work) and
+[run-state: proof-of-work records](../engine/run-state.md#proof-of-work-records-phase-boundary-verdicts).
 
 ## `batch archive`
 

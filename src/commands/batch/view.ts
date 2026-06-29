@@ -18,7 +18,7 @@ import {
   type ChangeStatusInfo,
   type ParkedInfo,
 } from '../../core/batch/status.js';
-import { readRunState } from '../../core/batch/journal.js';
+import { readRunState, readJournal } from '../../core/batch/journal.js';
 import { resolveBatchName, listBatchNames } from './shared.js';
 
 export interface BatchViewOptions {
@@ -39,6 +39,9 @@ function symbolFor(change: ChangeStatusInfo): string {
       return chalk.green('✓');
     case 'in-progress':
       return chalk.yellow('◉');
+    case 'awaiting-verify':
+      // Tasks done, verify gate pending — distinct from done (✓) and approval (⏸).
+      return chalk.magenta('⧖');
     case 'ready':
       return chalk.cyan('○');
     case 'blocked':
@@ -71,7 +74,10 @@ export async function batchViewCommand(
   const batchName = resolveBatchName(projectRoot, name);
   const manifest = loadBatchManifest(projectRoot, batchName);
   const runState = readRunState(projectRoot, batchName);
-  const status = await computeBatchStatus(projectRoot, manifest, runState);
+  // Thread the run journal so status honors the single journal-aware done-rule
+  // (an all-tasks-checked change with no journaled verify renders awaiting-verify).
+  const journal = readJournal(projectRoot, batchName);
+  const status = await computeBatchStatus(projectRoot, manifest, runState, journal);
 
   if (options.json) {
     console.log(JSON.stringify(status, null, 2));
@@ -128,7 +134,10 @@ function renderSingleBatch(status: BatchStatusInfo): void {
 
   console.log('\n' + '═'.repeat(60));
   if (status.next) {
-    console.log(chalk.bold(`Next: ${status.next.change} (phase ${status.next.phase})`));
+    const label = status.next.decompose
+      ? `decompose phase ${status.next.phase}`
+      : `${status.next.change} (phase ${status.next.phase})`;
+    console.log(chalk.bold(`Next: ${label}`));
   } else if (status.status === 'done') {
     console.log(chalk.green('All changes done.'));
   } else {

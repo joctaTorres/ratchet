@@ -1,0 +1,66 @@
+# E2E fixture batch for the proof-of-work phase gate.
+#
+# Driven by test/e2e/proof-of-work-gate.sh against the BUILT CLI in a fresh
+# scratch project root. The script copies this manifest under
+# .ratchet/batches/<name>/batch.yaml and `mkdir -p .ratchet/changes/archive/first`
+# so phase `p1` is done (its change is archived) while phase `p2` still holds an
+# outstanding change. The first `ratchet batch apply` therefore runs `p1`'s
+# CONFIGURED proof-of-work at the boundary into `p2`.
+#
+# `p1`'s proof-of-work passes or fails purely on the RATCHET_E2E_PROOF env var
+# the script controls — a NEUTRAL, project-agnostic shell test (no package
+# manager / test runner / toolchain command), per the `generalizable-defaults`
+# standard. `realBashRunner` spawns `bash -c <run>` inheriting the apply
+# process's environment, so exporting the var before invoking apply flips the
+# verdict without ever spawning a real agent.
+#
+# The committed policy is `hard-gate`; the warn scenario flips just
+# `settings.proofOfWork` to `warn` in its own scratch copy (a single sed).
+
+name: proof-of-work-gate
+created: 2026-06-28
+
+settings:
+  # Committed policy: a failing p1 proof blocks entry into p2. The warn scenario
+  # rewrites this one line to `warn` in its scratch copy.
+  proofOfWork: hard-gate
+
+phases:
+  - name: p1
+    goal: >-
+      Phase 1 — already shipped in the fixture (its change `first` is archived).
+      Its boundary proof-of-work is the subject under test: it runs when apply
+      crosses into phase 2.
+    success: >-
+      Phase 1's env-gated proof-of-work command exits 0.
+    proofOfWork:
+      # blackbox: run a neutral shell command, pass on exit 0. The command is
+      # keyed on an env var the e2e sets — NOT a ratchet-toolchain command.
+      kind: blackbox
+      run: test "${RATCHET_E2E_PROOF:-fail}" = pass
+      pass: exit-zero
+    changes:
+      - name: first
+        done: >-
+          Phase 1's only change — archived by the e2e so phase 1 is done and the
+          boundary proof-of-work into phase 2 becomes the next runnable step.
+
+  - name: p2
+    goal: >-
+      Phase 2 — holds one outstanding change `second`. Entry into this phase is
+      what the prior phase's proof-of-work gates.
+    success: >-
+      Phase 2's outstanding change is reachable only once phase 1's boundary
+      proof-of-work has passed (or is in `warn`).
+    proofOfWork:
+      # Placeholder — never executed by the e2e (no scenario crosses p2's
+      # boundary, so no agent is ever spawned). Neutral per generalizable-defaults.
+      kind: blackbox
+      run: "true"
+      pass: exit-zero
+    changes:
+      - name: second
+        done: >-
+          Phase 2's outstanding change — the e2e never drives apply into it (that
+          would spawn a real agent); it only asserts whether `second` is
+          reachable, which is the proof-of-work gate's effect.

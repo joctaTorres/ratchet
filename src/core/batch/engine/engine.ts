@@ -26,9 +26,12 @@ import { appendJournalForLocus, type JournalEntryKind, type RunLocus } from '../
 import type {
   ResolvedStepContext,
   ChangeStepContext,
+  DecompositionStepContext,
   StepResult,
+  StepKind,
   Transition,
 } from './contract.js';
+import type { BatchSettings } from '../config.js';
 import {
   resolveAdapter,
   UnknownAgentError,
@@ -42,10 +45,17 @@ import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
 import { makeRexRemoteRuntime } from './runtime/rex-remote-runtime.js';
 import { validateRemoteSettings } from '../config.js';
 import { makeStreamJsonRenderer } from './runtime/stream-json-renderer.js';
-import { buildAgentInstructions } from './instructions.js';
+import { buildAgentInstructions, buildDecompositionInstructions, decompositionJournalKey } from './instructions.js';
+import {
+  ensureSkillInSpawnLocus,
+  ensureCommandInSpawnLocus,
+  DECOMPOSE_COMMAND_ID,
+  SkillLocusError,
+  type SkillLocusDeps,
+} from './skill-locus.js';
 import { mapSessionToOutcome } from './outcome.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
-import { computeNextTransition, readChangeDiskState } from './transition.js';
+import { computeNextTransition, readChangeDiskState, type ChangeDiskState } from './transition.js';
 import { withBatchLock } from './lock.js';
 import {
   readChangeJournalTolerant,
@@ -77,6 +87,12 @@ export interface EngineDeps {
   adapters?: Record<string, AgentAdapter>;
   /** Resolve the project root (defaults to planning-home). */
   projectRoot?: () => string;
+  /**
+   * Injectable side-effect seam for the skill-in-spawn-locus guarantee
+   * (exists/writeText). Defaults to the real fs; tests inject fakes to drive the
+   * render/verify/fail paths without touching disk.
+   */
+  skillLocusDeps?: SkillLocusDeps;
 }
 
 /**
@@ -138,6 +154,7 @@ export class RatchetBatchEngine {
   private readonly printLine: LinePrinter;
   private readonly adapters?: Record<string, AgentAdapter>;
   private readonly projectRoot: () => string;
+  private readonly skillLocusDeps?: SkillLocusDeps;
 
   constructor(deps: EngineDeps = {}) {
     this.runtimeOverride =
@@ -145,6 +162,7 @@ export class RatchetBatchEngine {
     this.printLine = deps.printLine ?? ((line) => process.stdout.write(line + '\n'));
     this.adapters = deps.adapters;
     this.projectRoot = deps.projectRoot ?? resolveProjectRoot;
+    this.skillLocusDeps = deps.skillLocusDeps;
   }
 
   /**
@@ -159,9 +177,9 @@ export class RatchetBatchEngine {
    * event channel are otherwise locus-agnostic — streaming and rendering are
    * identical regardless of locus, because every runtime emits the same events.
    */
-  private selectRuntime(projectRoot: string, context: ChangeStepContext): AgentRuntime {
+  private selectRuntime(projectRoot: string, settings: BatchSettings): AgentRuntime {
     if (this.runtimeOverride) return this.runtimeOverride;
-    const locus = context.settings.locus ?? 'local';
+    const locus = settings.locus ?? 'local';
     // The enum is validated upstream, so an unknown locus here is a programming
     // error. `image` is threaded only for docker (ignored by the local path).
     if (locus === 'remote') {
@@ -169,21 +187,21 @@ export class RatchetBatchEngine {
       // BEFORE any REST call — mirror the runtime's error-result path (non-zero
       // exit + message in stderr + an error event) so the engine maps it to
       // blocked/failed with no new outcome states and never leaks the token.
-      const configError = validateRemoteSettings(context.settings);
+      const configError = validateRemoteSettings(settings);
       if (configError) return failingRuntime(configError);
       return makeRexRemoteRuntime({
-        host: context.settings.host as string,
-        port: context.settings.port as number,
-        authToken: context.settings.authToken as string,
+        host: settings.host as string,
+        port: settings.port as number,
+        authToken: settings.authToken as string,
         // The runtime picks https for a non-local host and refuses plaintext to
         // one unless this explicit opt-in is set; loopback always allows http.
-        allowInsecure: context.settings.insecure === true,
+        allowInsecure: settings.insecure === true,
       });
     }
     return makeRexSidecarRuntime({
       locus,
       projectRoot,
-      ...(locus === 'docker' ? { image: context.settings.image } : {}),
+      ...(locus === 'docker' ? { image: settings.image } : {}),
     });
   }
 
@@ -257,6 +275,31 @@ export class RatchetBatchEngine {
     // standalone change with no manifest.
     const locus: RunLocus = batch ? { batch } : { change };
 
+    // Guarantee the canonical rct command for this transition is present in the
+    // spawn locus BEFORE building any spawn request or selecting a runtime. The
+    // later prompt-delegation changes tell the agent to invoke
+    // `/rct:<transition> <change>`, so the command must actually exist where the
+    // agent runs. A locus the engine cannot render into (e.g. remote) or a render
+    // failure short-circuits to a blocked/failed step carrying the actionable
+    // bootstrap message — no agent is spawned, the message is surfaced live, and
+    // the step stays resumable (the same contract as `UnknownAgentError` /
+    // `failingRuntime`, no new outcome state).
+    try {
+      ensureSkillInSpawnLocus(ctx, projectRoot, this.skillLocusDeps);
+    } catch (err) {
+      if (err instanceof SkillLocusError) {
+        this.printLine(err.message);
+        return toStepResult({
+          state: 'failed',
+          change,
+          transition,
+          blocker: err.message,
+          message: err.message,
+        });
+      }
+      throw err;
+    }
+
     // Build instructions + the spawn request for this single forced transition.
     // A `RATCHET_BATCH_AGENT_CMD` override stands in for the agent; otherwise the
     // configured adapter is resolved (rejecting unknowns before any spawn).
@@ -291,6 +334,196 @@ export class RatchetBatchEngine {
     const before = readChangeJournalTolerantForLocus(projectRoot, locus, change).length;
     const diskBefore = readChangeDiskState(projectRoot, change);
 
+    // Delegate the spawn→stream→map→journal tail to the shared core. `diskAfter`
+    // runs after the agent exits and the session delta is read but before mapping
+    // — the seam where the PROPOSE step's metadata stamp must land.
+    return this.spawnAndMap({
+      request,
+      emitsStreamJson,
+      settings: ctx.settings,
+      projectRoot,
+      locus,
+      change,
+      transition,
+      parkForApproval: this.shouldParkForApproval(ctx, transition),
+      before,
+      diskBefore,
+      diskAfter: () => {
+        // The PROPOSE step writes change artifacts directly on disk and does NOT
+        // go through `ratchet new change`, so it can leave the change without a
+        // `.ratchet.yaml` metadata stamp. Discovery for validate/list/archive
+        // keys off that file, so an unstamped change is `done` in batch status
+        // yet invisible to validate. Stamp it deterministically here so every
+        // engine-created change is discoverable through a single mechanism
+        // (no-op when the directory is absent or already stamped).
+        if (transition === 'propose') {
+          ensureChangeMetadata(
+            path.join(projectRoot, '.ratchet', 'changes', change),
+            projectRoot
+          );
+        }
+        return readChangeDiskState(projectRoot, change);
+      },
+    });
+  }
+
+  /**
+   * Drive ONE phase-decomposition step: spawn EXACTLY ONE agent for a reachable,
+   * ungated phase whose `changes` list is still empty, delegating to the canonical
+   * decomposition skill so it AUTHORS the phase's concrete change intents into
+   * `batch.yaml` from the prior phases' shipped results. This parallels
+   * `runStep`/`runChangeStep` but is keyed off the PHASE, not a change:
+   *
+   *   - it takes the per-batch single-flight lock (like `runStep`),
+   *   - it guarantees the canonical decomposition command in the spawn locus
+   *     (reusing the `ensureCommandInSpawnLocus` render-or-fail discipline),
+   *   - it reuses the runtime selection, streaming/rendering, journal-delta
+   *     snapshot, and `mapSessionToOutcome` outcome mapping,
+   *   - it NEVER calls `computeNextTransition` (there is no change yet) and NEVER
+   *     authors `batch.yaml` itself — the agent (the skill) does that.
+   *
+   * The journal/outcome key for a decomposition is the PHASE name (there is no
+   * change), so its entries and resume state live under that key — see
+   * {@link decompositionJournalKey}.
+   */
+  async runDecompositionStep(context: DecompositionStepContext): Promise<StepResult> {
+    const projectRoot = this.projectRoot();
+    const { batch } = context;
+    return withBatchLock(projectRoot, batch, async () =>
+      this.runDecompositionStepLocked(projectRoot, context)
+    );
+  }
+
+  private async runDecompositionStepLocked(
+    projectRoot: string,
+    context: DecompositionStepContext
+  ): Promise<StepResult> {
+    const { batch } = context;
+    const key = decompositionJournalKey(context.phase.name);
+
+    // Guarantee the canonical decomposition command is present in the spawn locus
+    // BEFORE building the request or selecting a runtime — the agent is told to
+    // invoke `/rct:decompose-phase`, so it must actually exist where the agent
+    // runs. A locus the engine cannot render into (e.g. remote) or a render
+    // failure short-circuits to a blocked step carrying the actionable bootstrap
+    // message — no agent is spawned (same contract as the change path).
+    try {
+      ensureCommandInSpawnLocus(
+        DECOMPOSE_COMMAND_ID,
+        context.settings,
+        projectRoot,
+        this.skillLocusDeps
+      );
+    } catch (err) {
+      if (err instanceof SkillLocusError) {
+        this.printLine(err.message);
+        return toStepResult({
+          state: 'failed',
+          change: key,
+          transition: 'decompose',
+          blocker: err.message,
+          message: err.message,
+        });
+      }
+      throw err;
+    }
+
+    const instructions = buildDecompositionInstructions(context);
+    const env: NodeJS.ProcessEnv = { ...process.env, RATCHET_BATCH_NAME: batch };
+    let request;
+    let emitsStreamJson = false;
+    try {
+      const built = this.buildSpawnRequest(
+        { batch, change: key, settings: context.settings },
+        instructions,
+        projectRoot,
+        env
+      );
+      request = built.request;
+      emitsStreamJson = built.emitsStreamJson;
+    } catch (err) {
+      if (err instanceof UnknownAgentError) {
+        return toStepResult({
+          state: 'failed',
+          change: key,
+          transition: 'decompose',
+          blocker: err.message,
+          message: err.message,
+        });
+      }
+      throw err;
+    }
+
+    // Snapshot the decomposition journal (keyed by phase) so we can isolate this
+    // session's entries. The decomposition artifact is the `batch.yaml` edit the
+    // agent makes; the engine does not author it and does not measure a change-dir
+    // delta, so disk evidence is a no-op snapshot (there is no change directory).
+    const locus: RunLocus = { batch };
+    const before = readChangeJournalTolerantForLocus(projectRoot, locus, key).length;
+    const diskState = readChangeDiskState(projectRoot, key);
+
+    // Same spawn→stream→map→journal tail as the change core. The decomposition
+    // artifact is the `batch.yaml` edit the agent makes — there is no change
+    // directory to stamp or measure — so disk evidence is a no-op snapshot
+    // (before === after) and there is never an approval park.
+    return this.spawnAndMap({
+      request,
+      emitsStreamJson,
+      settings: context.settings,
+      projectRoot,
+      locus,
+      change: key,
+      transition: 'decompose',
+      parkForApproval: false,
+      before,
+      diskBefore: diskState,
+      diskAfter: () => diskState,
+    });
+  }
+
+  /**
+   * Shared spawn→stream→map→journal tail for the change and decomposition cores.
+   * Routes the prepared `request` through the locus-selected streaming runtime
+   * (printing each stdout line live via the single `printLine` sink, or through
+   * the stream-json renderer when the adapter emits structured json), snapshots
+   * this session's journal delta, maps it to an outcome, and records the outcome
+   * entry at the run locus. Behavior is byte-identical to the two inlined copies
+   * it replaces; the per-call-site differences are passed in:
+   *   - `change`/`transition` key the outcome, journal entry, and its default
+   *     message (`${transition} ${state}` — for `decompose` this is exactly the
+   *     old `decompose ${state}` default),
+   *   - `parkForApproval` is precomputed by the caller (pure over context),
+   *   - `diskAfter()` is invoked AFTER the agent exits and the session delta is
+   *     read but BEFORE mapping, so the change core can stamp propose metadata
+   *     there; the decomposition core just returns its no-op snapshot.
+   */
+  private async spawnAndMap(args: {
+    request: AgentSpawnRequest;
+    emitsStreamJson: boolean;
+    settings: BatchSettings;
+    projectRoot: string;
+    locus: RunLocus;
+    change: string;
+    transition: StepKind;
+    parkForApproval: boolean;
+    before: number;
+    diskBefore: ChangeDiskState;
+    diskAfter: () => ChangeDiskState;
+  }): Promise<StepResult> {
+    const {
+      request,
+      emitsStreamJson,
+      settings,
+      projectRoot,
+      locus,
+      change,
+      transition,
+      parkForApproval,
+      before,
+      diskBefore,
+      diskAfter,
+    } = args;
+
     // Route through the streaming runtime: each stdout line is PRINTED live as it
     // arrives while still accumulating into the returned `AgentSpawnResult`, which
     // flows into `mapSessionToOutcome` exactly as the old spawner result did.
@@ -301,7 +534,7 @@ export class RatchetBatchEngine {
     // Rendering is display-only — the runtime accumulates the raw NDJSON into
     // `AgentSpawnResult.stdout` independently, so the mapped transcript is
     // untouched.
-    const runtime = this.selectRuntime(projectRoot, ctx);
+    const runtime = this.selectRuntime(projectRoot, settings);
     const renderer = emitsStreamJson ? makeStreamJsonRenderer(this.printLine) : undefined;
     const onEvent = (e: AgentEvent): void => {
       if (e.kind === 'stdout' && e.line !== undefined) {
@@ -327,24 +560,6 @@ export class RatchetBatchEngine {
     const sessionEntries = afterAll.slice(before);
     const sessionIndices = sessionEntries.map((_, i) => before + i);
 
-    // The PROPOSE step writes change artifacts directly on disk and does NOT go
-    // through `ratchet new change`, so it can leave the change without a
-    // `.ratchet.yaml` metadata stamp. Discovery for validate/list/archive keys
-    // off that file, so an unstamped change is `done` in batch status yet
-    // invisible to validate. Stamp it deterministically here so every
-    // engine-created change is discoverable through a single mechanism
-    // (no-op when the directory is absent or already stamped).
-    if (transition === 'propose') {
-      ensureChangeMetadata(
-        path.join(projectRoot, '.ratchet', 'changes', change),
-        projectRoot
-      );
-    }
-
-    const diskAfter = readChangeDiskState(projectRoot, change);
-
-    const parkForApproval = this.shouldParkForApproval(ctx, transition);
-
     const outcome = mapSessionToOutcome({
       change,
       transition,
@@ -352,7 +567,7 @@ export class RatchetBatchEngine {
       sessionIndices,
       spawn: spawnResult,
       parkForApproval,
-      diskEvidence: { before: diskBefore, after: diskAfter },
+      diskEvidence: { before: diskBefore, after: diskAfter() },
     });
 
     // Record a journal entry for the transition outcome (the agent may not have
@@ -380,7 +595,7 @@ export class RatchetBatchEngine {
    * `RATCHET_EVAL_AGENT_CMD` in the eval judge.
    */
   private buildSpawnRequest(
-    context: ChangeStepContext,
+    context: { batch?: string; change: string; settings: BatchSettings },
     instructions: string,
     projectRoot: string,
     env: NodeJS.ProcessEnv

@@ -35,6 +35,11 @@ export const cursorAdapter: ToolCommandAdapter = {
     return path.join('.cursor', 'commands', `rct-${commandId}.md`);
   },
 
+  // Cursor commands are named /rct-<id> (frontmatter `name: /rct-<id>`).
+  getInvocation(commandId: string): string {
+    return `/rct-${commandId}`;
+  },
+
   formatFile(content: CommandContent): string {
     return `---
 name: /rct-${content.id}

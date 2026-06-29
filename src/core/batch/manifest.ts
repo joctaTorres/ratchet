@@ -154,6 +154,21 @@ export function parseBatchManifest(content: string): BatchManifest {
     );
   }
 
+  // `llm-judge` is a recognized proof-of-work kind (the schema enum keeps it so
+  // the type and validation message stay precise), but it is NOT yet executable
+  // by `batch apply` — no judge is wired. Reject it here, at validation, with an
+  // actionable message rather than letting a batch reach apply carrying a proof
+  // that can never pass. Both the `ratchet validate` and `loadBatchManifest`
+  // (apply) paths route through this parser, so the rejection covers both.
+  result.data.phases.forEach((phase, index) => {
+    if (phase.proofOfWork.kind === 'llm-judge') {
+      throw new BatchManifestError(
+        'llm-judge proof-of-work is not yet supported by `batch apply`; use `integration` or `blackbox`.',
+        `phases.${index}.proofOfWork.kind`
+      );
+    }
+  });
+
   return result.data;
 }
 

@@ -146,7 +146,9 @@ describe('ratchet propose', () => {
     );
 
     expect(calls.length).toBe(1);
-    expect(calls[0].instructions).toContain('Additional guidance:');
+    // delegated-lifecycle: -m guidance now rides on the /rct:<transition> <change>
+    // invocation as an argument, not a detached "Additional guidance:" block.
+    expect(calls[0].instructions).not.toContain('Additional guidance:');
     expect(calls[0].instructions).toContain('keep it to a single file');
   });
 

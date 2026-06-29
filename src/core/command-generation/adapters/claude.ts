@@ -42,6 +42,12 @@ export const claudeAdapter: ToolCommandAdapter = {
     return path.join('.claude', 'commands', 'rct', `${commandId}.md`);
   },
 
+  // Claude namespaces slash commands with ':' (.claude/commands/rct/<id>.md →
+  // /rct:<id>).
+  getInvocation(commandId: string): string {
+    return `/rct:${commandId}`;
+  },
+
   formatFile(content: CommandContent): string {
     return `---
 name: ${escapeYamlValue(content.name)}

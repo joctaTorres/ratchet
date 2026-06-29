@@ -27,7 +27,7 @@ phases:
     success: A user can exercise the slice end to end.
     # The proof-of-work is an executable check an agent can run directly.
     proofOfWork:
-      kind: integration        # integration | blackbox | llm-judge
+      kind: integration        # integration | blackbox
       run: pnpm test           # a runnable command
       pass: exit code 0        # the pass condition
     # Change intents form a DAG via optional `after` edges. No edges = parallel.

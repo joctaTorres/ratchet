@@ -40,6 +40,17 @@ export interface ToolCommandAdapter {
    */
   getFilePath(commandId: string): string;
   /**
+   * Returns the slash-command invocation token a user (or a spawned headless
+   * agent) types to run a command — e.g. claude `/rct:apply`, cursor/gemini/
+   * codex `/rct-apply`. The token syntax is NOT uniform across agents (claude
+   * namespaces with `:`, the file-based agents use `-`), so each adapter owns its
+   * own. The shared spawn-prompt path resolves the token through this method for
+   * the configured spawn agent rather than hard-coding one agent's syntax.
+   * @param commandId - The command identifier (e.g., 'apply')
+   * @returns The invocation token (e.g., '/rct:apply' or '/rct-apply')
+   */
+  getInvocation(commandId: string): string;
+  /**
    * Formats the complete file content including frontmatter.
    * @param content - The tool-agnostic command content
    * @returns Complete file content ready to write

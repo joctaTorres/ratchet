@@ -225,6 +225,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `batch config [name]` | Resolved batch settings: project defaults + manifest overrides + agent permissions |
 | `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step) |
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
+| `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
 | `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|check\|agent`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
@@ -285,8 +286,8 @@ from the phase's. A batch is intent you can revise before applying.
 
 | Workflow | Command | What it does |
 |---|---|---|
-| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox` / `llm-judge`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Ends with a **gated hand-off into `/rct:apply-batch`** to drive the batch now (this session as orchestrator) or defer it to a later run. |
-| **apply-batch** | `/rct:apply-batch <name>` | Autonomous orchestrator that drives the batch to completion. It **loops** `ratchet batch apply` (which stays single-step) until done, surfacing halts (blocked / awaiting-approval) and proof-of-work failures to you, recording your answers via `ratchet batch report`, then resuming. The orchestrator does **no coding itself** — it only runs `ratchet` CLI commands and talks to you; the coding happens inside the engine-spawned agent. |
+| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Ends with a **gated hand-off into `/rct:apply-batch`** to drive the batch now (this session as orchestrator) or defer it to a later run. |
+| **apply-batch** | `/rct:apply-batch <name>` | Autonomous orchestrator that drives the batch to completion. It **loops** `ratchet batch apply` (which stays single-step) until done, surfacing halts (blocked / awaiting-approval) and proof-of-work failures to you, recording your answers via `ratchet batch report`, then resuming. The orchestrator does **no coding itself** — it only runs `ratchet` CLI commands and talks to you; the coding happens inside the engine-spawned agent. When the next step is a reachable phase whose changes are still empty, `batch apply` decomposes it **natively** — spawning an agent that delegates to the canonical `decompose-phase` skill to author that phase's change intents from the prior phase's shipped results — then the loop continues into the new changes, with no manual stop/propose/resume detour. |
 
 ```
 You: /rct:propose-batch ship a checkout flow
@@ -394,7 +395,7 @@ features/cli/status#status-as-json:
   setup: pnpm install         # optional: runs ONCE into a cached working copy
   check:
     run: ratchet status --json
-    pass: contains:applyRequires   # exit-zero | contains:<text> | regex:<pattern>
+    pass: contains:applyRequires   # exit-zero (or "exit code 0 — ..." prose) | contains:<text> | regex:<pattern>
 
 features/cli/status#status-as-text:
   fixture: verify-sample

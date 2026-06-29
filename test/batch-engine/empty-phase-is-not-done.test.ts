@@ -27,7 +27,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { appendJournal } from '../../src/core/batch/journal.js';
+import { appendJournal, recordProofOfWork } from '../../src/core/batch/journal.js';
 import {
   isChangeDone,
   readChangeDiskState,
@@ -61,6 +61,22 @@ async function markDone(change: string): Promise<void> {
     kind: 'completion',
     message: 'verified',
     transition: 'verify',
+  });
+}
+
+/**
+ * Record a passing boundary proof for a phase. The TERMINAL phase's proof never
+ * runs at a successor boundary (there is none), so a fully-done batch is only
+ * `done` once its last phase's proof is recorded as satisfied (C2).
+ */
+function recordPassingProof(phase: string): void {
+  recordProofOfWork(projectRoot, BATCH, phase, {
+    phase,
+    passed: true,
+    gatePassed: true,
+    policy: 'hard-gate',
+    reason: 'pass-condition-met',
+    detail: 'Proof-of-work passed (0).',
   });
 }
 
@@ -207,6 +223,9 @@ phases:
 `;
     await markDone('first');
     await markDone('second');
+    // The terminal phase (p2) has no successor boundary, so its proof must be
+    // recorded for the batch to be `done` (C2).
+    recordPassingProof('p2');
     const status = await computeBatchStatus(projectRoot, parseBatchManifest(manifest));
 
     expect(status.doneCount).toBe(2);
@@ -264,6 +283,9 @@ phases:
         done: only is done
 `;
     await markDone('only');
+    // Single-phase batch: this only phase is the terminal phase, so its proof
+    // must be recorded for the batch to be `done` (C2).
+    recordPassingProof('p1');
     const status = await computeBatchStatus(projectRoot, parseBatchManifest(manifest));
     expect(status.status).toBe('done');
     expect(selectRunnableStep(selectableFor(status)).reason).toBe('all-done');

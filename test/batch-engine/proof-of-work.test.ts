@@ -66,6 +66,25 @@ describe('evaluatePassCondition', () => {
     }
   });
 
+  it('does not treat a directive followed by an underscore-joined token as exit-zero', () => {
+    // `exit code 0_done` is a single underscore-joined token, not a leading
+    // exit-zero directive: it must fall through to the stdout-substring default
+    // (exit 0 + substring required), not gate on exit status alone.
+    const condition = 'exit code 0_done';
+    // exit 0 but stdout lacks the literal token -> NOT a pass (would have passed
+    // if mistaken for an exit-zero directive).
+    const miss = evaluatePassCondition(condition, { exitCode: 0, stdout: 'unrelated\n', stderr: '' });
+    expect(miss.passed).toBe(false);
+    expect(miss.reason).toBe('pass-condition-unmet');
+    // and it passes only when stdout actually contains the literal token.
+    const hit = evaluatePassCondition(condition, {
+      exitCode: 0,
+      stdout: 'exit code 0_done\n',
+      stderr: '',
+    });
+    expect(hit.passed).toBe(true);
+  });
+
   it('treats a bare non-exit-code string as a stdout substring default', () => {
     // passes when stdout contains the bare string
     const hit = evaluatePassCondition('all checks green', {

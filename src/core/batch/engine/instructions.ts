@@ -234,7 +234,56 @@ function rctDecomposeInvocation(context: DecompositionStepContext): string {
   const agentId = context.settings.agent ?? DEFAULT_AGENT;
   const adapter =
     CommandAdapterRegistry.get(agentId) ?? CommandAdapterRegistry.get(DEFAULT_AGENT)!;
-  return `${adapter.getInvocation(DECOMPOSE_COMMAND_ID)} ${context.phase.name}`;
+  const base = `${adapter.getInvocation(DECOMPOSE_COMMAND_ID)} ${context.phase.name}`;
+  const args = decompositionInvocationArguments(context);
+  return args ? `${base} ${args}` : base;
+}
+
+/**
+ * The argument payload appended to the `/rct:decompose-phase <phase>` invocation:
+ * the resolved resume answer/feedback (W1), handed to the skill as `$ARGUMENTS`
+ * exactly as a change step's {@link invocationArguments} does. Empty when the step
+ * is not resuming, so the plain decomposition invocation stays bare.
+ */
+function decompositionInvocationArguments(context: DecompositionStepContext): string {
+  const resume = context.resume;
+  if (resume?.kind === 'blocked' && resume.answer?.trim()) {
+    return resume.answer.trim();
+  }
+  if (resume?.kind === 'awaiting-approval' && resume.feedback?.trim()) {
+    return resume.feedback.trim();
+  }
+  return '';
+}
+
+/**
+ * Resume INTENT framing for a parked decomposition step (W1), mirroring a change
+ * step's {@link resumeGuidance}: the answer/feedback TEXT rides on the invocation
+ * as a trailing argument; this block keeps only the directive (incorporate the
+ * answer / revise per feedback, do not start over) plus the original
+ * question/proposal for context. Absent resume → empty.
+ */
+function decompositionResumeGuidance(context: DecompositionStepContext): string {
+  const resume = context.resume;
+  if (!resume) return '';
+  if (resume.kind === 'blocked' && resume.answer?.trim()) {
+    return [
+      'This decomposition step was previously parked on a blocker:',
+      `  Question: ${resume.reason}`,
+      'The resolved answer is attached to the invocation above as an argument —',
+      'incorporate it and author the change intents. Do not start over.',
+    ].join('\n');
+  }
+  if (resume.kind === 'awaiting-approval' && resume.feedback?.trim()) {
+    return [
+      'The prior decomposition was REJECTED with feedback. Re-author the phase',
+      'intents against the existing draft (do NOT start over):',
+      `  Prior proposal: ${resume.reason}`,
+      'The reviewer feedback is attached to the invocation above as an argument —',
+      'revise the intents to address it.',
+    ].join('\n');
+  }
+  return '';
 }
 
 /**
@@ -272,8 +321,14 @@ function priorResultsContext(context: DecompositionStepContext): string {
  * {@link rctDecomposeInvocation}.
  */
 function decompositionGuidance(context: DecompositionStepContext): string {
-  const invocation = `  ${rctDecomposeInvocation(context)}`;
-  return [
+  // The invocation may carry a trailing resume argument; indent every line so the
+  // argument renders as an attached continuation of the call (mirrors the change
+  // path's transition guidance).
+  const invocation = rctDecomposeInvocation(context)
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n');
+  const lines = [
     'Decompose this phase by invoking the ratchet decompose-phase skill — run:',
     invocation,
     'It loads the project standards under ".ratchet/standards/" and is the single',
@@ -281,7 +336,15 @@ function decompositionGuidance(context: DecompositionStepContext): string {
     'decomposition steps yourself — delegate to the skill and let it author this',
     "phase's concrete change intents into batch.yaml from the prior phase's shipped",
     'results. Author ONLY the manifest edit — never change directories.',
-  ].join('\n');
+  ];
+  if (decompositionInvocationArguments(context)) {
+    lines.push(
+      'Anything after the phase name above is the resume context the engine already',
+      'resolved — pass it to the skill as its arguments ($ARGUMENTS); do not treat',
+      'it as a separate, optional note.'
+    );
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -308,8 +371,13 @@ export function buildDecompositionInstructions(context: DecompositionStepContext
     priorResultsContext(context),
     '',
     decompositionGuidance(context),
-    '',
-    reportChannel(context.batch, key),
   ];
+
+  // Resume framing (W1): when the step was parked and the user answered, surface
+  // the resume intent — the answer text itself rides on the invocation argument.
+  const resume = decompositionResumeGuidance(context);
+  if (resume) sections.push('', resume);
+
+  sections.push('', reportChannel(context.batch, key));
   return sections.join('\n');
 }

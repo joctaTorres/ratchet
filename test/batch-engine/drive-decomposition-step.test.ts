@@ -27,7 +27,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs, existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
-import { appendJournal } from '../../src/core/batch/journal.js';
+import { appendJournal, recordProofOfWork } from '../../src/core/batch/journal.js';
 import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
 import type { AgentRuntime } from '../../src/core/batch/engine/runtime/contract.js';
 import type {
@@ -118,6 +118,18 @@ async function markDone(change: string): Promise<void> {
   });
 }
 
+/** Record a passing boundary proof for a phase (what `batch apply` records). */
+function recordTerminalProof(phase: string): void {
+  recordProofOfWork(projectRoot, BATCH, phase, {
+    phase,
+    passed: true,
+    gatePassed: true,
+    policy: 'hard-gate',
+    reason: 'pass-condition-met',
+    detail: 'Proof-of-work passed (0).',
+  });
+}
+
 function settings(over: Partial<BatchSettings> = {}): BatchSettings {
   return {
     gate: 'voluntary',
@@ -173,10 +185,27 @@ describe('drive-decomposition-step: apply drives a ready empty phase natively', 
     const manifest = loadBatchManifest(projectRoot, BATCH);
     const status = await computeBatchStatus(projectRoot, manifest);
 
-    const target = pickNextStep(status, manifest.phases);
+    // p1's boundary proof is treated as already recorded so this isolates the
+    // decomposition selection; the predecessor-proof-before-decompose ordering
+    // (S4) is covered by its own test below.
+    const target = pickNextStep(status, manifest.phases, new Set(['p1']));
     expect(target).toBeDefined();
     expect(target!.kind).toBe('decompose');
     expect(target!.phase.name).toBe('p2');
+  });
+
+  it('(S4) runs the predecessor phase boundary proof before the decomposition step', async () => {
+    await writeManifest(UNDECOMPOSED);
+    await markDone('first');
+    const manifest = loadBatchManifest(projectRoot, BATCH);
+    const status = await computeBatchStatus(projectRoot, manifest);
+
+    // p1 is done with a configured but UNRECORDED proof; p2 (undecomposed) is
+    // entered off p1's shipped slice, so p1's boundary proof must run FIRST —
+    // before the decomposition step — exactly as before a change step.
+    const target = pickNextStep(status, manifest.phases, new Set());
+    expect(target).toMatchObject({ kind: 'proof-of-work' });
+    expect(target!.phase.name).toBe('p1');
   });
 
   it('(b)(c) spawns ONE delegating agent that authors p2 intents into batch.yaml', async () => {
@@ -211,6 +240,38 @@ describe('drive-decomposition-step: apply drives a ready empty phase natively', 
     expect(p2.changes.every((c) => c.done.trim().length > 0)).toBe(true);
   });
 
+  it('(W1) a resumed decomposition surfaces the answer text in the spawned instructions', async () => {
+    await writeManifest(UNDECOMPOSED);
+    await markDone('first');
+
+    const stub = stubDecomposer();
+    const engine = new RatchetBatchEngine({
+      runtime: stub.runtime,
+      projectRoot: () => projectRoot,
+      printLine: () => {},
+    });
+
+    // A decomposition that was parked on a blocker and then answered: the answer
+    // must ride into the spawned instructions, not be silently dropped on resume.
+    await engine.runDecompositionStep(
+      decompositionContext({
+        resume: {
+          kind: 'blocked',
+          reason: 'which slice should p2 ship?',
+          answer: 'ship the read-only dashboard slice',
+        },
+      })
+    );
+
+    expect(stub.calls).toHaveLength(1);
+    const instr = stub.calls[0].instructions;
+    // The resolved answer rides on the decompose-phase invocation as an argument.
+    expect(instr).toContain('ship the read-only dashboard slice');
+    expect(instr).toContain('/rct:decompose-phase p2');
+    // The resume intent framing is present too (incorporate, do not start over).
+    expect(instr).toContain('which slice should p2 ship?');
+  });
+
   it('(d)(e) after decomposition the next step is the new change, and done stays honest', async () => {
     await writeManifest(UNDECOMPOSED);
     await markDone('first');
@@ -236,6 +297,9 @@ describe('drive-decomposition-step: apply drives a ready empty phase natively', 
 
     // Finish the new change → now every reachable phase is decomposed and done.
     await markDone('second');
+    // p2 is the terminal phase; record its boundary proof so the batch can be
+    // `done` (C2 — the terminal proof has no successor boundary to trigger it).
+    recordTerminalProof('p2');
     const doneStatus = await computeBatchStatus(projectRoot, manifest);
     expect(doneStatus.status).toBe('done');
     expect(pickNextStep(doneStatus, manifest.phases)).toBeUndefined();
@@ -295,7 +359,9 @@ describe('drive-decomposition-step: apply drives a ready empty phase natively', 
     let manifest = loadBatchManifest(projectRoot, BATCH);
     let status = await computeBatchStatus(projectRoot, manifest);
     expect(status.status).not.toBe('done');
-    expect(pickNextStep(status, manifest.phases)!.kind).toBe('decompose');
+    // p1's boundary proof is treated as recorded so this isolates the
+    // decomposition step from the (separately covered) predecessor-proof ordering.
+    expect(pickNextStep(status, manifest.phases, new Set(['p1']))!.kind).toBe('decompose');
 
     // One apply decomposes p2 (delegating to the canonical skill) — no manual detour.
     const stub = stubDecomposer();
@@ -319,6 +385,9 @@ describe('drive-decomposition-step: apply drives a ready empty phase natively', 
     });
 
     await markDone('second');
+    // p2 is the terminal phase: its boundary proof must be recorded for the
+    // batch to be `done` (C2).
+    recordTerminalProof('p2');
     status = await computeBatchStatus(projectRoot, manifest);
     expect(status.status).toBe('done');
   });

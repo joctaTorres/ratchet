@@ -62,14 +62,36 @@ describe('proof-of-work journal record', () => {
     });
   });
 
-  it('latest recording wins for a phase', () => {
+  it('is idempotent per boundary: a back-to-back re-record is a no-op (first record wins)', () => {
+    // The recorder is idempotent (W2): once a phase has a current, un-invalidated
+    // record, a second back-to-back call is dropped — a single current record
+    // survives, so a concurrent double-apply cannot append two verdicts.
+    const first = recordProofOfWork(
+      projectRoot,
+      BATCH,
+      'p1',
+      record({ passed: false, gatePassed: false, reason: 'nonzero-exit', detail: 'failed' })
+    );
+    expect(first).toBeDefined();
+    const second = recordProofOfWork(projectRoot, BATCH, 'p1', record({ passed: true }));
+    expect(second).toBeUndefined(); // no-op: a current record already exists
+    // The first (failing) record is still the current verdict — not overwritten.
+    expect(readLatestProofOfWork(projectRoot, BATCH, 'p1')!.passed).toBe(false);
+  });
+
+  it('accepts a fresh record after an invalidation marker', async () => {
+    const { recordProofOfWorkInvalidation } = await import('../../src/core/batch/journal.js');
     recordProofOfWork(
       projectRoot,
       BATCH,
       'p1',
       record({ passed: false, gatePassed: false, reason: 'nonzero-exit', detail: 'failed' })
     );
-    recordProofOfWork(projectRoot, BATCH, 'p1', record({ passed: true }));
+    // An explicit invalidation drops the phase from the fold, so the next record
+    // is accepted (this is the `batch rerun-proof` path).
+    recordProofOfWorkInvalidation(projectRoot, BATCH, 'p1');
+    const fresh = recordProofOfWork(projectRoot, BATCH, 'p1', record({ passed: true }));
+    expect(fresh).toBeDefined();
     expect(readLatestProofOfWork(projectRoot, BATCH, 'p1')!.passed).toBe(true);
   });
 

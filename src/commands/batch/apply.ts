@@ -132,8 +132,12 @@ export async function batchApplyCommand(
   if (!target) {
     // When nothing is runnable because a phase is held shut by the prior phase's
     // failing `hard-gate` proof, cite that proof (the same gate `computeBatchStatus`
-    // derived) instead of the generic "everything is gated" message.
-    const proofBlock = proofBlockReason(status, proofByPhase);
+    // derived) instead of the generic "everything is gated" message. The terminal
+    // phase's failing proof gates no successor (there is none), so it is cited
+    // separately: it is what holds the batch out of `done`.
+    const proofBlock =
+      proofBlockReason(status, proofByPhase) ??
+      terminalProofBlockReason(status, manifest.phases, proofByPhase);
     const text =
       status.status === 'done'
         ? chalk.green('Nothing to do — all changes are done.')
@@ -180,6 +184,10 @@ export async function batchApplyCommand(
     // Coarse hint only; the engine derives the authoritative transition from
     // richer on-disk state via the same `computeNextTransition` and overrides
     // this. `propose` is the neutral default for a not-yet-created change.
+    // Deliberately journal-blind: this call passes no journal, so it only
+    // coarse-sorts from on-disk change state; the engine re-derives the
+    // authoritative transition WITH the journal before spawning, so a stale or
+    // missing journal here cannot pick the wrong transition.
     transition: computeNextTransition(projectRoot, change) ?? 'propose',
     phase: {
       name: phase.name,
@@ -277,7 +285,38 @@ export function pickNextStep(
   // only when this is genuinely next).
   if (status.next?.decompose && status.next.phase) {
     const phase = manifestPhases.find((p) => p.name === status.next!.phase);
-    if (phase) return { kind: 'decompose', phase };
+    if (phase) {
+      // Boundary before decomposition (S4): the phase about to be decomposed is
+      // entered off its predecessor's shipped slice, so the predecessor's
+      // boundary proof must run FIRST — exactly as it does before a change step.
+      // If the immediately-preceding phase is done, has a configured
+      // proof-of-work, and has not been recorded yet, run that proof before the
+      // decompose step (the next apply, with the proof recorded, decomposes).
+      const phaseIndex = status.phases.findIndex((p) => p.name === phase.name);
+      if (phaseIndex > 0) {
+        const predStatus = status.phases[phaseIndex - 1];
+        const predecessor = manifestPhases.find((p) => p.name === predStatus.name);
+        if (
+          predecessor &&
+          predStatus.status === 'done' &&
+          predecessor.proofOfWork &&
+          !recordedProofPhases.has(predecessor.name)
+        ) {
+          return { kind: 'proof-of-work', phase: predecessor };
+        }
+      }
+      return { kind: 'decompose', phase };
+    }
+  }
+
+  // Terminal-phase boundary proof (C2): once every change is done and nothing is
+  // left to decompose, `computeBatchStatus` surfaces the LAST phase's unrun proof
+  // as `next.proof`. The last phase has no successor, so its boundary proof is
+  // never triggered by entering a later phase; selecting it here is what runs and
+  // records it, and the batch is not `done` until that record is satisfied.
+  if (status.next?.proof && status.next.phase) {
+    const phase = manifestPhases.find((p) => p.name === status.next!.phase);
+    if (phase) return { kind: 'proof-of-work', phase };
   }
   return undefined;
 }
@@ -305,6 +344,29 @@ function proofBlockReason(
     if (rec && !rec.gatePassed) {
       return phase.gatedBy ?? `${predecessor.name} — proof-of-work failed: ${rec.detail}`;
     }
+  }
+  return undefined;
+}
+
+/**
+ * If the TERMINAL phase's recorded boundary proof-of-work failed its hard-gate,
+ * return a message citing it. The terminal phase has no successor to gate, so its
+ * failing proof never shows up in `proofBlockReason` (which keys off a downstream
+ * phase being `gated`); it is nonetheless what holds the batch out of `done` (C2),
+ * so `batch apply`'s no-step output cites it rather than the generic message.
+ * Reads only the recorded verdict (`proofByPhase`), never re-deriving the gate.
+ */
+function terminalProofBlockReason(
+  status: BatchStatusInfo,
+  manifestPhases: Phase[],
+  proofByPhase: ReadonlyMap<string, ProofOfWorkRecord>
+): string | undefined {
+  if (status.status === 'done') return undefined;
+  const terminalPhase = manifestPhases[manifestPhases.length - 1];
+  if (!terminalPhase) return undefined;
+  const rec = proofByPhase.get(terminalPhase.name);
+  if (rec && !rec.gatePassed) {
+    return `${terminalPhase.name} — proof-of-work failed: ${rec.detail}`;
   }
   return undefined;
 }
@@ -359,6 +421,17 @@ async function runDecomposition(
     },
     priorResults: priorPhaseResults(status, phase.name),
     settings,
+    // Thread the resolved resume answer/feedback exactly as a change step does
+    // (W1): a parked decomposition that the user answered must carry that answer
+    // into the spawned instructions, not silently drop it on resume.
+    resume: parked
+      ? {
+          kind: parked.kind,
+          reason: parked.reason,
+          answer: parked.answer,
+          feedback: parked.feedback,
+        }
+      : undefined,
   };
 
   const result = await engine.runDecompositionStep(context);

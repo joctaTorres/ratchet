@@ -21,7 +21,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
-import { appendJournal } from '../../src/core/batch/journal.js';
+import { appendJournal, recordProofOfWork } from '../../src/core/batch/journal.js';
 import {
   computeNextTransition,
   isChangeDone,
@@ -217,7 +217,29 @@ describe('single journal-aware done-rule, driven propose -> apply -> verify', ()
 
     const journalAfterVerify = readChangeJournalTolerant(projectRoot, BATCH, CHANGE);
 
-    // (b) once verify is journaled: done, nothing runnable, batch done.
+    // (b1) the change is done, but p1 is the TERMINAL phase: its boundary proof
+    // has not run (no successor triggers it), so the batch is NOT yet done — it
+    // surfaces the terminal proof as the next step (C2).
+    {
+      const { status, change } = await statusChange();
+      expect(change.status).toBe('done');
+      expect(status.doneCount).toBe(1);
+      expect(status.status).toBe('in-progress');
+      expect(status.next).toEqual({ phase: 'p1', proof: true });
+    }
+
+    // The terminal-phase boundary proof runs and records a passing verdict (what
+    // `batch apply` does at the terminal boundary).
+    recordProofOfWork(projectRoot, BATCH, 'p1', {
+      phase: 'p1',
+      passed: true,
+      gatePassed: true,
+      policy: 'hard-gate',
+      reason: 'pass-condition-met',
+      detail: 'Proof-of-work passed (0).',
+    });
+
+    // (b2) once the terminal proof is satisfied: done, nothing runnable, batch done.
     {
       const { status, change } = await statusChange();
       expect(change.status).toBe('done');

@@ -96,13 +96,19 @@ bare phase name) so the two never collide.
 ```ts
 function proofOfWorkJournalKey(phase: string): string; // `proof-of-work:${phase}`
 
-// Writer: append a phase's verdict to the batch run journal.
+// Writer: append a phase's verdict to the batch run journal. IDEMPOTENT per
+// boundary: if the phase already has a current (un-invalidated) record, the call
+// is a no-op and returns `undefined`. The boundary proof runs outside the batch
+// lock, so two concurrent applies could each reach the recorder for the same
+// boundary; this guard preserves "at most once per boundary". A fresh record is
+// accepted again only after a `proof-of-work-invalidated` marker (the
+// `batch rerun-proof` path) drops the phase from the fold.
 function recordProofOfWork(
   projectRoot: string,
   batch: string,
   phase: string,
   record: ProofOfWorkRecord
-): JournalEntry;
+): JournalEntry | undefined;
 
 // Writer: append a superseding invalidation marker for a phase (append-only;
 // the original proof-of-work entry is left in place). Backs `batch rerun-proof`.

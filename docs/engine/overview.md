@@ -295,14 +295,28 @@ about whether a reachable empty phase is outstanding work.
 
 ## Batch status and the decomposition step
 
-A multi-phase batch is `done` only once **every reachable phase is decomposed AND
-all its changes are done**. The old done arithmetic counted only declared change
+A multi-phase batch is `done` only once **every reachable phase is decomposed,
+all its changes are done, AND the terminal phase's boundary proof-of-work is
+recorded as satisfied**. The old done arithmetic counted only declared change
 intents (`doneCount === changeCount`), so a later phase with an empty `changes`
 list contributed zero and the batch flipped `done` the moment the first phase's
 changes finished — even though the later phase had no concrete intents yet
 (#30). `computeBatchStatus` now folds in whether any reachable (ungated) phase is
 still undecomposed: such a phase keeps the batch `in-progress` and is surfaced as
 `next` (a decomposition step carrying the phase, no `change`).
+
+**Terminal-phase proof gate.** Each phase's boundary proof-of-work runs when
+*entering* the next phase, but the **last** phase has no successor — so its proof
+would never run, and the batch would report `done` without it. `computeBatchStatus`
+closes that hole: once every change is done and nothing is left to decompose, the
+terminal phase's proof must be recorded as satisfied (`gatePassed: true`) for the
+batch to be `done`. When the terminal proof has not run, status stays `in-progress`
+and surfaces it as `next` (`{ phase, proof: true }`, no `change`); `pickNextStep`
+selects it, and `batch apply` runs and records it. A failing terminal `hard-gate`
+proof keeps the batch out of `done` with nothing auto-runnable — `batch apply`'s
+no-step output cites the failing proof and the operator must `batch rerun-proof`
+(or fix the cause). This also means a **single-phase** batch gates on its one
+phase's proof before reporting `done`.
 
 ```mermaid
 flowchart TB
@@ -372,7 +386,13 @@ it once all changes in a phase are done:
 |---|---|
 | `integration` | Runs a bash command; evaluates a pass condition against exit status and stdout. |
 | `blackbox` | Same execution path as `integration`. |
-| `llm-judge` | Spawns an agent that exercises the software and returns a pass/fail verdict against the phase success criteria. |
+
+> **`llm-judge` is not yet supported by `batch apply`.** It is a recognized
+> proof-of-work kind in the schema, but no judge is wired, so a manifest with an
+> `llm-judge` proof-of-work is **rejected at validation** (`ratchet validate
+> <batch> --type batch` and the apply load path both fail) with:
+> *"llm-judge proof-of-work is not yet supported by `batch apply`; use
+> `integration` or `blackbox`."* Use `integration` or `blackbox`.
 
 **Pass conditions** (for `integration`/`blackbox`):
 
@@ -398,7 +418,14 @@ it once all changes in a phase are done:
 `batch apply` is `runProofOfWork`'s live caller. When phase `P`'s changes are all
 done and the next reachable phase `Q` still has outstanding work, the host loop
 (`pickNextStep` / `batchApplyCommand` in `src/commands/batch/apply.ts`) runs `P`'s
-proof-of-work **at the boundary** before entering `Q`:
+proof-of-work **at the boundary** before entering `Q`. The **terminal** phase has
+no successor `Q`, so its proof runs at a different trigger: once every change in
+the batch is done and nothing is left to decompose, the terminal phase's proof is
+surfaced and run the same way — it is what holds the batch out of `done` until it
+is recorded as satisfied (see [Terminal-phase proof gate](#batch-status-and-the-decomposition-step)).
+The predecessor's boundary proof also runs **before a decomposition step**: an
+undecomposed phase is entered off its predecessor's shipped slice, so the
+predecessor's proof runs first, exactly as it does before a change step.
 
 ```mermaid
 flowchart TB

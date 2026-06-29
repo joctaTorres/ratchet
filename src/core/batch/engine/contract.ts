@@ -124,6 +124,13 @@ export interface DecompositionStepContext {
   /** Prior phases' shipped results — the basis for authoring this phase's intents. */
   priorResults: PriorPhaseResult[];
   settings: BatchSettings;
+  /**
+   * Resume context when the decomposition step was parked (W1). Mirrors a change
+   * step's `resume`: when the user answered a blocker (or rejected with feedback),
+   * the resolved text rides along as a trailing argument of the decompose-phase
+   * invocation so a resumed decomposition does not silently drop the answer.
+   */
+  resume?: StepResume;
 }
 
 export type StepState =

@@ -25,6 +25,7 @@ import { parseBatchManifest } from '../../../src/core/batch/manifest.js';
 import {
   appendJournal,
   recordProofOfWork,
+  recordProofOfWorkInvalidation,
   type ProofOfWorkRecord,
 } from '../../../src/core/batch/journal.js';
 
@@ -128,7 +129,7 @@ describe('computeBatchStatus proof-aware phase gate (hard-gate)', () => {
     expect(p2.status).not.toBe('blocked');
   });
 
-  it('lets a later passing proof reopen a gate an earlier failing proof closed', async () => {
+  it('lets a later passing proof reopen a gate an earlier failing proof closed (after invalidation)', async () => {
     await markP1Done();
     recordProofOfWork(
       projectRoot,
@@ -136,6 +137,11 @@ describe('computeBatchStatus proof-aware phase gate (hard-gate)', () => {
       'p1',
       record({ passed: false, gatePassed: false, reason: 'nonzero-exit', detail: 'failed' })
     );
+    // The recorder is idempotent per boundary (W2): a fresh passing record is
+    // only accepted after the failing one is explicitly invalidated (the
+    // `batch rerun-proof` path). Without the invalidation the re-record is a
+    // no-op and the gate would stay closed.
+    recordProofOfWorkInvalidation(projectRoot, BATCH, 'p1');
     recordProofOfWork(projectRoot, BATCH, 'p1', record({ passed: true, gatePassed: true }));
     const status = await computeBatchStatus(projectRoot, parseBatchManifest(MANIFEST));
     expect(phase(status, 'p2').gated).toBe(false);

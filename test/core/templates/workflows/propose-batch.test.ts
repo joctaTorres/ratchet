@@ -26,10 +26,11 @@ describe('propose-batch workflow templates', () => {
     expect(body).toMatch(/reject horizontal/i);
     expect(body).toContain('proof-of-work');
 
-    // The three allowed proof-of-work kinds.
+    // The two allowed proof-of-work kinds. `llm-judge` is NOT offered (it is not
+    // yet supported by `batch apply`); the body names it only to warn against it.
     expect(body).toContain('integration');
     expect(body).toContain('blackbox');
-    expect(body).toContain('llm-judge');
+    expect(body).toMatch(/llm-judge\` is NOT yet supported|do not use it/i);
 
     // Phase-one concrete proof vs later-phase refinable proof.
     expect(body).toMatch(/refined at phase entry/i);

@@ -158,6 +158,26 @@ describe('ensureSkillInSpawnLocus — a locus the engine cannot render into fail
     expect(msg).not.toMatch(/invoke `?\/rct:apply/); // never tells the agent to run it
     expect(writes.size).toBe(0); // nothing rendered
   });
+
+  it('renders the invocation token through the per-agent adapter, not a hard-coded /rct:<id>', () => {
+    const { deps } = fakeDeps();
+    // A non-claude spawn agent uses `/rct-<id>` syntax, so the operator message
+    // must cite `/rct-apply` (its real token) — not the claude `/rct:apply`.
+    let thrown: unknown;
+    try {
+      ensureSkillInSpawnLocus(
+        context({ settings: settings({ agent: 'gemini', locus: 'remote', host: 'h', port: 1, authToken: 't' }) }),
+        ROOT,
+        deps
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(SkillLocusError);
+    const msg = (thrown as Error).message;
+    expect(msg).toContain('/rct-apply'); // gemini's real invocation token
+    expect(msg).not.toContain('/rct:apply'); // not the hard-coded claude token
+  });
 });
 
 describe('ensureSkillInSpawnLocus — a render failure surfaces as a SkillLocusError', () => {

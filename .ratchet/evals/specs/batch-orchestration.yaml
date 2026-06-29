@@ -693,11 +693,15 @@ changes/batch-orchestration/features/batch-phases/phases#proof-of-work-kinds-are
     run: |
       set -e
       ratchet new batch demo >/dev/null
-      # Each executable kind is accepted.
-      for k in integration blackbox llm-judge; do
+      # Each currently-supported executable kind is accepted.
+      for k in integration blackbox; do
         printf '%s\n' 'name: demo' 'phases:' '  - name: p' '    goal: g' '    success: s' "    proofOfWork: { kind: $k, run: x, pass: \"exit 0\" }" '    changes: []' > .ratchet/batches/demo/batch.yaml
         ratchet validate demo >/dev/null
       done
+      # llm-judge is a recognized kind but NOT yet supported by batch apply: rejected.
+      printf '%s\n' 'name: demo' 'phases:' '  - name: p' '    goal: g' '    success: s' '    proofOfWork: { kind: llm-judge, run: x, pass: "exit 0" }' '    changes: []' > .ratchet/batches/demo/batch.yaml
+      ! ratchet validate demo >/dev/null 2>&1
+      ratchet validate demo 2>&1 | grep -qi 'llm-judge proof-of-work is not yet supported'
       # A non-executable / unknown kind is rejected, naming the allowed set.
       printf '%s\n' 'name: demo' 'phases:' '  - name: p' '    goal: g' '    success: s' '    proofOfWork: { kind: manual-review, run: x, pass: "exit 0" }' '    changes: []' > .ratchet/batches/demo/batch.yaml
       ratchet validate demo 2>&1 | grep -qi 'integration, blackbox, llm-judge'

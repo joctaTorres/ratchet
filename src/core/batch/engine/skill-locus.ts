@@ -179,6 +179,12 @@ export function ensureCommandInSpawnLocus(
     return;
   }
 
+  // Render the invocation token the SAME way the spawn instructions do — through
+  // the resolved adapter — so the operator message names the actual agent's
+  // syntax (claude `/rct:<id>`, others `/rct-<id>`) rather than a hard-coded
+  // `/rct:<id>` that misleads for a non-claude spawn agent.
+  const invocation = adapter.getInvocation(commandId);
+
   const targetPath = commandFilePath(adapter.getFilePath(commandId), projectRoot);
 
   // A locus the engine does not control on disk (remote) cannot be guaranteed:
@@ -186,7 +192,7 @@ export function ensureCommandInSpawnLocus(
   // its working tree does not and cannot contain.
   if (!engineControlsLocus(locus)) {
     throw new SkillLocusError(
-      `Cannot guarantee the rct '${commandId}' command (/rct:${commandId}) in the spawn ` +
+      `Cannot guarantee the rct '${commandId}' command (${invocation}) in the spawn ` +
         `locus: locus '${locus}' runs the agent in a remote workdir this engine does not ` +
         `control on disk, so the command file '${targetPath}' cannot be rendered there. ` +
         `Render the rct commands into the remote workspace before running, or set locus to ` +
@@ -204,7 +210,7 @@ export function ensureCommandInSpawnLocus(
   const content = getCommandContents([commandId]).find((c) => c.id === commandId);
   if (!content) {
     throw new SkillLocusError(
-      `Cannot guarantee the rct '${commandId}' command (/rct:${commandId}) in the spawn ` +
+      `Cannot guarantee the rct '${commandId}' command (${invocation}) in the spawn ` +
         `locus '${locus}': no shared command definition exists for id '${commandId}'. This ` +
         `is an internal bootstrap error — the engine will not spawn an agent told to invoke ` +
         `a command it cannot render.`
@@ -216,7 +222,7 @@ export function ensureCommandInSpawnLocus(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new SkillLocusError(
-      `Cannot guarantee the rct '${commandId}' command (/rct:${commandId}) in the spawn ` +
+      `Cannot guarantee the rct '${commandId}' command (${invocation}) in the spawn ` +
         `locus '${locus}': failed to render it to '${targetPath}'. Ensure the path is ` +
         `writable, then retry. The agent is NOT spawned. Detail: ${detail}`
     );

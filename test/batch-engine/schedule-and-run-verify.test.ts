@@ -24,7 +24,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
-import { appendJournal } from '../../src/core/batch/journal.js';
+import { appendJournal, recordProofOfWork } from '../../src/core/batch/journal.js';
 import {
   computeNextTransition,
   isChangeDone,
@@ -241,14 +241,36 @@ describe('verify scheduled and run through the real selection seam', () => {
     expect(prompt).toContain('delegate to the skill');
     expect(prompt).toMatch(/Do NOT hand-build or re-describe\n?the verify steps/);
 
-    // (c) once the verify completion is journaled: done, nothing runnable.
+    // (c) the change is done, but p1 is the TERMINAL phase: selection now surfaces
+    //     its boundary proof-of-work as the next step (C2) — the batch is not done
+    //     until that terminal proof is recorded.
     const journalAfterVerify = readChangeJournalTolerant(projectRoot, BATCH, CHANGE);
+    {
+      const { status, change } = await statusOf(CHANGE);
+      expect(change.status).toBe('done');
+      expect(status.next).toEqual({ phase: 'p1', proof: true });
+      const manifest = parseBatchManifest(MANIFEST);
+      const proofTarget = pickNextStep(status, manifest.phases);
+      expect(proofTarget).toMatchObject({ kind: 'proof-of-work' });
+      expect((proofTarget as { phase: { name: string } }).phase.name).toBe('p1');
+    }
+
+    // The terminal-phase boundary proof runs and records a passing verdict (what
+    // `batch apply` does at the terminal boundary); now the batch drains to done.
+    recordProofOfWork(projectRoot, BATCH, 'p1', {
+      phase: 'p1',
+      passed: true,
+      gatePassed: true,
+      policy: 'hard-gate',
+      reason: 'pass-condition-met',
+      detail: 'Proof-of-work passed (0).',
+    });
     {
       const { status, change } = await statusOf(CHANGE);
       expect(change.status).toBe('done');
       expect(status.next).toBeUndefined();
       const manifest = parseBatchManifest(MANIFEST);
-      expect(pickNextStep(status, manifest.phases)).toBeUndefined();
+      expect(pickNextStep(status, manifest.phases, new Set(['p1']))).toBeUndefined();
     }
     expect(computeNextTransition(projectRoot, CHANGE, journalAfterVerify)).toBeUndefined();
     expect(selectRunnableStep(selectableFor()).reason).toBe('all-done');

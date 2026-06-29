@@ -50,7 +50,7 @@ phases:
     goal: <phase goal>
     success: <success criteria>
     proofOfWork:
-      kind: integration       # integration | blackbox | llm-judge
+      kind: integration       # integration | blackbox  (llm-judge not yet supported)
       run: <bash command>
       pass: <pass condition>
     changes:
@@ -371,6 +371,18 @@ Execution sequence:
    gated message. The block persists across separate stateless `batch apply`
    invocations. See [engine: phase gates and
    proof-of-work](../engine/overview.md#phase-gates-and-proof-of-work).
+
+   **Terminal-phase proof.** The **last** phase has no following phase `Q` to
+   trigger its boundary proof. So once every change in the batch is done and
+   nothing is left to decompose, `batch apply` surfaces and runs the terminal
+   phase's proof-of-work the same way — and the batch is **not `done`** until that
+   proof is recorded as satisfied (`gatePassed: true`). A failing terminal
+   `hard-gate` proof keeps the batch `in-progress` with nothing auto-runnable: the
+   no-step output cites the failing terminal proof and the operator must
+   `batch rerun-proof` (or fix the cause). A **single-phase** batch therefore gates
+   on its one phase's proof before reporting `done`. The predecessor's boundary
+   proof also runs **before a decomposition step** (an undecomposed phase is
+   entered off its predecessor's slice).
 
    **Decomposition step.** When the next runnable step is a reachable phase whose
    `changes` are still empty, `batch apply` spawns one agent that delegates to the

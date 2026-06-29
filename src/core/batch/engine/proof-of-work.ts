@@ -98,7 +98,7 @@ type PassEvaluation = { passed: boolean; reason: ProofOfWorkPassReason | ProofOf
  * as `—`, `:`, `,`). Recognizes `exit 0`, `exit-zero`, `exit code 0`, and prose
  * forms like `Exit 0, then ...` or `EXIT CODE 0 — everything passes`.
  */
-const EXIT_ZERO_DIRECTIVE = /^exit(?:[- ]?code)?[- ]?(?:0|zero)(?![a-z0-9])/i;
+const EXIT_ZERO_DIRECTIVE = /^exit(?:[- ]?code)?[- ]?(?:0|zero)(?![a-z0-9_])/i;
 
 /** Pass when exit 0; otherwise fail as nonzero-exit. */
 function exitZeroHandler(exitedZero: boolean): PassEvaluation {

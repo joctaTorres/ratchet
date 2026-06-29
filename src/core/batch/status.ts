@@ -100,9 +100,13 @@ export interface BatchStatusInfo {
    * (`change` set). A reachable, ungated phase whose `changes` list is still
    * empty is surfaced as a decomposition step instead: `decompose: true` with no
    * `change` (the concrete intents are authored by the follow-on decomposition
-   * run, not here).
+   * run, not here). When every change is done but the TERMINAL phase's boundary
+   * proof-of-work has not yet run, the terminal proof is surfaced as the next
+   * step: `proof: true` with the terminal phase name and no `change` (see
+   * `computeBatchStatus` — the batch is not `done` until that proof is recorded
+   * as satisfied).
    */
-  next?: { phase: string; change?: string; decompose?: boolean };
+  next?: { phase: string; change?: string; decompose?: boolean; proof?: boolean };
   status: 'empty' | 'pending' | 'in-progress' | 'done';
 }
 
@@ -362,7 +366,7 @@ export async function computeBatchStatus(
   let completed = 0;
   let changeCount = 0;
   let doneCount = 0;
-  let next: { phase: string; change?: string; decompose?: boolean } | undefined;
+  let next: { phase: string; change?: string; decompose?: boolean; proof?: boolean } | undefined;
 
   for (const phase of phases) {
     for (const change of phase.changes) {
@@ -405,13 +409,47 @@ export async function computeBatchStatus(
     next = { phase: reachableUndecomposed.name, decompose: true };
   }
 
+  // Terminal-phase proof-of-work gate (C2). Every phase's boundary proof is run
+  // when ENTERING the next phase, but the LAST phase has no successor, so its
+  // proof would never run — and the batch would report `done` without it. Close
+  // that hole: the batch is not `done` until the terminal phase's proof is
+  // recorded as satisfied. `terminalProofSatisfied` folds policy via the same
+  // `gatePassed` boolean the phase gate uses (`warn` records `gatePassed: true`),
+  // so a `warn` failure still satisfies it. A batch with no phases (no terminal
+  // phase) is vacuously satisfied.
+  const terminalPhase = manifest.phases[manifest.phases.length - 1];
+  const terminalRec = terminalPhase ? proofByPhase.get(terminalPhase.name) : undefined;
+  const terminalProofSatisfied =
+    !terminalPhase?.proofOfWork || terminalRec?.gatePassed === true;
+
+  // When every change is done and nothing is left to decompose but the terminal
+  // proof is NOT yet satisfied, surface the next step:
+  //  - proof never ran (`terminalRec` undefined) -> offer it as a selectable
+  //    `proof` step so `batch apply` runs and records it.
+  //  - proof ran and FAILED its hard-gate (`!gatePassed`) -> nothing is
+  //    auto-runnable; leave `next` undefined so the operator must
+  //    `batch rerun-proof` or fix. Either way the batch stays out of `done`.
+  if (
+    !next &&
+    changeCount > 0 &&
+    doneCount === changeCount &&
+    !reachableUndecomposed &&
+    !terminalProofSatisfied &&
+    terminalRec === undefined &&
+    terminalPhase
+  ) {
+    next = { phase: terminalPhase.name, proof: true };
+  }
+
   let status: BatchStatusInfo['status'];
   if (changeCount === 0) {
     // Brand-new batch with no actionable change intents anywhere: empty.
     status = 'empty';
-  } else if (doneCount === changeCount && !reachableUndecomposed) {
-    // Done ONLY when every declared change is done AND no reachable phase is
-    // still undecomposed. A reachable empty phase keeps the batch out of `done`.
+  } else if (doneCount === changeCount && !reachableUndecomposed && terminalProofSatisfied) {
+    // Done ONLY when every declared change is done, no reachable phase is still
+    // undecomposed, AND the terminal phase's boundary proof-of-work is recorded
+    // as satisfied. A reachable empty phase or an unrun/failing terminal proof
+    // keeps the batch out of `done` (it falls through to `in-progress`).
     status = 'done';
   } else if (
     doneCount > 0 ||

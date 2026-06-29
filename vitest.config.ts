@@ -46,7 +46,15 @@ export default defineConfig({
         // must never be instrumented — `all: true` would otherwise drag the
         // measured total down by tens of thousands of foreign, untested lines.
         // A no-op in CI (where `.agents/` does not exist).
-        '.agents/**'
+        '.agents/**',
+        // Non-application sources: the terminal-animation demo scripts under
+        // `scripts/**` (braille / spin / preview demos, run by hand, not part of
+        // the shipped CLI) and the root tooling config `eslint.config.js`.
+        // Measuring them as uncovered application lines understates real coverage,
+        // so they are excluded alongside `.agents/**`. `website/` is NOT excluded —
+        // it is application code and stays measured.
+        'scripts/**',
+        'eslint.config.js'
       ]
     },
     testTimeout: 10000,

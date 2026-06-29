@@ -151,11 +151,16 @@ phases:
       - name: ratchet-floor-to-87
         after: [core-util-tests, utils-helper-tests]
         done: >-
-          With the core utilities and helpers covered, raise
-          DEFAULT_COVERAGE_THRESHOLD to the floor the suite now clears (target
-          ~87) with the gate unit tests updated for the new floor (green
-          at/above, red below) and docs/engine/coverage-gate.md + README updated
-          per the documentation standard; the gate exits 0 at the raised floor.
+          First scope vitest coverage to the application: exclude the non-app
+          terminal-animation demo scripts (scripts/**) and root tooling config
+          (eslint.config.js) from coverage in vitest.config.ts, joining the
+          existing .agents/** exclusion (website/ stays measured — it is now
+          covered). Then raise DEFAULT_COVERAGE_THRESHOLD to the floor the suite
+          now clears (target ~87) with the gate unit tests updated for the new
+          floor (green at/above, red below), and docs/engine/coverage-gate.md
+          (documenting both the raised floor and the coverage scope) + README
+          updated per the documentation standard; the gate exits 0 at the raised
+          floor.
 
   # ---------------------------------------------------------------------------
   # PHASE 4 — Cover CLI entry + large files; reach the 95% target

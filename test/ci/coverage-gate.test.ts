@@ -104,50 +104,59 @@ describe('resolveThreshold', () => {
   });
 });
 
-describe('raised coverage floor (floor-to-80.feature)', () => {
-  // The phase covered the batch, workflow and eval command groups and raised the
-  // enforced floor from the prior 78 to the phase target 80. These tests pin the
-  // raised default and prove the gate's green-at/above, red-below behavior at it,
-  // plus the override and non-numeric-fallback contracts.
+describe('raised coverage floor (floor-to-87.feature)', () => {
+  // The phase covered the core utilities and the `utils` helpers and scoped
+  // coverage to the application, raising the enforced floor from the prior 80 to
+  // the phase target 87. These tests pin the raised default and prove the gate's
+  // green-at/above, red-below behavior at it, plus the override and
+  // non-numeric-fallback contracts.
 
-  it('resolves the default enforced floor to 80, strictly above the previous 78 floor', () => {
-    expect(DEFAULT_COVERAGE_THRESHOLD).toBe(80);
-    expect(resolveThreshold({})).toBe(80);
-    expect(resolveThreshold({})).toBeGreaterThan(78);
+  it('resolves the default enforced floor to 87, strictly above the previous 80 floor', () => {
+    expect(DEFAULT_COVERAGE_THRESHOLD).toBe(87);
+    expect(resolveThreshold({})).toBe(87);
+    expect(resolveThreshold({})).toBeGreaterThan(80);
   });
 
-  it('is green + exit 0 when coverage is exactly at the raised floor (80)', () => {
-    const run = runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(80)) });
+  it('is green + exit 0 when coverage is exactly at the raised floor (87)', () => {
+    const run = runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(87)) });
     expect(run.result.signal).toBe('green');
     expect(run.exitCode).toBe(0);
   });
 
-  it('is green + exit 0 when coverage is above the raised floor (80.09)', () => {
-    const run = runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(80.09)) });
+  it('is green + exit 0 when coverage is above the raised floor (88)', () => {
+    const run = runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(88)) });
     expect(run.result.signal).toBe('green');
     expect(run.exitCode).toBe(0);
   });
 
-  it('is red + exit 1 below the raised floor, naming the coverage and the 80 threshold', () => {
-    const run = runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(79.5)) });
+  it('is red + exit 1 below the raised floor, naming the coverage and the 87 threshold', () => {
+    const run = runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(86.5)) });
     expect(run.result.signal).toBe('red');
     expect(run.exitCode).toBe(1);
     const reason = run.result.reasons.join('\n');
-    expect(reason).toContain('79.5');
-    expect(reason).toContain('80');
+    expect(reason).toContain('86.5');
+    expect(reason).toContain('87');
   });
 
   it('lets a COVERAGE_THRESHOLD override win over the raised default', () => {
-    const summary = writeSummary(summaryWithPct(80));
-    // 80 clears the raised default but not a higher 95 override.
-    expect(runCoverageGate({ [SUMMARY_ENV]: summary }).result.signal).toBe('green');
+    // 87 clears the raised default but not a higher 95 override; 96 clears 95.
     expect(
-      runCoverageGate({ [SUMMARY_ENV]: summary, [THRESHOLD_ENV]: '95' }).result.signal,
+      runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(87)), [THRESHOLD_ENV]: '95' })
+        .result.signal,
     ).toBe('red');
+    expect(
+      runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(96)), [THRESHOLD_ENV]: '95' })
+        .result.signal,
+    ).toBe('green');
+    // A lower override of 80 lets 86 (below the raised default) through.
+    expect(
+      runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(86)), [THRESHOLD_ENV]: '80' })
+        .result.signal,
+    ).toBe('green');
   });
 
-  it('falls back to the raised default of 80 for a non-numeric override', () => {
-    expect(resolveThreshold({ [THRESHOLD_ENV]: 'not-a-number' })).toBe(80);
+  it('falls back to the raised default of 87 for a non-numeric override', () => {
+    expect(resolveThreshold({ [THRESHOLD_ENV]: 'not-a-number' })).toBe(87);
   });
 });
 
@@ -171,7 +180,7 @@ describe('readCoverageTotal', () => {
 
 describe('runCoverageGate', () => {
   it('green + exit 0 when the measured total meets the threshold', () => {
-    const run = runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(80)) });
+    const run = runCoverageGate({ [SUMMARY_ENV]: writeSummary(summaryWithPct(87)) });
     expect(run.result.signal).toBe('green');
     expect(run.exitCode).toBe(0);
     expect(run.lines.join('\n')).toMatch(/green/i);
@@ -195,13 +204,13 @@ describe('runCoverageGate', () => {
   });
 
   it('respects a COVERAGE_THRESHOLD override at the runner boundary', () => {
-    const summary = writeSummary(summaryWithPct(81));
-    // 81% clears the enforced default (DEFAULT_COVERAGE_THRESHOLD) but not a
-    // raised 85% override.
-    expect(DEFAULT_COVERAGE_THRESHOLD).toBeLessThanOrEqual(81);
+    const summary = writeSummary(summaryWithPct(88));
+    // 88% clears the enforced default (DEFAULT_COVERAGE_THRESHOLD) but not a
+    // raised 95% override.
+    expect(DEFAULT_COVERAGE_THRESHOLD).toBeLessThanOrEqual(88);
     expect(runCoverageGate({ [SUMMARY_ENV]: summary }).result.signal).toBe('green');
     expect(
-      runCoverageGate({ [SUMMARY_ENV]: summary, [THRESHOLD_ENV]: '85' }).result.signal,
+      runCoverageGate({ [SUMMARY_ENV]: summary, [THRESHOLD_ENV]: '95' }).result.signal,
     ).toBe('red');
   });
 });

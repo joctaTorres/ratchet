@@ -25,11 +25,22 @@ Only line coverage is gated. Branch coverage is not gated.
 
 | Variable | Default | Description |
 |---|---|---|
-| `COVERAGE_THRESHOLD` | `80` | The enforced minimum line-coverage percentage required for `green`. Overrides the built-in default when set to a finite number; a missing, empty, or non-numeric value falls back to the default of `80`. |
+| `COVERAGE_THRESHOLD` | `87` | The enforced minimum line-coverage percentage required for `green`. Overrides the built-in default when set to a finite number; a missing, empty, or non-numeric value falls back to the default of `87`. |
 | `COVERAGE_SUMMARY` | `coverage/coverage-summary.json` | Path to the v8 `json-summary` reporter output the gate reads `total.lines.pct` from. |
 
-The default of `80` is a ratchet point: it is raised as coverage is added and
+The default of `87` is a ratchet point: it is raised as coverage is added and
 never lowered, climbing toward the testing standard's 95% line-coverage target.
+
+## Coverage scope
+
+The coverage run measures the repository's application code. Three sources are
+excluded from coverage in `vitest.config.ts` because they are not application
+code: the vendored reference checkouts under `.agents/`, the terminal-animation
+demo scripts under `scripts/` (run by hand, not part of the shipped CLI), and the
+root tooling config `eslint.config.js`. The `website/` application code is
+measured. This scope makes `total.lines.pct` reflect real application coverage,
+so the enforced floor is judged against application code rather than non-app
+sources.
 
 ## Signal and exit code
 

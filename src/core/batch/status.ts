@@ -421,6 +421,14 @@ export async function computeBatchStatus(
   const terminalRec = terminalPhase ? proofByPhase.get(terminalPhase.name) : undefined;
   const terminalProofSatisfied =
     !terminalPhase?.proofOfWork || terminalRec?.gatePassed === true;
+  // The terminal proof only matters once the terminal phase is itself a FINISHED
+  // phase — ungated AND decomposed AND all its changes done (`PhaseStatusInfo`
+  // `done`). A gated terminal (e.g. its predecessor's proof failed) or an
+  // undecomposed empty terminal keeps the batch in-progress on its own; surfacing
+  // or running its proof there would execute a command on blocked/nonexistent
+  // work and could flip the batch to a false `done`. `reachableUndecomposed` only
+  // catches UNGATED empties, so this guard is what closes the gated-empty case.
+  const terminalPhaseDone = phases[phases.length - 1]?.status === 'done';
 
   // When every change is done and nothing is left to decompose but the terminal
   // proof is NOT yet satisfied, surface the next step:
@@ -434,6 +442,7 @@ export async function computeBatchStatus(
     changeCount > 0 &&
     doneCount === changeCount &&
     !reachableUndecomposed &&
+    terminalPhaseDone &&
     !terminalProofSatisfied &&
     terminalRec === undefined &&
     terminalPhase
@@ -445,7 +454,12 @@ export async function computeBatchStatus(
   if (changeCount === 0) {
     // Brand-new batch with no actionable change intents anywhere: empty.
     status = 'empty';
-  } else if (doneCount === changeCount && !reachableUndecomposed && terminalProofSatisfied) {
+  } else if (
+    doneCount === changeCount &&
+    !reachableUndecomposed &&
+    terminalPhaseDone &&
+    terminalProofSatisfied
+  ) {
     // Done ONLY when every declared change is done, no reachable phase is still
     // undecomposed, AND the terminal phase's boundary proof-of-work is recorded
     // as satisfied. A reachable empty phase or an unrun/failing terminal proof

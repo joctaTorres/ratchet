@@ -20,7 +20,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { appendJournal, readLatestProofOfWork } from '../../src/core/batch/journal.js';
+import {
+  appendJournal,
+  readLatestProofOfWork,
+  proofOfWorkJournalKey,
+} from '../../src/core/batch/journal.js';
 import {
   getBatchManifestPath,
   loadBatchManifest,
@@ -158,5 +162,57 @@ describe('terminal-phase proof-of-work gates `done` (C2)', () => {
     const status = await computeBatchStatus(projectRoot, loadBatchManifest(projectRoot, BATCH));
     expect(status.status).toBe('done');
     expect(status.next).toBeUndefined();
+  });
+
+  it('does NOT surface/run the terminal proof on a gated, undecomposed terminal phase (C2 regression)', async () => {
+    // p1 ships; p2 is the terminal phase, lazily decomposed (empty `changes`) and
+    // gated because p1's boundary proof FAILED its hard-gate. A gated empty
+    // terminal slips past `reachableUndecomposed` (which only matches UNGATED
+    // empties), so the terminal-proof gate must NOT fire — else it would run p2's
+    // command on blocked/undecomposed work and could report a false `done`.
+    await writeManifest(`
+name: ${BATCH}
+settings:
+  agent: no-such-agent
+  proofOfWork: hard-gate
+phases:
+  - name: p1
+    goal: ship p1
+    success: p1 works
+    proofOfWork: { kind: integration, run: "exit 0", pass: "exit 0" }
+    changes:
+      - name: c1
+        done: c1 done
+  - name: p2
+    goal: ship p2
+    success: p2 works
+    proofOfWork: { kind: integration, run: "exit 0", pass: "exit 0" }
+    changes: []
+`);
+    await markDone('c1');
+    // Record p1's FAILED hard-gate boundary proof -> p2 is gated.
+    appendJournal(projectRoot, BATCH, {
+      change: proofOfWorkJournalKey('p1'),
+      kind: 'proof-of-work',
+      message: 'failed',
+      proof: {
+        phase: 'p1',
+        passed: false,
+        gatePassed: false,
+        policy: 'hard-gate',
+        reason: 'nonzero-exit',
+        detail: 'p1 proof failed',
+      },
+    });
+
+    const manifest = loadBatchManifest(projectRoot, BATCH);
+    const status = await computeBatchStatus(projectRoot, manifest);
+
+    // NOT done: the gated, undecomposed terminal phase keeps the batch in-progress.
+    expect(status.status).toBe('in-progress');
+    // The terminal proof is NOT surfaced for the gated empty terminal phase.
+    expect(status.next).toBeUndefined();
+    // And selection offers no terminal proof-of-work step for it.
+    expect(pickNextStep(status, manifest.phases)).toBeUndefined();
   });
 });

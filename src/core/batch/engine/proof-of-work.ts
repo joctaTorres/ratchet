@@ -5,13 +5,22 @@
  * proof-of-work to decide whether the phase ships:
  *
  *   - `integration` / `blackbox` run a bash command and pass when the pass
- *     condition holds against the command output/exit status.
- *   - `llm-judge` spawns an agent that exercises the software directly (bash or
- *     an MCP tool) and returns a pass/fail verdict against the success criteria.
+ *     condition holds against the command output/exit status. These are the only
+ *     kinds `batch apply` runs today.
  *
  * Policy gates the phase: under `hard-gate` (default) a failure blocks the phase
  * and the next phase and is surfaced as a blocker; under `warn` the failure is
  * recorded and the phase is allowed to complete.
+ *
+ * NOT YET WIRED — `llm-judge`: a recognized proof-of-work kind whose design is to
+ * spawn an agent that exercises the software directly (bash or an MCP tool) and
+ * returns a pass/fail verdict against the success criteria. `batch apply` does
+ * NOT support it yet: `parseBatchManifest` (`manifest.ts`) REJECTS an `llm-judge`
+ * phase at validation, so the `kind === 'llm-judge'` branch below is currently
+ * unreachable from the live caller. The branch (and the `JudgeRequest` /
+ * `LlmJudge` / `JudgeVerdict` contract) is retained as fail-closed scaffolding
+ * for when a judge adapter is wired — it returns a failing verdict when no judge
+ * is configured, so a phase can never silently pass an unrun judge.
  *
  * STUBBED BOUNDARY: the bash runner is injectable (`BashRunner`) so tests do not
  * shell out; the default runner really executes the command via child_process.
@@ -44,7 +53,8 @@ export const realBashRunner: BashRunner = (command, cwd) =>
     child.on('close', (exitCode) => resolve({ exitCode, stdout, stderr }));
   });
 
-/** A judge returns a verdict; spawned for `llm-judge` proof-of-work. */
+/** A judge returns a verdict; would be spawned for the not-yet-wired `llm-judge`
+ *  proof-of-work (see file header — `batch apply` rejects that kind today). */
 export interface JudgeRequest {
   success: string;
   run: string;
@@ -163,9 +173,11 @@ export interface RunProofOfWorkDeps {
  * (proof-of-work never runs while a phase has in-progress changes).
  *
  * `success` is the phase's success criteria from the resolved step context. The
- * `llm-judge` kind judges the running software against THAT criteria, not the
- * bash pass-condition (`proofOfWork.pass`) which only applies to the
- * integration/blackbox kinds.
+ * (not-yet-wired) `llm-judge` kind would judge the running software against THAT
+ * criteria; the bash pass-condition (`proofOfWork.pass`) drives the live
+ * integration/blackbox kinds. See the file header: `batch apply` rejects
+ * `llm-judge` at manifest validation, so its branch here is currently unreachable
+ * from the live caller and fails closed when no judge is configured.
  *
  * LIVE CALLER: `batch apply` (`runProofAtBoundary` in `src/commands/batch/apply.ts`)
  * runs this at the phase boundary — when a phase's changes are all done and the

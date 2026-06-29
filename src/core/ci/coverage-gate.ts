@@ -37,7 +37,7 @@ import type { GateSignal } from './release-decision.js';
  * untested while line% holds. Adding a branch floor is a deliberate future
  * change, not a silent one.
  */
-export const DEFAULT_COVERAGE_THRESHOLD = 72;
+export const DEFAULT_COVERAGE_THRESHOLD = 78;
 
 /** Environment variable that overrides {@link DEFAULT_COVERAGE_THRESHOLD}. */
 export const THRESHOLD_ENV = 'COVERAGE_THRESHOLD';

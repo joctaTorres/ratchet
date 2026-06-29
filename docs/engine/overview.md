@@ -325,14 +325,19 @@ flowchart TB
     DEC["🧩 decomposition step<br/>ungated phase, empty changes<br/>(status in-progress · next: decompose phase)"]
     SPAWN["🤖 batch apply → runDecompositionStep<br/>spawn ONE agent · delegate to decompose-phase skill"]
     AUTH["📝 skill authors phase's change intents<br/>into batch.yaml (each with a done)"]
-    BD["✅ batch done<br/>every reachable phase decomposed<br/>AND all changes done"]
+    TP{"terminal phase's<br/>proof-of-work satisfied?<br/>(recorded gatePassed)"}
+    TPR["⚙️ batch apply runs + records<br/>terminal phase's boundary proof"]
+    BD["✅ batch done<br/>every reachable phase decomposed,<br/>all changes done, AND<br/>terminal proof satisfied"]
 
     PC --> Q
     Q -->|"yes — ungated, undecomposed"| DEC
-    Q -->|"no — all phases decomposed"| BD
+    Q -->|"no — all phases decomposed & done"| TP
     DEC --> SPAWN
     SPAWN --> AUTH
     AUTH -->|"phase now decomposed; loop drives its changes"| PC
+    TP -->|"not yet recorded"| TPR
+    TPR -->|"verdict journaled"| TP
+    TP -->|"gatePassed: true (or warn)"| BD
 
     classDef todo fill:#FFE0B2,stroke:#8a4b00,stroke-width:2px,color:#5d3300;
     classDef gate fill:#E1BEE7,stroke:#6a1b9a,stroke-width:2px,color:#3d0a52;
@@ -340,8 +345,8 @@ flowchart TB
     classDef done fill:#A5D6A7,stroke:#1b5e20,stroke-width:2px,color:#06371a;
 
     class PC todo;
-    class Q,DEC gate;
-    class SPAWN,AUTH run;
+    class Q,DEC,TP gate;
+    class SPAWN,AUTH,TPR run;
     class BD done;
 ```
 

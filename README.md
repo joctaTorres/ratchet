@@ -441,7 +441,7 @@ pnpm dev            # tsc --watch
 
 CI enforces a minimum line-coverage floor through the coverage gate
 (`node dist/core/ci/coverage-gate.js`). The enforced floor is raisable via the
-`COVERAGE_THRESHOLD` environment variable (default `78`) and is ratcheted upward
+`COVERAGE_THRESHOLD` environment variable (default `80`) and is ratcheted upward
 toward the testing standard's 95% target, never lowered — see the
 [Coverage gate](https://ratchet-ai.dev/engine/coverage-gate) Reference page
 (`docs/engine/coverage-gate.md`).

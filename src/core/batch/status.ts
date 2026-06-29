@@ -24,7 +24,7 @@ import { RATCHET_DIR_NAME } from '../config.js';
 import { getTaskProgressForChange, type TaskProgress } from '../../utils/task-progress.js';
 import { BatchDag } from './dag.js';
 import type { BatchManifest, Phase, ChangeIntent } from './manifest.js';
-import type { JournalEntry, ParkedKind, RunState } from './journal.js';
+import type { JournalEntry, ParkedKind, ParkedStep, RunState } from './journal.js';
 import { readJournal, proofRecordsFromEntries } from './journal.js';
 import { hasJournaledVerify } from './engine/transition.js';
 
@@ -180,6 +180,60 @@ async function deriveChangeBase(
   return { exists: true, archived: false, progress, done, awaitingVerify };
 }
 
+/**
+ * Classify one change's derived status (and any parked overlay) from its on-disk
+ * base, its DAG blockers, and any parked entry from the run state. Pure: same
+ * inputs -> same `{ status, parked }`. Preserves the single journal-aware
+ * done-rule precedence (done > awaiting-verify > in-progress) and the parked
+ * overlay rule: a blocker / unapproved awaiting-approval park on a NOT-done
+ * change overrides the derived status, while a finished change's stale park is
+ * left moot.
+ */
+function classifyChangeStatus(
+  base: ChangeBase,
+  blockedBy: string[],
+  parkedRaw: ParkedStep | undefined
+): { status: ChangeStatus; parked?: ParkedInfo } {
+  let status: ChangeStatus;
+  if (base.done) {
+    status = 'done';
+  } else if (base.awaitingVerify) {
+    // Tasks all checked but no journaled verify completion yet: the verify gate
+    // has not run. Explicitly NOT done — the single journal-aware done-rule.
+    status = 'awaiting-verify';
+  } else if (base.exists && base.progress.total > 0) {
+    status = 'in-progress';
+  } else if (blockedBy.length > 0) {
+    status = 'blocked';
+  } else {
+    // Ready to start. A pending change (no dir) that is ready is reported as
+    // ready-to-start; an existing-but-empty change is also ready.
+    status = base.exists ? 'in-progress' : 'ready';
+  }
+
+  // Overlay parked state from the run journal: a step the agent halted (a
+  // voluntary blocker or an after-propose approval request) must surface as
+  // halted, not as ready/in-progress. A finished (done/archived) step's stale
+  // park is moot, so we leave it alone.
+  let parked: ParkedInfo | undefined;
+  if (parkedRaw && !base.done) {
+    parked = {
+      kind: parkedRaw.kind,
+      reason: parkedRaw.reason,
+      answer: parkedRaw.answer,
+      feedback: parkedRaw.feedback,
+      approved: parkedRaw.approved,
+    };
+    if (parkedRaw.kind === 'blocked') {
+      status = 'blocked';
+    } else if (parkedRaw.kind === 'awaiting-approval' && !parkedRaw.approved) {
+      status = 'awaiting-approval';
+    }
+  }
+
+  return { status, parked };
+}
+
 async function derivePhaseStatus(
   projectRoot: string,
   phase: Phase,
@@ -207,44 +261,11 @@ async function derivePhaseStatus(
   const changes: ChangeStatusInfo[] = phase.changes.map((intent) => {
     const base = bases.get(intent.name)!;
     const blockedBy = blocked[intent.name] ?? [];
-
-    let status: ChangeStatus;
-    if (base.done) {
-      status = 'done';
-    } else if (base.awaitingVerify) {
-      // Tasks all checked but no journaled verify completion yet: the verify gate
-      // has not run. Explicitly NOT done — the single journal-aware done-rule.
-      status = 'awaiting-verify';
-    } else if (base.exists && base.progress.total > 0) {
-      status = 'in-progress';
-    } else if (blockedBy.length > 0) {
-      status = 'blocked';
-    } else {
-      // Ready to start. A pending change (no dir) that is ready is reported as
-      // ready-to-start; an existing-but-empty change is also ready.
-      status = base.exists ? 'in-progress' : 'ready';
-    }
-
-    // Overlay parked state from the run journal: a step the agent halted (a
-    // voluntary blocker or an after-propose approval request) must surface as
-    // halted, not as ready/in-progress. A finished (done/archived) step's stale
-    // park is moot, so we leave it alone.
-    const parkedRaw = runState.parked[intent.name];
-    let parked: ParkedInfo | undefined;
-    if (parkedRaw && !base.done) {
-      parked = {
-        kind: parkedRaw.kind,
-        reason: parkedRaw.reason,
-        answer: parkedRaw.answer,
-        feedback: parkedRaw.feedback,
-        approved: parkedRaw.approved,
-      };
-      if (parkedRaw.kind === 'blocked') {
-        status = 'blocked';
-      } else if (parkedRaw.kind === 'awaiting-approval' && !parkedRaw.approved) {
-        status = 'awaiting-approval';
-      }
-    }
+    const { status, parked } = classifyChangeStatus(
+      base,
+      blockedBy,
+      runState.parked[intent.name]
+    );
 
     return {
       name: intent.name,

@@ -75,6 +75,34 @@ export interface SelectionResult {
 }
 
 /**
+ * Within one decomposed phase, pick the first change whose `after` deps are all
+ * done, that is not itself done, and not parked. Returns the chosen change name
+ * (absent when none is runnable) plus whether any not-done change was held back
+ * by an unmet dependency or an unresolved park — the caller folds that flag
+ * across phases to distinguish "nothing runnable" from "all done". Pure over the
+ * phase it is given (no filesystem), mirroring `selectRunnableStep` itself.
+ */
+function pickRunnableChange(
+  phase: SelectablePhase
+): { change?: string; sawBlockedOrParked: boolean } {
+  const doneSet = new Set(
+    phase.changes.filter((c) => c.done).map((c) => c.name)
+  );
+
+  let sawBlockedOrParked = false;
+  for (const change of phase.changes) {
+    if (change.done) continue;
+    const depsMet = change.after.every((dep) => doneSet.has(dep));
+    if (!depsMet || change.parked) {
+      sawBlockedOrParked = true;
+      continue;
+    }
+    return { change: change.name, sawBlockedOrParked };
+  }
+  return { sawBlockedOrParked };
+}
+
+/**
  * Select the first runnable change across phases in order: skip gated phases,
  * then within a phase pick the first change whose deps are all done, that is not
  * itself done, and not parked. Returns a reason when nothing is runnable.
@@ -123,23 +151,11 @@ export function selectRunnableStep(phases: SelectablePhase[]): SelectionResult {
       return { step: { phase: phase.name, decompose: true } };
     }
 
-    const doneSet = new Set(
-      phase.changes.filter((c) => c.done).map((c) => c.name)
-    );
-
-    for (const change of phase.changes) {
-      if (change.done) continue;
-      const depsMet = change.after.every((dep) => doneSet.has(dep));
-      if (!depsMet) {
-        sawBlockedOrParked = true;
-        continue;
-      }
-      if (change.parked) {
-        sawBlockedOrParked = true;
-        continue;
-      }
-      return { step: { phase: phase.name, change: change.name } };
+    const picked = pickRunnableChange(phase);
+    if (picked.change !== undefined) {
+      return { step: { phase: phase.name, change: picked.change } };
     }
+    if (picked.sawBlockedOrParked) sawBlockedOrParked = true;
   }
 
   if (sawBlockedOrParked) return { reason: 'all-blocked-or-parked' };

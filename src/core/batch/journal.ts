@@ -307,13 +307,16 @@ export function recordProofOfWork(
   phase: string,
   record: ProofOfWorkRecord
 ): JournalEntry | undefined {
-  // Idempotency guard (W2): the boundary proof runs OUTSIDE `withBatchLock`, so
-  // two concurrent `batch apply` invocations could both reach the recorder for
-  // the same phase boundary and each append a record. Fold the existing entries
-  // (the same "latest current record per phase" reader the gate uses) and skip
-  // the append when a current — i.e. un-invalidated — record already exists for
-  // the phase. This preserves "at most once per boundary" even under concurrent
-  // applies. The legitimate re-run path (`batch rerun-proof`) appends a
+  // Best-effort idempotency guard (W2): the boundary proof runs OUTSIDE
+  // `withBatchLock`, so this read-then-append is NOT concurrency-safe. Two
+  // concurrent `batch apply` invocations can both fold the entries below, both
+  // see no current record, and both append for the same phase boundary — the
+  // guard collapses only the common sequential re-entry, not a true race. That
+  // is harmless: correctness does not depend on mutual exclusion here. The gate
+  // reader folds "latest current record per phase", so a duplicate append just
+  // re-asserts the same verdict and the latest-wins fold (see
+  // `proofRecordsFromEntries`) still yields one effective record per phase. The
+  // legitimate re-run path (`batch rerun-proof`) appends a
   // `proof-of-work-invalidated` marker FIRST, which drops the phase from the
   // fold, so a fresh record is still accepted after an explicit invalidation.
   const current = readProofOfWorkByPhase(projectRoot, batch);

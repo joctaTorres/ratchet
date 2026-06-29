@@ -28,6 +28,7 @@ import type {
   ChangeStepContext,
   DecompositionStepContext,
   StepResult,
+  StepKind,
   Transition,
 } from './contract.js';
 import type { BatchSettings } from '../config.js';
@@ -54,7 +55,7 @@ import {
 } from './skill-locus.js';
 import { mapSessionToOutcome } from './outcome.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
-import { computeNextTransition, readChangeDiskState } from './transition.js';
+import { computeNextTransition, readChangeDiskState, type ChangeDiskState } from './transition.js';
 import { withBatchLock } from './lock.js';
 import {
   readChangeJournalTolerant,
@@ -333,84 +334,37 @@ export class RatchetBatchEngine {
     const before = readChangeJournalTolerantForLocus(projectRoot, locus, change).length;
     const diskBefore = readChangeDiskState(projectRoot, change);
 
-    // Route through the streaming runtime: each stdout line is PRINTED live as it
-    // arrives while still accumulating into the returned `AgentSpawnResult`, which
-    // flows into `mapSessionToOutcome` exactly as the old spawner result did.
-    // When the resolved adapter emits structured stream-json, route each stdout
-    // line through the generic renderer (which itself writes via `this.printLine`,
-    // keeping the single sink seam) for polished live output; flush any buffered
-    // partial + the summary on exit. Otherwise print each line raw, as before.
-    // Rendering is display-only — the runtime accumulates the raw NDJSON into
-    // `AgentSpawnResult.stdout` independently, so the mapped transcript is
-    // untouched.
-    const runtime = this.selectRuntime(projectRoot, ctx.settings);
-    const renderer = emitsStreamJson ? makeStreamJsonRenderer(this.printLine) : undefined;
-    const onEvent = (e: AgentEvent): void => {
-      if (e.kind === 'stdout' && e.line !== undefined) {
-        if (renderer) renderer.handleLine(e.line + '\n');
-        else this.printLine(e.line);
-      } else if (e.kind === 'exit' && renderer) {
-        renderer.flush();
-      } else if (e.kind === 'error' && e.message !== undefined) {
-        // An actionable failure (e.g. a remote auth/connection/config error or a
-        // sidecar bootstrap failure) is printed live on the same sink so the user
-        // sees the message even though the mapped outcome stays a generic
-        // failed→blocked. Flush any buffered render first so it is not swallowed.
-        renderer?.flush();
-        this.printLine(e.message);
-      }
-    };
-    const spawnResult: AgentSpawnResult = await runtime(request, onEvent);
-    // Belt-and-braces: flush in case the runtime resolved without an exit event.
-    renderer?.flush();
-
-    // Read the entries the agent wrote during this session and map them.
-    const afterAll = readChangeJournalTolerantForLocus(projectRoot, locus, change);
-    const sessionEntries = afterAll.slice(before);
-    const sessionIndices = sessionEntries.map((_, i) => before + i);
-
-    // The PROPOSE step writes change artifacts directly on disk and does NOT go
-    // through `ratchet new change`, so it can leave the change without a
-    // `.ratchet.yaml` metadata stamp. Discovery for validate/list/archive keys
-    // off that file, so an unstamped change is `done` in batch status yet
-    // invisible to validate. Stamp it deterministically here so every
-    // engine-created change is discoverable through a single mechanism
-    // (no-op when the directory is absent or already stamped).
-    if (transition === 'propose') {
-      ensureChangeMetadata(
-        path.join(projectRoot, '.ratchet', 'changes', change),
-        projectRoot
-      );
-    }
-
-    const diskAfter = readChangeDiskState(projectRoot, change);
-
-    const parkForApproval = this.shouldParkForApproval(ctx, transition);
-
-    const outcome = mapSessionToOutcome({
+    // Delegate the spawn→stream→map→journal tail to the shared core. `diskAfter`
+    // runs after the agent exits and the session delta is read but before mapping
+    // — the seam where the PROPOSE step's metadata stamp must land.
+    return this.spawnAndMap({
+      request,
+      emitsStreamJson,
+      settings: ctx.settings,
+      projectRoot,
+      locus,
       change,
       transition,
-      sessionEntries,
-      sessionIndices,
-      spawn: spawnResult,
-      parkForApproval,
-      diskEvidence: { before: diskBefore, after: diskAfter },
+      parkForApproval: this.shouldParkForApproval(ctx, transition),
+      before,
+      diskBefore,
+      diskAfter: () => {
+        // The PROPOSE step writes change artifacts directly on disk and does NOT
+        // go through `ratchet new change`, so it can leave the change without a
+        // `.ratchet.yaml` metadata stamp. Discovery for validate/list/archive
+        // keys off that file, so an unstamped change is `done` in batch status
+        // yet invisible to validate. Stamp it deterministically here so every
+        // engine-created change is discoverable through a single mechanism
+        // (no-op when the directory is absent or already stamped).
+        if (transition === 'propose') {
+          ensureChangeMetadata(
+            path.join(projectRoot, '.ratchet', 'changes', change),
+            projectRoot
+          );
+        }
+        return readChangeDiskState(projectRoot, change);
+      },
     });
-
-    // Record a journal entry for the transition outcome (the agent may not have
-    // reported one, e.g. on failure), so resume sees this step. Written at the
-    // resolved locus — the batch run dir, or the change-local `.run/`.
-    appendJournalForLocus(projectRoot, locus, {
-      change,
-      kind: outcomeKind(outcome.state),
-      message:
-        outcome.message ??
-        outcome.blocker ??
-        `${transition} ${outcome.state}`,
-      transition,
-    });
-
-    return toStepResult(outcome);
   }
 
   /**
@@ -508,7 +462,79 @@ export class RatchetBatchEngine {
     const before = readChangeJournalTolerantForLocus(projectRoot, locus, key).length;
     const diskState = readChangeDiskState(projectRoot, key);
 
-    const runtime = this.selectRuntime(projectRoot, context.settings);
+    // Same spawn→stream→map→journal tail as the change core. The decomposition
+    // artifact is the `batch.yaml` edit the agent makes — there is no change
+    // directory to stamp or measure — so disk evidence is a no-op snapshot
+    // (before === after) and there is never an approval park.
+    return this.spawnAndMap({
+      request,
+      emitsStreamJson,
+      settings: context.settings,
+      projectRoot,
+      locus,
+      change: key,
+      transition: 'decompose',
+      parkForApproval: false,
+      before,
+      diskBefore: diskState,
+      diskAfter: () => diskState,
+    });
+  }
+
+  /**
+   * Shared spawn→stream→map→journal tail for the change and decomposition cores.
+   * Routes the prepared `request` through the locus-selected streaming runtime
+   * (printing each stdout line live via the single `printLine` sink, or through
+   * the stream-json renderer when the adapter emits structured json), snapshots
+   * this session's journal delta, maps it to an outcome, and records the outcome
+   * entry at the run locus. Behavior is byte-identical to the two inlined copies
+   * it replaces; the per-call-site differences are passed in:
+   *   - `change`/`transition` key the outcome, journal entry, and its default
+   *     message (`${transition} ${state}` — for `decompose` this is exactly the
+   *     old `decompose ${state}` default),
+   *   - `parkForApproval` is precomputed by the caller (pure over context),
+   *   - `diskAfter()` is invoked AFTER the agent exits and the session delta is
+   *     read but BEFORE mapping, so the change core can stamp propose metadata
+   *     there; the decomposition core just returns its no-op snapshot.
+   */
+  private async spawnAndMap(args: {
+    request: AgentSpawnRequest;
+    emitsStreamJson: boolean;
+    settings: BatchSettings;
+    projectRoot: string;
+    locus: RunLocus;
+    change: string;
+    transition: StepKind;
+    parkForApproval: boolean;
+    before: number;
+    diskBefore: ChangeDiskState;
+    diskAfter: () => ChangeDiskState;
+  }): Promise<StepResult> {
+    const {
+      request,
+      emitsStreamJson,
+      settings,
+      projectRoot,
+      locus,
+      change,
+      transition,
+      parkForApproval,
+      before,
+      diskBefore,
+      diskAfter,
+    } = args;
+
+    // Route through the streaming runtime: each stdout line is PRINTED live as it
+    // arrives while still accumulating into the returned `AgentSpawnResult`, which
+    // flows into `mapSessionToOutcome` exactly as the old spawner result did.
+    // When the resolved adapter emits structured stream-json, route each stdout
+    // line through the generic renderer (which itself writes via `this.printLine`,
+    // keeping the single sink seam) for polished live output; flush any buffered
+    // partial + the summary on exit. Otherwise print each line raw, as before.
+    // Rendering is display-only — the runtime accumulates the raw NDJSON into
+    // `AgentSpawnResult.stdout` independently, so the mapped transcript is
+    // untouched.
+    const runtime = this.selectRuntime(projectRoot, settings);
     const renderer = emitsStreamJson ? makeStreamJsonRenderer(this.printLine) : undefined;
     const onEvent = (e: AgentEvent): void => {
       if (e.kind === 'stdout' && e.line !== undefined) {
@@ -517,32 +543,44 @@ export class RatchetBatchEngine {
       } else if (e.kind === 'exit' && renderer) {
         renderer.flush();
       } else if (e.kind === 'error' && e.message !== undefined) {
+        // An actionable failure (e.g. a remote auth/connection/config error or a
+        // sidecar bootstrap failure) is printed live on the same sink so the user
+        // sees the message even though the mapped outcome stays a generic
+        // failed→blocked. Flush any buffered render first so it is not swallowed.
         renderer?.flush();
         this.printLine(e.message);
       }
     };
     const spawnResult: AgentSpawnResult = await runtime(request, onEvent);
+    // Belt-and-braces: flush in case the runtime resolved without an exit event.
     renderer?.flush();
 
-    const afterAll = readChangeJournalTolerantForLocus(projectRoot, locus, key);
+    // Read the entries the agent wrote during this session and map them.
+    const afterAll = readChangeJournalTolerantForLocus(projectRoot, locus, change);
     const sessionEntries = afterAll.slice(before);
     const sessionIndices = sessionEntries.map((_, i) => before + i);
 
     const outcome = mapSessionToOutcome({
-      change: key,
-      transition: 'decompose',
+      change,
+      transition,
       sessionEntries,
       sessionIndices,
       spawn: spawnResult,
-      parkForApproval: false,
-      diskEvidence: { before: diskState, after: diskState },
+      parkForApproval,
+      diskEvidence: { before: diskBefore, after: diskAfter() },
     });
 
+    // Record a journal entry for the transition outcome (the agent may not have
+    // reported one, e.g. on failure), so resume sees this step. Written at the
+    // resolved locus — the batch run dir, or the change-local `.run/`.
     appendJournalForLocus(projectRoot, locus, {
-      change: key,
+      change,
       kind: outcomeKind(outcome.state),
-      message: outcome.message ?? outcome.blocker ?? `decompose ${outcome.state}`,
-      transition: 'decompose',
+      message:
+        outcome.message ??
+        outcome.blocker ??
+        `${transition} ${outcome.state}`,
+      transition,
     });
 
     return toStepResult(outcome);

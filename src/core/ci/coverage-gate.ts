@@ -25,20 +25,19 @@ import type { GateSignal } from './release-decision.js';
 
 /**
  * Default minimum line-coverage percentage a build must meet to stay green.
- * Anchored just below the currently measured total (68.67% as of this change)
- * so a green tree stays green and a real regression trips the gate; a threshold
- * above current coverage would turn CI red on the very push that introduces the
- * gate. Overridable via `COVERAGE_THRESHOLD` so the value is data, not a literal
- * baked into the call site.
+ * This is the enforced CI floor: CI invokes the gate with no override so this
+ * value governs. It is a ratchet point — raised as coverage is added, never
+ * lowered — climbing toward the testing standard's 95% line-coverage target.
+ * Overridable via `COVERAGE_THRESHOLD` so the value is data, not a literal
+ * baked into the call site; the override wins only when it parses to a finite
+ * number, otherwise this default holds (see {@link resolveThreshold}).
  *
- * TRACKING NOTE: this floor leaves only ~0.67pp of headroom over the measured
- * 68.67% line coverage, so a real regression and a small measurement wobble can
- * both trip it — ratchet this up as coverage improves. Also, only LINE coverage
- * is gated here (`total.lines.pct`); BRANCH coverage is intentionally not gated
- * yet, so logic can be added with branches untested while line% holds. Adding a
- * branch floor is a deliberate future change, not a silent one.
+ * TRACKING NOTE: only LINE coverage is gated here (`total.lines.pct`); BRANCH
+ * coverage is intentionally not gated yet, so logic can be added with branches
+ * untested while line% holds. Adding a branch floor is a deliberate future
+ * change, not a silent one.
  */
-export const DEFAULT_COVERAGE_THRESHOLD = 68;
+export const DEFAULT_COVERAGE_THRESHOLD = 72;
 
 /** Environment variable that overrides {@link DEFAULT_COVERAGE_THRESHOLD}. */
 export const THRESHOLD_ENV = 'COVERAGE_THRESHOLD';

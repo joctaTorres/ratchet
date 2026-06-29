@@ -97,6 +97,8 @@ the full picture.
 
 Standards are project-level guidelines kept at `.ratchet/standards/*.md` — a sibling of the feature store, **not** a per-change artifact. A standard can cover any concern (testing, security, architecture, design, …). `ratchet init` creates the directory empty; author standards with `/rct:propose-standard`.
 
+Ratchet's own repository ships a **`testing` standard** that codifies its test pyramid, what to test where, a 95% minimum line-coverage floor, and its fixture / end-to-end test patterns — see the [Testing standard](https://ratchet-ai.dev/standards/testing) Reference page (`docs/standards/testing.md`).
+
 Each standard carries a stable **`tag`** in its frontmatter (`tag: security`); the tag falls back to the file name when omitted. The tag — not the file name — is how changes and features reference a standard, so a standard can be renamed without breaking links. Tags must be unique across the library (`validate` errors on a duplicate).
 
 Standards are loaded automatically where the agent has discretion:
@@ -436,6 +438,13 @@ pnpm test:coverage  # coverage report
 pnpm lint           # eslint
 pnpm dev            # tsc --watch
 ```
+
+CI enforces a minimum line-coverage floor through the coverage gate
+(`node dist/core/ci/coverage-gate.js`). The enforced floor is raisable via the
+`COVERAGE_THRESHOLD` environment variable (default `72`) and is ratcheted upward
+toward the testing standard's 95% target, never lowered — see the
+[Coverage gate](https://ratchet-ai.dev/engine/coverage-gate) Reference page
+(`docs/engine/coverage-gate.md`).
 
 The CLI is built on `commander`, `@inquirer/prompts`, `zod`, `yaml`, `fast-glob`, `chalk`, and `ora`. The artifact graph is schema-driven (`schemas/ratchet/schema.yaml`); Gherkin is parsed by a hand-rolled parser in `src/core/parsers/`.
 

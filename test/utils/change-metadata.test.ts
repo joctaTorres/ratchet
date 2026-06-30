@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -9,9 +9,30 @@ import {
   readDeclaredStandardTags,
   resolveSchemaForChange,
   validateSchemaName,
+  ensureChangeMetadata,
   ChangeMetadataError,
 } from '../../src/utils/change-metadata.js';
 import { ChangeMetadataSchema } from '../../src/core/change-metadata/index.js';
+
+// Controllable seam so we can force readProjectConfig to throw (its real
+// implementation swallows all read errors and returns null, leaving the
+// fall-back-on-throw catch in resolveSchemaForChange otherwise unreachable).
+const { projectConfigShouldThrow } = vi.hoisted(() => ({
+  projectConfigShouldThrow: { value: false },
+}));
+
+vi.mock('../../src/core/project-config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/project-config.js')>();
+  return {
+    ...actual,
+    readProjectConfig: (projectRoot: string) => {
+      if (projectConfigShouldThrow.value) {
+        throw new Error('boom: project config read failed');
+      }
+      return actual.readProjectConfig(projectRoot);
+    },
+  };
+});
 
 describe('ChangeMetadataSchema', () => {
   describe('valid metadata', () => {
@@ -138,6 +159,50 @@ describe('writeChangeMetadata', () => {
     const result = readChangeMetadata(changeDir);
     expect(result?.standards).toEqual(['security', 'testing']);
   });
+
+  it('throws ChangeMetadataError when metadata fails Zod validation (schema passes, shape invalid)', async () => {
+    // `created` in a non-ISO form passes the schema-name gate (schema 'ratchet'
+    // is valid) but fails the Zod ChangeMetadataSchema parse, exercising the
+    // safeParse failure branch in writeChangeMetadata.
+    expect(() =>
+      writeChangeMetadata(changeDir, {
+        schema: 'ratchet',
+        created: 'not-a-real-date',
+      } as any)
+    ).toThrow(ChangeMetadataError);
+
+    try {
+      writeChangeMetadata(changeDir, { schema: 'ratchet', created: '01/05/2025' } as any);
+      throw new Error('expected writeChangeMetadata to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ChangeMetadataError);
+      expect((err as ChangeMetadataError).message).toMatch(/Invalid metadata/);
+      expect((err as ChangeMetadataError).metadataPath).toBe(
+        path.join(changeDir, '.ratchet.yaml')
+      );
+    }
+    // Nothing should have been written.
+    await expect(fs.access(path.join(changeDir, '.ratchet.yaml'))).rejects.toThrow();
+  });
+
+  it('wraps a write failure in ChangeMetadataError carrying the cause', async () => {
+    // Make the target `.ratchet.yaml` a DIRECTORY so the underlying writeFileSync
+    // fails with EISDIR — exercises the write-failure catch without spying on the
+    // (non-configurable in ESM) node:fs namespace.
+    await fs.mkdir(path.join(changeDir, '.ratchet.yaml'), { recursive: true });
+
+    try {
+      writeChangeMetadata(changeDir, { schema: 'ratchet', created: '2025-01-05' });
+      throw new Error('expected writeChangeMetadata to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ChangeMetadataError);
+      expect((err as ChangeMetadataError).message).toMatch(/Failed to write metadata/);
+      expect((err as ChangeMetadataError).cause).toBeInstanceOf(Error);
+      expect((err as ChangeMetadataError).metadataPath).toBe(
+        path.join(changeDir, '.ratchet.yaml')
+      );
+    }
+  });
 });
 
 describe('readChangeMetadata', () => {
@@ -211,6 +276,22 @@ describe('readChangeMetadata', () => {
 
     expect(() => readChangeMetadata(changeDir)).toThrow(/Unknown schema/);
   });
+
+  it('wraps a read failure in ChangeMetadataError carrying the cause', async () => {
+    // Make `.ratchet.yaml` a DIRECTORY: existsSync(metaPath) is true (so we get
+    // past the null check) but readFileSync fails with EISDIR — exercising the
+    // read-failure catch branch.
+    await fs.mkdir(path.join(changeDir, '.ratchet.yaml'), { recursive: true });
+
+    try {
+      readChangeMetadata(changeDir);
+      throw new Error('expected readChangeMetadata to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ChangeMetadataError);
+      expect((err as ChangeMetadataError).message).toMatch(/Failed to read metadata/);
+      expect((err as ChangeMetadataError).cause).toBeInstanceOf(Error);
+    }
+  });
 });
 
 describe('resolveSchemaForChange', () => {
@@ -255,6 +336,19 @@ describe('resolveSchemaForChange', () => {
     await fs.writeFile(metaPath, '{ invalid yaml', 'utf-8');
 
     expect(() => resolveSchemaForChange(changeDir)).toThrow(ChangeMetadataError);
+  });
+
+  it('falls back to default when reading project config throws', async () => {
+    // No metadata file present, so resolution reaches the project-config branch.
+    // Force readProjectConfig to throw, exercising the try/catch that swallows
+    // config-read failures and falls through to the default schema.
+    projectConfigShouldThrow.value = true;
+    try {
+      const result = resolveSchemaForChange(changeDir);
+      expect(result).toBe('ratchet'); // default, because config read threw
+    } finally {
+      projectConfigShouldThrow.value = false;
+    }
   });
 
   it('should use project config schema when no metadata exists', async () => {
@@ -332,6 +426,60 @@ describe('resolveSchemaForChange', () => {
     // Remove config, default should win
     await fs.unlink(path.join(configDir, 'config.yaml'));
     expect(resolveSchemaForChange(changeDir)).toBe('ratchet'); // Default wins
+  });
+});
+
+describe('ensureChangeMetadata', () => {
+  let testDir: string;
+  let changeDir: string;
+
+  beforeEach(async () => {
+    testDir = path.join(os.tmpdir(), `ratchet-ensure-${randomUUID()}`);
+    // Mirror the real layout (projectRoot/.ratchet/changes/<name>) so the derived
+    // project root and schema resolution behave like production.
+    changeDir = path.join(testDir, '.ratchet', 'changes', 'test-change');
+    await fs.mkdir(changeDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  it('returns false (no-op) when the change directory does not exist', () => {
+    const missing = path.join(testDir, '.ratchet', 'changes', 'nope');
+    expect(ensureChangeMetadata(missing, testDir)).toBe(false);
+  });
+
+  it('writes a stamp and returns true when none exists yet', async () => {
+    const created = ensureChangeMetadata(changeDir, testDir);
+    expect(created).toBe(true);
+
+    const meta = readChangeMetadata(changeDir, testDir);
+    expect(meta?.schema).toBe('ratchet'); // resolved default schema
+    // A created date (YYYY-MM-DD) was stamped.
+    expect(meta?.created).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('returns false (no-op) when a metadata file already exists', async () => {
+    await fs.writeFile(
+      path.join(changeDir, '.ratchet.yaml'),
+      'schema: ratchet\ncreated: "2025-01-05"\n',
+      'utf-8'
+    );
+
+    expect(ensureChangeMetadata(changeDir, testDir)).toBe(false);
+    // Existing stamp left untouched.
+    const meta = readChangeMetadata(changeDir, testDir);
+    expect(meta?.created).toBe('2025-01-05');
+  });
+
+  it('derives the project root from changeDir when none is provided', () => {
+    // changeDir is projectRoot/.ratchet/changes/<name>; without an explicit root
+    // it resolves three levels up. The stamp still gets a default schema.
+    const created = ensureChangeMetadata(changeDir);
+    expect(created).toBe(true);
+    const meta = readChangeMetadata(changeDir);
+    expect(meta?.schema).toBe('ratchet');
   });
 });
 

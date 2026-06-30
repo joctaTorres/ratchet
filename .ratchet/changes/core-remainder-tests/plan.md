@@ -107,6 +107,6 @@ behavior changes, so existing green tests must stay green.
 - [x] 2.4 Extend the features-apply test for the sidecar remainder: malformed
       yaml read as empty, drop-when-empty on write, non-string filtering, and
       sorted/unique link tags.
-- [ ] 3.1 Run `pnpm build && pnpm vitest run --coverage`; confirm the full suite
+- [x] 3.1 Run `pnpm build && pnpm vitest run --coverage`; confirm the full suite
       is green and `total.lines.pct >= 95`, and fill any tail gap needed to clear
       95 (per the feature files and the `testing` standard).

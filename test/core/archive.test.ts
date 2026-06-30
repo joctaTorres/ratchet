@@ -9,15 +9,33 @@ import { RATCHET_DIR_NAME } from '../../src/core/config.js';
 // Mirror of .ratchet/changes/core-remainder-tests/features/core-remainder-tests/archive.feature
 // Drives the interactive @inquirer/prompts (confirm/select) through stubbed answers so the
 // non-`--yes` confirmation branches of archive are reachable under test.
-const { confirmMock, selectMock } = vi.hoisted(() => ({
+const { confirmMock, selectMock, progressThrows } = vi.hoisted(() => ({
   confirmMock: vi.fn(),
   selectMock: vi.fn(),
+  progressThrows: { remaining: 0 },
 }));
 
 vi.mock('@inquirer/prompts', () => ({
   confirm: confirmMock,
   select: selectMock,
 }));
+
+// Partial-mock task-progress so one test can force getTaskProgressForChange to
+// throw, exercising selectChange's fallback-to-plain-names branch (archive.ts
+// lines 259-262). By default it delegates to the real implementation.
+vi.mock('../../src/utils/task-progress.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/utils/task-progress.js')>();
+  return {
+    ...actual,
+    getTaskProgressForChange: (...args: Parameters<typeof actual.getTaskProgressForChange>) => {
+      if (progressThrows.remaining > 0) {
+        progressThrows.remaining -= 1;
+        return Promise.reject(new Error('forced progress failure'));
+      }
+      return actual.getTaskProgressForChange(...args);
+    },
+  };
+});
 
 async function writeFile(file: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -81,6 +99,7 @@ describe('ArchiveCommand', () => {
     confirmMock.mockReset();
     confirmMock.mockResolvedValue(true);
     selectMock.mockReset();
+    progressThrows.remaining = 0;
   });
 
   afterEach(async () => {
@@ -343,5 +362,127 @@ describe('ArchiveCommand', () => {
     await expect(
       fs.access(path.join(root, RATCHET_DIR_NAME, 'changes', 'pick-me'))
     ).resolves.toBeUndefined();
+  });
+
+  // Source lines 41-44: the named change path resolves to a *file*, not a
+  // directory. stat() succeeds but isDirectory() is false → "not found".
+  it('throws when the named change path is a file rather than a directory', async () => {
+    await fs.mkdir(path.join(root, RATCHET_DIR_NAME, 'changes'), { recursive: true });
+    // Create a regular file where the change directory would be.
+    await writeFile(path.join(root, RATCHET_DIR_NAME, 'changes', 'not-a-dir'), 'just a file\n');
+
+    await expect(new ArchiveCommand().execute('not-a-dir', { yes: true })).rejects.toThrow(
+      /Change 'not-a-dir' not found/
+    );
+  });
+
+  // Source line 72: plan.md absent → the validatePlan branch is skipped via the
+  // catch. The change still validates and archives.
+  it('archives a change that has no plan.md (plan validation skipped)', async () => {
+    const changeDir = await scaffoldChange(root, 'no-plan');
+    await fs.rm(path.join(changeDir, 'plan.md'));
+
+    await new ArchiveCommand().execute('no-plan', { yes: true });
+
+    await expect(fs.access(archivePath('no-plan'))).resolves.toBeUndefined();
+  });
+
+  // Source lines 81-82: the change has no features/ directory at all → the stat
+  // throws and hasFeatureDir stays false, so feature validation is skipped.
+  it('archives a change that has no features directory', async () => {
+    const changeDir = path.join(root, RATCHET_DIR_NAME, 'changes', 'no-features');
+    await fs.mkdir(changeDir, { recursive: true });
+    await writeFile(path.join(changeDir, '.ratchet.yaml'), 'schema: ratchet\n');
+    await writeFile(path.join(changeDir, 'plan.md'), VALID_PLAN);
+
+    await new ArchiveCommand().execute('no-features', { yes: true });
+
+    await expect(fs.access(archivePath('no-features'))).resolves.toBeUndefined();
+  });
+
+  // Source lines 101-110: the standards link validation reports an ERROR (an
+  // unknown standard tag is declared) → blocking. The change is NOT archived.
+  it('blocks archive when standards link validation reports an error', async () => {
+    const changeDir = await scaffoldChange(root, 'bad-standard');
+    // Declare a standard tag that does not exist in the store's standards library.
+    await writeFile(
+      path.join(changeDir, '.ratchet.yaml'),
+      'schema: ratchet\nstandards:\n  - nonexistent-standard\n'
+    );
+
+    await new ArchiveCommand().execute('bad-standard', { yes: true });
+
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/Validation errors in standards links|Validation failed/);
+    // Blocking error → change stays put, not archived.
+    await expect(
+      fs.access(path.join(root, RATCHET_DIR_NAME, 'changes', 'bad-standard'))
+    ).resolves.toBeUndefined();
+    await expect(fs.access(archivePath('bad-standard'))).rejects.toThrow();
+  });
+
+  // Source lines 146-155 (decline branch): incomplete tasks, no --yes → the
+  // confirm prompt is shown and declined → archive cancelled.
+  it('cancels when incomplete tasks are found and the confirmation is declined', async () => {
+    const incompletePlan = VALID_PLAN.replace('- [x] 1.1', '- [ ] 1.1');
+    await scaffoldChange(root, 'incomplete-decline', { plan: incompletePlan });
+    confirmMock.mockResolvedValueOnce(false); // decline the incomplete-tasks prompt
+
+    await new ArchiveCommand().execute('incomplete-decline', {});
+
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/Archive cancelled/);
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    await expect(
+      fs.access(path.join(root, RATCHET_DIR_NAME, 'changes', 'incomplete-decline'))
+    ).resolves.toBeUndefined();
+    await expect(fs.access(archivePath('incomplete-decline'))).rejects.toThrow();
+  });
+
+  // Source lines 146-155 (accept branch): incomplete tasks, no --yes → confirm
+  // accepted, then feature-store confirm accepted → archive proceeds.
+  it('continues past incomplete tasks when the confirmation is accepted (no --yes)', async () => {
+    const incompletePlan = VALID_PLAN.replace('- [x] 1.1', '- [ ] 1.1');
+    await scaffoldChange(root, 'incomplete-accept', { plan: incompletePlan });
+    // First confirm = incomplete-tasks (accept), second = feature-store (accept).
+    confirmMock.mockResolvedValue(true);
+
+    await new ArchiveCommand().execute('incomplete-accept', {});
+
+    await expect(fs.access(archivePath('incomplete-accept'))).resolves.toBeUndefined();
+  });
+
+  // Source lines 240-243: selectChange finds no active changes (only the
+  // archive dir exists) → logs "No active changes found" and aborts.
+  it('reports "No active changes found" when only the archive dir exists', async () => {
+    await fs.mkdir(path.join(root, RATCHET_DIR_NAME, 'changes', 'archive'), { recursive: true });
+
+    await new ArchiveCommand().execute(undefined, {});
+
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/No active changes found|No change selected/);
+    expect(selectMock).not.toHaveBeenCalled();
+  });
+
+  // Source lines 259-262: the inline progress computation throws, so selectChange
+  // falls back to plain change names. We force the throw by making a change's
+  // plan a directory (so reading task progress errors), then select it.
+  it('falls back to plain change names when inline progress computation fails', async () => {
+    await scaffoldChange(root, 'progress-throws');
+    // Force the FIRST getTaskProgressForChange call (inside selectChange's inline
+    // progress build) to reject, so the catch falls back to plain names. The
+    // remaining count is 1 so the later line-140 progress read still succeeds.
+    progressThrows.remaining = 1;
+    selectMock.mockResolvedValueOnce('progress-throws');
+
+    await new ArchiveCommand().execute(undefined, {});
+
+    // select() was still offered (with fallback plain names) and resolved the change.
+    expect(selectMock).toHaveBeenCalledTimes(1);
+    const choices = (selectMock.mock.calls[0][0] as { choices: Array<{ value: string }> }).choices;
+    expect(choices.map(c => c.value)).toContain('progress-throws');
+    // The fallback names are the bare change name (no padded status column).
+    expect(choices.find(c => c.value === 'progress-throws')!.name).toBe('progress-throws');
+    await expect(fs.access(archivePath('progress-throws'))).resolves.toBeUndefined();
   });
 });

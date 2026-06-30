@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { promises as fs } from 'fs';
 import path from 'path';
 import { makeCommandFixture, type CommandFixture } from '../change-fixture.js';
 
@@ -39,6 +40,26 @@ function planningHomeFor(root: string) {
     batchesDir: path.join(root, '.ratchet', 'batches'),
     defaultSchema: 'ratchet',
   };
+}
+
+/**
+ * Scaffold a project-local schema (`.ratchet/schemas/<name>/`) with the given
+ * `schema.yaml` body and one template per artifact, so apply-instruction paths
+ * that depend on non-`ratchet` apply blocks (a separate tracks file, or no
+ * tracking at all) can be exercised over the fixture.
+ */
+async function writeProjectSchema(
+  root: string,
+  name: string,
+  schemaYaml: string,
+  templates: Record<string, string>
+): Promise<void> {
+  const dir = path.join(root, '.ratchet', 'schemas', name);
+  await fs.mkdir(path.join(dir, 'templates'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'schema.yaml'), schemaYaml, 'utf-8');
+  for (const [file, body] of Object.entries(templates)) {
+    await fs.writeFile(path.join(dir, 'templates', file), body, 'utf-8');
+  }
 }
 
 describe('instructionsCommand', () => {
@@ -99,6 +120,62 @@ describe('instructionsCommand', () => {
     expect(text).toContain('<warning>');
     expect(text).toContain('Missing: features');
   });
+
+  it('embeds project context and artifact rules and lists what the artifact unlocks', async () => {
+    await fixture.writeMetadata('rich-change');
+    // Project config supplies <project_context> and per-artifact <rules>; the
+    // `features` artifact unlocks `plan`, so the <unlocks> block also renders.
+    await fs.writeFile(
+      path.join(fixture.root, '.ratchet', 'config.yaml'),
+      [
+        'context: |',
+        '  Background for the assistant only.',
+        'rules:',
+        '  features:',
+        '    - Keep scenarios small.',
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+
+    // An explicit, valid --schema also exercises the schema-existence check.
+    await instructionsCommand('features', { change: 'rich-change', schema: 'ratchet' });
+
+    const text = output();
+    expect(text).toContain('<project_context>');
+    expect(text).toContain('Background for the assistant only.');
+    expect(text).toContain('<rules>');
+    expect(text).toContain('- Keep scenarios small.');
+    expect(text).toContain('<unlocks>');
+    expect(text).toContain('Completing this artifact enables: plan');
+  });
+
+  it('rejects an explicit --schema that does not exist', async () => {
+    await fixture.writeMetadata('a-change');
+
+    await expect(
+      instructionsCommand('features', { change: 'a-change', schema: 'nope-not-a-schema' })
+    ).rejects.toThrow(/Schema 'nope-not-a-schema' not found/);
+  });
+
+  it('embeds the project standards library into the artifact text', async () => {
+    await fixture.writeMetadata('std-change');
+    const stdDir = path.join(fixture.root, '.ratchet', 'standards');
+    await fs.mkdir(stdDir, { recursive: true });
+    await fs.writeFile(
+      path.join(stdDir, 'testing.md'),
+      ['---', 'tag: testing', '---', '# Testing', 'Always isolate fixtures.', ''].join('\n'),
+      'utf-8'
+    );
+
+    await instructionsCommand('features', { change: 'std-change' });
+
+    const text = output();
+    expect(text).toContain('<standards>');
+    expect(text).toContain('tag="testing"');
+    expect(text).toContain('Always isolate fixtures.');
+    expect(text).toContain('</standards>');
+  });
 });
 
 describe('generateApplyInstructions', () => {
@@ -145,6 +222,99 @@ describe('generateApplyInstructions', () => {
     expect(instructions.progress.complete).toBe(3);
     expect(instructions.progress.remaining).toBe(0);
   });
+
+  it('reports blocked when the tracked plan exists but contains no tasks', async () => {
+    // plan.md present (so the `plan` artifact is satisfied) but with zero
+    // checkboxes: the tracks file exists yet has no tasks.
+    await fixture.writePlan('empty-plan', '# change\n\nNo task checkboxes here.\n');
+    await fixture.writeMetadata('empty-plan');
+
+    const instructions = await generateApplyInstructions(
+      fixture.root,
+      'empty-plan',
+      undefined,
+      planningHomeFor(fixture.root)
+    );
+
+    expect(instructions.state).toBe('blocked');
+    expect(instructions.progress.total).toBe(0);
+    expect(instructions.instruction).toContain('contains no tasks');
+  });
+
+  it('reports blocked when the required artifact exists but its tracks file is missing', async () => {
+    // Custom schema: the required artifact (`spec` → spec.md) and the tracking
+    // file (tasks.md) are different files, so a present artifact + absent tracks
+    // file exercises the "tracking file missing" branch.
+    await writeProjectSchema(
+      fixture.root,
+      'tracked',
+      [
+        'name: tracked',
+        'version: 1',
+        'artifacts:',
+        '  - id: spec',
+        '    generates: spec.md',
+        '    description: The spec',
+        '    template: spec.md',
+        'apply:',
+        '  requires: [spec]',
+        '  tracks: tasks.md',
+        '',
+      ].join('\n'),
+      { 'spec.md': '# spec template\n' }
+    );
+    const dir = await fixture.makeChange('needs-tracks');
+    await fs.writeFile(path.join(dir, 'spec.md'), '# done spec\n', 'utf-8');
+    await fixture.writeMetadata('needs-tracks', 'schema: tracked\n');
+
+    const instructions = await generateApplyInstructions(
+      fixture.root,
+      'needs-tracks',
+      undefined,
+      planningHomeFor(fixture.root)
+    );
+
+    expect(instructions.state).toBe('blocked');
+    expect(instructions.instruction).toContain('tasks.md');
+    expect(instructions.instruction).toContain('missing');
+  });
+
+  it('reports ready with the schema instruction when the schema configures no tracking file', async () => {
+    // Custom schema with an apply block but no `tracks`: once the required
+    // artifact exists, apply is ready and the schema instruction is surfaced.
+    await writeProjectSchema(
+      fixture.root,
+      'untracked',
+      [
+        'name: untracked',
+        'version: 1',
+        'artifacts:',
+        '  - id: spec',
+        '    generates: spec.md',
+        '    description: The spec',
+        '    template: spec.md',
+        'apply:',
+        '  requires: [spec]',
+        '  instruction: Just build it.',
+        '',
+      ].join('\n'),
+      { 'spec.md': '# spec template\n' }
+    );
+    const dir = await fixture.makeChange('no-tracks');
+    await fs.writeFile(path.join(dir, 'spec.md'), '# done spec\n', 'utf-8');
+    await fixture.writeMetadata('no-tracks', 'schema: untracked\n');
+
+    const instructions = await generateApplyInstructions(
+      fixture.root,
+      'no-tracks',
+      undefined,
+      planningHomeFor(fixture.root)
+    );
+
+    expect(instructions.state).toBe('ready');
+    expect(instructions.progress.total).toBe(0);
+    expect(instructions.instruction).toBe('Just build it.');
+  });
 });
 
 describe('applyInstructionsCommand', () => {
@@ -178,6 +348,29 @@ describe('applyInstructionsCommand', () => {
     expect(parsed.changeName).toBe('ready-apply');
     expect(parsed.tasks).toHaveLength(2);
     expect(parsed.progress.remaining).toBe(2);
+  });
+
+  it('renders apply instructions as text and validates an explicit --schema', async () => {
+    await fixture.writeChangeWithTasks('text-apply', { done: 1, total: 2 });
+    await fixture.writeMetadata('text-apply');
+
+    // No `json` flag → the text printer runs; a valid `schema` exercises the
+    // schema-existence check in the apply command.
+    await applyInstructionsCommand({ change: 'text-apply', schema: 'ratchet' });
+
+    const text = output();
+    expect(text).toContain('## Apply: text-apply');
+    expect(text).toContain('### Tasks');
+    expect(text).toContain('1/2 complete');
+  });
+
+  it('rejects an explicit --schema that does not exist', async () => {
+    await fixture.writeChangeWithTasks('bad-schema', { done: 0, total: 1 });
+    await fixture.writeMetadata('bad-schema');
+
+    await expect(
+      applyInstructionsCommand({ change: 'bad-schema', schema: 'nope-not-a-schema' })
+    ).rejects.toThrow(/Schema 'nope-not-a-schema' not found/);
   });
 });
 
@@ -242,5 +435,28 @@ describe('printApplyInstructionsText', () => {
     expect(text).toContain('### Tasks');
     expect(text).toContain('- [x] first task');
     expect(text).toContain('- [ ] second task');
+  });
+
+  it('marks progress complete with a check for an all_done snapshot', () => {
+    const allDone: ApplyInstructions = {
+      changeName: 'done-demo',
+      changeDir: '/tmp/done-demo',
+      schemaName: 'ratchet',
+      contextFiles: {},
+      progress: { total: 2, complete: 2, remaining: 0 },
+      tasks: [
+        { id: '1', description: 'first task', done: true },
+        { id: '2', description: 'second task', done: true },
+      ],
+      state: 'all_done',
+      instruction: 'All tasks are complete!',
+    };
+
+    printApplyInstructionsText(allDone);
+
+    const text = output();
+    expect(text).toContain('### Progress');
+    expect(text).toContain('2/2 complete ✓');
+    expect(text).toContain('All tasks are complete!');
   });
 });

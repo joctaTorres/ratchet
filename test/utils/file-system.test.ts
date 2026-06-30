@@ -177,6 +177,32 @@ describe('FileSystemUtils', () => {
       const hasPermission = await FileSystemUtils.ensureWritePermissions(dirPath);
       expect(hasPermission).toBe(true);
     });
+
+    // Source lines 273-282: the test-file write succeeds but every unlink attempt
+    // fails. After exhausting retries the method still returns true (the write
+    // proved permissions) and logs that cleanup failed.
+    it('returns true even when cleanup of the probe file repeatedly fails', async () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const unlinkSpy = vi
+        .spyOn(fs, 'unlink')
+        .mockRejectedValue(Object.assign(new Error('locked'), { code: 'EBUSY' }));
+
+      const hasPermission = await FileSystemUtils.ensureWritePermissions(testDir);
+
+      expect(hasPermission).toBe(true);
+      // All retries attempted (maxRetries === 3) and the final failure was logged.
+      expect(unlinkSpy).toHaveBeenCalledTimes(3);
+      expect(debugSpy).toHaveBeenCalled();
+
+      unlinkSpy.mockRestore();
+      debugSpy.mockRestore();
+
+      // Clean up any leftover probe files so afterEach succeeds.
+      const leftovers = (await fs.readdir(testDir)).filter((n) =>
+        n.startsWith('.ratchet-test-')
+      );
+      await Promise.all(leftovers.map((n) => fs.unlink(path.join(testDir, n))));
+    });
   });
 
   describe('canWriteFile', () => {
@@ -344,6 +370,185 @@ describe('FileSystemUtils', () => {
         '\\server\\share\\repo\\.windsurf\\workflows\\ratchet-archive.md'
       );
     });
+
+    // Source line 97: a POSIX base with no extra segments → normalized base only.
+    it('normalizes a POSIX base path when no segments are supplied', () => {
+      const result = FileSystemUtils.joinPath('/tmp/project/./sub/../sub');
+      expect(result).toBe('/tmp/project/sub');
+    });
+
+    // Source line 90: a Windows base with no extra segments → normalized base only.
+    it('normalizes a Windows base path when no segments are supplied', () => {
+      const result = FileSystemUtils.joinPath('C:\\Users\\dev\\project\\');
+      expect(result).toBe('C:\\Users\\dev\\project\\');
+    });
+  });
+
+  // Source lines 110-111: fileExists logs (console.debug) and returns false when
+  // fs.access fails with a non-ENOENT error (e.g. EACCES via stat throwing).
+  describe('fileExists / directoryExists non-ENOENT branches', () => {
+    it('returns false and logs when fs.access fails with a non-ENOENT error (fileExists)', async () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const accessSpy = vi.spyOn(fs, 'access').mockRejectedValueOnce(
+        Object.assign(new Error('permission denied'), { code: 'EACCES' })
+      );
+
+      const exists = await FileSystemUtils.fileExists(path.join(testDir, 'whatever.txt'));
+
+      expect(exists).toBe(false);
+      expect(debugSpy).toHaveBeenCalled();
+
+      accessSpy.mockRestore();
+      debugSpy.mockRestore();
+    });
+
+    // Source lines 198-199: directoryExists logs and returns false when stat
+    // fails with a non-ENOENT error.
+    it('returns false and logs when fs.stat fails with a non-ENOENT error (directoryExists)', async () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const statSpy = vi.spyOn(fs, 'stat').mockRejectedValueOnce(
+        Object.assign(new Error('I/O error'), { code: 'EIO' })
+      );
+
+      const exists = await FileSystemUtils.directoryExists(path.join(testDir, 'whatever'));
+
+      expect(exists).toBe(false);
+      expect(debugSpy).toHaveBeenCalled();
+
+      statSpy.mockRestore();
+      debugSpy.mockRestore();
+    });
+  });
+
+  // Source lines 131-132, 139-140, 144-146, 175-176: canWriteFile's ENOENT path
+  // walks up via findFirstExistingDirectory; cover its non-directory, root, and
+  // unexpected-error branches plus the "no existing parent" return.
+  describe('canWriteFile findFirstExistingDirectory branches', () => {
+    // Source lines 175-176: ENOENT on the target and no existing parent directory
+    // found → returns false. We make every stat in the walk-up report ENOENT.
+    it('returns false when no existing parent directory can be found', async () => {
+      const target = path.join(testDir, 'a', 'b', 'c.txt');
+      const statSpy = vi.spyOn(fs, 'stat').mockRejectedValue(
+        Object.assign(new Error('not found'), { code: 'ENOENT' })
+      );
+
+      const canWrite = await FileSystemUtils.canWriteFile(target);
+
+      expect(canWrite).toBe(false);
+      statSpy.mockRestore();
+    });
+
+    // Source lines 144-146: an unexpected (non-ENOENT) error while walking up the
+    // tree → findFirstExistingDirectory returns null → canWriteFile false.
+    it('returns false when walking up the tree hits an unexpected error', async () => {
+      const target = path.join(testDir, 'x', 'y', 'z.txt');
+      const statSpy = vi.spyOn(fs, 'stat').mockImplementation((p: any) => {
+        // The target itself is ENOENT (drives into the ENOENT branch);
+        // the first parent lookup throws an unexpected error.
+        if (String(p).endsWith('z.txt')) {
+          return Promise.reject(Object.assign(new Error('gone'), { code: 'ENOENT' }));
+        }
+        return Promise.reject(Object.assign(new Error('I/O error'), { code: 'EIO' }));
+      });
+
+      const canWrite = await FileSystemUtils.canWriteFile(target);
+
+      expect(canWrite).toBe(false);
+      statSpy.mockRestore();
+    });
+
+    // Source lines 131-132: findFirstExistingDirectory stats a parent that exists
+    // but is NOT a directory → returns null → canWriteFile false. The target stat
+    // reports ENOENT (driving the walk-up); the parent stat resolves to a file.
+    it('returns false when the first existing ancestor is a file, not a directory', async () => {
+      const blockingFile = path.join(testDir, 'blocker');
+      await fs.writeFile(blockingFile, 'content');
+      const target = path.join(blockingFile, 'child.txt');
+      const realStat = fs.stat.bind(fs);
+
+      const statSpy = vi.spyOn(fs, 'stat').mockImplementation((p: any, ...rest: any[]) => {
+        if (String(p).endsWith('child.txt')) {
+          // Force the ENOENT branch so findFirstExistingDirectory runs on the parent.
+          return Promise.reject(Object.assign(new Error('gone'), { code: 'ENOENT' }));
+        }
+        // The parent (blocker) is a real file → stats fine but isDirectory() is false.
+        return realStat(p, ...rest);
+      });
+
+      const canWrite = await FileSystemUtils.canWriteFile(target);
+
+      expect(canWrite).toBe(false);
+      statSpy.mockRestore();
+    });
+  });
+
+  // Source lines 232-235: updateFileWithMarkers replaces an existing block and
+  // throws on inverted / half-present markers.
+  describe('updateFileWithMarkers', () => {
+    const START = '<!-- ratchet:start -->';
+    const END = '<!-- ratchet:end -->';
+
+    it('replaces the content between existing well-ordered markers', async () => {
+      const filePath = path.join(testDir, 'markers.md');
+      await fs.writeFile(
+        filePath,
+        ['before', START, 'old body', END, 'after', ''].join('\n')
+      );
+
+      await FileSystemUtils.updateFileWithMarkers(filePath, 'new body', START, END);
+
+      const updated = await fs.readFile(filePath, 'utf-8');
+      expect(updated).toContain('new body');
+      expect(updated).not.toContain('old body');
+      expect(updated).toContain('before');
+      expect(updated).toContain('after');
+    });
+
+    it('prepends a fresh marker block when no markers exist yet', async () => {
+      const filePath = path.join(testDir, 'fresh.md');
+      await fs.writeFile(filePath, 'existing content\n');
+
+      await FileSystemUtils.updateFileWithMarkers(filePath, 'inserted', START, END);
+
+      const updated = await fs.readFile(filePath, 'utf-8');
+      expect(updated.startsWith(START)).toBe(true);
+      expect(updated).toContain('inserted');
+      expect(updated).toContain('existing content');
+    });
+
+    it('creates the file with a marker block when it does not exist', async () => {
+      const filePath = path.join(testDir, 'created.md');
+
+      await FileSystemUtils.updateFileWithMarkers(filePath, 'body', START, END);
+
+      const created = await fs.readFile(filePath, 'utf-8');
+      expect(created).toBe(`${START}\nbody\n${END}`);
+    });
+
+    // Source line 243: an inverted layout (end marker before start marker) means
+    // the post-start end lookup misses, leaving exactly one marker found → throws
+    // the "Invalid marker state" half-present error.
+    it('throws on an inverted layout where only one marker is resolvable', async () => {
+      const filePath = path.join(testDir, 'inverted.md');
+      await fs.writeFile(
+        filePath,
+        ['intro', END, 'middle', START, 'outro', ''].join('\n')
+      );
+
+      await expect(
+        FileSystemUtils.updateFileWithMarkers(filePath, 'x', START, END)
+      ).rejects.toThrow(/Invalid marker state/);
+    });
+
+    // Source line 243: exactly one marker is present → throws.
+    it('throws when only the start marker is present (half-open block)', async () => {
+      const filePath = path.join(testDir, 'half.md');
+      await fs.writeFile(filePath, ['intro', START, 'body with no end', ''].join('\n'));
+
+      await expect(
+        FileSystemUtils.updateFileWithMarkers(filePath, 'x', START, END)
+      ).rejects.toThrow(/Invalid marker state/);
+    });
   });
 });
 
@@ -437,6 +642,23 @@ describe('removeMarkerBlock', () => {
     expect(result.endsWith('\n\n')).toBe(false);
     expect(result).toContain('keep before');
     expect(result).toContain('keep after');
+  });
+
+  // Source lines 21-22: a marker is clean on its LEFT (line start) but has
+  // trailing non-whitespace on the same line → isMarkerOnOwnLine's right-side
+  // scan returns false, so the marker is not treated as standing alone.
+  it('ignores a marker that starts the line but has trailing text after it', () => {
+    const content = [
+      START + ' trailing comment on the same line',
+      'generated body',
+      END,
+      'after',
+    ].join('\n');
+
+    // The START is not "on its own line" (right side has text), so the pair is
+    // never matched and the content is returned unchanged.
+    const result = removeMarkerBlock(content, START, END);
+    expect(result).toBe(content);
   });
 
   // Scenario: removeMarkerBlock returns empty when removal leaves only whitespace.

@@ -2,6 +2,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import {
@@ -66,6 +67,23 @@ describe('runVersionGuard', () => {
     const result = runVersionGuard(env({ version: '0.1.0', published: '' }));
 
     expect(result.should_publish).toBe(true);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('falls back to the repo package.json version when PACKAGE_VERSION is unset', () => {
+    // No PACKAGE_VERSION override forces resolveLocalVersion to read the real
+    // package.json; the PUBLISHED_VERSIONS override keeps the registry untouched.
+    // The repo's own version is already published, so this is a SKIP — but the
+    // point is the local version was resolved from package.json without error.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(
+      readFileSync(path.resolve(here, '../../package.json'), 'utf8')
+    ) as { version: string };
+
+    const result = runVersionGuard({ PUBLISHED_VERSIONS: pkg.version });
+
+    expect(result.should_publish).toBe(false);
+    expect(result.decision.outcome).toBe(SKIP);
     expect(result.exitCode).toBe(0);
   });
 });
@@ -212,6 +230,16 @@ describe('fetchPublishedVersionsFromRegistry (default registry source, mocked)',
     const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
 
     expect(result).toEqual({ status: 'ok', versions: ['1.0.0', '1.1.0', '2.0.0'] });
+  });
+
+  it('treats a non-array, non-string JSON return as an empty set', () => {
+    // `npm view` normally returns an array (or a bare string); any other JSON
+    // shape (e.g. an object) is defensively normalized to an empty set.
+    execFileSyncMock.mockReturnValueOnce(JSON.stringify({ unexpected: true }));
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result).toEqual({ status: 'ok', versions: [] });
   });
 
   it('reports a genuine non-404 failure as an ambiguous error', () => {

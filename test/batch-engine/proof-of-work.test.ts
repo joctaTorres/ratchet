@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   runProofOfWork,
   evaluatePassCondition,
+  realBashRunner,
   type BashRunner,
   type LlmJudge,
 } from '../../src/core/batch/engine/proof-of-work.js';
@@ -60,6 +61,23 @@ describe('evaluatePassCondition', () => {
     }).not.toThrow();
     expect(r?.passed).toBe(false);
     expect(r?.reason).toBe('pass-condition-unmet');
+  });
+});
+
+// The default runner really shells out. These exercise it with trivial,
+// hermetic built-ins (`echo`, `exit`) — no network, no agents, no fixtures —
+// so the real spawn path is covered without depending on any external command.
+describe('realBashRunner (default spawn)', () => {
+  it('captures stdout and a zero exit code for a successful command', async () => {
+    const result = await realBashRunner('echo hello', process.cwd());
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('hello');
+  });
+
+  it('surfaces a nonzero exit code and stderr for a failing command', async () => {
+    const result = await realBashRunner('echo oops >&2; exit 3', process.cwd());
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr).toContain('oops');
   });
 });
 
@@ -141,6 +159,30 @@ describe('runProofOfWork (llm-judge)', () => {
     expect(result.passed).toBe(true);
     expect(result.reason).toBe('judge-pass');
     expect(result.detail).toBe('looks good'); // carries the verdict reason
+  });
+
+  it('reports pass-condition-unmet detail when exit 0 but the needle is absent', async () => {
+    // exit 0 + contains: condition not satisfied -> the pass-condition-unmet
+    // branch of describeFail (not nonzero-exit).
+    const bashCleanButEmpty: BashRunner = async () => ({ exitCode: 0, stdout: 'nothing here', stderr: '' });
+    const result = await runProofOfWork(
+      POW({ kind: 'integration', pass: 'contains:PASS' }),
+      'hard-gate',
+      '/tmp',
+      SUCCESS,
+      { bash: bashCleanButEmpty }
+    );
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe('pass-condition-unmet');
+    expect(result.detail).toContain('pass condition not satisfied by output');
+  });
+
+  it('describes a nonzero exit with the actual exit code', async () => {
+    const result = await runProofOfWork(POW({ kind: 'integration' }), 'hard-gate', '/tmp', SUCCESS, {
+      bash: bashFail,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.detail).toContain('command exited 1');
   });
 
   it('judges against the phase success criteria, not the bash pass condition', async () => {

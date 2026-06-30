@@ -72,6 +72,97 @@ describe('batchStatusCommand', () => {
     expect(output()).toContain('which adapter?');
   });
 
+  it('renders an in-progress symbol and task progress for a partially-done change', async () => {
+    await fixture.writeBatch('b', {
+      phases: [{ name: 'foundation', changes: [{ name: 'c-wip' }] }],
+    });
+    // A change dir with some-but-not-all tasks checked is in-progress.
+    await fixture.writeChangeWithTasks('c-wip', { done: 1, total: 3 });
+
+    await batchStatusCommand('b', {});
+
+    const out = output();
+    expect(out).toContain('c-wip');
+    expect(out).toContain('◉');
+    expect(out).toContain('[1/3]');
+  });
+
+  it('surfaces an awaiting-approval halt with its symbol and review prompt', async () => {
+    await fixture.writeBatch('b', { phases: [{ changes: [{ name: 'c-review' }] }] });
+    fixture.park('b', {
+      change: 'c-review',
+      kind: 'awaiting-approval',
+      reason: 'approve the proposal?',
+    });
+
+    await batchStatusCommand('b', {});
+
+    const out = output();
+    expect(out).toContain('⏸');
+    expect(out).toContain('awaiting approval: approve the proposal?');
+    expect(out).toContain('approve or reject from the batch view');
+  });
+
+  it('notes a rejected awaiting-approval step carries reviewer feedback', async () => {
+    await fixture.writeBatch('b', { phases: [{ changes: [{ name: 'c-rejected' }] }] });
+    fixture.park('b', {
+      change: 'c-rejected',
+      kind: 'awaiting-approval',
+      reason: 'approve the proposal?',
+      feedback: 'tighten the scope',
+    });
+
+    await batchStatusCommand('b', {});
+
+    const out = output();
+    expect(out).toContain('⏸');
+    expect(out).toContain('re-runs propose on next apply');
+  });
+
+  it('names the unmet dependency for a DAG-blocked change', async () => {
+    await fixture.writeBatch('b', {
+      phases: [
+        {
+          name: 'foundation',
+          changes: [{ name: 'dep' }, { name: 'consumer', after: ['dep'] }],
+        },
+      ],
+    });
+    // `dep` has no dir / is not done, so `consumer` is blocked by it.
+
+    await batchStatusCommand('b', {});
+
+    const out = output();
+    expect(out).toContain('✗');
+    expect(out).toContain('blocked by dep');
+  });
+
+  it('reports all changes done when every change is complete', async () => {
+    await fixture.writeBatch('b', {
+      phases: [{ name: 'foundation', changes: [{ name: 'c-done' }] }],
+    });
+    await fixture.writeChangeWithTasks('c-done', { done: 1, total: 1 });
+
+    await batchStatusCommand('b', {});
+
+    const out = output();
+    expect(out).toContain('✓');
+    expect(out).toContain('All changes done.');
+  });
+
+  it('carries a null next step in --json once the batch is done', async () => {
+    await fixture.writeBatch('b', {
+      phases: [{ name: 'foundation', changes: [{ name: 'c-done' }] }],
+    });
+    await fixture.writeChangeWithTasks('c-done', { done: 1, total: 1 });
+
+    await batchStatusCommand('b', { json: true });
+
+    const parsed = JSON.parse(output()) as { status: string; next: unknown };
+    expect(parsed.status).toBe('done');
+    expect(parsed.next).toBeNull();
+  });
+
   it('emits the batch name, status, gate, and per-change fields with --json', async () => {
     await fixture.writeBatch('b', {
       phases: [{ name: 'foundation', changes: [{ name: 'c1' }] }],

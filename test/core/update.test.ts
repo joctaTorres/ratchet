@@ -6,6 +6,7 @@ import { RATCHET_MARKERS } from '../../src/core/config.js';
 import type { GlobalConfig } from '../../src/core/global-config.js';
 import path from 'path';
 import fs from 'fs/promises';
+import * as nodeFs from 'fs';
 import os from 'os';
 import { randomUUID } from 'crypto';
 
@@ -1888,6 +1889,183 @@ content
       expect(await FileSystemUtils.fileExists(skillFile)).toBe(false);
 
       consoleSpy.mockRestore();
+    });
+
+    it('surfaces a per-tool failure when setting up a legacy tool throws during upgrade', async () => {
+      // Legacy slash-command directory (no skills yet) so update upgrades the tool.
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
+      await fs.mkdir(legacyCommandDir, { recursive: true });
+      await fs.writeFile(path.join(legacyCommandDir, 'proposal.md'), 'old command');
+
+      // Make skill writes during the legacy-tool setup fail, exercising the
+      // upgradeLegacyTools catch (spinner.fail + error line).
+      const originalWriteFile = FileSystemUtils.writeFile.bind(FileSystemUtils);
+      const writeSpy = vi
+        .spyOn(FileSystemUtils, 'writeFile')
+        .mockImplementation(async (filePath, content) => {
+          if (filePath.includes('SKILL.md')) {
+            throw new Error('EACCES: legacy setup denied');
+          }
+          return originalWriteFile(filePath, content);
+        });
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      const forceUpdateCommand = new UpdateCommand({ force: true });
+      await forceUpdateCommand.execute(testDir);
+
+      // The per-tool setup-failure error line is printed.
+      const calls = consoleSpy.mock.calls.map(call =>
+        call.map(arg => String(arg)).join(' ')
+      );
+      expect(calls.some(call => call.includes('legacy setup denied'))).toBe(true);
+
+      writeSpy.mockRestore();
+      consoleSpy.mockRestore();
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Remaining validation / note / cleanup branches.
+  //   - displayOldCoreCustomProfileNote (custom profile matching the OLD core set)
+  //   - the swallow-error catch in each remove* helper
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('old-core custom profile note', () => {
+    it('suggests opting back into core when a custom profile matches the old core set', async () => {
+      // The pre-sync core set the note watches for. "explore" is not in
+      // ALL_WORKFLOWS, so it is filtered from the generated workflows but still
+      // counts toward the old-core match (which keys on globalConfig.workflows).
+      setMockConfig({
+        featureFlags: {},
+        profile: 'custom',
+        delivery: 'both',
+        workflows: ['propose', 'explore', 'apply', 'archive'],
+      });
+
+      // A configured tool so update proceeds past the no-tools short-circuit.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      await updateCommand.execute(testDir);
+
+      const calls = consoleSpy.mock.calls.map(call =>
+        call.map(arg => String(arg)).join(' ')
+      );
+      expect(
+        calls.some(call => call.includes('The core profile now includes sync'))
+      ).toBe(true);
+      expect(
+        calls.some(call => call.includes('ratchet config profile core'))
+      ).toBe(true);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('does not show the old-core note when the custom profile differs from the old core set', async () => {
+      setMockConfig({
+        featureFlags: {},
+        profile: 'custom',
+        delivery: 'both',
+        workflows: ['apply'],
+      });
+
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-apply-change'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-apply-change', 'SKILL.md'), 'old');
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      await updateCommand.execute(testDir);
+
+      const calls = consoleSpy.mock.calls.map(call =>
+        call.map(arg => String(arg)).join(' ')
+      );
+      expect(
+        calls.some(call => call.includes('The core profile now includes sync'))
+      ).toBe(false);
+
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe('remove-helper error tolerance', () => {
+    it('swallows rm errors when removing skill dirs for a commands-only delivery switch', async () => {
+      setMockConfig({ featureFlags: {}, profile: 'core', delivery: 'commands' });
+
+      // A skill dir exists so the commands-only switch tries to remove it.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+
+      // fs.promises.rm throws -> the catch in removeSkillDirs swallows it, the
+      // update still completes without throwing.
+      const rmSpy = vi
+        .spyOn(nodeFs.promises, 'rm')
+        .mockRejectedValue(new Error('EPERM: rm denied'));
+
+      const forceUpdateCommand = new UpdateCommand({ force: true });
+      await expect(forceUpdateCommand.execute(testDir)).resolves.toBeUndefined();
+
+      rmSpy.mockRestore();
+    });
+
+    it('swallows unlink errors when removing command files for a skills-only delivery switch', async () => {
+      setMockConfig({ featureFlags: {}, profile: 'core', delivery: 'skills' });
+
+      // A configured skill + an existing command file so the skills-only switch
+      // tries to unlink the command.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
+      await fs.mkdir(commandsDir, { recursive: true });
+      await fs.writeFile(path.join(commandsDir, 'propose.md'), 'old command');
+
+      // fs.promises.unlink throws -> the catch in removeCommandFiles swallows it.
+      const unlinkSpy = vi
+        .spyOn(nodeFs.promises, 'unlink')
+        .mockRejectedValue(new Error('EPERM: unlink denied'));
+
+      const forceUpdateCommand = new UpdateCommand({ force: true });
+      await expect(forceUpdateCommand.execute(testDir)).resolves.toBeUndefined();
+
+      unlinkSpy.mockRestore();
+    });
+
+    it('swallows rm/unlink errors when removing deselected-workflow artifacts', async () => {
+      // Custom profile selecting only propose; verify is deselected and present
+      // as both a skill dir and a command file, so both remove-unselected helpers
+      // run and hit their swallow-error catch when fs rejects.
+      setMockConfig({
+        featureFlags: {},
+        profile: 'custom',
+        delivery: 'both',
+        workflows: ['propose'],
+      });
+
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-verify-change'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-verify-change', 'SKILL.md'), 'old');
+      const extraCommandFile = path.join(testDir, '.claude', 'commands', 'rct', 'verify.md');
+      await fs.mkdir(path.dirname(extraCommandFile), { recursive: true });
+      await fs.writeFile(extraCommandFile, 'old');
+
+      const rmSpy = vi
+        .spyOn(nodeFs.promises, 'rm')
+        .mockRejectedValue(new Error('EPERM: rm denied'));
+      const unlinkSpy = vi
+        .spyOn(nodeFs.promises, 'unlink')
+        .mockRejectedValue(new Error('EPERM: unlink denied'));
+
+      await expect(updateCommand.execute(testDir)).resolves.toBeUndefined();
+
+      rmSpy.mockRestore();
+      unlinkSpy.mockRestore();
     });
   });
 });

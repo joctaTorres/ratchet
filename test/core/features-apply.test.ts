@@ -265,6 +265,21 @@ describe('features-apply', () => {
       ]);
     });
 
+    // Scenario: with no declared standards the store links are left untouched.
+    it('is a no-op when the change declares no standards (empty tags)', async () => {
+      // A pre-existing sidecar that must survive untouched.
+      await writeFile(
+        sidecarPath('user-auth'),
+        yaml.stringify({ features: { 'login.feature': ['testing'] } })
+      );
+
+      await materializeStandardLinks(root, changeName, []);
+
+      // The early return left the sidecar exactly as it was.
+      const features = await readSidecarFeatures('user-auth');
+      expect(features).toEqual({ 'login.feature': ['testing'] });
+    });
+
     // Scenario: a sidecar with no remaining links is dropped entirely.
     it('deletes the sidecar from the store when no links remain', async () => {
       // An existing sidecar with a single feature whose link is about to be removed.
@@ -283,5 +298,166 @@ describe('features-apply', () => {
       // The drop-when-empty branch removes the sidecar file entirely.
       await expect(fs.access(sidecarPath('user-auth'))).rejects.toThrow();
     });
+  });
+
+  // With a real standards library present, materializeStandardLinks builds the
+  // reverse index and regenerates the `## Implemented by` block in each standard
+  // file — exercising buildReverseIndex / renderImplementedByBlock /
+  // regenerateReverseLinks end to end.
+  describe('materializeStandardLinks (reverse links into standards)', () => {
+    function standardsDir(): string {
+      return path.join(root, RATCHET_DIR_NAME, 'standards');
+    }
+
+    it('regenerates the Implemented by block for a matching standard', async () => {
+      // A standard whose tag (file stem) is "testing".
+      await writeFile(
+        path.join(standardsDir(), 'testing.md'),
+        '# Testing standard\n\nWrite tests.\n'
+      );
+      // A feature tagged with that standard.
+      await writeFile(
+        path.join(changeDir, 'features', 'user-auth', 'login.feature'),
+        'Feature: Login\n'
+      );
+
+      await materializeStandardLinks(root, changeName, ['testing']);
+
+      const rendered = await fs.readFile(
+        path.join(standardsDir(), 'testing.md'),
+        'utf-8'
+      );
+      expect(rendered).toContain('## Implemented by');
+      expect(rendered).toContain('- user-auth/login.feature');
+      // Original body is preserved above the generated block.
+      expect(rendered).toContain('Write tests.');
+    });
+
+    it('skips a standard whose markdown file cannot be read', async () => {
+      // loadStandards lists "testing" (a .md entry) but the path is a DIRECTORY,
+      // so regenerateReverseLinks' readFile throws and the standard is skipped
+      // without aborting the run.
+      await fs.mkdir(path.join(standardsDir(), 'testing.md'), { recursive: true });
+      await writeFile(
+        path.join(changeDir, 'features', 'user-auth', 'login.feature'),
+        'Feature: Login\n'
+      );
+
+      await expect(
+        materializeStandardLinks(root, changeName, ['testing'])
+      ).resolves.toBeUndefined();
+
+      // The directory was left untouched (no write happened).
+      const stat = await fs.stat(path.join(standardsDir(), 'testing.md'));
+      expect(stat.isDirectory()).toBe(true);
+    });
+
+    it('leaves a standard with no implementing features without a block', async () => {
+      // The change links to "testing", so the unrelated "security" standard gains
+      // no block (renderImplementedByBlock with empty features removes/omits it).
+      await writeFile(
+        path.join(standardsDir(), 'security.md'),
+        '# Security standard\n\nNo features yet.\n'
+      );
+      await writeFile(
+        path.join(standardsDir(), 'testing.md'),
+        '# Testing standard\n'
+      );
+      await writeFile(
+        path.join(changeDir, 'features', 'user-auth', 'login.feature'),
+        'Feature: Login\n'
+      );
+
+      await materializeStandardLinks(root, changeName, ['testing']);
+
+      const security = await fs.readFile(
+        path.join(standardsDir(), 'security.md'),
+        'utf-8'
+      );
+      expect(security).not.toContain('## Implemented by');
+    });
+  });
+
+  // Defensive edge branches: glob/read failures and malformed change layouts are
+  // swallowed into safe empty results rather than thrown.
+  describe('defensive edge branches', () => {
+    it('findFeatureUpdates returns [] when the features path is a file, not a directory', async () => {
+      // fast-glob with cwd pointing at a file throws; the catch maps it to [].
+      await writeFile(path.join(changeDir, 'features'), 'i am a file, not a dir\n');
+      const updates = await findFeatureUpdates(changeDir, storeDir);
+      expect(updates).toEqual([]);
+    });
+
+    it('applyFeatures throws when the change path is a file, not a directory', async () => {
+      // changeDir exists as a plain file -> stat succeeds but isDirectory() is false.
+      const fileChange = 'file-change';
+      await writeFile(
+        path.join(root, RATCHET_DIR_NAME, 'changes', fileChange),
+        'not a directory\n'
+      );
+      await expect(applyFeatures(root, fileChange, {})).rejects.toThrow(/not found/);
+    });
+
+    it('classifies a feature as overwritten when the existing target is unreadable', async () => {
+      // Target exists (exists=true) but byte-compare fails (read error) -> the
+      // filesAreIdentical catch returns false, classifying it as overwritten.
+      await writeFile(
+        path.join(changeDir, 'features', 'user-auth', 'login.feature'),
+        'Feature: Login\n'
+      );
+      // Create the target as a DIRECTORY so reading it as a file fails.
+      await fs.mkdir(path.join(storeDir, 'user-auth', 'login.feature'), {
+        recursive: true,
+      });
+
+      const result = await applyFeatures(root, changeName, { dryRun: true });
+      expect(result.overwritten).toBe(1);
+      expect(result.unchanged).toBe(0);
+    });
+
+    it('a sidecar whose YAML is a non-object (scalar) is read as no links', async () => {
+      // yaml.parse of a bare scalar yields a non-object; the read normalizes to {}.
+      await writeFile(sidecarPath('user-auth'), '42\n');
+      await writeFile(
+        path.join(changeDir, 'features', 'user-auth', 'login.feature'),
+        'Feature: Login\n'
+      );
+
+      await materializeStandardLinks(root, changeName, ['testing']);
+
+      const raw = await fs.readFile(sidecarPath('user-auth'), 'utf-8');
+      const parsed = yaml.parse(raw) as { features: Record<string, unknown> };
+      expect(parsed.features).toEqual({ 'login.feature': ['testing'] });
+    });
+
+    it('builds an empty reverse index when the store directory does not exist', async () => {
+      // tags non-empty (so materialize runs) but no features and no tombstones,
+      // so updateForwardLinks writes nothing and the store dir never appears —
+      // buildReverseIndex's readdir fails and yields an empty index.
+      await writeFile(
+        path.join(standardsDirPath(), 'testing.md'),
+        '# Testing standard\n'
+      );
+      // No features directory in the change at all.
+      await expect(
+        materializeStandardLinks(root, changeName, ['testing'])
+      ).resolves.toBeUndefined();
+
+      // Store dir was never created; the standard gained no Implemented-by block.
+      await expect(fs.access(storeDir)).rejects.toThrow();
+      const rendered = await fs.readFile(
+        path.join(standardsDirPath(), 'testing.md'),
+        'utf-8'
+      );
+      expect(rendered).not.toContain('## Implemented by');
+    });
+
+    function sidecarPath(capability: string): string {
+      return path.join(storeDir, capability, '.ratchet.yaml');
+    }
+
+    function standardsDirPath(): string {
+      return path.join(root, RATCHET_DIR_NAME, 'standards');
+    }
   });
 });

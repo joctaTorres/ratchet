@@ -17,7 +17,7 @@ const MIN_WIDTH = 58;
 /**
  * Welcome text content (right column)
  */
-function getWelcomeText(): string[] {
+export function getWelcomeText(): string[] {
   return [
     chalk.white.bold('Welcome to Ratchet'),
     chalk.dim('A lightweight spec-driven framework'),
@@ -38,7 +38,7 @@ function getWelcomeText(): string[] {
 /**
  * Renders a single frame with side-by-side layout
  */
-function renderFrame(artLines: string[], textLines: string[]): string {
+export function renderFrame(artLines: string[], textLines: string[]): string {
   const maxLines = Math.max(artLines.length, textLines.length);
   const lines: string[] = [];
 
@@ -62,7 +62,7 @@ function renderFrame(artLines: string[], textLines: string[]): string {
 /**
  * Checks if the terminal supports animation
  */
-function canAnimate(): boolean {
+export function canAnimate(): boolean {
   // Must be TTY
   if (!process.stdout.isTTY) return false;
 
@@ -79,7 +79,7 @@ function canAnimate(): boolean {
 /**
  * Wait for Enter key press
  */
-function waitForEnter(): Promise<void> {
+export function waitForEnter(): Promise<void> {
   return new Promise((resolve) => {
     const { stdin } = process;
 

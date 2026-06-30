@@ -25,11 +25,12 @@ Only line coverage is gated. Branch coverage is not gated.
 
 | Variable | Default | Description |
 |---|---|---|
-| `COVERAGE_THRESHOLD` | `87` | The enforced minimum line-coverage percentage required for `green`. Overrides the built-in default when set to a finite number; a missing, empty, or non-numeric value falls back to the default of `87`. |
+| `COVERAGE_THRESHOLD` | `95` | The enforced minimum line-coverage percentage required for `green`. Overrides the built-in default when set to a finite number; a missing, empty, or non-numeric value falls back to the default of `95`. |
 | `COVERAGE_SUMMARY` | `coverage/coverage-summary.json` | Path to the v8 `json-summary` reporter output the gate reads `total.lines.pct` from. |
 
-The default of `87` is a ratchet point: it is raised as coverage is added and
-never lowered, climbing toward the testing standard's 95% line-coverage target.
+The default of `95` is the testing standard's permanent minimum, reached and
+locked in: it is the terminal value of a ratchet point that was raised as
+coverage was added and is never lowered.
 
 ## Coverage scope
 

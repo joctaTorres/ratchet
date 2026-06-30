@@ -175,11 +175,12 @@ phases:
       ~1040 uncovered lines to cover, per the `testing` standard. Then ratchet
       the enforced floor to 95%, locking it in as the new permanent minimum.
     success: >-
-      Total line coverage is >= 95%, the coverage gate's enforced minimum is set
-      to 95, and the full vitest suite is green at that floor.
+      Total line coverage is >= 95% (measured 95.39%) and the coverage gate's
+      enforced minimum is locked at 95, with the full vitest suite green at that
+      floor — the testing standard's permanent minimum, reached.
     proofOfWork:
       kind: integration
-      # Floor is the 95% target, locked in as the new enforced default minimum.
+      # Floor locked at the testing standard's 95% minimum, ratcheted from 87.
       run: >-
         pnpm build && pnpm vitest run --coverage &&
         COVERAGE_THRESHOLD=95 node dist/core/ci/coverage-gate.js
@@ -216,9 +217,9 @@ phases:
       - name: ratchet-floor-to-95
         after: [cli-index-tests, validate-deep-tests, ui-telemetry-tests, core-remainder-tests]
         done: >-
-          With the gaps covered and measured total.lines.pct >= 95, raise
-          DEFAULT_COVERAGE_THRESHOLD to 95 with the gate unit tests updated for
-          the new floor (green at/above 95, red below) and
-          docs/engine/coverage-gate.md + README updated to 95 per the
-          documentation standard; the gate exits 0 at the 95 floor, locked in as
-          the new permanent minimum.
+          With the gaps covered and measured total.lines.pct >= 95 (95.39%),
+          raise DEFAULT_COVERAGE_THRESHOLD from 87 to 95 (the testing standard's
+          permanent minimum) with the gate unit tests updated for the new floor
+          (green at/above 95, red below) and docs/engine/coverage-gate.md +
+          README updated to 95 per the documentation standard; the gate exits 0
+          at the 95 floor, locked in as the new permanent minimum.

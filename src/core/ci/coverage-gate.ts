@@ -25,11 +25,12 @@ import type { GateSignal } from './release-decision.js';
 
 /**
  * Default minimum line-coverage percentage a build must meet to stay green —
- * currently `87`, the floor raised once the core utilities and `utils` helpers
- * were covered and coverage was scoped to the application. This is the enforced
- * CI floor: CI invokes the gate with no override so this value governs. It is a
- * ratchet point — raised as coverage is added, never lowered — climbing toward
- * the testing standard's 95% line-coverage target.
+ * `95`, the testing standard's permanent minimum, reached and locked in once the
+ * CLI entry, validate, ui/telemetry and core-remainder surfaces were covered
+ * (measured total line coverage 95.39%). This is the enforced CI floor: CI
+ * invokes the gate with no override so this value governs. It is a ratchet point
+ * — raised as coverage is added, never lowered — and now sits at the standard's
+ * 95% target, the floor's terminal value.
  * Overridable via `COVERAGE_THRESHOLD` so the value is data, not a literal
  * baked into the call site; the override wins only when it parses to a finite
  * number, otherwise this default holds (see {@link resolveThreshold}).
@@ -39,7 +40,7 @@ import type { GateSignal } from './release-decision.js';
  * untested while line% holds. Adding a branch floor is a deliberate future
  * change, not a silent one.
  */
-export const DEFAULT_COVERAGE_THRESHOLD = 87;
+export const DEFAULT_COVERAGE_THRESHOLD = 95;
 
 /** Environment variable that overrides {@link DEFAULT_COVERAGE_THRESHOLD}. */
 export const THRESHOLD_ENV = 'COVERAGE_THRESHOLD';

@@ -36,6 +36,13 @@ export {
   type JudgeDeps,
 } from './judge.js';
 export {
+  resolveJury,
+  JurySchema,
+  type Jury,
+  type Quorum,
+  type ResolvedJury,
+} from './jury.js';
+export {
   generateRunId,
   persistRun,
   loadRun,

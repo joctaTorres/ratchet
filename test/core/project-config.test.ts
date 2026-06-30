@@ -411,6 +411,40 @@ context: |
       });
     });
 
+    // Implements features/eval-judge/jury-quorum-resolution.feature — the
+    // project-level `eval.jury` default is parsed field-by-field via the same
+    // resilient `eval` branch as `eval.gate`: a valid jury map is kept, an
+    // invalid one is warned-and-dropped.
+    describe('eval.jury default', () => {
+      it('keeps a valid eval.jury map of votes and quorum', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\neval:\n  jury:\n    votes: 3\n    quorum: unanimous\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.eval?.jury).toEqual({ votes: 3, quorum: 'unanimous' });
+        expect(consoleWarnSpy).not.toHaveBeenCalled();
+      });
+
+      it('warns and drops the eval section when the quorum value is not majority|unanimous', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\neval:\n  jury:\n    quorum: sometimes\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.eval).toBeUndefined();
+        expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid 'eval' field"));
+      });
+    });
+
     describe('.yml/.yaml precedence', () => {
       it('should prefer .yaml when both exist', () => {
         const configDir = path.join(tempDir, '.ratchet');

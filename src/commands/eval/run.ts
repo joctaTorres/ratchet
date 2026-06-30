@@ -11,7 +11,7 @@
 
 import chalk from 'chalk';
 import { executeRun, buildReport, type EvalReport } from '../../core/eval/index.js';
-import { projectRoot, resolveScope, resolveContributorGate, type ScopeFlags } from './shared.js';
+import { projectRoot, resolveScope, resolveContributorGate, resolveJuryDefault, type ScopeFlags } from './shared.js';
 
 export interface EvalRunOptions extends ScopeFlags {
   /** `--gate <ids>`: set the enabled contributor set outright. */
@@ -38,7 +38,8 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
     judge: options.judge,
   });
 
-  const { run, warnings } = await executeRun(root, { scope, gate });
+  const jury = resolveJuryDefault(root);
+  const { run, warnings } = await executeRun(root, { scope, gate, judge: { jury } });
   const report = await buildReport(root, run.runId);
 
   if (options.json) {

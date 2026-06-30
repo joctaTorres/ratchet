@@ -408,7 +408,9 @@ features/cli/status#status-as-text:
   fixture: verify-sample
   kind: llm-judge             # spawned-judge fallback for prose-y scenarios
   success: the status output is human-readable text
-  agentVotes: 3               # N-of-M repeat votes; majority wins
+  jury:                       # optional: overrides the project's eval.jury default
+    votes: 3
+    quorum: unanimous         # majority (default) | unanimous
   rubric:                     # optional: overrides the auto-derived Then-clause rubric
     - "Output is readable prose, not raw JSON"
 ```
@@ -426,10 +428,13 @@ its verdict (CoT-before-verdict) and judges the evidence on its own merits
 instead of trusting the scenario's framing (anti-sycophancy). A vote **fails
 closed on uncertainty**: a clause judged `"no"`/`"can't-tell"`, left
 unaddressed, or claimed `"yes"` with no concrete evidence, does not pass, and a
-vote passes only when every clause does (all-yes). The judge may cast **N-of-M
-votes** (`agentVotes`, default 1); when votes disagree, the case is recorded
-`unjudged` — never silently `fail` — so judge noise can't manufacture a
-regression. Prefer a `deterministic` binding.
+vote passes only when every clause does (all-yes). A configurable **jury**
+(`votes`, default 1; `quorum`, `majority` (default) or `unanimous`) resolves
+the cast votes into one verdict — layered from a project-level `eval.jury`
+default down to a per-binding `jury:` override; when the votes do not reach
+the configured quorum, the case is recorded `unjudged` — never silently `fail`
+— so judge noise can't manufacture a regression. Prefer a `deterministic`
+binding.
 
 **Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
 is a case that **passed in the baseline and fails now**; new/retired cases are

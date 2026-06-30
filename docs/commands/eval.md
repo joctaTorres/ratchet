@@ -368,7 +368,9 @@ alphabetical sort order wins and a warning is emitted.
   kind: llm-judge
   setup: "pnpm install --frozen-lockfile"   # optional
   success: "The search endpoint returns ranked results for multi-word queries."
-  agentVotes: 3    # optional; default 1
+  jury:                       # optional; default { votes: 1, quorum: majority }
+    votes: 3
+    quorum: unanimous
   rubric:          # optional; default derives one item per Then-clause
     - "Multi-word queries return ranked results"
     - "Single-word queries still return results"
@@ -380,7 +382,7 @@ alphabetical sort order wins and a warning is emitted.
 | `kind` | `"llm-judge"` | Discriminant. Required. |
 | `setup` | string | Shell command run once to bootstrap the fixture working copy. Optional. |
 | `success` | string | Success criteria passed to the spawned judge agent. Required. |
-| `agentVotes` | integer ≥ 1 | Number of independent judge votes to cast. Default `1`. |
+| `jury` | object | Per-binding jury override (`votes`, `quorum`), layered over the project-level `eval.jury` default. See [`eval:` settings](../configuration/config-yaml.md#eval-settings). Optional. |
 | `rubric` | string[] | Explicit binary rubric, used verbatim instead of auto-deriving one item per Gherkin `Then`-clause. Optional. |
 
 ---
@@ -411,7 +413,7 @@ Each case in a run carries one of three verdicts:
 |---|---|
 | `pass` | The case was judged and satisfied its pass condition or success criteria. |
 | `fail` | The case was judged and did not satisfy its pass condition or success criteria. |
-| `unjudged` | The case was not judged: unbound, excluded by judge mode, or agent votes disagreed. |
+| `unjudged` | The case was not judged: unbound, excluded by judge mode, or the jury's cast votes did not reach its configured quorum. |
 
 Each verdict record carries a `source` field: `"judged"` for engine-produced
 verdicts or `"manual"` for overrides written by `eval record`.
@@ -439,11 +441,15 @@ The agent judge fails closed:
   or inconclusive clause fails the whole vote.
 - A judge response with no parseable per-clause verdict array fails every
   clause closed.
-- When `agentVotes > 1`, votes (each already all-yes-gated) are resolved by
-  majority: strictly more passes than fails → `pass`; all votes fail (no
-  passes) → `fail`; any other outcome (tie, or mixed-leaning with at least one
-  pass) → `unjudged` with a disagreement note. Agent vote disagreement is
-  never silently treated as `fail`.
+- The jury (`jury.votes`, default 1; `jury.quorum`, default `majority`) casts
+  that many votes (each already all-yes-gated) and resolves them under the
+  configured quorum:
+  - `majority`: `pass` when passing votes are a strict majority, `fail` when
+    failing votes are a strict majority; a tie does not reach quorum.
+  - `unanimous`: `pass` only when every vote passes, `fail` only when every
+    vote fails; any split does not reach quorum.
+  - A jury that does not reach its configured quorum always records
+    `unjudged` with the vote tally — never a guessed `pass` or `fail`.
 
 ### Baseline regression
 

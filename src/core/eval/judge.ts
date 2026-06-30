@@ -14,8 +14,10 @@
  *   - FAIL CLOSED on uncertainty: a clause without concrete "yes" evidence
  *     (a "no", a "can't-tell", or no verdict at all) does not pass; a vote
  *     passes only when every clause passes.
- *   - N-of-M votes (`agentVotes`, default 1, majority wins). When the votes do
- *     not agree the case is `unjudged` (disagreement noted) — never `fail`.
+ *   - A jury (`votes`, default 1; `quorum`, default `majority`) resolved by
+ *     `resolveJury` from a per-binding override layered over the project's
+ *     `eval.jury` default. When cast votes do not reach the configured quorum
+ *     the case is `unjudged` (sub-quorum noted) — never a guessed `fail`.
  *
  * Every judgment runs in the fixture working copy as cwd; no judgment reads or
  * mutates the host repository. All seams are injectable so tests never shell out
@@ -24,6 +26,7 @@
 
 import type { EvalCase } from './set.js';
 import type { Binding, LlmJudgeBinding, DeterministicBinding } from './spec.js';
+import { resolveJury, type Jury, type Quorum } from './jury.js';
 import {
   evaluatePassCondition,
   realBashRunner,
@@ -54,6 +57,8 @@ export interface JudgeDeps {
   spawner?: Spawner;
   /** Agent name for the judge subprocess (default resolves the engine default). */
   agentName?: string;
+  /** Project-level jury default, layered under a per-binding `jury:` override. */
+  jury?: Jury;
 }
 
 /** A spawned-agent vote: the structured per-clause result plus the all-yes-derived overall pass. */
@@ -274,35 +279,46 @@ async function castVote(
   return parseAgentVote(result.stdout, rubric);
 }
 
-/** Resolve N votes into a single verdict: majority wins; a tie/disagreement is
- * `unjudged` (never a silent fail). */
-export function resolveVotes(votes: AgentVote[]): CaseVerdict {
+/**
+ * Resolve N cast votes into a single case verdict under a configured quorum.
+ * Both quorum kinds are symmetric — the same rule decides a pass and a fail —
+ * and either never reaches quorum, in which case the case is `unjudged` (never
+ * a guess):
+ *
+ *   - `majority`: `pass` when passing votes are a strict majority, `fail` when
+ *     failing votes are a strict majority, otherwise (a tie) sub-quorum.
+ *   - `unanimous`: `pass` only when every vote passes, `fail` only when every
+ *     vote fails, otherwise (any split) sub-quorum.
+ */
+export function resolveVotes(votes: AgentVote[], quorum: Quorum = 'majority'): CaseVerdict {
   const passes = votes.filter((v) => v.pass).length;
   const fails = votes.length - passes;
+  if (quorum === 'unanimous') {
+    if (fails === 0 && votes.length > 0) return { verdict: 'pass', evidence: votes[0]?.clauses ?? [] };
+    if (passes === 0 && votes.length > 0) return { verdict: 'fail', evidence: votes[0]?.clauses ?? [] };
+    return subQuorum(votes, quorum);
+  }
   if (passes > fails) {
     const deciding = votes.find((v) => v.pass);
     return { verdict: 'pass', evidence: deciding?.clauses ?? [] };
   }
   if (fails > passes) {
-    // Unanimous-enough fail. Surface a failing vote's clauses as evidence.
-    if (passes === 0) {
-      return { verdict: 'fail', evidence: votes[0]?.clauses ?? [] };
-    }
-    // Mixed but fail-leaning: a disagreement, not a clean fail.
-    return disagreement(votes);
+    const deciding = votes.find((v) => !v.pass);
+    return { verdict: 'fail', evidence: deciding?.clauses ?? [] };
   }
-  return disagreement(votes);
+  return subQuorum(votes, quorum);
 }
 
-function disagreement(votes: AgentVote[]): CaseVerdict {
+/** Build the `unjudged` verdict for a vote tally that did not reach its configured quorum. */
+function subQuorum(votes: AgentVote[], quorum: Quorum): CaseVerdict {
   const summary = votes.map((v, i) => `vote ${i + 1}: ${v.pass ? 'pass' : 'fail'}`).join(', ');
   return {
     verdict: 'unjudged',
     evidence: [
       {
-        clause: '(vote disagreement)',
+        clause: '(jury sub-quorum)',
         pass: false,
-        evidence: `Judge votes disagreed (${summary}); recorded unjudged rather than risk a false regression.`,
+        evidence: `Votes did not reach ${quorum} quorum (${summary}); recorded unjudged rather than risk a false regression.`,
       },
     ],
   };
@@ -316,12 +332,12 @@ async function judgeAgent(
 ): Promise<CaseVerdict> {
   const spawner = deps.spawner ?? realSpawner;
   const rubric = deriveRubric(c, binding);
-  const n = binding.agentVotes ?? 1;
+  const { votes: n, quorum } = resolveJury({ config: deps.jury, binding: binding.jury });
   const votes: AgentVote[] = [];
   for (let i = 0; i < n; i++) {
     votes.push(await castVote(c, binding, rubric, cwd, spawner, deps.agentName));
   }
-  return resolveVotes(votes);
+  return resolveVotes(votes, quorum);
 }
 
 async function judgeCheck(

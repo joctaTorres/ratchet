@@ -2,9 +2,11 @@
  * Unit tests for the engine-backed judge.
  *
  * Implements features/eval-judge/engine-backed-judge.feature (judging through
- * the batch engine seams) and features/eval-judge/rubric-decomposition.feature
+ * the batch engine seams), features/eval-judge/rubric-decomposition.feature
  * (per-Then-clause rubric derivation, the CoT-before-verdict/anti-sycophancy
- * prompt, and the structured all-yes-gated per-clause verdict).
+ * prompt, and the structured all-yes-gated per-clause verdict), and the
+ * vote-resolution scenarios of features/eval-judge/jury-quorum-resolution.feature
+ * (symmetric majority/unanimous quorum, sub-quorum never guesses).
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -211,25 +213,59 @@ describe('parseAgentVote', () => {
   });
 });
 
+// Implements features/eval-judge/jury-quorum-resolution.feature's
+// vote-resolution scenarios: symmetric majority/unanimous quorum, sub-quorum
+// always records `unjudged` (never a guessed pass or fail).
 describe('resolveVotes', () => {
   function vote(pass: boolean, evidence = 'e'): { pass: boolean; clauses: ClauseResult[] } {
     return { pass, clauses: [{ clause: 'c', pass, evidence }] };
   }
 
-  it('records a clean fail when all votes fail', () => {
-    const r = resolveVotes([vote(false, 'missing X'), vote(false, 'missing X')]);
-    expect(r.verdict).toBe('fail');
+  describe('majority quorum', () => {
+    it('resolves a pass on a strict majority of passing votes', () => {
+      const r = resolveVotes([vote(true), vote(true), vote(false)], 'majority');
+      expect(r.verdict).toBe('pass');
+    });
+
+    it('resolves a fail on a strict majority of failing votes', () => {
+      const r = resolveVotes([vote(false), vote(false), vote(true)], 'majority');
+      expect(r.verdict).toBe('fail');
+    });
+
+    it('does not reach quorum on a tie, naming the quorum that was not reached', () => {
+      const r = resolveVotes([vote(true), vote(false)], 'majority');
+      expect(r.verdict).toBe('unjudged');
+      expect(r.evidence[0].evidence).toMatch(/majority quorum/i);
+    });
   });
 
-  it('records unjudged on disagreement, never a fail', () => {
-    const r = resolveVotes([vote(true), vote(false)]);
-    expect(r.verdict).toBe('unjudged');
-    expect(r.evidence[0].evidence).toMatch(/disagree/i);
+  describe('unanimous quorum', () => {
+    it('resolves a pass when every vote passes', () => {
+      const r = resolveVotes([vote(true), vote(true), vote(true)], 'unanimous');
+      expect(r.verdict).toBe('pass');
+    });
+
+    it('resolves a fail when every vote fails', () => {
+      const r = resolveVotes([vote(false), vote(false), vote(false)], 'unanimous');
+      expect(r.verdict).toBe('fail');
+    });
+
+    it('does not reach quorum on any split, naming the quorum that was not reached', () => {
+      const r = resolveVotes([vote(true), vote(true), vote(false)], 'unanimous');
+      expect(r.verdict).toBe('unjudged');
+      expect(r.evidence[0].evidence).toMatch(/unanimous quorum/i);
+    });
   });
 
-  it('takes the majority on 2-of-3 pass', () => {
+  it('defaults to majority quorum when none is given', () => {
     const r = resolveVotes([vote(true), vote(true), vote(false)]);
     expect(r.verdict).toBe('pass');
+  });
+
+  it('never records a sub-quorum result as pass or fail', () => {
+    const r = resolveVotes([vote(true), vote(false)], 'majority');
+    expect(r.verdict).not.toBe('pass');
+    expect(r.verdict).not.toBe('fail');
   });
 });
 
@@ -308,7 +344,7 @@ describe('judgeCase: llm-judge', () => {
   });
 
   it('judges by N repeat votes and takes the majority', async () => {
-    const threeVoteBinding: Binding = { ...binding, agentVotes: 3 };
+    const threeVoteBinding: Binding = { ...binding, jury: { votes: 3 } };
     const { spawner, cwds } = spawnerReturning(
       '[{"verdict": "yes", "evidence": "a"}]',
       '[{"verdict": "yes", "evidence": "b"}]',
@@ -320,7 +356,7 @@ describe('judgeCase: llm-judge', () => {
   });
 
   it('records unjudged (never fail) when repeat votes disagree', async () => {
-    const twoVoteBinding: Binding = { ...binding, agentVotes: 2 };
+    const twoVoteBinding: Binding = { ...binding, jury: { votes: 2 } };
     const { spawner } = spawnerReturning(
       '[{"verdict": "yes", "evidence": "yes evidence"}]',
       '[{"verdict": "no", "evidence": "no evidence"}]'

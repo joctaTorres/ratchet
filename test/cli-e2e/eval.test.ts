@@ -310,7 +310,8 @@ features/cli/status#status-as-text:
   fixture: agent-fx
   kind: llm-judge
   success: readable text
-  agentVotes: 2
+  jury:
+    votes: 2
 `
     );
     const stub = `cat >/dev/null; n=$(cat ${counter} 2>/dev/null || echo 0); echo $((n+1)) > ${counter}; if [ "$n" = "0" ]; then echo '[{"verdict": "yes", "evidence": "looks good"}]'; else echo '[{"verdict": "no", "evidence": "actually broken"}]'; fi`;

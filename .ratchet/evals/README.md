@@ -23,8 +23,10 @@ and *what codebase to judge it against*.
      with a `pass` condition (`exit-zero` | `contains:<text>` | `regex:<pattern>` |
      substring). No agent; same answer every time.
    - `kind: llm-judge` — a fresh coding agent is spawned against the fixture and
-     judged against `success` criteria (fail-closed on uncertainty; optional N-of-M
-     `agentVotes`, disagreement → `unjudged`). For prose-y scenarios.
+     judged against `success` criteria (fail-closed on uncertainty; a configurable
+     `jury` — `votes`, default 1, layered from the project's `eval.jury` default;
+     `quorum`, `majority` (default) or `unanimous` — resolves the cast votes, and a
+     sub-quorum result is `unjudged`). For prose-y scenarios.
    A case with no binding is **`unjudged`** — never counted as a pass.
 3. At judge time each case gets its **own throwaway copy** of the fixture as its
    working directory (see `src/core/eval/fixture.ts`), so a check may freely

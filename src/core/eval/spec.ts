@@ -18,6 +18,7 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { RATCHET_DIR_NAME } from '../config.js';
+import { JurySchema } from './jury.js';
 
 export type BindingKind = 'deterministic' | 'llm-judge';
 
@@ -39,8 +40,8 @@ const LlmJudgeBindingSchema = z.object({
   /** Success criteria the spawned judge must satisfy. */
   success: z.string().min(1),
   setup: z.string().optional(),
-  /** Number of repeat votes (default 1, majority wins). */
-  agentVotes: z.number().int().positive().optional(),
+  /** Per-binding jury override (votes/quorum), layered over the project default. */
+  jury: JurySchema.optional(),
   /**
    * Explicit rubric override. When present, used verbatim instead of
    * auto-deriving one item per Then-clause from the scenario's steps.

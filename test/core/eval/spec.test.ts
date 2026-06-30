@@ -46,7 +46,7 @@ describe('loadEvalSpecs', () => {
     expect(specs.warnings).toHaveLength(0);
   });
 
-  it('loads an llm-judge binding with success criteria and votes', () => {
+  it('loads an llm-judge binding with success criteria and a jury override', () => {
     const root = makeProject();
     writeSpec(
       root,
@@ -55,7 +55,9 @@ describe('loadEvalSpecs', () => {
   fixture: fx
   kind: llm-judge
   success: it prints a JSON object
-  agentVotes: 3
+  jury:
+    votes: 3
+    quorum: unanimous
 `
     );
     const specs = loadEvalSpecs(root);
@@ -63,7 +65,7 @@ describe('loadEvalSpecs', () => {
     expect(b?.binding.kind).toBe('llm-judge');
     if (b?.binding.kind === 'llm-judge') {
       expect(b.binding.success).toContain('JSON');
-      expect(b.binding.agentVotes).toBe(3);
+      expect(b.binding.jury).toEqual({ votes: 3, quorum: 'unanimous' });
     }
   });
 

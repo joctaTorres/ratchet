@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { PermissionsPolicySchema } from './batch/permissions-policy.js';
 import { ALL_CONTRIBUTOR_IDS } from './eval/gate.js';
+import { JurySchema } from './eval/jury.js';
 import type { ContributorId } from './eval/aggregate.js';
 
 /**
@@ -91,6 +92,9 @@ export const ProjectConfigSchema = z.object({
         )
         .strict()
         .optional(),
+      // Project-level jury default (votes/quorum/panel) for the llm-judge
+      // contributor, overridable per binding via `LlmJudgeBinding.jury`.
+      jury: JurySchema.optional(),
     })
     .partial()
     .optional()

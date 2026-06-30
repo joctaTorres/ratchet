@@ -129,8 +129,15 @@ function waitForEnter(): Promise<void> {
 }
 
 /**
- * Shows the animated welcome screen.
- * Returns when user presses Enter.
+ * Shows the welcome screen and resolves once the user presses Enter (or
+ * immediately when input is non-interactive).
+ *
+ * The public seam for the module: it composes the private helpers
+ * (`getWelcomeText`/`renderFrame`/`canAnimate`/`waitForEnter`), which are
+ * exercised through this function rather than exported. When the terminal
+ * supports animation (`canAnimate`) it renders an animated loop and blocks on
+ * `waitForEnter`; otherwise it writes a single static frame and returns without
+ * blocking. Ctrl+C during the wait exits the process.
  */
 export async function showWelcomeScreen(): Promise<void> {
   const textLines = getWelcomeText();

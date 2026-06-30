@@ -203,6 +203,25 @@ describe('runCoverageGate', () => {
     expect(run.lines.join('\n')).toMatch(/could not be read/i);
   });
 
+  it('falls back to the default summary path when SUMMARY_ENV is unset (the CI runner path)', () => {
+    // CI invokes the gate with no SUMMARY_ENV, so the `|| DEFAULT_SUMMARY_PATH`
+    // branch governs. Run from an empty cwd with no coverage/ dir: the default
+    // path resolves, the read fails, and the gate fails closed — exercising the
+    // fallback the Actions runner actually takes.
+    const prevCwd = process.cwd();
+    const empty = mkdtempSync(path.join(tmpdir(), 'cov-gate-default-'));
+    try {
+      process.chdir(empty);
+      const run = runCoverageGate({ [THRESHOLD_ENV]: '95' });
+      expect(run.result.signal).toBe('red');
+      expect(run.exitCode).not.toBe(0);
+      expect(run.lines.join('\n')).toMatch(/could not be read/i);
+    } finally {
+      process.chdir(prevCwd);
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
   it('respects a COVERAGE_THRESHOLD override at the runner boundary', () => {
     const summary = writeSummary(summaryWithPct(96));
     // 96% clears the enforced default (DEFAULT_COVERAGE_THRESHOLD) but not a

@@ -27,7 +27,9 @@ import type { GateSignal } from './release-decision.js';
  * Default minimum line-coverage percentage a build must meet to stay green —
  * `95`, the testing standard's permanent minimum, reached and locked in once the
  * CLI entry, validate, ui/telemetry and core-remainder surfaces were covered
- * (measured total line coverage 95.39%). This is the enforced CI floor: CI
+ * (measured total line coverage cleared 95% when the floor was set; the exact
+ * figure drifts with each change, so it is not pinned here). This is the
+ * enforced CI floor: CI
  * invokes the gate with no override so this value governs. It is a ratchet point
  * — raised as coverage is added, never lowered — and now sits at the standard's
  * 95% target, the floor's terminal value.

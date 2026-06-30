@@ -369,6 +369,9 @@ alphabetical sort order wins and a warning is emitted.
   setup: "pnpm install --frozen-lockfile"   # optional
   success: "The search endpoint returns ranked results for multi-word queries."
   agentVotes: 3    # optional; default 1
+  rubric:          # optional; default derives one item per Then-clause
+    - "Multi-word queries return ranked results"
+    - "Single-word queries still return results"
 ```
 
 | Field | Type | Description |
@@ -378,6 +381,7 @@ alphabetical sort order wins and a warning is emitted.
 | `setup` | string | Shell command run once to bootstrap the fixture working copy. Optional. |
 | `success` | string | Success criteria passed to the spawned judge agent. Required. |
 | `agentVotes` | integer ≥ 1 | Number of independent judge votes to cast. Default `1`. |
+| `rubric` | string[] | Explicit binary rubric, used verbatim instead of auto-deriving one item per Gherkin `Then`-clause. Optional. |
 
 ---
 
@@ -414,16 +418,32 @@ verdicts or `"manual"` for overrides written by `eval record`.
 
 ### Agent judge guarantees
 
+Each `llm-judge` case is judged against a binary **rubric**: one item per
+`Then`-clause (the `Then` step plus every `And`/`But` step that follows it,
+until the next `Given`/`When`/`Then`), or the binding's explicit `rubric:`
+list when present. `And`/`But` steps rooted under `Given`/`When` are not
+rubric items.
+
+Per vote, the spawned judge agent is instructed to reason step by step about
+each clause **before** stating that clause's verdict (CoT-before-verdict), and
+to reach its own judgment from observed evidence rather than defer to the
+scenario's or success criteria's framing (anti-sycophancy). The agent reports
+one `"yes" | "no" | "can't-tell"` verdict with cited evidence per clause.
+
 The agent judge fails closed:
 
-- A judge response with no parseable verdict JSON records `fail`.
-- A judge response reporting `pass` without stating concrete evidence records
-  `fail`.
-- When `agentVotes > 1`, votes are resolved by majority: strictly more passes
-  than fails → `pass`; all votes fail (no passes) → `fail`; any other
-  outcome (tie, or mixed-leaning with at least one pass) → `unjudged` with a
-  disagreement note. Agent vote disagreement is never silently treated as
-  `fail`.
+- A clause judged `"no"` or `"can't-tell"`, left unaddressed, or reported
+  `"yes"` without concrete evidence, does not pass — uncertainty is never a
+  pass.
+- A vote passes only when **every** clause passes (all-yes); a single failing
+  or inconclusive clause fails the whole vote.
+- A judge response with no parseable per-clause verdict array fails every
+  clause closed.
+- When `agentVotes > 1`, votes (each already all-yes-gated) are resolved by
+  majority: strictly more passes than fails → `pass`; all votes fail (no
+  passes) → `fail`; any other outcome (tie, or mixed-leaning with at least one
+  pass) → `unjudged` with a disagreement note. Agent vote disagreement is
+  never silently treated as `fail`.
 
 ### Baseline regression
 

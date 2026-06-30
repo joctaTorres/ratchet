@@ -179,6 +179,53 @@ phases:
         gating, jury quorum resolution with project/per-binding layering and
         sub-quorum abstention, skip filters recording counted `skipped` with the
         baseline-skip warning, and structured evidence persisted in the run JSON
+    changes:
+      - name: rubric-decomposition
+        after: []
+        done: >-
+          judge.ts decomposes each `llm-judge` case's Gherkin Then-clauses into a
+          rubric (one item auto-derived per Then/And/But-under-Then step, with an
+          optional explicit `rubric:` override on the binding taking precedence),
+          the per-vote agent prompt requires step-by-step reasoning before stating
+          a verdict (CoT-before-verdict) and instructs the agent to judge evidence
+          independently rather than defer to the scenario's framing
+          (anti-sycophancy), and `judgeCase()`/`parseAgentVote()` return a
+          structured `[{clause, pass, evidence}]` per vote that passes only when
+          every clause is `pass` (fail-closed: any `no` or `can't-tell` clause
+          fails the vote), replacing today's flat `CaseVerdict.reason` string
+      - name: jury-quorum-resolution
+        after: [rubric-decomposition]
+        done: >-
+          a `jury` block (`votes`, `quorum: majority|unanimous`) is read from
+          project-level `eval.jury` with a per-binding override on the
+          `llm-judge` case; the judge entry point resolves N structured
+          per-clause votes into one case verdict via the configured quorum
+          (majority or unanimous agreement over each vote's all-yes pass); a
+          sub-quorum result (not enough agreeing votes to reach the threshold)
+          records the case `unjudged` rather than guessing; the jury schema
+          reserves an inert `panel:` slot (parsed and validated, never evaluated)
+          for future cross-family panel use
+      - name: skip-filters
+        after: []
+        done: >-
+          a case matching project `eval.skip` config or an in-file `@skip`
+          Gherkin tag (captured by gherkin-parser.ts, today discarded along with
+          all tags) is excluded from judging by default and recorded with a new
+          `skipped` CaseRecord status (never silently dropped) and counted in
+          the run summary; `--include-skipped` on `eval run` overrides the
+          exclusion and judges the case normally; a case whose most recent
+          baseline status was `pass` and is now skipped emits a visible warning
+          at run time
+      - name: structured-evidence-persistence
+        after: [jury-quorum-resolution, skip-filters]
+        done: >-
+          the run JSON (`EvalRun`/`CaseRecord` in run.ts) persists, per judged
+          `llm-judge` case, the resolved rubric, each clause's boolean pass/fail
+          and cited evidence, and each juror's individual vote (clauses +
+          verdict); a `skipped` case retains its skip reason and source (config,
+          tag, or default); report.ts and `eval set`/run output surface this
+          structured data without changing how the `llm-judge` contributor plugs
+          into aggregate.ts's AND-over-contributors gate
 
   # ---------------------------------------------------------------------------
   - name: holdout-scenarios

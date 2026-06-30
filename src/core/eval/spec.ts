@@ -41,6 +41,11 @@ const LlmJudgeBindingSchema = z.object({
   setup: z.string().optional(),
   /** Number of repeat votes (default 1, majority wins). */
   agentVotes: z.number().int().positive().optional(),
+  /**
+   * Explicit rubric override. When present, used verbatim instead of
+   * auto-deriving one item per Then-clause from the scenario's steps.
+   */
+  rubric: z.array(z.string().min(1)).optional(),
 });
 
 export const BindingSchema = z.discriminatedUnion('kind', [

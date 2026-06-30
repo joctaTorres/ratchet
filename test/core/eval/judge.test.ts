@@ -1,7 +1,22 @@
+/**
+ * Unit tests for the engine-backed judge.
+ *
+ * Implements features/eval-judge/engine-backed-judge.feature (judging through
+ * the batch engine seams) and features/eval-judge/rubric-decomposition.feature
+ * (per-Then-clause rubric derivation, the CoT-before-verdict/anti-sycophancy
+ * prompt, and the structured all-yes-gated per-clause verdict).
+ */
 import { describe, it, expect } from 'vitest';
-import { judgeCase, parseAgentVote, resolveVotes } from '../../../src/core/eval/judge.js';
+import {
+  judgeCase,
+  deriveRubric,
+  buildJudgeInstructions,
+  parseAgentVote,
+  resolveVotes,
+  type ClauseResult,
+} from '../../../src/core/eval/judge.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
-import type { Binding } from '../../../src/core/eval/spec.js';
+import type { Binding, LlmJudgeBinding } from '../../../src/core/eval/spec.js';
 import type { BashRunner, Spawner } from '../../../src/core/batch/engine/index.js';
 
 const CASE: EvalCase = {
@@ -15,6 +30,26 @@ const CASE: EvalCase = {
   ],
 };
 
+const TWO_CLAUSE_CASE: EvalCase = {
+  id: 'f/x#two',
+  feature: 'F',
+  scenario: 'Two clauses',
+  source: 'f/x.feature',
+  steps: [
+    { keyword: 'Given', text: 'a project' },
+    { keyword: 'When', text: 'it runs' },
+    { keyword: 'Then', text: 'clause one holds' },
+    { keyword: 'And', text: 'clause two holds' },
+  ],
+};
+
+const llmJudgeBinding = (overrides: Partial<LlmJudgeBinding> = {}): LlmJudgeBinding => ({
+  fixture: 'fx',
+  kind: 'llm-judge',
+  success: 'prints JSON',
+  ...overrides,
+});
+
 function spawnerReturning(...stdouts: string[]): { spawner: Spawner; cwds: string[] } {
   const cwds: string[] = [];
   let i = 0;
@@ -27,80 +62,173 @@ function spawnerReturning(...stdouts: string[]): { spawner: Spawner; cwds: strin
   return { spawner, cwds };
 }
 
+describe('deriveRubric', () => {
+  it('derives a one-item rubric for a single Then step with no And/But', () => {
+    const c: EvalCase = {
+      ...CASE,
+      steps: [
+        { keyword: 'Given', text: 'a project' },
+        { keyword: 'Then', text: 'it works' },
+      ],
+    };
+    expect(deriveRubric(c, llmJudgeBinding())).toEqual(['it works']);
+  });
+
+  it('derives one item per Then plus each And/But step under it', () => {
+    const c: EvalCase = {
+      ...CASE,
+      steps: [
+        { keyword: 'Given', text: 'a project' },
+        { keyword: 'Then', text: 'clause one' },
+        { keyword: 'And', text: 'clause two' },
+        { keyword: 'But', text: 'clause three' },
+      ],
+    };
+    expect(deriveRubric(c, llmJudgeBinding())).toEqual(['clause one', 'clause two', 'clause three']);
+  });
+
+  it('excludes And/But steps rooted under Given or When', () => {
+    const c: EvalCase = {
+      ...CASE,
+      steps: [
+        { keyword: 'Given', text: 'a project' },
+        { keyword: 'And', text: 'a second precondition' },
+        { keyword: 'When', text: 'it runs' },
+        { keyword: 'And', text: 'a second action' },
+        { keyword: 'Then', text: 'it works' },
+      ],
+    };
+    expect(deriveRubric(c, llmJudgeBinding())).toEqual(['it works']);
+  });
+
+  it('uses an explicit rubric override verbatim instead of deriving from steps', () => {
+    const binding = llmJudgeBinding({ rubric: ['declared clause one', 'declared clause two'] });
+    expect(deriveRubric(TWO_CLAUSE_CASE, binding)).toEqual(['declared clause one', 'declared clause two']);
+  });
+});
+
+describe('buildJudgeInstructions', () => {
+  it('requires reasoning before a verdict for each rubric clause and lists every clause', () => {
+    const prompt = buildJudgeInstructions(TWO_CLAUSE_CASE, llmJudgeBinding());
+    expect(prompt).toMatch(/reason step by step/i);
+    expect(prompt).toMatch(/then state that clause's[\s\S]*verdict/i);
+    expect(prompt).toContain('clause one holds');
+    expect(prompt).toContain('clause two holds');
+  });
+
+  it('instructs independent judgment of evidence and a can\'t-tell answer when inconclusive', () => {
+    const prompt = buildJudgeInstructions(TWO_CLAUSE_CASE, llmJudgeBinding());
+    expect(prompt).toMatch(/independent judgment/i);
+    expect(prompt).toMatch(/do not assume the scenario or success criteria/i);
+    expect(prompt).toMatch(/can't-tell[\s\S]*inconclusive/i);
+  });
+});
+
 describe('parseAgentVote', () => {
-  it('parses a pass verdict with evidence', () => {
-    const v = parseAgentVote('blah\n{"pass": true, "reason": "saw the file"}');
-    expect(v).toEqual({ pass: true, reason: 'saw the file', hasEvidence: true });
-  });
-
-  it('fails closed when no verdict JSON is present', () => {
-    const v = parseAgentVote('I think it is fine.');
-    expect(v.pass).toBe(false);
-    expect(v.hasEvidence).toBe(false);
-  });
-
-  it('fails closed on a pass with no evidence', () => {
-    const v = parseAgentVote('{"pass": true, "reason": ""}');
-    expect(v.pass).toBe(false);
-    expect(v.hasEvidence).toBe(false);
-  });
-
-  it('parses a reason that itself contains braces', () => {
+  it('returns a structured pass per clause when every clause is judged yes', () => {
     const v = parseAgentVote(
-      'preamble\n{"pass": true, "reason": "found config {\\"a\\": 1} in src"}'
+      '[{"clause": "clause one holds", "verdict": "yes", "evidence": "saw clause one"},' +
+        '{"clause": "clause two holds", "verdict": "yes", "evidence": "saw clause two"}]',
+      ['clause one holds', 'clause two holds']
     );
     expect(v.pass).toBe(true);
-    expect(v.reason).toBe('found config {"a": 1} in src');
-    expect(v.hasEvidence).toBe(true);
+    expect(v.clauses).toEqual([
+      { clause: 'clause one holds', pass: true, evidence: 'saw clause one' },
+      { clause: 'clause two holds', pass: true, evidence: 'saw clause two' },
+    ]);
   });
 
-  it('parses a multi-line reason', () => {
+  it('fails closed on a "no" clause while preserving its cited evidence', () => {
     const v = parseAgentVote(
-      '{"pass": false, "reason": "line one\\nline two with } brace"}'
+      '[{"clause": "clause one holds", "verdict": "yes", "evidence": "saw it"},' +
+        '{"clause": "clause two holds", "verdict": "no", "evidence": "not found anywhere"}]',
+      ['clause one holds', 'clause two holds']
     );
     expect(v.pass).toBe(false);
-    expect(v.reason).toBe('line one\nline two with } brace');
+    expect(v.clauses[1]).toEqual({ clause: 'clause two holds', pass: false, evidence: 'not found anywhere' });
   });
 
-  it('takes the last balanced verdict block, ignoring earlier braces', () => {
+  it('fails closed on a "can\'t-tell" clause and names the missing evidence', () => {
     const v = parseAgentVote(
-      'notes {not json} then {"pass": false, "reason": "first"}\n{"pass": true, "reason": "final {x}"}'
+      '[{"clause": "it works", "verdict": "can\'t-tell", "evidence": "could not confirm"}]',
+      ['it works']
+    );
+    expect(v.pass).toBe(false);
+    expect(v.clauses[0].pass).toBe(false);
+    expect(v.clauses[0].evidence).toMatch(/could not confirm/);
+  });
+
+  it('fails closed on a clause the agent never addressed', () => {
+    const v = parseAgentVote('[{"clause": "clause one holds", "verdict": "yes", "evidence": "saw it"}]', [
+      'clause one holds',
+      'clause two holds',
+    ]);
+    expect(v.pass).toBe(false);
+    expect(v.clauses[1].pass).toBe(false);
+    expect(v.clauses[1].evidence).toMatch(/no verdict/i);
+  });
+
+  it('passes the vote only when every clause passes', () => {
+    const v = parseAgentVote(
+      '[{"verdict": "yes", "evidence": "a"}, {"verdict": "yes", "evidence": "b"}, {"verdict": "yes", "evidence": "c"}]',
+      ['a', 'b', 'c']
     );
     expect(v.pass).toBe(true);
-    expect(v.reason).toBe('final {x}');
   });
 
-  it('fails closed when no block parses as a verdict despite braces', () => {
-    const v = parseAgentVote('thoughts: {maybe} {pass?} but no JSON verdict here');
+  it('fails the whole vote on a single failing or can\'t-tell clause among passing ones', () => {
+    const v = parseAgentVote(
+      '[{"verdict": "yes", "evidence": "a"}, {"verdict": "yes", "evidence": "b"}, {"verdict": "can\'t-tell", "evidence": "c"}]',
+      ['a', 'b', 'c']
+    );
     expect(v.pass).toBe(false);
-    expect(v.hasEvidence).toBe(false);
+    expect(v.clauses[2].pass).toBe(false);
+  });
+
+  it('fails closed when no verdict array is present', () => {
+    const v = parseAgentVote('I think it is fine.', ['it works']);
+    expect(v.pass).toBe(false);
+    expect(v.clauses[0].pass).toBe(false);
+  });
+
+  it('takes the last balanced verdict array, ignoring earlier malformed brackets', () => {
+    const v = parseAgentVote(
+      'notes [not json] then [{"verdict": "no", "evidence": "first"}]\n' +
+        '[{"verdict": "yes", "evidence": "final [x] value"}]',
+      ['it works']
+    );
+    expect(v.pass).toBe(true);
+    expect(v.clauses[0].evidence).toBe('final [x] value');
+  });
+
+  it('parses evidence text containing brackets without breaking the scan', () => {
+    const v = parseAgentVote(
+      'preamble\n[{"verdict": "yes", "evidence": "found config [a, b] in src"}]',
+      ['it works']
+    );
+    expect(v.pass).toBe(true);
+    expect(v.clauses[0].evidence).toBe('found config [a, b] in src');
   });
 });
 
 describe('resolveVotes', () => {
+  function vote(pass: boolean, evidence = 'e'): { pass: boolean; clauses: ClauseResult[] } {
+    return { pass, clauses: [{ clause: 'c', pass, evidence }] };
+  }
+
   it('records a clean fail when all votes fail', () => {
-    const r = resolveVotes([
-      { pass: false, reason: 'missing X', hasEvidence: true },
-      { pass: false, reason: 'missing X', hasEvidence: true },
-    ]);
+    const r = resolveVotes([vote(false, 'missing X'), vote(false, 'missing X')]);
     expect(r.verdict).toBe('fail');
   });
 
   it('records unjudged on disagreement, never a fail', () => {
-    const r = resolveVotes([
-      { pass: true, reason: 'ok', hasEvidence: true },
-      { pass: false, reason: 'no', hasEvidence: true },
-    ]);
+    const r = resolveVotes([vote(true), vote(false)]);
     expect(r.verdict).toBe('unjudged');
-    expect(r.reason).toMatch(/disagree/i);
+    expect(r.evidence[0].evidence).toMatch(/disagree/i);
   });
 
   it('takes the majority on 2-of-3 pass', () => {
-    const r = resolveVotes([
-      { pass: true, reason: 'ok', hasEvidence: true },
-      { pass: true, reason: 'ok2', hasEvidence: true },
-      { pass: false, reason: 'no', hasEvidence: true },
-    ]);
+    const r = resolveVotes([vote(true), vote(true), vote(false)]);
     expect(r.verdict).toBe('pass');
   });
 });
@@ -121,12 +249,16 @@ describe('judgeCase: deterministic', () => {
     const r = await judgeCase(CASE, deterministicBinding, '/fixture/copy', { bash });
     expect(usedCwd).toBe('/fixture/copy');
     expect(r.verdict).toBe('pass');
+    expect(r.evidence).toEqual([
+      { clause: 'contains:applyRequires', pass: true, evidence: 'check passed (contains:applyRequires)' },
+    ]);
   });
 
   it('fails when the condition is not met', async () => {
     const bash: BashRunner = async () => ({ exitCode: 0, stdout: 'nope', stderr: '' });
     const r = await judgeCase(CASE, deterministicBinding, '/c', { bash });
     expect(r.verdict).toBe('fail');
+    expect(r.evidence[0].pass).toBe(false);
   });
 
   // The judge shares evaluatePassCondition with the batch proof-of-work gate, so a
@@ -156,42 +288,44 @@ describe('judgeCase: deterministic', () => {
 });
 
 describe('judgeCase: llm-judge', () => {
-  const llmJudgeBinding: Binding = { fixture: 'fx', kind: 'llm-judge', success: 'prints JSON' };
+  const binding: Binding = llmJudgeBinding();
 
-  it('spawns in the fixture cwd and captures the verdict', async () => {
-    const { spawner, cwds } = spawnerReturning('{"pass": true, "reason": "printed JSON"}');
-    const r = await judgeCase(CASE, llmJudgeBinding, '/fixture/copy', { spawner });
+  it('spawns in the fixture cwd and captures the structured per-clause verdict', async () => {
+    const { spawner, cwds } = spawnerReturning(
+      '[{"clause": "it works", "verdict": "yes", "evidence": "printed JSON output"}]'
+    );
+    const r = await judgeCase(CASE, binding, '/fixture/copy', { spawner });
     expect(cwds).toEqual(['/fixture/copy']);
     expect(r.verdict).toBe('pass');
-    expect(r.reason).toContain('printed JSON');
+    expect(r.evidence).toEqual([{ clause: 'it works', pass: true, evidence: 'printed JSON output' }]);
   });
 
   it('fails closed when the judge finds no concrete evidence', async () => {
     const { spawner } = spawnerReturning('I could not find anything conclusive.');
-    const r = await judgeCase(CASE, llmJudgeBinding, '/c', { spawner });
+    const r = await judgeCase(CASE, binding, '/c', { spawner });
     expect(r.verdict).toBe('fail');
-    expect(r.reason).toMatch(/evidence/i);
+    expect(r.evidence[0].evidence).toMatch(/evidence/i);
   });
 
   it('judges by N repeat votes and takes the majority', async () => {
-    const binding: Binding = { ...llmJudgeBinding, agentVotes: 3 };
+    const threeVoteBinding: Binding = { ...binding, agentVotes: 3 };
     const { spawner, cwds } = spawnerReturning(
-      '{"pass": true, "reason": "a"}',
-      '{"pass": true, "reason": "b"}',
-      '{"pass": false, "reason": "c"}'
+      '[{"verdict": "yes", "evidence": "a"}]',
+      '[{"verdict": "yes", "evidence": "b"}]',
+      '[{"verdict": "no", "evidence": "c"}]'
     );
-    const r = await judgeCase(CASE, binding, '/c', { spawner });
+    const r = await judgeCase(CASE, threeVoteBinding, '/c', { spawner });
     expect(cwds).toHaveLength(3);
     expect(r.verdict).toBe('pass');
   });
 
   it('records unjudged (never fail) when repeat votes disagree', async () => {
-    const binding: Binding = { ...llmJudgeBinding, agentVotes: 2 };
+    const twoVoteBinding: Binding = { ...binding, agentVotes: 2 };
     const { spawner } = spawnerReturning(
-      '{"pass": true, "reason": "yes"}',
-      '{"pass": false, "reason": "no"}'
+      '[{"verdict": "yes", "evidence": "yes evidence"}]',
+      '[{"verdict": "no", "evidence": "no evidence"}]'
     );
-    const r = await judgeCase(CASE, binding, '/c', { spawner });
+    const r = await judgeCase(CASE, twoVoteBinding, '/c', { spawner });
     expect(r.verdict).toBe('unjudged');
   });
 });

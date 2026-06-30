@@ -4,12 +4,16 @@
  *   - `deterministic` kind -> `realBashRunner` runs the binding's command in the
  *     fixture working copy; `evaluatePassCondition` decides pass/fail.
  *   - `llm-judge` kind -> `resolveAdapter` + `realSpawner` spawn a fresh coding
- *     agent in the fixture working copy with instructions built from the
- *     scenario steps + the binding's success criteria, returning {pass, reason}.
+ *     agent in the fixture working copy with instructions built from a
+ *     per-Then-clause rubric, returning a structured per-clause verdict.
  *
- * The llm-judge path is guarded so judge noise can never manufacture a regression:
- *   - FAIL CLOSED on uncertainty: a verdict without concrete evidence is not a
- *     pass; the missing evidence is named in the reason.
+ * The llm-judge path decomposes the scenario's Gherkin Then-clauses into a
+ * binary rubric (one item per Then/And/But-under-Then step, or an explicit
+ * `rubric:` override) and is guarded so judge noise can never manufacture a
+ * regression:
+ *   - FAIL CLOSED on uncertainty: a clause without concrete "yes" evidence
+ *     (a "no", a "can't-tell", or no verdict at all) does not pass; a vote
+ *     passes only when every clause passes.
  *   - N-of-M votes (`agentVotes`, default 1, majority wins). When the votes do
  *     not agree the case is `unjudged` (disagreement noted) — never `fail`.
  *
@@ -27,16 +31,22 @@ import {
   resolveAdapter,
   type BashRunner,
   type Spawner,
-  type JudgeVerdict,
   type AgentRequestContext,
 } from '../batch/engine/index.js';
 
 export type Verdict = 'pass' | 'fail' | 'unjudged';
 
+/** The independent, evidence-cited result of one rubric clause. */
+export interface ClauseResult {
+  clause: string;
+  pass: boolean;
+  evidence: string;
+}
+
 export interface CaseVerdict {
   verdict: Verdict;
-  /** Evidence (for fail) or reason (for unjudged / pass). */
-  reason: string;
+  /** Structured per-clause result of the deciding vote (or `votes[0]` when no vote decided the case). */
+  evidence: ClauseResult[];
 }
 
 export interface JudgeDeps {
@@ -46,82 +56,155 @@ export interface JudgeDeps {
   agentName?: string;
 }
 
-/** A spawned-agent vote: the parsed verdict plus whether evidence was present. */
+/** A spawned-agent vote: the structured per-clause result plus the all-yes-derived overall pass. */
 interface AgentVote {
   pass: boolean;
-  reason: string;
-  /** True when the agent gave concrete evidence; false ⇒ fail closed. */
-  hasEvidence: boolean;
+  clauses: ClauseResult[];
 }
 
 function renderSteps(c: EvalCase): string {
   return c.steps.map((s) => `  ${s.keyword} ${s.text}`).join('\n');
 }
 
+/**
+ * Derive the binary rubric for a case: one item per `Then` step, plus one item
+ * for every `And`/`But` step that follows it (until the next `Given`/`When`/
+ * `Then` step closes the clause). `And`/`But` steps rooted under `Given`/`When`
+ * are excluded. `binding.rubric`, when present, is used verbatim and steps are
+ * not consulted at all.
+ */
+export function deriveRubric(c: EvalCase, binding: LlmJudgeBinding): string[] {
+  if (binding.rubric && binding.rubric.length > 0) return binding.rubric;
+  const rubric: string[] = [];
+  let inThenClause = false;
+  for (const step of c.steps) {
+    if (step.keyword === 'Then') {
+      rubric.push(step.text);
+      inThenClause = true;
+    } else if ((step.keyword === 'And' || step.keyword === 'But') && inThenClause) {
+      rubric.push(step.text);
+    } else {
+      inThenClause = false;
+    }
+  }
+  return rubric;
+}
+
 /** Build the judge instructions a spawned agent reads from stdin. */
-export function buildJudgeInstructions(c: EvalCase, success: string): string {
+export function buildJudgeInstructions(c: EvalCase, binding: LlmJudgeBinding): string {
+  const rubric = deriveRubric(c, binding);
+  const rubricList = rubric.map((item, i) => `  ${i + 1}. ${item}`).join('\n');
   return [
     'You are an eval JUDGE. Decide whether the codebase in your working directory',
-    'satisfies the scenario below. You must base your verdict on CONCRETE EVIDENCE',
-    'you observe in the working directory — run commands, read files. Do NOT guess.',
+    'satisfies EVERY clause of the rubric below. You must base each clause\'s',
+    'verdict on CONCRETE EVIDENCE you observe in the working directory — run',
+    'commands, read files. Do NOT guess.',
     '',
     `Feature: ${c.feature}`,
     `Scenario: ${c.scenario}`,
     renderSteps(c),
     '',
     'Success criteria:',
-    success,
+    binding.success,
     '',
-    'Report your verdict on the LAST line as strict JSON:',
-    '  {"pass": true|false, "reason": "<concrete evidence, or what evidence is missing>"}',
-    'If you cannot find concrete evidence either way, set pass=false and name the',
-    'missing evidence in reason. Fail closed: uncertainty is never a pass.',
+    'Rubric — judge each clause independently and in order:',
+    rubricList,
+    '',
+    'For EACH clause above: first reason step by step about what you observe in',
+    'the working directory relevant to that clause, THEN state that clause\'s',
+    'verdict. Reach your own, independent judgment from the evidence you find —',
+    'do not assume the scenario or success criteria description is accurate, and',
+    'do not let a clause\'s framing talk you into a "yes". Answer "can\'t-tell" for',
+    'a clause when your evidence is inconclusive; uncertainty is never a "yes".',
+    '',
+    'Report your verdict on the LAST line as strict JSON: a single array with one',
+    'entry per rubric clause above, in the same order:',
+    '  [{"clause": "<rubric item text>", "verdict": "yes"|"no"|"can\'t-tell", "evidence": "<concrete evidence, or what evidence is missing>"}]',
+    'A clause with no stated evidence is never a "yes". Fail closed: uncertainty',
+    'is never a pass.',
   ].join('\n');
 }
 
-/** Parse the agent's stdout into a vote, failing closed on anything unclear. */
-export function parseAgentVote(stdout: string): AgentVote {
-  const verdict = extractVerdictJson(stdout);
-  if (!verdict) {
+/** One entry of the agent's reported verdict array, before validation. */
+interface RawClauseEntry {
+  clause?: unknown;
+  verdict?: unknown;
+  evidence?: unknown;
+}
+
+/** Judge a single rubric clause against its (possibly missing) reported entry. */
+function judgeClause(clauseText: string, entry: RawClauseEntry | undefined): ClauseResult {
+  if (!entry) {
     return {
+      clause: clauseText,
       pass: false,
-      reason: 'No verdict JSON found in judge output; failing closed (no concrete evidence).',
-      hasEvidence: false,
+      evidence: 'No verdict for this clause in judge output; failing closed (no concrete evidence).',
     };
   }
-  const reason = verdict.reason.trim();
-  const hasEvidence = reason.length > 0;
-  // Fail closed: a "pass" with no stated evidence is treated as no-evidence.
-  if (verdict.pass && !hasEvidence) {
+  const evidence = typeof entry.evidence === 'string' ? entry.evidence.trim() : '';
+  if (entry.verdict === 'yes') {
+    if (evidence.length === 0) {
+      return {
+        clause: clauseText,
+        pass: false,
+        evidence: 'Judge reported "yes" without naming concrete evidence; failing closed.',
+      };
+    }
+    return { clause: clauseText, pass: true, evidence };
+  }
+  if (entry.verdict === 'no') {
     return {
+      clause: clauseText,
       pass: false,
-      reason: 'Judge reported pass without naming concrete evidence; failing closed.',
-      hasEvidence: false,
+      evidence: evidence || 'Judge reported "no" for this clause; no evidence given.',
     };
   }
-  return { pass: verdict.pass, reason, hasEvidence };
+  // "can't-tell", or any other/unparseable verdict value: fail closed.
+  return {
+    clause: clauseText,
+    pass: false,
+    evidence:
+      evidence || 'Judge could not find conclusive evidence for this clause ("can\'t-tell"); failing closed.',
+  };
 }
 
 /**
- * Find the last balanced `{...}` block that parses as a verdict. Scanning for
- * balanced braces (rather than a single brace-free regex) means a `reason`
- * containing `{`, `}`, or newlines still parses. Fails closed: any block that
- * does not parse, or lacks a boolean `pass`, is ignored.
+ * Parse the agent's stdout into a vote against the case's rubric, failing
+ * closed on anything unclear. `rubric` is the ordered clause list the agent
+ * was asked to judge: entries are matched to clauses by POSITION (the prompt
+ * asks for one entry per clause, in rubric order) rather than by echoed
+ * clause text, since an agent may paraphrase the clause it is judging. A
+ * missing or unparseable entry at a clause's position fails that clause
+ * closed; the vote passes only when every clause passes.
  */
-function extractVerdictJson(stdout: string): JudgeVerdict | null {
-  for (const block of balancedBraceBlocks(stdout).reverse()) {
-    const verdict = parseVerdictBlock(block);
-    if (verdict) return verdict;
+export function parseAgentVote(stdout: string, rubric: string[]): AgentVote {
+  const raw = extractVerdictJson(stdout);
+  const clauses: ClauseResult[] = rubric.map((clauseText, i) => judgeClause(clauseText, raw?.[i]));
+  const pass = clauses.length > 0 && clauses.every((cl) => cl.pass);
+  return { pass, clauses };
+}
+
+/**
+ * Find the last balanced top-level `[...]` array that parses as a JSON array.
+ * Scanning for balanced brackets (rather than a bracket-free regex) means an
+ * `evidence` string containing `[`, `]`, or newlines still parses. Fails
+ * closed: any block that does not parse, or is not an array, is ignored.
+ */
+function extractVerdictJson(stdout: string): RawClauseEntry[] | null {
+  for (const block of balancedBlocks(stdout, '[', ']').reverse()) {
+    const parsed = parseVerdictArrayBlock(block);
+    if (parsed) return parsed;
   }
   return null;
 }
 
 /**
- * Every top-level `{...}` substring with balanced braces, in order. Braces and
- * escapes inside JSON string literals are skipped, so a `reason` value
- * containing `{`/`}` does not prematurely open or close a block.
+ * Every top-level substring delimited by `open`/`close` with balanced
+ * nesting, in source order. Delimiters and escapes inside JSON string
+ * literals are skipped, so a string value containing `open`/`close` does not
+ * prematurely open or close a block.
  */
-function balancedBraceBlocks(text: string): string[] {
+function balancedBlocks(text: string, open: string, close: string): string[] {
   const blocks: string[] = [];
   let depth = 0;
   let start = -1;
@@ -137,10 +220,10 @@ function balancedBraceBlocks(text: string): string[] {
     }
     if (ch === '"') {
       inString = true;
-    } else if (ch === '{') {
+    } else if (ch === open) {
       if (depth === 0) start = i;
       depth++;
-    } else if (ch === '}' && depth > 0) {
+    } else if (ch === close && depth > 0) {
       depth--;
       if (depth === 0) blocks.push(text.slice(start, i + 1));
     }
@@ -148,11 +231,10 @@ function balancedBraceBlocks(text: string): string[] {
   return blocks;
 }
 
-function parseVerdictBlock(block: string): JudgeVerdict | null {
+function parseVerdictArrayBlock(block: string): RawClauseEntry[] | null {
   try {
-    const parsed = JSON.parse(block) as JudgeVerdict;
-    if (typeof parsed.pass !== 'boolean') return null;
-    return { pass: parsed.pass, reason: typeof parsed.reason === 'string' ? parsed.reason : '' };
+    const parsed: unknown = JSON.parse(block);
+    return Array.isArray(parsed) ? (parsed as RawClauseEntry[]) : null;
   } catch {
     return null;
   }
@@ -169,8 +251,8 @@ function judgeContext(c: EvalCase): AgentRequestContext {
  * exercise the agent path deterministically without a real agent). Otherwise the
  * configured adapter is resolved as usual.
  */
-function buildVoteRequest(c: EvalCase, cwd: string, success: string, agentName?: string) {
-  const instructions = buildJudgeInstructions(c, success);
+function buildVoteRequest(c: EvalCase, binding: LlmJudgeBinding, cwd: string, agentName?: string) {
+  const instructions = buildJudgeInstructions(c, binding);
   const override = process.env.RATCHET_EVAL_AGENT_CMD;
   if (override && override.trim().length > 0) {
     return { command: 'bash', args: ['-c', override], instructions, cwd, env: process.env };
@@ -182,13 +264,14 @@ function buildVoteRequest(c: EvalCase, cwd: string, success: string, agentName?:
 async function castVote(
   c: EvalCase,
   binding: LlmJudgeBinding,
+  rubric: string[],
   cwd: string,
   spawner: Spawner,
   agentName?: string
 ): Promise<AgentVote> {
-  const request = buildVoteRequest(c, cwd, binding.success, agentName);
+  const request = buildVoteRequest(c, binding, cwd, agentName);
   const result = await spawner(request);
-  return parseAgentVote(result.stdout);
+  return parseAgentVote(result.stdout, rubric);
 }
 
 /** Resolve N votes into a single verdict: majority wins; a tie/disagreement is
@@ -197,13 +280,13 @@ export function resolveVotes(votes: AgentVote[]): CaseVerdict {
   const passes = votes.filter((v) => v.pass).length;
   const fails = votes.length - passes;
   if (passes > fails) {
-    const evidence = votes.find((v) => v.pass)?.reason ?? 'judge pass';
-    return { verdict: 'pass', reason: evidence };
+    const deciding = votes.find((v) => v.pass);
+    return { verdict: 'pass', evidence: deciding?.clauses ?? [] };
   }
   if (fails > passes) {
-    // Unanimous-enough fail. Surface a failing vote's reason as evidence.
+    // Unanimous-enough fail. Surface a failing vote's clauses as evidence.
     if (passes === 0) {
-      return { verdict: 'fail', reason: votes[0]?.reason ?? 'judge fail' };
+      return { verdict: 'fail', evidence: votes[0]?.clauses ?? [] };
     }
     // Mixed but fail-leaning: a disagreement, not a clean fail.
     return disagreement(votes);
@@ -215,7 +298,13 @@ function disagreement(votes: AgentVote[]): CaseVerdict {
   const summary = votes.map((v, i) => `vote ${i + 1}: ${v.pass ? 'pass' : 'fail'}`).join(', ');
   return {
     verdict: 'unjudged',
-    reason: `Judge votes disagreed (${summary}); recorded unjudged rather than risk a false regression.`,
+    evidence: [
+      {
+        clause: '(vote disagreement)',
+        pass: false,
+        evidence: `Judge votes disagreed (${summary}); recorded unjudged rather than risk a false regression.`,
+      },
+    ],
   };
 }
 
@@ -226,10 +315,11 @@ async function judgeAgent(
   deps: JudgeDeps
 ): Promise<CaseVerdict> {
   const spawner = deps.spawner ?? realSpawner;
+  const rubric = deriveRubric(c, binding);
   const n = binding.agentVotes ?? 1;
   const votes: AgentVote[] = [];
   for (let i = 0; i < n; i++) {
-    votes.push(await castVote(c, binding, cwd, spawner, deps.agentName));
+    votes.push(await castVote(c, binding, rubric, cwd, spawner, deps.agentName));
   }
   return resolveVotes(votes);
 }
@@ -243,12 +333,21 @@ async function judgeCheck(
   const result = await bash(binding.check.run, cwd);
   const evaluation = evaluatePassCondition(binding.check.pass, result);
   if (evaluation.passed) {
-    return { verdict: 'pass', reason: `check passed (${binding.check.pass})` };
+    return {
+      verdict: 'pass',
+      evidence: [{ clause: binding.check.pass, pass: true, evidence: `check passed (${binding.check.pass})` }],
+    };
   }
   const detail = result.stderr.trim() || result.stdout.trim();
   return {
     verdict: 'fail',
-    reason: `check failed (${evaluation.reason})${detail ? `: ${detail.slice(0, 500)}` : ''}`,
+    evidence: [
+      {
+        clause: binding.check.pass,
+        pass: false,
+        evidence: `check failed (${evaluation.reason})${detail ? `: ${detail.slice(0, 500)}` : ''}`,
+      },
+    ],
   };
 }
 

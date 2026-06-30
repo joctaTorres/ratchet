@@ -3,8 +3,9 @@
  *
  * The agent judge is exercised deterministically via RATCHET_EVAL_AGENT_CMD,
  * which stands in a bash stub for the real coding-agent binary so no agent is
- * ever spawned. The stub emits a strict-JSON verdict on its last line, exactly
- * as a real judge would.
+ * ever spawned. The stub emits a strict-JSON per-clause verdict array on its
+ * last line, exactly as a real judge would. Every llm-judge-bound scenario in
+ * this file has a single `Then` step, so the rubric is always one clause.
  */
 
 import { afterAll, describe, it, expect } from 'vitest';
@@ -69,10 +70,10 @@ features/cli/status#status-as-text:
   return root;
 }
 
-/** Env that makes the agent judge emit a fixed verdict deterministically. */
-function agentEnv(pass: boolean, reason: string): NodeJS.ProcessEnv {
+/** Env that makes the agent judge emit a fixed single-clause verdict deterministically. */
+function agentEnv(pass: boolean, evidence: string): NodeJS.ProcessEnv {
   return {
-    RATCHET_EVAL_AGENT_CMD: `cat >/dev/null; echo '{"pass": ${pass}, "reason": "${reason}"}'`,
+    RATCHET_EVAL_AGENT_CMD: `cat >/dev/null; echo '[{"verdict": "${pass ? 'yes' : 'no'}", "evidence": "${evidence}"}]'`,
   };
 }
 
@@ -312,7 +313,7 @@ features/cli/status#status-as-text:
   agentVotes: 2
 `
     );
-    const stub = `cat >/dev/null; n=$(cat ${counter} 2>/dev/null || echo 0); echo $((n+1)) > ${counter}; if [ "$n" = "0" ]; then echo '{"pass": true, "reason": "looks good"}'; else echo '{"pass": false, "reason": "actually broken"}'; fi`;
+    const stub = `cat >/dev/null; n=$(cat ${counter} 2>/dev/null || echo 0); echo $((n+1)) > ${counter}; if [ "$n" = "0" ]; then echo '[{"verdict": "yes", "evidence": "looks good"}]'; else echo '[{"verdict": "no", "evidence": "actually broken"}]'; fi`;
     const run = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: { RATCHET_EVAL_AGENT_CMD: stub },

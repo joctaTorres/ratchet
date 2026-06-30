@@ -409,6 +409,8 @@ features/cli/status#status-as-text:
   kind: llm-judge             # spawned-judge fallback for prose-y scenarios
   success: the status output is human-readable text
   agentVotes: 3               # N-of-M repeat votes; majority wins
+  rubric:                     # optional: overrides the auto-derived Then-clause rubric
+    - "Output is readable prose, not raw JSON"
 ```
 
 **Fixtures run isolated.** Before judging, the fixture is materialized into a
@@ -417,10 +419,17 @@ build/run/mutate freely without touching the checked-in fixture or the host repo
 An optional `setup` bootstraps a fixture **once** into a copy cached by
 fixture+setup and reused across every case bound to it.
 
-**The agent judge is guarded.** It **fails closed on uncertainty** (no concrete
-evidence ⇒ not a pass) and may cast **N-of-M votes** (`agentVotes`, default 1).
-When votes disagree, the case is recorded `unjudged` — never silently `fail` — so
-judge noise can't manufacture a regression. Prefer a `deterministic` binding.
+**The agent judge is rubric-driven and guarded.** Each case is judged against a
+binary rubric — one item per Gherkin `Then`-clause by default, or an explicit
+`rubric:` list. The judge reasons step by step about each clause before stating
+its verdict (CoT-before-verdict) and judges the evidence on its own merits
+instead of trusting the scenario's framing (anti-sycophancy). A vote **fails
+closed on uncertainty**: a clause judged `"no"`/`"can't-tell"`, left
+unaddressed, or claimed `"yes"` with no concrete evidence, does not pass, and a
+vote passes only when every clause does (all-yes). The judge may cast **N-of-M
+votes** (`agentVotes`, default 1); when votes disagree, the case is recorded
+`unjudged` — never silently `fail` — so judge noise can't manufacture a
+regression. Prefer a `deterministic` binding.
 
 **Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
 is a case that **passed in the baseline and fails now**; new/retired cases are

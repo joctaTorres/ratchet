@@ -15,7 +15,7 @@
 import { enumerateEvalSet, type EvalCase, type EvalScope } from './set.js';
 import { loadEvalSpecs, resolveBinding, type ResolvedBinding } from './spec.js';
 import { FixtureManager, type FixtureManagerDeps } from './fixture.js';
-import { judgeCase, type JudgeDeps } from './judge.js';
+import { judgeCase, type CaseVerdict, type JudgeDeps } from './judge.js';
 import { ALL_CONTRIBUTOR_IDS } from './gate.js';
 import type { ContributorId } from './aggregate.js';
 import {
@@ -72,7 +72,16 @@ async function judgeBound(
   const { cwd } = await fixtures.materialize(bound.binding.fixture, bound.binding.setup);
   // The gate already decided this case runs; judge it by its bound kind.
   const verdict = await judgeCase(c, bound.binding, cwd, judge);
-  return { verdict: verdict.verdict, reason: verdict.reason, source: 'judged' };
+  return { verdict: verdict.verdict, reason: summarizeEvidence(verdict.evidence), source: 'judged' };
+}
+
+/**
+ * Flatten the structured per-clause evidence into the single `reason` string
+ * `CaseRecord` still persists in this slice (the run JSON gains structured
+ * per-clause persistence in a later judge-hardening change).
+ */
+function summarizeEvidence(evidence: CaseVerdict['evidence']): string {
+  return evidence.map((cl) => `[${cl.pass ? 'pass' : 'fail'}] ${cl.clause}: ${cl.evidence}`).join('\n');
 }
 
 /** Run the eval over the in-scope set and persist the result. */

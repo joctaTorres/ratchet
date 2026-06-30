@@ -167,10 +167,13 @@ phases:
   # ---------------------------------------------------------------------------
   - name: cli-and-large-files-to-95
     goal: >-
-      Cover the remaining large, integration-only files — cli/index.ts (716L),
-      core/init.ts (913L), core/update.ts (726L), core/legacy-cleanup.ts (633L)
-      — per the `testing` standard, and ratchet the enforced floor to the 95%
-      target, locking it in as the new permanent minimum.
+      Close the remaining coverage gap to 95%. Measured at phase entry (app
+      scope) the real gaps are broader than the original four files: cli/index.ts
+      (43%), commands/validate.ts (29%), ui/welcome-screen.ts, telemetry, and a
+      core remainder (archive, init/update remainders, version-guard,
+      file-system, proof-of-work, list, move-directory, markdown-parser, …) —
+      ~1040 uncovered lines to cover, per the `testing` standard. Then ratchet
+      the enforced floor to 95%, locking it in as the new permanent minimum.
     success: >-
       Total line coverage is >= 95%, the coverage gate's enforced minimum is set
       to 95, and the full vitest suite is green at that floor.
@@ -181,3 +184,41 @@ phases:
         pnpm build && pnpm vitest run --coverage &&
         COVERAGE_THRESHOLD=95 node dist/core/ci/coverage-gate.js
       pass: exit-zero
+    # Decomposed at phase entry from measured per-file coverage: four parallel
+    # test-writing changes targeting the real gaps feed a floor-ratchet to 95.
+    changes:
+      - name: cli-index-tests
+        done: >-
+          src/cli/index.ts (currently ~43%) has tests covering its command
+          dispatch, flag parsing, and error/exit paths per the `testing`
+          standard (integration over a tmpdir fixture / driving the built CLI as
+          fits each path); its line coverage rises substantially and the full
+          vitest suite is green.
+      - name: validate-deep-tests
+        done: >-
+          src/commands/validate.ts (currently ~29%) has tests covering its
+          validation branches and reporting paths per the `testing` standard;
+          its line coverage rises substantially and the full suite is green.
+      - name: ui-telemetry-tests
+        done: >-
+          src/ui/welcome-screen.ts, src/telemetry/index.ts and
+          src/prompts/searchable-multi-select.ts have tests covering their main
+          behaviors and branches per the `testing` standard; their line coverage
+          rises substantially and the full suite is green.
+      - name: core-remainder-tests
+        done: >-
+          The core remainder is covered enough to clear 95% overall:
+          core/archive.ts, the init.ts/update.ts remainders, ci/version-guard.ts,
+          utils/file-system.ts, batch/engine/proof-of-work.ts, parsers/
+          markdown-parser.ts, core/list.ts, utils/move-directory.ts and
+          features-apply.ts (and any tail needed) get tests per the `testing`
+          standard; the full suite is green and measured total.lines.pct >= 95.
+      - name: ratchet-floor-to-95
+        after: [cli-index-tests, validate-deep-tests, ui-telemetry-tests, core-remainder-tests]
+        done: >-
+          With the gaps covered and measured total.lines.pct >= 95, raise
+          DEFAULT_COVERAGE_THRESHOLD to 95 with the gate unit tests updated for
+          the new floor (green at/above 95, red below) and
+          docs/engine/coverage-gate.md + README updated to 95 per the
+          documentation standard; the gate exits 0 at the 95 floor, locked in as
+          the new permanent minimum.

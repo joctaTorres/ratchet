@@ -168,8 +168,10 @@ at `.ratchet/batches/<batch>/.run/<id>/prompt.txt` on the host. The run command
 sent to the sidecar is `cd <cwd>; cat <promptfile> | <agent argv>`. The prompt
 file is removed after the run (in a `finally` block).
 
-The overall run timeout is 10 minutes. On completion or timeout the sidecar
-receives `SIGTERM` followed (after a 2 s grace) by `SIGKILL` if it has not
+The overall run timeout defaults to `600000` ms (10 minutes) and is configurable
+via `batch.agentTimeoutMs` or the `RATCHET_AGENT_TIMEOUT_MS` environment variable
+(see [Per-agent timeout](#per-agent-timeout) below). On completion or timeout the
+sidecar receives `SIGTERM` followed (after a 2 s grace) by `SIGKILL` if it has not
 exited.
 
 ### `docker` — `RexSidecarRuntime` with `DockerDeployment`
@@ -221,9 +223,55 @@ The remote runtime reproduces the sidecar's tail-poll streaming over REST:
 6. Read the exit sentinel. Drain final bytes, emit `exit`, then close the session
    and runtime (`POST /close_session`, `POST /close`).
 
-The overall run timeout is 10 minutes. A `swerexception` body on any response
-is surfaced as an actionable `AgentEvent{kind:'error'}` with the engine mapped to
-blocked/failed and no hang.
+The overall run timeout defaults to `600000` ms (10 minutes) and is configurable
+via `batch.agentTimeoutMs` or the `RATCHET_AGENT_TIMEOUT_MS` environment variable
+(see [Per-agent timeout](#per-agent-timeout) below). A `swerexception` body on any
+response is surfaced as an actionable `AgentEvent{kind:'error'}` with the engine
+mapped to blocked/failed and no hang.
+
+## Per-agent timeout
+
+Every runtime applies a per-agent timeout — the guard against a hung agent. It is
+locus-uniform and agent-neutral: the same resolved value applies to `local`,
+`docker`, and `remote`, and to every coding agent. The built-in default is
+`600000` ms (10 minutes); each runtime keeps applying that default whenever no
+value is configured.
+
+`selectRuntime` resolves the effective timeout once (via `resolveAgentTimeoutMs`)
+and threads it into the chosen runtime's `timeoutMs` option, omitting the option
+entirely when nothing is set so the runtime's own default applies. Resolution
+precedence is **env > manifest > project config > built-in default**:
+
+- `RATCHET_AGENT_TIMEOUT_MS` wins when it parses to a positive integer. A zero,
+  negative, non-numeric, or empty value is ignored (a typo never shortens or
+  removes the guard) and resolution falls through to the config layers.
+- Otherwise `batch.agentTimeoutMs` from the per-change manifest, then the project
+  config (`.ratchet/config.yaml`).
+- Otherwise the runtime's built-in `DEFAULT_TIMEOUT_MS` (`600000` ms).
+
+```mermaid
+flowchart TD
+  env["RATCHET_AGENT_TIMEOUT_MS<br/>(positive integer?)"]
+  manifest["manifest batch.agentTimeoutMs"]
+  project["project config<br/>batch.agentTimeoutMs"]
+  default["built-in DEFAULT_TIMEOUT_MS<br/>600000 ms"]
+  resolved(["effective timeoutMs"])
+
+  env -- "set & valid" --> resolved
+  env -- "unset / invalid" --> manifest
+  manifest -- "set" --> resolved
+  manifest -- "unset" --> project
+  project -- "set" --> resolved
+  project -- "unset" --> default
+  default --> resolved
+
+  classDef src fill:#1f2937,stroke:#93c5fd,stroke-width:2px,color:#ffffff;
+  classDef def fill:#374151,stroke:#fbbf24,stroke-width:2px,color:#ffffff;
+  classDef out fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+  class env,manifest,project src;
+  class default def;
+  class resolved out;
+```
 
 ## Agent adapters
 

@@ -6,6 +6,8 @@ import os from 'os';
 import { parse as parseYaml } from 'yaml';
 import {
   resolveBatchSettings,
+  resolveAgentTimeoutMs,
+  AGENT_TIMEOUT_ENV_VAR,
   validateSetting,
   validateRemoteSettings,
   setProjectBatchSetting,
@@ -396,5 +398,40 @@ describe('manifest schema with remote keys', () => {
       phases: [],
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('resolveAgentTimeoutMs', () => {
+  const noConfig: Pick<BatchSettings, 'agentTimeoutMs'> = {};
+
+  it('returns undefined when nothing is configured (runtime keeps its 600000ms default)', () => {
+    expect(resolveAgentTimeoutMs(noConfig, {})).toBeUndefined();
+  });
+
+  it('uses the config key when set and no env override is present', () => {
+    expect(resolveAgentTimeoutMs({ agentTimeoutMs: 1800000 }, {})).toBe(1800000);
+  });
+
+  it('uses the env var when set and no config key is present', () => {
+    expect(resolveAgentTimeoutMs(noConfig, { [AGENT_TIMEOUT_ENV_VAR]: '1800000' })).toBe(1800000);
+  });
+
+  it('lets the env var take precedence over the config key', () => {
+    expect(
+      resolveAgentTimeoutMs({ agentTimeoutMs: 1800000 }, { [AGENT_TIMEOUT_ENV_VAR]: '2400000' })
+    ).toBe(2400000);
+  });
+
+  it.each(['0', '-1', 'not-a-num', ''])(
+    'ignores a non-positive/non-numeric env value %j and falls back to the default',
+    (value) => {
+      expect(resolveAgentTimeoutMs(noConfig, { [AGENT_TIMEOUT_ENV_VAR]: value })).toBeUndefined();
+    }
+  );
+
+  it('falls through an invalid env value to a valid config key', () => {
+    expect(
+      resolveAgentTimeoutMs({ agentTimeoutMs: 1800000 }, { [AGENT_TIMEOUT_ENV_VAR]: 'not-a-num' })
+    ).toBe(1800000);
   });
 });

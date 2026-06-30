@@ -362,7 +362,10 @@ dials under `.ratchet/config.yaml` `batch:`, with manifest-level overrides).
 
 The coding agent itself runs through a **SWE-ReX agent runtime** with live
 output streaming, configurable to execute **locally**, in **Docker**, or on a
-**remote** host — with pluggable adapters (claude / codex / gemini / cursor).
+**remote** host — with pluggable adapters (claude / codex / gemini / cursor). The
+per-agent timeout defaults to 10 minutes and is raised with the
+`batch.agentTimeoutMs` config key or the `RATCHET_AGENT_TIMEOUT_MS` environment
+variable (env wins) when a slow-but-passing proof-of-work needs more time.
 
 ## Eval suite
 

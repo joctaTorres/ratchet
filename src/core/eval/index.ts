@@ -84,3 +84,14 @@ export {
   type GateFlags,
   type ResolveGateInput,
 } from './gate.js';
+export {
+  evaluateInvariant,
+  isInvariantViolation,
+  MEASURE_RESOLVERS,
+  realFileReader,
+  type InvariantOutcome,
+  type InvariantStatus,
+  type InvariantEvalContext,
+  type MeasureResolver,
+  type FileReader,
+} from './invariant-evaluator.js';

@@ -12,10 +12,17 @@ well-formed. It is **fail-closed** — an absent file is the only path to an emp
 set; a present-but-broken manifest raises an error rather than degrading to a
 vacuous pass.
 
-Evaluating the invariants and gating the verdict are downstream of this loader;
-this Reference entry documents the manifest schema and the loader's contract.
+The typed set the loader produces is then handed one invariant at a time to the
+per-invariant **evaluator** (`src/core/eval/invariant-evaluator.ts`), which
+computes a `pass` / `fail` / `unevaluable` outcome for each kind (documented under
+[Evaluator outcome model](#evaluator-outcome-model)). Threading the evaluator
+through the `invariants` gate contributor over the whole manifest, and gating the
+run verdict on it, are downstream of this slice.
 
 ## Overview
+
+The loader turns the authored YAML into a typed set, failing closed on anything
+broken:
 
 ```mermaid
 flowchart TD
@@ -37,6 +44,47 @@ flowchart TD
     class LOADER core
     class EMPTY,TYPED ok
     class FAIL err
+```
+
+Each typed invariant is then evaluated against the run to one outcome — and
+anything that cannot be checked fails closed to a violation rather than a pass:
+
+```mermaid
+flowchart TD
+    INV[📦 one typed invariant<br/>+ run · baseline run]
+    EVAL{{⚙️ evaluateInvariant<br/>dispatch on kind}}
+    DET[🧪 deterministic<br/>run check.run · evaluatePassCondition]
+    MON[📈 monotonic<br/>measure vs baseline value]
+    SNAP[📷 snapshot<br/>produce.run vs golden]
+
+    INV --> EVAL
+    EVAL --> DET
+    EVAL --> MON
+    EVAL --> SNAP
+
+    DET -->|✓ predicate holds| PASS[✅ pass]
+    MON -->|✓ current ≥ baseline| PASS
+    SNAP -->|✓ output = golden| PASS
+
+    DET -->|✗ predicate breaks| FAILV[❌ fail — violation]
+    MON -->|✗ current &lt; baseline| FAILV
+    SNAP -->|✗ output ≠ golden| FAILV
+
+    DET -->|🔐 predicate errors| UNEV[🔐 unevaluable — violation]
+    MON -->|🔐 missing baseline · unknown measure| UNEV
+    SNAP -->|🔐 golden absent · produce errors| UNEV
+
+    classDef source   fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef core     fill:#FFD700,stroke:#333,stroke-width:2px,color:black
+    classDef kind     fill:#FFE4B5,stroke:#333,stroke-width:2px,color:black
+    classDef ok       fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+    classDef err      fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+
+    class INV source
+    class EVAL core
+    class DET,MON,SNAP kind
+    class PASS ok
+    class FAILV,UNEV err
 ```
 
 ## Manifest schema
@@ -130,6 +178,51 @@ The loader never returns a silently empty set for a present-but-broken manifest:
 an empty active set is a vacuous pass, so any failure to parse or validate raises
 `InvariantManifestError` and the caller fails closed.
 
+## Evaluator outcome model
+
+`evaluateInvariant(invariant, context)` computes exactly one **outcome** for a
+single loaded invariant against the run state. The outcome is three-valued, and
+the third value is the anti-gaming linchpin:
+
+| `status`       | Meaning                                                              | Violation? |
+| -------------- | ------------------------------------------------------------------- | ---------- |
+| `pass`         | The invariant was checked and the run satisfies it.                 | no         |
+| `fail`         | The invariant was checked and the run violates it.                  | yes        |
+| `unevaluable`  | The invariant **could not be checked at all** (fail-closed).        | yes        |
+
+`unevaluable` is a first-class status, never folded into `fail`, so the evidence
+can distinguish *"checked and violated"* from *"could not be checked"*. Both are
+violations: `isInvariantViolation(outcome)` is `status !== 'pass'`, so a kind that
+cannot be evaluated can never slip through as a pass — the exact vacuous-pass hole
+the invariant set exists to close.
+
+Every outcome records a human-readable `measure` and the `evidence` behind the
+status. The `context` (`InvariantEvalContext`) supplies the `projectRoot`, the
+`run`, the `baseline` run (or `null`), and injectable `bash` / `readFile` seams
+(defaulting to the real runners) so the decision logic is provable without a real
+spawn or filesystem.
+
+### How each kind is evaluated
+
+- **deterministic** — runs `check.run` (cwd = project root) through the injected
+  `bash` and decides pass/fail with the engine's `evaluatePassCondition` (the same
+  `exit-zero` / `contains:` / `regex:` / substring vocabulary the deterministic
+  *binding* uses). A predicate that **throws before producing a result** is
+  `unevaluable`. Evidence records the pass condition met, or the predicate output,
+  or why it could not run.
+- **monotonic** — resolves the named `measure` to a current value over the run via
+  the extensible `MEASURE_RESOLVERS` registry, then compares it non-decreasing
+  against the same measure derived from the **baseline run's recorded state**:
+  `current ≥ baseline` is pass, `current < baseline` is fail. A **missing baseline
+  run/measure** or an **unknown measure name** is `unevaluable`. `measure` records
+  `scenario-count: 12 (baseline 10)`. The only built-in measure is the
+  ecosystem-neutral `scenario-count` (`run.cases.length`); new measures register in
+  the map without baking any toolchain into the evaluator.
+- **snapshot** — reads the checked-in `golden` (resolved relative to the project
+  root) via the injected `readFile`, runs `produce.run`, and diffs the produced
+  stdout (trimmed) against the golden (trimmed): equal is pass, differing is fail.
+  An **absent golden**, or a `produce` command that **throws**, is `unevaluable`.
+
 ## API
 
 | Export                            | Description                                                         |
@@ -141,3 +234,13 @@ an empty active set is a vacuous pass, so any failure to parse or validate raise
 | `DeterministicInvariant` / `MonotonicInvariant` / `SnapshotInvariant` | Per-kind types.                 |
 | `InvariantManifest`               | Load result: `{ invariants: Invariant[] }`.                         |
 | `InvariantSchema`                 | The zod discriminated union backing validation.                     |
+| `evaluateInvariant(inv, ctx)`     | Computes one `pass` / `fail` / `unevaluable` outcome for an invariant; fail-closed. |
+| `isInvariantViolation(outcome)`   | `status !== 'pass'` — treats both `fail` and `unevaluable` as violations. |
+| `MEASURE_RESOLVERS`               | Extensible measure registry; ships the neutral `scenario-count`.    |
+| `InvariantOutcome` / `InvariantStatus` | The outcome record and its three-valued status.                |
+| `InvariantEvalContext`            | Evaluator inputs: `projectRoot`, `run`, `baseline`, injectable `bash` / `readFile`. |
+| `MeasureResolver` / `FileReader` / `realFileReader` | The injectable seam types and the default fs reader. |
+
+> **No user-facing CLI/flag/config surface in this slice**, so `README.md` is
+> unchanged: the evaluator is pure core logic that the downstream `invariants`
+> contributor and default-manifest slices expose to users.

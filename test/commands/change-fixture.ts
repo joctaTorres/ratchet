@@ -47,6 +47,79 @@ const VALID_FEATURE = `Feature: Sample capability
     Then an outcome is observed
 `;
 
+/**
+ * A structurally invalid Gherkin feature: its sole Scenario is missing both a
+ * When and a Then step, which the validator reports as an ERROR (missing GWT).
+ */
+const INVALID_FEATURE = `Feature: Broken capability
+  Scenario: incomplete
+    Given only a precondition
+`;
+
+/**
+ * A structurally invalid plan.md: it is missing every required section
+ * (## Why / ## What Changes / ## Design / ## Tasks), which validatePlan reports
+ * as an ERROR.
+ */
+const INVALID_PLAN = `# change
+
+This plan intentionally omits its required sections so validation fails.
+`;
+
+/** Build a batch manifest YAML body for the named batch. */
+function validBatchYaml(name: string): string {
+  return [
+    `name: ${name}`,
+    'phases:',
+    '  - name: phase-1',
+    '    goal: Deliver the first slice',
+    '    success: The slice passes its proof',
+    '    proofOfWork:',
+    '      kind: integration',
+    '      run: echo ok',
+    '      pass: exit-zero',
+    '    changes:',
+    '      - name: change-a',
+    '        done: change-a is complete',
+    '',
+  ].join('\n');
+}
+
+/** A manifest whose phase omits the required `proofOfWork` block (schema error). */
+function malformedBatchYaml(name: string): string {
+  return [
+    `name: ${name}`,
+    'phases:',
+    '  - name: phase-1',
+    '    goal: Deliver the first slice',
+    '    success: The slice passes its proof',
+    '',
+  ].join('\n');
+}
+
+/** A schema-valid manifest whose phase has a dependency cycle (DAG error). */
+function cyclicBatchYaml(name: string): string {
+  return [
+    `name: ${name}`,
+    'phases:',
+    '  - name: phase-1',
+    '    goal: Deliver the first slice',
+    '    success: The slice passes its proof',
+    '    proofOfWork:',
+    '      kind: integration',
+    '      run: echo ok',
+    '      pass: exit-zero',
+    '    changes:',
+    '      - name: change-a',
+    '        done: change-a is complete',
+    '        after: [change-b]',
+    '      - name: change-b',
+    '        done: change-b is complete',
+    '        after: [change-a]',
+    '',
+  ].join('\n');
+}
+
 /** A structurally valid plan.md (all required sections + at least one task). */
 function validPlan(tasks: string): string {
   return [
@@ -119,6 +192,68 @@ export class CommandFixture {
   /** Create a feature-store capability dir (`.ratchet/features/<cap>`) — a "spec". */
   async writeSpec(cap: string): Promise<void> {
     await fs.mkdir(path.join(this.root, '.ratchet', 'features', cap), { recursive: true });
+  }
+
+  /**
+   * Create a structurally valid spec in the feature store: a capability dir
+   * (`.ratchet/features/<cap>`) holding one valid `.feature` file, so
+   * validateFeatures reports it as valid.
+   */
+  async writeValidSpec(cap: string): Promise<void> {
+    const dir = path.join(this.root, '.ratchet', 'features', cap, 'sub');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'spec.feature'), VALID_FEATURE, 'utf-8');
+  }
+
+  /**
+   * Create a structurally invalid spec: a capability dir whose `.feature` file
+   * has a Scenario missing its When/Then steps, which validateFeatures reports
+   * as an ERROR.
+   */
+  async writeInvalidSpec(cap: string): Promise<void> {
+    const dir = path.join(this.root, '.ratchet', 'features', cap, 'sub');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'spec.feature'), INVALID_FEATURE, 'utf-8');
+  }
+
+  /**
+   * Create a discoverable but structurally invalid change: it has the
+   * `.ratchet.yaml` metadata stamp (so discovery sees it) yet both its feature
+   * and its plan.md are invalid, so validateChangeArtifacts reports ERRORs.
+   */
+  async writeInvalidChange(change: string): Promise<string> {
+    const dir = await this.makeChange(change);
+    await fs.mkdir(path.join(dir, 'features', 'sample'), { recursive: true });
+    await fs.writeFile(
+      path.join(dir, 'features', 'sample', 'sample.feature'),
+      INVALID_FEATURE,
+      'utf-8'
+    );
+    await fs.writeFile(path.join(dir, 'plan.md'), INVALID_PLAN, 'utf-8');
+    await fs.writeFile(path.join(dir, '.ratchet.yaml'), 'schema: ratchet\n', 'utf-8');
+    return dir;
+  }
+
+  /** Write a batch manifest (`.ratchet/batches/<name>/batch.yaml`) with `body`. */
+  private async writeBatchManifest(name: string, body: string): Promise<void> {
+    const dir = path.join(this.root, '.ratchet', 'batches', name);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'batch.yaml'), body, 'utf-8');
+  }
+
+  /** Write a structurally valid batch manifest named `name`. */
+  async writeValidBatch(name: string): Promise<void> {
+    await this.writeBatchManifest(name, validBatchYaml(name));
+  }
+
+  /** Write a batch manifest that fails schema validation (missing proofOfWork). */
+  async writeMalformedBatch(name: string): Promise<void> {
+    await this.writeBatchManifest(name, malformedBatchYaml(name));
+  }
+
+  /** Write a schema-valid batch manifest whose phase has a dependency cycle. */
+  async writeCyclicBatch(name: string): Promise<void> {
+    await this.writeBatchManifest(name, cyclicBatchYaml(name));
   }
 
   /**

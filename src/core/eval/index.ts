@@ -100,3 +100,7 @@ export {
   type MeasureResolver,
   type FileReader,
 } from './invariant-evaluator.js';
+export {
+  detectTestDirectory,
+  buildDefaultInvariantManifestYaml,
+} from './default-manifest.js';

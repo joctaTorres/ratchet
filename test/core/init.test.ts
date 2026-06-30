@@ -115,6 +115,38 @@ describe('InitCommand', () => {
       expect(content).toContain('schema: ratchet');
     });
 
+    // features/eval-invariants/default-manifest.feature
+    it('should create .ratchet/evals/invariants.yaml with spec-not-weakened active', async () => {
+      const initCommand = new InitCommand({ tools: 'claude', force: true });
+
+      await initCommand.execute(testDir);
+
+      const manifestPath = path.join(testDir, '.ratchet', 'evals', 'invariants.yaml');
+      expect(await fileExists(manifestPath)).toBe(true);
+
+      const content = await fs.readFile(manifestPath, 'utf-8');
+      const parsed = parseYaml(content);
+      const specNotWeakened = parsed.invariants.find((i: any) => i.id === 'spec-not-weakened');
+      expect(specNotWeakened).toBeDefined();
+      expect(specNotWeakened.kind).toBe('monotonic');
+      expect(specNotWeakened.active).toBe(true);
+      expect(specNotWeakened.measure).toBe('scenario-count');
+    });
+
+    it('should leave a user-edited invariants.yaml unchanged byte-for-byte on re-init', async () => {
+      const initCommand1 = new InitCommand({ tools: 'claude', force: true });
+      await initCommand1.execute(testDir);
+
+      const manifestPath = path.join(testDir, '.ratchet', 'evals', 'invariants.yaml');
+      const userEdited = 'invariants:\n  - id: spec-not-weakened\n    kind: monotonic\n    active: true\n    measure: scenario-count\n  - id: tests-still-exist\n    kind: deterministic\n    active: true\n    check:\n      run: "test -d test"\n';
+      await fs.writeFile(manifestPath, userEdited);
+
+      const initCommand2 = new InitCommand({ tools: 'claude', force: true });
+      await initCommand2.execute(testDir);
+
+      expect(await fs.readFile(manifestPath, 'utf-8')).toBe(userEdited);
+    });
+
     it('should create core profile skills for Claude Code by default', async () => {
       const initCommand = new InitCommand({ tools: 'claude', force: true });
 

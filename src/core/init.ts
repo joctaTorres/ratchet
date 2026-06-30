@@ -50,6 +50,8 @@ import { readProjectConfig } from './project-config.js';
 import { setProjectBatchPermissions } from './batch/config.js';
 import { selectPosture } from './batch/first-run-setup.js';
 import type { PermissionPosture } from './batch/permissions-policy.js';
+import { buildDefaultInvariantManifestYaml } from './eval/default-manifest.js';
+import { invariantsManifestPath } from './eval/invariants.js';
 
 const require = createRequire(import.meta.url);
 const { version: RATCHET_VERSION } = require('../../package.json');
@@ -172,6 +174,10 @@ export class InitCommand {
 
     // Create config.yaml if needed
     const configStatus = await this.createConfig(ratchetPath, extendMode);
+
+    // Scaffold the default anti-gaming invariant manifest so the eval gate is
+    // real from the first run; never overwrites an existing manifest.
+    await this.createDefaultInvariantManifest(projectPath);
 
     // Display success message
     this.displaySuccessMessage(projectPath, validatedTools, results, configStatus);
@@ -596,6 +602,7 @@ export class InitCommand {
         path.join(ratchetPath, 'standards'),
         path.join(ratchetPath, 'changes'),
         path.join(ratchetPath, 'changes', 'archive'),
+        path.join(ratchetPath, 'evals'),
       ];
 
       for (const dir of directories) {
@@ -612,6 +619,7 @@ export class InitCommand {
       path.join(ratchetPath, 'standards'),
       path.join(ratchetPath, 'changes'),
       path.join(ratchetPath, 'changes', 'archive'),
+      path.join(ratchetPath, 'evals'),
     ];
 
     for (const dir of directories) {
@@ -750,6 +758,32 @@ export class InitCommand {
     try {
       const yamlContent = serializeConfig({ schema: DEFAULT_SCHEMA });
       await FileSystemUtils.writeFile(configPath, yamlContent);
+      return 'created';
+    } catch {
+      return 'skipped';
+    }
+  }
+
+  /**
+   * Write the starter `.ratchet/evals/invariants.yaml` on first init (or when
+   * backfilling an older project on re-init). Unlike `config.yaml`, this is
+   * never gated behind interactivity/`--force`: the manifest is deterministic
+   * scaffolding, not a user choice, and the anti-gaming gate it feeds must be
+   * real on every `ratchet init`, including unattended/CI runs. An existing
+   * manifest (including user edits) is never overwritten.
+   */
+  private async createDefaultInvariantManifest(
+    projectPath: string
+  ): Promise<'created' | 'exists' | 'skipped'> {
+    const manifestPath = invariantsManifestPath(projectPath);
+
+    if (fs.existsSync(manifestPath)) {
+      return 'exists';
+    }
+
+    try {
+      const yamlContent = buildDefaultInvariantManifestYaml(projectPath);
+      await FileSystemUtils.writeFile(manifestPath, yamlContent);
       return 'created';
     } catch {
       return 'skipped';

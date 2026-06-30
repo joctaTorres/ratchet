@@ -193,6 +193,8 @@ ratchet archive add-login -y                      # sync features → store, arc
 ├── standards/                # project guidelines, loaded by propose + verify (starts empty)
 ├── changes/
 │   └── archive/              # completed changes land here, date-prefixed
+├── evals/
+│   └── invariants.yaml       # anti-gaming invariant manifest (spec-not-weakened active, rest scaffolded inert)
 └── config.yaml               # schema + project context/rules
 
 .claude/                      # (per selected tool)

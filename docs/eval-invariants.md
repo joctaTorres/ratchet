@@ -334,7 +334,39 @@ contributor is absent from the verdict — the same generic mechanism as
 | `InvariantEvalContext`            | Evaluator inputs: `projectRoot`, `run`, `baseline`, injectable `bash` / `readFile`. |
 | `MeasureResolver` / `FileReader` / `realFileReader` | The injectable seam types and the default fs reader. |
 
-> Writing the **default manifest** at `ratchet init` (with `spec-not-weakened`
-> active and the stack-specific invariants scaffolded inert) is the separate
-> downstream `init-default-manifest` slice; this gate runs over whatever manifest
-> already exists.
+## Default manifest
+
+`ratchet init` writes a starter `.ratchet/evals/invariants.yaml` for a project
+that has none yet (`src/core/eval/default-manifest.ts`,
+`buildDefaultInvariantManifestYaml(projectRoot)`), so the anti-gaming gate is
+real from the first run rather than opt-in by omission:
+
+- **`spec-not-weakened`** (`monotonic`, `measure: scenario-count`) is always
+  present and **active**. It is the one invariant ratchet can evaluate on
+  every project unconditionally — the measure comes from ratchet's own run
+  state (`run.cases.length`), not anything stack-specific.
+- **`tests-still-exist`** (`deterministic`) is always **inert**
+  (`active: false`). `detectTestDirectory(projectRoot)` checks a small,
+  ecosystem-neutral set of conventional directory names (`test`, `tests`,
+  `spec`, `__tests__`) for existence under the project root. When one is
+  found, the entry is emitted as live, uncommented YAML with a concrete
+  `check.run: test -d <detected-dir>`, ready to flip to `active: true`. When
+  none is found, it is emitted as a commented-out placeholder instead of a
+  guessed path — never parsed by the loader.
+- **`public-api-unchanged`** (`snapshot`) is always **inert** and always a
+  commented-out placeholder. A real `produce.run` needs a toolchain-specific
+  command (a TypeScript declaration diff, `cargo public-api`, etc.); ratchet
+  cannot pick one without assuming a stack, so this entry is never live YAML
+  in the default manifest.
+
+The manifest is written once, only when absent — first init or a project that
+has never had one (mirroring how `config.yaml` is scaffolded). A re-run
+(extend mode) or any subsequent `ratchet init` leaves an existing
+`invariants.yaml` untouched, so a user's later edits (e.g. flipping an
+invariant active) are never clobbered.
+
+This is the literal anti-vacuous guarantee the invariant set exists to
+enforce: only `spec-not-weakened` is ever scaffolded active, so the default
+manifest is never active-but-vacuous, and activating `tests-still-exist` or
+`public-api-unchanged` is always a deliberate, informed user edit — never an
+init-time guess.

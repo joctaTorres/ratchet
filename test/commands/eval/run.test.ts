@@ -73,6 +73,11 @@ describe('evalRunCommand', () => {
     const text = output();
     expect(text).toContain('1 unjudged');
     expect(text).toContain('Run is incomplete');
+    // The aggregated overall verdict and the per-contributor breakdown render.
+    expect(text).toContain('[PASS]');
+    expect(text).toContain('Contributors:');
+    expect(text).toContain('deterministic:');
+    expect(text).toContain('regression:');
   });
 
   it('emits the runId, scorecard, and warnings as JSON', async () => {
@@ -88,6 +93,14 @@ describe('evalRunCommand', () => {
       unjudged: 1,
       complete: false,
     });
+    // The aggregated overall verdict and contributor breakdown are emitted.
+    expect(parsed.overall).toBe('pass');
+    expect(parsed.contributors.map((c: { id: string }) => c.id)).toEqual([
+      'deterministic',
+      'llm-judge',
+      'invariants',
+      'regression',
+    ]);
     expect(Array.isArray(parsed.warnings)).toBe(true);
 
     // The persisted run carries the same id and the unbound case as unjudged.

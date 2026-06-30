@@ -62,4 +62,18 @@ export {
   type FailingCase,
   type BaselineDiff,
 } from './report.js';
+export {
+  aggregateRun,
+  isRunComplete,
+  DEFAULT_CONTRIBUTORS,
+  deterministicContributor,
+  llmJudgeContributor,
+  regressionContributor,
+  invariantsContributor,
+  type Contributor,
+  type ContributorId,
+  type ContributorContext,
+  type ContributorOutcome,
+  type RunAggregate,
+} from './aggregate.js';
 export { executeRun, type RunOptions, type RunOutcome } from './execute.js';

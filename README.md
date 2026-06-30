@@ -423,9 +423,18 @@ judge noise can't manufacture a regression. Prefer a `deterministic` binding.
 **Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
 is a case that **passed in the baseline and fails now**; new/retired cases are
 diffed, not failed. `unjudged` keeps a run incomplete and never counts as a pass.
-The overall verdict fails while any regression or fail exists — so never promote a
-run to baseline while a regression exists. Unbound cases (no fixture) can take a
-manual verdict via `ratchet eval record` (a `fail` requires `--evidence`).
+Unbound cases (no fixture) can take a manual verdict via `ratchet eval record`
+(a `fail` requires `--evidence`).
+
+**One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
+place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a
+logical **AND over named contributors** (`deterministic`, `llm-judge`,
+`invariants`, `regression`): the run passes only when every contributor passes,
+and `eval run` reports the verdict with its per-contributor breakdown.
+Contributors are the extension point for future gate capabilities. An
+**incomplete** run (any case `unjudged`) **cannot be promoted to baseline** — so
+an unfinished run can never become the regression baseline future runs are judged
+against.
 
 ## Agent workflows (skills / `/rct:` commands)
 

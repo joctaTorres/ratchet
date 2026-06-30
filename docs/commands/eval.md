@@ -70,7 +70,7 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--judge <
 | `--change` | `<name>` | Scope to a single active change. |
 | `--path` | `<dir-or-file>` | Narrow to a capability directory or `.feature` file within the feature store. |
 | `--judge` | `auto \| deterministic \| llm-judge` | Judge mode. Default: project config `eval.judge`, or `auto` when not configured. |
-| `--json` | | Output as JSON: `{ runId, scorecard, warnings }`. |
+| `--json` | | Output as JSON: `{ runId, overall, scorecard, contributors, warnings }`. |
 
 ### Behavior
 
@@ -97,8 +97,12 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--judge <
    `.ratchet/evals/runs/<run-id>.json`. The run id is a UTC timestamp plus a
    3-byte hex suffix (`YYYYMMDDTHHMMSSmmmZ-<hex>`), ensuring chronological
    sort order and no collisions.
-7. **Output.** The run id and a pass/fail/unjudged scorecard are printed. Any
-   spec-load warnings are printed as dim lines.
+7. **Output.** The run id, the aggregated overall verdict, the
+   pass/fail/unjudged scorecard, and a per-contributor breakdown are printed
+   (`deterministic`, `llm-judge`, `invariants`, `regression`). The overall
+   verdict is decided by the [verdict-aggregation core](../eval-verdict-aggregation.md)
+   as a logical AND over the contributors. Any spec-load warnings are printed as
+   dim lines.
 
 ---
 
@@ -165,8 +169,10 @@ ratchet eval report --run <id> [--json]
    - **New** — present in the current run but not in the baseline.
    - **Retired** — present in the baseline but not in the current run.
    - When no baseline is promoted, the diff is empty (no regressions).
-4. **Overall verdict.** The run-level verdict is `fail` when any failing case
-   or any regression exists; otherwise `pass`.
+4. **Overall verdict.** The run-level verdict is decided by the
+   [verdict-aggregation core](../eval-verdict-aggregation.md) as a logical AND
+   over named contributors: it is `pass` only when every contributor passes. The
+   `EvalReport` carries the per-contributor breakdown under `contributors`.
 
 ---
 
@@ -196,9 +202,14 @@ ratchet eval baseline <run-id> [--json]
 
 1. The run is loaded to verify it exists; a non-existent run id fails
    non-zero.
-2. `.ratchet/evals/baseline.json` is written (or overwritten) with
+2. **Completeness guard.** An incomplete run — one with any case still
+   `unjudged`, per the [verdict-aggregation core](../eval-verdict-aggregation.md)'s
+   `complete` signal — is rejected with an error naming the run as incomplete,
+   and `baseline.json` is left unchanged. An incomplete run can never become the
+   regression baseline.
+3. `.ratchet/evals/baseline.json` is written (or overwritten) with
    `{ "runId": "<run-id>" }`.
-3. Subsequent `eval report` calls diff against this run.
+4. Subsequent `eval report` calls diff against this run.
 
 ---
 
@@ -337,9 +348,11 @@ The agent judge fails closed:
 
 A regression is a case that was `pass` in the promoted baseline run and is
 `fail` in the current run. `unjudged` in either run is not a regression. The
-`eval report` overall verdict is `fail` while any regression or any failing
-case exists.
+overall verdict is decided by the
+[verdict-aggregation core](../eval-verdict-aggregation.md) as a logical AND over
+named contributors; the `regression` contributor fails the run while any
+regression exists.
 
 The baseline is stored at `.ratchet/evals/baseline.json` as
 `{ "runId": "<id>" }`. Promoting a new baseline with `eval baseline` overwrites
-this file.
+this file, but only a **complete** run (no case `unjudged`) may be promoted.

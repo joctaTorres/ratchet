@@ -6,6 +6,7 @@ import { buildReport, diffAgainstBaseline } from '../../../src/core/eval/report.
 import { persistRun, promoteBaseline, toSnapshot, type EvalRun } from '../../../src/core/eval/run.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
 import type { Verdict } from '../../../src/core/eval/judge.js';
+import type { BindingKind } from '../../../src/core/eval/spec.js';
 
 const roots: string[] = [];
 
@@ -25,14 +26,22 @@ function mkCase(id: string): EvalCase {
   };
 }
 
-function mkRun(runId: string, verdicts: Record<string, { verdict: Verdict; reason?: string }>): EvalRun {
+function mkRun(
+  runId: string,
+  verdicts: Record<string, { verdict: Verdict; reason?: string; kind?: BindingKind | null }>
+): EvalRun {
   const ids = Object.keys(verdicts);
+  // A judged case is a bound case: pass/fail default to a deterministic binding
+  // kind so the aggregation core attributes them to a contributor; unjudged
+  // cases default to unbound (null), as in a real run.
+  const kindFor = (v: { verdict: Verdict; kind?: BindingKind | null }): BindingKind | null =>
+    v.kind !== undefined ? v.kind : v.verdict === 'unjudged' ? null : 'deterministic';
   return {
     runId,
     createdAt: new Date().toISOString(),
     judgeMode: 'auto',
     scope: { kind: 'store' },
-    cases: ids.map((id) => toSnapshot(mkCase(id), null)),
+    cases: ids.map((id) => toSnapshot(mkCase(id), kindFor(verdicts[id]))),
     verdicts: Object.fromEntries(
       ids.map((id) => [
         id,
@@ -69,6 +78,41 @@ describe('scorecard', () => {
     persistRun(root, mkRun('r1', { 'a#p': { verdict: 'pass' } }));
     expect(buildReport(root, 'r1').scorecard.complete).toBe(true);
     expect(buildReport(root, 'r1').overall).toBe('pass');
+  });
+});
+
+// features/eval-verdict-aggregation/aggregation-core.feature
+describe('overall verdict routed through the aggregation core', () => {
+  it('exposes a per-contributor breakdown and fails via the failing contributor', () => {
+    const root = makeProject();
+    persistRun(
+      root,
+      mkRun('r1', {
+        'a#det': { verdict: 'fail', reason: 'boom', kind: 'deterministic' },
+        'a#llm': { verdict: 'pass', kind: 'llm-judge' },
+      })
+    );
+    const report = buildReport(root, 'r1');
+    expect(report.overall).toBe('fail');
+    // Every contributor is reported; the deterministic one fails and names the case.
+    const ids = report.contributors.map((c) => c.id);
+    expect(ids).toEqual(['deterministic', 'llm-judge', 'invariants', 'regression']);
+    const det = report.contributors.find((c) => c.id === 'deterministic');
+    expect(det).toMatchObject({ status: 'fail', failing: ['a#det'] });
+    expect(report.contributors.find((c) => c.id === 'llm-judge')?.status).toBe('pass');
+  });
+
+  it('reports the regression contributor as the failing one on a baseline regression', () => {
+    const root = makeProject();
+    persistRun(root, mkRun('base', { 'a#x': { verdict: 'pass' } }));
+    promoteBaseline(root, 'base');
+    persistRun(root, mkRun('cur', { 'a#x': { verdict: 'fail', reason: 'broke' } }));
+    const report = buildReport(root, 'cur');
+    expect(report.overall).toBe('fail');
+    const failing = report.contributors.filter((c) => c.status === 'fail').map((c) => c.id);
+    // Both the deterministic check and the regression fire on this case.
+    expect(failing).toContain('regression');
+    expect(report.contributors.find((c) => c.id === 'regression')?.failing).toEqual(['a#x']);
   });
 });
 

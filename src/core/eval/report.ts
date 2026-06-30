@@ -9,12 +9,15 @@
  *   - retired    = present only in the baseline (neither is a regression)
  *
  * `unjudged` keeps a run incomplete and never counts as a pass. The overall
- * verdict fails while any regression or fail exists.
+ * verdict is decided in exactly one place — the verdict-aggregation core
+ * (`aggregate.ts`) — as a logical AND over named contributors; `buildReport`
+ * routes `overall` through it and exposes the per-contributor breakdown.
  */
 
-import type { EvalRun, CaseRecord } from './run.js';
+import type { EvalRun } from './run.js';
 import { loadRun, loadBaselineRunId } from './run.js';
 import type { Verdict } from './judge.js';
+import { aggregateRun, type ContributorOutcome } from './aggregate.js';
 
 export interface Scorecard {
   total: number;
@@ -45,8 +48,10 @@ export interface EvalReport {
   failing: FailingCase[];
   unjudgedCases: string[];
   diff: BaselineDiff;
-  /** Overall verdict: fails while any regression or fail exists. */
+  /** Overall verdict, decided by the aggregation core as an AND over contributors. */
   overall: 'pass' | 'fail';
+  /** Per-contributor breakdown from the aggregation core. */
+  contributors: ContributorOutcome[];
 }
 
 function verdictOf(run: EvalRun, caseId: string): Verdict {
@@ -111,15 +116,17 @@ export function buildReport(projectRoot: string, runId: string): EvalReport {
   const baseline = baselineId ? safeLoad(projectRoot, baselineId) : null;
   const diff = diffAgainstBaseline(run, baseline);
   const scorecard = scoreRun(run);
-  const overall: 'pass' | 'fail' =
-    scorecard.fail > 0 || diff.regressions.length > 0 ? 'fail' : 'pass';
+  // The aggregation core is the single decider of the overall verdict: a logical
+  // AND over named contributors. No inline pass/fail expression lives here.
+  const aggregate = aggregateRun({ run, diff });
   return {
     runId,
     scorecard,
     failing: failingCases(run),
     unjudgedCases: unjudgedIds(run),
     diff,
-    overall,
+    overall: aggregate.overall,
+    contributors: aggregate.contributors,
   };
 }
 

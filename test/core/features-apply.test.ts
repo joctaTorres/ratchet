@@ -1,11 +1,14 @@
+// Mirrors .ratchet/changes/core-remainder-tests/features/core-remainder-tests/features-apply.feature
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
+import * as yaml from 'yaml';
 import {
   findFeatureUpdates,
   applyFeatures,
   readTombstones,
+  materializeStandardLinks,
 } from '../../src/core/features-apply.js';
 import { RATCHET_DIR_NAME } from '../../src/core/config.js';
 
@@ -172,6 +175,113 @@ describe('features-apply', () => {
 
     it('throws when the change does not exist', async () => {
       await expect(applyFeatures(root, 'nope', {})).rejects.toThrow(/not found/);
+    });
+  });
+
+  // Exercise the standard-link sidecar read/write helpers (readSidecar /
+  // writeSidecar / updateForwardLinks) through the public materializeStandardLinks
+  // entry point, which is the only exported caller of those internals. With no
+  // standards directory present, regenerateReverseLinks is a safe no-op, so each
+  // test isolates the forward-link sidecar behavior under .ratchet/features/.
+  describe('materializeStandardLinks (sidecar read/write)', () => {
+    const SIDECAR_FILENAME = '.ratchet.yaml';
+
+    function sidecarPath(capability: string): string {
+      return path.join(storeDir, capability, SIDECAR_FILENAME);
+    }
+
+    async function readSidecarFeatures(
+      capability: string
+    ): Promise<Record<string, unknown>> {
+      const raw = await fs.readFile(sidecarPath(capability), 'utf-8');
+      const parsed = yaml.parse(raw) as { features?: Record<string, unknown> };
+      return parsed.features ?? {};
+    }
+
+    // Scenario: a malformed sidecar yaml is read as having no links.
+    it('treats a malformed sidecar yaml as carrying no links rather than throwing', async () => {
+      // A new feature for the capability, plus an existing malformed sidecar.
+      await writeFile(
+        path.join(changeDir, 'features', 'user-auth', 'login.feature'),
+        'Feature: Login\n'
+      );
+      await writeFile(sidecarPath('user-auth'), ':\n  this is: not: valid: yaml: [');
+
+      await expect(
+        materializeStandardLinks(root, changeName, ['testing'])
+      ).resolves.toBeUndefined();
+
+      // The malformed prior content was read as empty links; only the freshly
+      // materialized feature remains.
+      const features = await readSidecarFeatures('user-auth');
+      expect(features).toEqual({ 'login.feature': ['testing'] });
+    });
+
+    // Scenario: non-string link entries are filtered out when reading a sidecar.
+    it('filters out non-string link entries when reading a sidecar', async () => {
+      // Pre-existing sidecar entry mixes strings and non-strings.
+      await writeFile(
+        sidecarPath('user-auth'),
+        yaml.stringify({
+          features: {
+            'existing.feature': ['testing', 42, null, 'security', { a: 1 }],
+          },
+        })
+      );
+      // A second feature for the same capability triggers a read+rewrite.
+      await writeFile(
+        path.join(changeDir, 'features', 'user-auth', 'login.feature'),
+        'Feature: Login\n'
+      );
+
+      await materializeStandardLinks(root, changeName, ['testing']);
+
+      const features = await readSidecarFeatures('user-auth');
+      // The pre-existing entry retains only its string tags.
+      expect(features['existing.feature']).toEqual(['security', 'testing']);
+      expect(features['login.feature']).toEqual(['testing']);
+    });
+
+    // Scenario: written sidecar link tags are sorted and de-duplicated.
+    it('writes link tags sorted and de-duplicated per capability', async () => {
+      await writeFile(
+        path.join(changeDir, 'features', 'user-auth', 'login.feature'),
+        'Feature: Login\n'
+      );
+
+      // Duplicate + unordered tags collapse to a unique, alphabetical list.
+      await materializeStandardLinks(root, changeName, [
+        'testing',
+        'security',
+        'testing',
+        'architecture',
+      ]);
+
+      const features = await readSidecarFeatures('user-auth');
+      expect(features['login.feature']).toEqual([
+        'architecture',
+        'security',
+        'testing',
+      ]);
+    });
+
+    // Scenario: a sidecar with no remaining links is dropped entirely.
+    it('deletes the sidecar from the store when no links remain', async () => {
+      // An existing sidecar with a single feature whose link is about to be removed.
+      await writeFile(
+        sidecarPath('user-auth'),
+        yaml.stringify({ features: { 'legacy.feature': ['testing'] } })
+      );
+      // Tombstone the only linked feature so the capability's links become empty.
+      await writeFile(
+        path.join(changeDir, 'features', '.deleted'),
+        'user-auth/legacy.feature\n'
+      );
+
+      await materializeStandardLinks(root, changeName, ['testing']);
+
+      // The drop-when-empty branch removes the sidecar file entirely.
+      await expect(fs.access(sidecarPath('user-auth'))).rejects.toThrow();
     });
   });
 });

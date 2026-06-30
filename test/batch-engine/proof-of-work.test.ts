@@ -1,3 +1,4 @@
+// Covers: core-remainder-tests/proof-of-work.feature
 import { describe, it, expect } from 'vitest';
 import {
   runProofOfWork,
@@ -33,6 +34,33 @@ describe('evaluatePassCondition', () => {
   it('supports regex: conditions', () => {
     expect(evaluatePassCondition('regex:\\d+ passing', { exitCode: 0, stdout: '12 passing', stderr: '' }).passed).toBe(true);
   });
+
+  it('a default substring condition passes only on exit 0 with the needle in stdout', () => {
+    const r = evaluatePassCondition('all good', { exitCode: 0, stdout: 'all good here', stderr: '' });
+    expect(r.passed).toBe(true);
+    expect(r.reason).toBe('pass-condition-met');
+  });
+
+  it('a satisfied substring condition still fails on a nonzero exit (nonzero-exit)', () => {
+    const r = evaluatePassCondition('all good', { exitCode: 1, stdout: 'all good here', stderr: '' });
+    expect(r.passed).toBe(false);
+    expect(r.reason).toBe('nonzero-exit');
+  });
+
+  it('a contains: needle absent while exit 0 is pass-condition-unmet', () => {
+    const r = evaluatePassCondition('contains:PASS', { exitCode: 0, stdout: 'nothing here', stderr: '' });
+    expect(r.passed).toBe(false);
+    expect(r.reason).toBe('pass-condition-unmet');
+  });
+
+  it('an invalid regex: pattern never throws and reports not-passed', () => {
+    let r: ReturnType<typeof evaluatePassCondition> | undefined;
+    expect(() => {
+      r = evaluatePassCondition('regex:([', { exitCode: 0, stdout: 'anything', stderr: '' });
+    }).not.toThrow();
+    expect(r?.passed).toBe(false);
+    expect(r?.reason).toBe('pass-condition-unmet');
+  });
 });
 
 const SUCCESS = 'the slice works end to end';
@@ -54,6 +82,19 @@ describe('runProofOfWork (bash kinds)', () => {
     const result = await runProofOfWork(POW(), 'warn', '/tmp', SUCCESS, { bash: bashFail });
     expect(result.passed).toBe(false);
     expect(result.gatePassed).toBe(true); // recorded as warning, phase proceeds
+  });
+
+  it('reports an error when the bash runner rejects (throws)', async () => {
+    const bashThrows: BashRunner = async () => {
+      throw new Error('spawn failed');
+    };
+    const result = await runProofOfWork(POW({ kind: 'integration' }), 'hard-gate', '/tmp', SUCCESS, {
+      bash: bashThrows,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe('error');
+    expect(result.gatePassed).toBe(false);
+    expect(result.detail).toContain('spawn failed');
   });
 });
 
@@ -78,6 +119,28 @@ describe('runProofOfWork (llm-judge)', () => {
     const result = await runProofOfWork(POW({ kind: 'llm-judge' }), 'hard-gate', '/tmp', SUCCESS, {});
     expect(result.passed).toBe(false);
     expect(result.gatePassed).toBe(false);
+    expect(result.reason).toBe('error');
+  });
+
+  it('reports an error carrying the thrown message when the judge rejects', async () => {
+    const judgeThrows: LlmJudge = async () => {
+      throw new Error('judge exploded');
+    };
+    const result = await runProofOfWork(POW({ kind: 'llm-judge' }), 'hard-gate', '/tmp', SUCCESS, {
+      judge: judgeThrows,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.reason).toBe('error');
+    expect(result.detail).toContain('judge exploded');
+  });
+
+  it('a passing judge yields judge-pass with the verdict reason as detail', async () => {
+    const result = await runProofOfWork(POW({ kind: 'llm-judge' }), 'hard-gate', '/tmp', SUCCESS, {
+      judge: judgePass,
+    });
+    expect(result.passed).toBe(true);
+    expect(result.reason).toBe('judge-pass');
+    expect(result.detail).toBe('looks good'); // carries the verdict reason
   });
 
   it('judges against the phase success criteria, not the bash pass condition', async () => {

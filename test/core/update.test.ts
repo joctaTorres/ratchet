@@ -29,6 +29,32 @@ vi.mock('../../src/core/global-config.js', async (importOriginal) => {
   };
 });
 
+// Interactive-prompt seams. By default isInteractive() falls through to the real
+// implementation; individual tests flip `interactiveState.value` to drive the
+// interactive legacy-cleanup / tool-selection branches without a real TTY.
+const { confirmMock, searchableMultiSelectMock, interactiveState } = vi.hoisted(() => ({
+  confirmMock: vi.fn(),
+  searchableMultiSelectMock: vi.fn(),
+  interactiveState: { value: null as boolean | null },
+}));
+
+vi.mock('@inquirer/prompts', () => ({
+  confirm: confirmMock,
+}));
+
+vi.mock('../../src/prompts/searchable-multi-select.js', () => ({
+  searchableMultiSelect: searchableMultiSelectMock,
+}));
+
+vi.mock('../../src/utils/interactive.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/utils/interactive.js')>();
+  return {
+    ...actual,
+    isInteractive: (value?: boolean | import('../../src/utils/interactive.js').InteractiveOptions) =>
+      interactiveState.value === null ? actual.isInteractive(value) : interactiveState.value,
+  };
+});
+
 // Helper to set mock config for tests
 function setMockConfig(config: GlobalConfig) {
   mockState.config = config;
@@ -56,6 +82,11 @@ describe('UpdateCommand', () => {
     // Reset mock config to defaults
     resetMockConfig();
 
+    // Reset interactive-prompt seams; default to the real isInteractive().
+    interactiveState.value = null;
+    confirmMock.mockReset();
+    searchableMultiSelectMock.mockReset();
+
     // Clear all mocks before each test
     vi.restoreAllMocks();
   });
@@ -63,6 +94,7 @@ describe('UpdateCommand', () => {
   afterEach(async () => {
     // Restore all mocks after each test
     vi.restoreAllMocks();
+    interactiveState.value = null;
 
     // Clean up test directory
     await fs.rm(testDir, { recursive: true, force: true });
@@ -1737,6 +1769,123 @@ content
         call.includes('Tools:') && call.includes('Claude Code')
       );
       expect(hasToolsList).toBe(true);
+
+      consoleSpy.mockRestore();
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Legacy-cleanup decision branches & interactive legacy tool-selection.
+  // Mirrors features/core-remainder-tests/init-update-remainders.feature
+  //   - Scenario: update warns and continues when legacy cleanup needs --force
+  //   - Scenario: declining update's interactive cleanup continues the skill update
+  //   - Scenario: selecting no tools during update skips tool setup
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('legacy-cleanup decision branches', () => {
+    it('warns to re-run with --force or interactively and continues without cleaning up (non-interactive, no --force)', async () => {
+      // Configured tool so the update proceeds past the "no tools" short-circuit.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+
+      // Legacy CLAUDE.md with Ratchet markers.
+      await fs.writeFile(
+        path.join(testDir, 'CLAUDE.md'),
+        `${RATCHET_MARKERS.start}\n# Ratchet Instructions\n${RATCHET_MARKERS.end}\n`
+      );
+
+      // Force the non-interactive branch explicitly.
+      interactiveState.value = false;
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      // No --force, non-interactive.
+      await updateCommand.execute(testDir);
+
+      // Warns to re-run with --force / interactively.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Run with --force to auto-cleanup legacy files, or run interactively.')
+      );
+
+      // Continues with the skill update.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Updated: Claude Code')
+      );
+
+      // No cleanup happened: legacy markers remain.
+      const content = await fs.readFile(path.join(testDir, 'CLAUDE.md'), 'utf-8');
+      expect(content).toContain(RATCHET_MARKERS.start);
+      expect(content).toContain(RATCHET_MARKERS.end);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('skips cleanup and proceeds with the skill update when the interactive cleanup confirmation is declined', async () => {
+      // Configured tool so the update proceeds.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+
+      // Legacy CLAUDE.md with Ratchet markers.
+      await fs.writeFile(
+        path.join(testDir, 'CLAUDE.md'),
+        `${RATCHET_MARKERS.start}\n# Ratchet Instructions\n${RATCHET_MARKERS.end}\n`
+      );
+
+      // Interactive session; user declines the cleanup confirmation.
+      interactiveState.value = true;
+      confirmMock.mockResolvedValue(false);
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      await updateCommand.execute(testDir);
+
+      // Confirmation was prompted and declined.
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+
+      // Reports skipping cleanup but continuing the skill update.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Skipping legacy cleanup. Continuing with skill update...')
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Updated: Claude Code')
+      );
+
+      // Cleanup skipped: legacy markers remain.
+      const content = await fs.readFile(path.join(testDir, 'CLAUDE.md'), 'utf-8');
+      expect(content).toContain(RATCHET_MARKERS.start);
+      expect(content).toContain(RATCHET_MARKERS.end);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('reports skipping tool setup when no tools are selected during the interactive legacy tool-selection', async () => {
+      // Legacy slash-command directory (no skills yet) so update offers to set up
+      // the detected legacy tool via the interactive multi-select.
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
+      await fs.mkdir(legacyCommandDir, { recursive: true });
+      await fs.writeFile(path.join(legacyCommandDir, 'proposal.md'), 'old command');
+
+      // Interactive session; accept cleanup, then select NO tools.
+      interactiveState.value = true;
+      confirmMock.mockResolvedValue(true);
+      searchableMultiSelectMock.mockResolvedValue([]);
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      await updateCommand.execute(testDir);
+
+      // The legacy tool-selection prompt fired.
+      expect(searchableMultiSelectMock).toHaveBeenCalledTimes(1);
+
+      // Reports skipping tool setup.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Skipping tool setup.')
+      );
+
+      // No skills were generated for the deselected tool.
+      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
+      expect(await FileSystemUtils.fileExists(skillFile)).toBe(false);
 
       consoleSpy.mockRestore();
     });

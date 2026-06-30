@@ -1,3 +1,5 @@
+// Integration tests for the list command remainder.
+// Mirrors: .ratchet/changes/core-remainder-tests/features/core-remainder-tests/list.feature
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -184,6 +186,123 @@ Regular text that should be ignored
       expect(logOutput).toContain('Features:');
       expect(logOutput.some(l => l.includes('user-auth') && l.includes('features 2'))).toBe(true);
       expect(logOutput.some(l => l.includes('billing') && l.includes('features 1'))).toBe(true);
+    });
+
+    // Scenario: specs mode lists features grouped by capability
+    it('lists each capability once with its feature count across several folders', async () => {
+      const featuresDir = path.join(tempDir, '.ratchet', 'features');
+      await fs.mkdir(path.join(featuresDir, 'core'), { recursive: true });
+      await fs.mkdir(path.join(featuresDir, 'commands'), { recursive: true });
+      await fs.mkdir(path.join(featuresDir, 'ui'), { recursive: true });
+      await fs.writeFile(path.join(featuresDir, 'core', 'list.feature'), 'Feature: List\n');
+      await fs.writeFile(path.join(featuresDir, 'core', 'init.feature'), 'Feature: Init\n');
+      await fs.writeFile(path.join(featuresDir, 'core', 'apply.feature'), 'Feature: Apply\n');
+      await fs.writeFile(path.join(featuresDir, 'commands', 'validate.feature'), 'Feature: Validate\n');
+      await fs.writeFile(path.join(featuresDir, 'commands', 'archive.feature'), 'Feature: Archive\n');
+      await fs.writeFile(path.join(featuresDir, 'ui', 'welcome.feature'), 'Feature: Welcome\n');
+
+      const listCommand = new ListCommand();
+      await listCommand.execute(tempDir, 'specs');
+
+      expect(logOutput).toContain('Features:');
+      // Each capability listed exactly once with its feature count.
+      const coreLines = logOutput.filter(l => l.includes('core') && l.includes('features'));
+      const commandsLines = logOutput.filter(l => l.includes('commands') && l.includes('features'));
+      const uiLines = logOutput.filter(l => l.includes('ui') && l.includes('features'));
+      expect(coreLines).toHaveLength(1);
+      expect(commandsLines).toHaveLength(1);
+      expect(uiLines).toHaveLength(1);
+      expect(coreLines[0]).toContain('features 3');
+      expect(commandsLines[0]).toContain('features 2');
+      expect(uiLines[0]).toContain('features 1');
+    });
+
+    // Scenario: specs mode reports nothing to show when the feature store is empty
+    it('reports no features when the dir exists but holds no .feature files', async () => {
+      const featuresDir = path.join(tempDir, '.ratchet', 'features');
+      await fs.mkdir(path.join(featuresDir, 'core'), { recursive: true });
+      // Non-feature files must not be counted.
+      await fs.writeFile(path.join(featuresDir, 'README.md'), '# nothing here\n');
+      await fs.writeFile(path.join(featuresDir, 'core', 'notes.txt'), 'not a feature\n');
+
+      const listCommand = new ListCommand();
+      await listCommand.execute(tempDir, 'specs');
+
+      expect(logOutput).toContain('No features found.');
+      expect(logOutput).not.toContain('Features:');
+    });
+  });
+
+  describe('changes mode JSON output', () => {
+    // Scenario: changes mode emits machine-readable JSON when asked
+    it('prints a JSON document carrying name, task counts, and status for an in-progress change', async () => {
+      const changesDir = path.join(tempDir, '.ratchet', 'changes');
+      await fs.mkdir(path.join(changesDir, 'in-progress-change'), { recursive: true });
+      await fs.writeFile(
+        path.join(changesDir, 'in-progress-change', 'plan.md'),
+        '- [x] Task 1\n- [x] Task 2\n- [ ] Task 3\n- [ ] Task 4\n'
+      );
+
+      const listCommand = new ListCommand();
+      await listCommand.execute(tempDir, 'changes', { json: true });
+
+      // Output is a single JSON document.
+      expect(logOutput).toHaveLength(1);
+      const parsed = JSON.parse(logOutput[0]);
+      expect(parsed.changes).toHaveLength(1);
+      const change = parsed.changes[0];
+      expect(change.name).toBe('in-progress-change');
+      expect(change.completedTasks).toBe(2);
+      expect(change.totalTasks).toBe(4);
+      expect(change.status).toBe('in-progress');
+      expect(typeof change.lastModified).toBe('string');
+    });
+
+    it('marks a fully completed change as complete and a task-less change as no-tasks', async () => {
+      const changesDir = path.join(tempDir, '.ratchet', 'changes');
+      await fs.mkdir(path.join(changesDir, 'done'), { recursive: true });
+      await fs.writeFile(
+        path.join(changesDir, 'done', 'plan.md'),
+        '- [x] Task 1\n- [x] Task 2\n'
+      );
+      await fs.mkdir(path.join(changesDir, 'empty'), { recursive: true });
+
+      const listCommand = new ListCommand();
+      await listCommand.execute(tempDir, 'changes', { json: true });
+
+      const parsed = JSON.parse(logOutput[0]);
+      const byName = Object.fromEntries(parsed.changes.map((c: any) => [c.name, c]));
+      expect(byName['done'].status).toBe('complete');
+      expect(byName['done'].completedTasks).toBe(2);
+      expect(byName['done'].totalTasks).toBe(2);
+      expect(byName['empty'].status).toBe('no-tasks');
+      expect(byName['empty'].totalTasks).toBe(0);
+    });
+
+    // Scenario: changes mode reports an empty changes set
+    it('emits an empty changes array as JSON when there are no active changes', async () => {
+      const changesDir = path.join(tempDir, '.ratchet', 'changes');
+      await fs.mkdir(changesDir, { recursive: true });
+
+      const listCommand = new ListCommand();
+      await listCommand.execute(tempDir, 'changes', { json: true });
+
+      expect(logOutput).toHaveLength(1);
+      expect(JSON.parse(logOutput[0])).toEqual({ changes: [] });
+    });
+
+    // Scenario: changes mode can sort alphabetically by name (JSON ordering)
+    it('orders changes alphabetically by name when the name sort option is given', async () => {
+      const changesDir = path.join(tempDir, '.ratchet', 'changes');
+      await fs.mkdir(path.join(changesDir, 'gamma'), { recursive: true });
+      await fs.mkdir(path.join(changesDir, 'alpha'), { recursive: true });
+      await fs.mkdir(path.join(changesDir, 'beta'), { recursive: true });
+
+      const listCommand = new ListCommand();
+      await listCommand.execute(tempDir, 'changes', { sort: 'name', json: true });
+
+      const parsed = JSON.parse(logOutput[0]);
+      expect(parsed.changes.map((c: any) => c.name)).toEqual(['alpha', 'beta', 'gamma']);
     });
   });
 });

@@ -1,10 +1,11 @@
+// Mirrors .ratchet/changes/core-remainder-tests/features/core-remainder-tests/file-system.feature
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as nodeFs from 'fs';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { randomUUID } from 'crypto';
-import { FileSystemUtils } from '../../src/utils/file-system.js';
+import { FileSystemUtils, removeMarkerBlock } from '../../src/utils/file-system.js';
 
 describe('FileSystemUtils', () => {
   let testDir: string;
@@ -270,6 +271,31 @@ describe('FileSystemUtils', () => {
       const canWrite = await FileSystemUtils.canWriteFile(filePath);
       expect(canWrite).toBe(true);
     });
+
+    // Scenario: a write to a non-writable path is reported as not writable.
+    // Make the first existing ancestor non-writable (chmod 0o555) and target a
+    // not-yet-existing file beneath it, exercising the ENOENT -> parent W_OK
+    // branch. canWriteFile must report false rather than throwing.
+    it.skipIf(process.platform === 'win32')(
+      'reports a non-writable target as not writable rather than throwing',
+      async () => {
+        const lockedDir = path.join(testDir, 'locked-dir');
+        await fs.mkdir(lockedDir);
+        await fs.chmod(lockedDir, 0o555); // read + execute, no write
+
+        const target = path.join(lockedDir, 'cannot-create.txt');
+
+        let canWrite: boolean;
+        try {
+          canWrite = await FileSystemUtils.canWriteFile(target);
+        } finally {
+          // Restore perms so afterEach can clean up regardless of assertion.
+          await fs.chmod(lockedDir, 0o755);
+        }
+
+        expect(canWrite).toBe(false);
+      }
+    );
   });
 
   describe('joinPath', () => {
@@ -318,5 +344,106 @@ describe('FileSystemUtils', () => {
         '\\server\\share\\repo\\.windsurf\\workflows\\ratchet-archive.md'
       );
     });
+  });
+});
+
+describe('removeMarkerBlock', () => {
+  const START = '<!-- ratchet:start -->';
+  const END = '<!-- ratchet:end -->';
+
+  // Scenario: removeMarkerBlock removes a block that stands on its own lines.
+  it('removes a marker block on its own lines and collapses triple blank lines', () => {
+    const content = [
+      'keep before',
+      '',
+      START,
+      'generated line one',
+      'generated line two',
+      END,
+      '',
+      '',
+      '',
+      'keep after',
+      '',
+    ].join('\n');
+
+    const result = removeMarkerBlock(content, START, END);
+
+    expect(result).not.toContain(START);
+    expect(result).not.toContain(END);
+    expect(result).not.toContain('generated line one');
+    // Triple+ blank lines collapse to a single double blank.
+    expect(result).not.toMatch(/\n{3,}/);
+    expect(result).toContain('keep before');
+    expect(result).toContain('keep after');
+    expect(result).toBe('keep before\n\nkeep after\n');
+  });
+
+  // Scenario: removeMarkerBlock leaves content untouched when markers are
+  // missing or inverted (end before start).
+  it('returns content unchanged when the end marker appears before the start marker', () => {
+    const content = [
+      'intro',
+      END,
+      'middle',
+      START,
+      'outro',
+    ].join('\n');
+
+    const result = removeMarkerBlock(content, START, END);
+    expect(result).toBe(content);
+  });
+
+  it('returns content unchanged when a marker is missing entirely', () => {
+    const content = ['intro', START, 'body', 'outro with no end marker'].join('\n');
+    const result = removeMarkerBlock(content, START, END);
+    expect(result).toBe(content);
+  });
+
+  // Scenario: removeMarkerBlock ignores an inline marker mention.
+  it('ignores an inline marker mention with other characters after it on the line', () => {
+    const content = [
+      'prose that mentions ' + START + ' inline and keeps going',
+      'and ' + END + ' is also inline here, not a marker line',
+      'final line',
+    ].join('\n');
+
+    // No marker stands alone on its own line, so nothing is removed.
+    const result = removeMarkerBlock(content, START, END);
+    expect(result).toBe(content);
+  });
+
+  // Scenario: removeMarkerBlock preserves the original newline style (CRLF).
+  it('preserves CRLF newline style when the content uses \\r\\n', () => {
+    const content = [
+      'keep before',
+      '',
+      START,
+      'generated',
+      END,
+      '',
+      'keep after',
+      '',
+    ].join('\r\n');
+
+    const result = removeMarkerBlock(content, START, END);
+
+    expect(result).not.toContain(START);
+    expect(result).not.toContain(END);
+    // Source line 343 derives the trailing newline style from whether the input
+    // contains '\r\n'; CRLF input yields a CRLF-terminated result.
+    expect(result).toContain('\r\n');
+    expect(result.endsWith('\r\n')).toBe(true);
+    expect(result.endsWith('\n\n')).toBe(false);
+    expect(result).toContain('keep before');
+    expect(result).toContain('keep after');
+  });
+
+  // Scenario: removeMarkerBlock returns empty when removal leaves only whitespace.
+  it('returns an empty string when the content is nothing but the marker block', () => {
+    const content = [START, 'only generated content', END].join('\n');
+
+    const result = removeMarkerBlock(content, START, END);
+    expect(result).toBe('');
   });
 });

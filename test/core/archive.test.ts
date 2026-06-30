@@ -2,8 +2,22 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
+import { parse as parseYaml } from 'yaml';
 import { ArchiveCommand } from '../../src/core/archive.js';
 import { RATCHET_DIR_NAME } from '../../src/core/config.js';
+
+// Mirror of .ratchet/changes/core-remainder-tests/features/core-remainder-tests/archive.feature
+// Drives the interactive @inquirer/prompts (confirm/select) through stubbed answers so the
+// non-`--yes` confirmation branches of archive are reachable under test.
+const { confirmMock, selectMock } = vi.hoisted(() => ({
+  confirmMock: vi.fn(),
+  selectMock: vi.fn(),
+}));
+
+vi.mock('@inquirer/prompts', () => ({
+  confirm: confirmMock,
+  select: selectMock,
+}));
 
 async function writeFile(file: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -63,6 +77,10 @@ describe('ArchiveCommand', () => {
     cwd = process.cwd();
     process.chdir(root);
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // Default: any prompt confirms. Individual tests override per-call as needed.
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValue(true);
+    selectMock.mockReset();
   });
 
   afterEach(async () => {
@@ -229,5 +247,101 @@ describe('ArchiveCommand', () => {
     expect(output).toMatch(/Skipping validation/);
     // Even an invalid feature archives when validation is skipped.
     await expect(fs.access(archivePath('skip-validate'))).resolves.toBeUndefined();
+  });
+
+  it('materializes declared standard links into the store when features are applied', async () => {
+    // Change declares a standard tag in its .ratchet.yaml metadata.
+    const changeDir = await scaffoldChange(root, 'with-standard');
+    await writeFile(
+      path.join(changeDir, '.ratchet.yaml'),
+      'schema: ratchet\nstandards:\n  - testing\n'
+    );
+    // A standard document with that tag exists in the store's standards library so
+    // the reverse "## Implemented by" block can be regenerated too.
+    await writeFile(
+      path.join(root, RATCHET_DIR_NAME, 'standards', 'testing.md'),
+      '---\ntag: testing\n---\n\n# Testing strategy\n\nBody.\n'
+    );
+
+    await new ArchiveCommand().execute('with-standard', { yes: true });
+
+    // Forward link: the per-capability sidecar maps the feature to the declared tag.
+    const sidecarPath = storePath('user-auth/.ratchet.yaml');
+    const sidecar = parseYaml(await fs.readFile(sidecarPath, 'utf-8')) as {
+      features: Record<string, string[]>;
+    };
+    expect(sidecar.features['login.feature']).toEqual(['testing']);
+
+    // Reverse link: the standard gained an "## Implemented by" block listing the feature.
+    const standardDoc = await fs.readFile(
+      path.join(root, RATCHET_DIR_NAME, 'standards', 'testing.md'),
+      'utf-8'
+    );
+    expect(standardDoc).toMatch(/## Implemented by/);
+    expect(standardDoc).toMatch(/user-auth\/login\.feature/);
+
+    // And the change itself was archived.
+    await expect(fs.access(archivePath('with-standard'))).resolves.toBeUndefined();
+
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/Standard links materialized for: testing/);
+  });
+
+  it('cancels the archive when the skip-validation confirmation is declined', async () => {
+    await scaffoldChange(root, 'decline-skip');
+    // No --yes flag, validation disabled → archive asks to confirm the skip.
+    confirmMock.mockResolvedValueOnce(false);
+
+    await new ArchiveCommand().execute('decline-skip', { noValidate: true });
+
+    // Declining cancels: the change is NOT archived and stays in place.
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/Archive cancelled/);
+    await expect(
+      fs.access(path.join(root, RATCHET_DIR_NAME, 'changes', 'decline-skip'))
+    ).resolves.toBeUndefined();
+    await expect(fs.access(archivePath('decline-skip'))).rejects.toThrow();
+    // The skip-validation confirm was the prompt shown.
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the feature store but still archives when the feature-store prompt is declined', async () => {
+    await scaffoldChange(root, 'decline-store');
+    // No --yes: archive asks "Proceed with feature store update?" — decline it.
+    confirmMock.mockResolvedValueOnce(false);
+
+    await new ArchiveCommand().execute('decline-store', {});
+
+    // Store left untouched, but the change is still moved to the archive.
+    await expect(fs.access(storePath('user-auth/login.feature'))).rejects.toThrow();
+    await expect(fs.access(archivePath('decline-store'))).resolves.toBeUndefined();
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/Skipping feature store update\. Proceeding with archive/);
+  });
+
+  it('selects a change interactively when no name is given', async () => {
+    await scaffoldChange(root, 'pick-me');
+    // selectChange resolves to the chosen change name; feature-store confirm is true by default.
+    selectMock.mockResolvedValueOnce('pick-me');
+
+    await new ArchiveCommand().execute(undefined, {});
+
+    expect(selectMock).toHaveBeenCalledTimes(1);
+    await expect(fs.access(archivePath('pick-me'))).resolves.toBeUndefined();
+  });
+
+  it('aborts gracefully when the interactive change selection is cancelled', async () => {
+    await scaffoldChange(root, 'pick-me');
+    // select() rejects on Ctrl+C; selectChange swallows it and returns null.
+    selectMock.mockRejectedValueOnce(new Error('User force closed the prompt'));
+
+    await new ArchiveCommand().execute(undefined, {});
+
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toMatch(/No change selected\. Aborting/);
+    // Nothing archived.
+    await expect(
+      fs.access(path.join(root, RATCHET_DIR_NAME, 'changes', 'pick-me'))
+    ).resolves.toBeUndefined();
   });
 });

@@ -1,13 +1,22 @@
+// Covers: core-remainder-tests/version-guard.feature
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import {
   runVersionGuard,
   writeShouldPublishOutput,
+  fetchPublishedVersionsFromRegistry,
   type PublishedVersionsResult,
 } from '../../src/core/ci/version-guard.js';
 import { PUBLISH, SKIP } from '../../src/core/ci/version-decision.js';
+
+// Mock the registry shell-out so the default fetcher is unit-testable offline.
+// The runVersionGuard tests below inject their own fetcher and never reach this,
+// so the mock is inert for them.
+vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
+const execFileSyncMock = execFileSync as unknown as ReturnType<typeof vi.fn>;
 
 /**
  * The version-guard runner is the thin bridge between the workflow's environment
@@ -163,5 +172,58 @@ describe('should_publish step output (GITHUB_OUTPUT)', () => {
 
   it('is a no-op when GITHUB_OUTPUT is unset (keeps the local/pure path clean)', () => {
     expect(() => writeShouldPublishOutput({}, true)).not.toThrow();
+  });
+});
+
+/**
+ * The DEFAULT published-set source shells out to `npm view <pkg> versions --json`
+ * via `execFileSync`. These tests mock `node:child_process` so the fetcher is
+ * exercised offline: an E404 ("package not found") failure resolves to the empty
+ * set (so the first release publishes), a bare-string JSON return is normalized
+ * to a one-element list, a JSON array is mapped via String, and any other failure
+ * is reported as an ambiguous error so the runner can fail SAFE.
+ */
+describe('fetchPublishedVersionsFromRegistry (default registry source, mocked)', () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('resolves an E404 (package-not-found) failure to an empty set', () => {
+    execFileSyncMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error('npm ERR! 404'), { stderr: 'E404 Not Found' });
+    });
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result).toEqual({ status: 'ok', versions: [] });
+  });
+
+  it('normalizes a bare-string JSON return to a single-version list', () => {
+    execFileSyncMock.mockReturnValueOnce(JSON.stringify('1.0.0'));
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result).toEqual({ status: 'ok', versions: ['1.0.0'] });
+  });
+
+  it('maps a JSON array return via String', () => {
+    execFileSyncMock.mockReturnValueOnce(JSON.stringify(['1.0.0', '1.1.0', '2.0.0']));
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result).toEqual({ status: 'ok', versions: ['1.0.0', '1.1.0', '2.0.0'] });
+  });
+
+  it('reports a genuine non-404 failure as an ambiguous error', () => {
+    execFileSyncMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error('ETIMEDOUT'), { stderr: 'network timeout' });
+    });
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.message).toContain('ETIMEDOUT');
+    }
   });
 });

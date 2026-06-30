@@ -121,6 +121,87 @@ describe('GherkinParser', () => {
     });
   });
 
+  // features/eval-judge/skip-filters.feature — tag capture is general (not
+  // skip-specific); `@skip` is just one consumer of `FeatureScenario.tags`.
+  describe('Tag parsing', () => {
+    it('attaches a single tag to the Scenario it precedes', () => {
+      const feature = parseFeatureFile(
+        `Feature: F
+  @skip
+  Scenario: s
+    Given a
+    Then b
+`
+      );
+      expect(feature.scenarios[0].tags).toEqual(['@skip']);
+    });
+
+    it('defaults to an empty array when no tags precede the Scenario', () => {
+      const feature = parseFeatureFile(
+        `Feature: F
+  Scenario: s
+    Given a
+    Then b
+`
+      );
+      expect(feature.scenarios[0].tags).toEqual([]);
+    });
+
+    it('captures multiple tags on one line', () => {
+      const feature = parseFeatureFile(
+        `Feature: F
+  @wip @skip
+  Scenario: s
+    Given a
+    Then b
+`
+      );
+      expect(feature.scenarios[0].tags).toEqual(['@wip', '@skip']);
+    });
+
+    it('captures multiple tags across separate lines', () => {
+      const feature = parseFeatureFile(
+        `Feature: F
+  @wip
+  @skip
+  Scenario: s
+    Given a
+    Then b
+`
+      );
+      expect(feature.scenarios[0].tags).toEqual(['@wip', '@skip']);
+    });
+
+    it('resets the tag buffer between scenarios', () => {
+      const feature = parseFeatureFile(
+        `Feature: F
+  @skip
+  Scenario: first
+    Given a
+    Then b
+
+  Scenario: second
+    Given a
+    Then b
+`
+      );
+      expect(feature.scenarios[0].tags).toEqual(['@skip']);
+      expect(feature.scenarios[1].tags).toEqual([]);
+    });
+
+    it('does not leak a feature-level tag onto the first scenario', () => {
+      const feature = parseFeatureFile(
+        `@featureTag
+Feature: F
+  Scenario: s
+    Given a
+    Then b
+`
+      );
+      expect(feature.scenarios[0].tags).toEqual([]);
+    });
+  });
+
   describe('tolerance (lenient parse)', () => {
     it('does not attach Background steps to scenarios', () => {
       const feature = parseFeatureFile(

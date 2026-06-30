@@ -42,6 +42,7 @@ export {
   type Quorum,
   type ResolvedJury,
 } from './jury.js';
+export { resolveSkip, SKIP_TAG, type SkipReason } from './skip.js';
 export {
   generateRunId,
   persistRun,

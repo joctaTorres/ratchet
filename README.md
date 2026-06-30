@@ -231,7 +231,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
 | `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
-| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--json`) |
+| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--include-skipped`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
 | `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
@@ -436,11 +436,18 @@ the configured quorum, the case is recorded `unjudged` — never silently `fail`
 — so judge noise can't manufacture a regression. Prefer a `deterministic`
 binding.
 
-**Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
-is a case that **passed in the baseline and fails now**; new/retired cases are
-diffed, not failed. `unjudged` keeps a run incomplete and never counts as a pass.
-Unbound cases (no fixture) can take a manual verdict via `ratchet eval record`
-(a `fail` requires `--evidence`).
+**Verdicts & baseline.** Each case is `pass`, `fail`, `unjudged`, or `skipped`. A
+regression is a case that **passed in the baseline and fails now**; new/retired
+cases are diffed, not failed. `unjudged` keeps a run incomplete and never counts
+as a pass. Unbound cases (no fixture) can take a manual verdict via `ratchet
+eval record` (a `fail` requires `--evidence`).
+
+**Skip filters.** A case tagged `@skip` in its `.feature` file, or whose id
+matches a project `eval.skip` glob pattern, is excluded from judging by
+default and recorded `skipped` — counted in the scorecard, never silently
+dropped, and never blocking baseline promotion. `--include-skipped` overrides
+both sources for a run. Skipping a case that was `pass` in the promoted
+baseline prints a visible warning naming it.
 
 **One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
 place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a

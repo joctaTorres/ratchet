@@ -40,11 +40,12 @@ export class GherkinParser {
     let sawFeature = false;
     const scenarios: FeatureScenario[] = [];
 
-    let current: { name: string; steps: Step[]; isOutline: boolean } | null = null;
+    let current: { name: string; steps: Step[]; isOutline: boolean; tags: string[] } | null = null;
     let inBackground = false;
     let inExamples = false;
     let inDocString = false;
     let docStringFence: '"""' | '```' | null = null;
+    let pendingTags: string[] = [];
 
     const flush = () => {
       if (current) {
@@ -52,6 +53,7 @@ export class GherkinParser {
           name: current.name,
           steps: current.steps,
           isOutline: current.isOutline,
+          tags: current.tags,
         });
         current = null;
       }
@@ -80,8 +82,10 @@ export class GherkinParser {
         continue;
       }
 
-      // Skip tags (e.g. @smoke @wip) - they annotate the next block.
+      // Tags (e.g. @smoke @wip) annotate the next Scenario/Scenario Outline
+      // block; accumulate them until that block is reached.
       if (trimmed.startsWith('@')) {
+        pendingTags.push(...trimmed.split(/\s+/).filter((t) => t.startsWith('@')));
         continue;
       }
 
@@ -91,6 +95,7 @@ export class GherkinParser {
         name = featureMatch[1].trim();
         inBackground = false;
         inExamples = false;
+        pendingTags = [];
         continue;
       }
 
@@ -99,6 +104,7 @@ export class GherkinParser {
         flush();
         inBackground = true;
         inExamples = false;
+        pendingTags = [];
         continue;
       }
 
@@ -111,7 +117,9 @@ export class GherkinParser {
           name: scenarioMatch[2].trim(),
           steps: [],
           isOutline,
+          tags: pendingTags,
         };
+        pendingTags = [];
         inBackground = false;
         inExamples = false;
         continue;

@@ -1,14 +1,16 @@
 /**
  * Eval scorecard and baseline regression diff.
  *
- * The scorecard counts pass/fail/unjudged and lists failing cases with their
- * evidence. The baseline diff classifies each case against the promoted
+ * The scorecard counts pass/fail/unjudged/skipped and lists failing cases with
+ * their evidence. The baseline diff classifies each case against the promoted
  * baseline run:
  *   - regression = pass in baseline AND fail now (the thing we guard against)
  *   - new        = present only in the current run
  *   - retired    = present only in the baseline (neither is a regression)
+ *   - skippedRegressions = pass in baseline AND skipped now (visible, not failed)
  *
- * `unjudged` keeps a run incomplete and never counts as a pass. The overall
+ * `unjudged` keeps a run incomplete and never counts as a pass; `skipped` is an
+ * intentional, counted exclusion and never blocks completeness. The overall
  * verdict is decided in exactly one place — the verdict-aggregation core
  * (`aggregate.ts`) — as a logical AND over named contributors; `buildReport`
  * routes `overall` through it and exposes the per-contributor breakdown.
@@ -26,6 +28,8 @@ export interface Scorecard {
   pass: number;
   fail: number;
   unjudged: number;
+  /** Cases intentionally excluded by a skip filter; counted in `total`, never unjudged. */
+  skipped: number;
   /** A run is complete when no case is unjudged. */
   complete: boolean;
 }
@@ -42,6 +46,8 @@ export interface BaselineDiff {
   regressions: string[];
   newCases: string[];
   retiredCases: string[];
+  /** Case ids whose baseline verdict was `pass` and are now `skipped`. */
+  skippedRegressions: string[];
 }
 
 export interface EvalReport {
@@ -69,13 +75,15 @@ function scoreRun(run: EvalRun): Scorecard {
   let pass = 0;
   let fail = 0;
   let unjudged = 0;
+  let skipped = 0;
   for (const c of run.cases) {
     const v = verdictOf(run, c.id);
     if (v === 'pass') pass++;
     else if (v === 'fail') fail++;
+    else if (v === 'skipped') skipped++;
     else unjudged++;
   }
-  return { total: run.cases.length, pass, fail, unjudged, complete: unjudged === 0 };
+  return { total: run.cases.length, pass, fail, unjudged, skipped, complete: unjudged === 0 };
 }
 
 function failingCases(run: EvalRun): FailingCase[] {
@@ -99,21 +107,29 @@ export function diffAgainstBaseline(
   baseline: EvalRun | null
 ): BaselineDiff {
   if (!baseline) {
-    return { baselineRunId: null, regressions: [], newCases: [], retiredCases: [] };
+    return { baselineRunId: null, regressions: [], newCases: [], retiredCases: [], skippedRegressions: [] };
   }
   const currentIds = new Set(run.cases.map((c) => c.id));
   const baselineIds = new Set(baseline.cases.map((c) => c.id));
 
   const regressions: string[] = [];
+  const skippedRegressions: string[] = [];
   for (const c of run.cases) {
     if (!baselineIds.has(c.id)) continue;
     const wasPass = (baseline.verdicts[c.id]?.verdict ?? 'unjudged') === 'pass';
-    const nowFail = verdictOf(run, c.id) === 'fail';
-    if (wasPass && nowFail) regressions.push(c.id);
+    const now = verdictOf(run, c.id);
+    if (wasPass && now === 'fail') regressions.push(c.id);
+    if (wasPass && now === 'skipped') skippedRegressions.push(c.id);
   }
   const newCases = [...currentIds].filter((id) => !baselineIds.has(id)).sort();
   const retiredCases = [...baselineIds].filter((id) => !currentIds.has(id)).sort();
-  return { baselineRunId: baseline.runId, regressions: regressions.sort(), newCases, retiredCases };
+  return {
+    baselineRunId: baseline.runId,
+    regressions: regressions.sort(),
+    newCases,
+    retiredCases,
+    skippedRegressions: skippedRegressions.sort(),
+  };
 }
 
 /** Build the full report for a run, loading the baseline if one is promoted. */

@@ -30,6 +30,7 @@ const CASE: EvalCase = {
     { keyword: 'Given', text: 'a project' },
     { keyword: 'Then', text: 'it works' },
   ],
+  tags: [],
 };
 
 const TWO_CLAUSE_CASE: EvalCase = {
@@ -43,6 +44,7 @@ const TWO_CLAUSE_CASE: EvalCase = {
     { keyword: 'Then', text: 'clause one holds' },
     { keyword: 'And', text: 'clause two holds' },
   ],
+  tags: [],
 };
 
 const llmJudgeBinding = (overrides: Partial<LlmJudgeBinding> = {}): LlmJudgeBinding => ({

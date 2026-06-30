@@ -46,3 +46,8 @@ export function resolveContributorGate(root: string, flags: GateFlags): Set<Cont
 export function resolveJuryDefault(root: string): Jury | undefined {
   return readProjectConfig(root)?.eval?.jury;
 }
+
+/** Resolve the project-level skip-filter glob patterns (`eval.skip`). */
+export function resolveSkipConfig(root: string): string[] | undefined {
+  return readProjectConfig(root)?.eval?.skip;
+}

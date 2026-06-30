@@ -25,6 +25,7 @@ function mkCase(id: string): EvalCase {
     scenario: id,
     source: 'f/x.feature',
     steps: [{ keyword: 'Given', text: 'a' }, { keyword: 'Then', text: 'b' }],
+    tags: [],
   };
 }
 
@@ -35,10 +36,10 @@ function mkRun(
 ): EvalRun {
   const ids = Object.keys(verdicts);
   // A judged case is a bound case: pass/fail default to a deterministic binding
-  // kind so the aggregation core attributes them to a contributor; unjudged
-  // cases default to unbound (null), as in a real run.
+  // kind so the aggregation core attributes them to a contributor; unjudged and
+  // skipped cases default to unbound (null), as in a real run.
   const kindFor = (v: { verdict: Verdict; kind?: BindingKind | null }): BindingKind | null =>
-    v.kind !== undefined ? v.kind : v.verdict === 'unjudged' ? null : 'deterministic';
+    v.kind !== undefined ? v.kind : v.verdict === 'unjudged' || v.verdict === 'skipped' ? null : 'deterministic';
   return {
     runId,
     createdAt: new Date().toISOString(),
@@ -88,6 +89,36 @@ describe('scorecard', () => {
     persistRun(root, mkRun('r1', { 'a#p': { verdict: 'pass' } }));
     expect((await buildReport(root, 'r1')).scorecard.complete).toBe(true);
     expect((await buildReport(root, 'r1')).overall).toBe('pass');
+  });
+
+  // features/eval-judge/skip-filters.feature — a skipped case is counted in the
+  // scorecard's total, separately from unjudged, and never blocks completeness.
+  it('counts skipped separately from unjudged and includes it in total', async () => {
+    const root = makeProject();
+    persistRun(
+      root,
+      mkRun('r1', {
+        'a#pass': { verdict: 'pass' },
+        'a#unj': { verdict: 'unjudged' },
+        'a#skip': { verdict: 'skipped', reason: 'Skipped: tagged @skip in f.feature.' },
+      })
+    );
+    const report = await buildReport(root, 'r1');
+    expect(report.scorecard).toMatchObject({ total: 3, pass: 1, fail: 0, unjudged: 1, skipped: 1 });
+  });
+
+  it('does not block completeness or baseline promotion when every case is skipped or judged', async () => {
+    const root = makeProject();
+    persistRun(
+      root,
+      mkRun('r1', {
+        'a#pass': { verdict: 'pass' },
+        'a#skip': { verdict: 'skipped' },
+      })
+    );
+    const report = await buildReport(root, 'r1');
+    expect(report.scorecard.complete).toBe(true);
+    expect(() => promoteBaseline(root, 'r1')).not.toThrow();
   });
 });
 
@@ -197,6 +228,31 @@ describe('baseline diff', () => {
     const current = mkRun('cur', { 'a#x': { verdict: 'fail', reason: 'r' } });
     const diff = diffAgainstBaseline(current, baseline);
     expect(diff.regressions).toEqual([]);
+  });
+
+  // features/eval-judge/skip-filters.feature — skipping a case that was passing
+  // in the baseline is flagged via skippedRegressions, distinct from regressions
+  // (which only fire on a `fail`, never a `skipped`).
+  it('flags skippedRegressions for a case that was pass in the baseline and is now skipped', () => {
+    const baseline = mkRun('base', { 'a#x': { verdict: 'pass' } });
+    const current = mkRun('cur', { 'a#x': { verdict: 'skipped' } });
+    const diff = diffAgainstBaseline(current, baseline);
+    expect(diff.skippedRegressions).toEqual(['a#x']);
+    expect(diff.regressions).toEqual([]);
+  });
+
+  it('leaves skippedRegressions empty for a case with no entry in the baseline', () => {
+    const baseline = mkRun('base', { 'a#other': { verdict: 'pass' } });
+    const current = mkRun('cur', { 'a#x': { verdict: 'skipped' } });
+    const diff = diffAgainstBaseline(current, baseline);
+    expect(diff.skippedRegressions).toEqual([]);
+  });
+
+  it('leaves skippedRegressions empty for a case that was already failing or unjudged in the baseline', () => {
+    const baseline = mkRun('base', { 'a#x': { verdict: 'fail', reason: 'r' } });
+    const current = mkRun('cur', { 'a#x': { verdict: 'skipped' } });
+    const diff = diffAgainstBaseline(current, baseline);
+    expect(diff.skippedRegressions).toEqual([]);
   });
 });
 

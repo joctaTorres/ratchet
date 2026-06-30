@@ -28,6 +28,7 @@ const CASE: EvalCase = {
   scenario: 'One',
   source: 'f/x.feature',
   steps: [{ keyword: 'Given', text: 'a' }, { keyword: 'Then', text: 'b' }],
+  tags: [],
 };
 
 function sampleRun(runId: string): EvalRun {

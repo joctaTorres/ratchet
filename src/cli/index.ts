@@ -671,6 +671,10 @@ withScopeFlags(
     .option('--no-llm-judge', 'Disable the llm-judge contributor for this run')
     .option('--no-invariants', 'Disable the invariants contributor for this run')
     .option('--judge <mode>', '[deprecated] Legacy judge-mode alias: auto | deterministic | llm-judge')
+    .option(
+      '--include-skipped',
+      'Judge cases that would otherwise be excluded by skip filters (eval.skip config or an in-file @skip tag)'
+    )
     .option('--json', 'Output as JSON')
 ).action(async (options: EvalRunOptions) => {
   try {

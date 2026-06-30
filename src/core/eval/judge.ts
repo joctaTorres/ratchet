@@ -37,7 +37,7 @@ import {
   type AgentRequestContext,
 } from '../batch/engine/index.js';
 
-export type Verdict = 'pass' | 'fail' | 'unjudged';
+export type Verdict = 'pass' | 'fail' | 'unjudged' | 'skipped';
 
 /** The independent, evidence-cited result of one rubric clause. */
 export interface ClauseResult {

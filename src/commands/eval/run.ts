@@ -1,5 +1,5 @@
 /**
- * `ratchet eval run [scope] [--gate <ids>] [--only <ids>] [--no-llm-judge] [--judge <mode>] [--json]`
+ * `ratchet eval run [scope] [--gate <ids>] [--only <ids>] [--no-llm-judge] [--judge <mode>] [--include-skipped] [--json]`
  *
  * Snapshot the in-scope set, judge every bound case whose contributor is enabled
  * through the engine seams against its fixture working copy, persist the run
@@ -7,11 +7,21 @@
  * disabled contributor — and any unbound case — records `unjudged`. Contributor
  * selection comes from `eval.gate` config overridden by the CLI selectors
  * (`--gate`/`--only`/`--no-llm-judge`); `--judge` is a deprecated legacy alias.
+ * A case matching `eval.skip` config or an in-file `@skip` tag is excluded and
+ * recorded `skipped` unless `--include-skipped` is passed; skipping a case that
+ * was `pass` in the baseline prints a visible warning.
  */
 
 import chalk from 'chalk';
 import { executeRun, buildReport, type EvalReport } from '../../core/eval/index.js';
-import { projectRoot, resolveScope, resolveContributorGate, resolveJuryDefault, type ScopeFlags } from './shared.js';
+import {
+  projectRoot,
+  resolveScope,
+  resolveContributorGate,
+  resolveJuryDefault,
+  resolveSkipConfig,
+  type ScopeFlags,
+} from './shared.js';
 
 export interface EvalRunOptions extends ScopeFlags {
   /** `--gate <ids>`: set the enabled contributor set outright. */
@@ -24,7 +34,16 @@ export interface EvalRunOptions extends ScopeFlags {
   invariants?: boolean;
   /** Legacy `--judge <mode>` alias (deprecated), mapped onto the gate. */
   judge?: string;
+  /** `--include-skipped`: judge cases that would otherwise be excluded by a skip filter. */
+  includeSkipped?: boolean;
   json?: boolean;
+}
+
+/** One warning per case whose baseline verdict was `pass` and is now `skipped`. */
+function baselineSkipWarnings(diff: EvalReport['diff']): string[] {
+  return diff.skippedRegressions.map(
+    (id) => `Case '${id}' was 'pass' in the baseline and is now skipped.`
+  );
 }
 
 export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void> {
@@ -39,8 +58,16 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
   });
 
   const jury = resolveJuryDefault(root);
-  const { run, warnings } = await executeRun(root, { scope, gate, judge: { jury } });
+  const skip = resolveSkipConfig(root);
+  const { run, warnings: specWarnings } = await executeRun(root, {
+    scope,
+    gate,
+    judge: { jury },
+    skip,
+    includeSkipped: options.includeSkipped,
+  });
   const report = await buildReport(root, run.runId);
+  const warnings = [...specWarnings, ...baselineSkipWarnings(report.diff)];
 
   if (options.json) {
     console.log(
@@ -98,7 +125,8 @@ function renderRun(runId: string, report: EvalReport, warnings: string[]): void 
   console.log(
     `  ${chalk.green(`${scorecard.pass} pass`)}  ` +
       `${chalk.red(`${scorecard.fail} fail`)}  ` +
-      `${chalk.yellow(`${scorecard.unjudged} unjudged`)}  (of ${scorecard.total})`
+      `${chalk.yellow(`${scorecard.unjudged} unjudged`)}  ` +
+      `${chalk.dim(`${scorecard.skipped} skipped`)}  (of ${scorecard.total})`
   );
   // Run-level gate violations (invariants, then regression) come first.
   renderRunLevelViolations(report);

@@ -95,6 +95,10 @@ export const ProjectConfigSchema = z.object({
       // Project-level jury default (votes/quorum/panel) for the llm-judge
       // contributor, overridable per binding via `LlmJudgeBinding.jury`.
       jury: JurySchema.optional(),
+      // Project-level skip-filter glob patterns, matched against the full
+      // case id. `--include-skipped` on `eval run` overrides this and the
+      // in-file `@skip` tag together for that run.
+      skip: z.array(z.string().min(1)).optional(),
     })
     .partial()
     .optional()

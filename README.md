@@ -436,6 +436,17 @@ Contributors are the extension point for future gate capabilities. An
 an unfinished run can never become the regression baseline future runs are judged
 against.
 
+**Invariants (`.ratchet/evals/invariants.yaml`).** The `invariants` contributor
+draws its run-level, anti-gaming checks from a checked-in manifest: a YAML list
+of invariants, each one of three kinds — `deterministic` (an absolute predicate),
+`monotonic` (a named measure that must not decrease vs the baseline), `snapshot`
+(output diffed against a checked-in golden) — and each carrying an `active` flag
+so an invariant can be scaffolded inert before it is turned on. The typed loader
+is **fail-closed**: an absent manifest is the only path to an empty set, and a
+malformed or invalid manifest surfaces an error rather than degrading to a
+vacuous pass. See the [eval invariant manifest](docs/eval-invariants.md)
+Reference doc for the schema and loader contract.
+
 **The gate is configurable.** Which contributors execute and gate a run is
 selectable, generalizing the old `--judge` flag: set `eval.gate` in
 `.ratchet/config.yaml` (a `contributor → boolean` map; unset ⇒ all enabled) and

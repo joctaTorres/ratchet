@@ -113,6 +113,44 @@ phases:
         run-level, fail-closed on an unevaluable invariant, and that `ratchet init`
         emits the tool-agnostic default manifest with the stack-agnostic invariant
         active and stack-specific ones inert
+    changes:
+      - name: invariant-manifest-schema
+        after: []
+        done: >-
+          a typed loader parses `.ratchet/evals/invariants.yaml` into the three
+          invariant kinds (`deterministic` absolute predicate, `monotonic`
+          non-decreasing measure vs baseline, `snapshot` vs a checked-in golden)
+          each with an `active` flag, returning an empty set when the file is
+          absent and surfacing a parse/validation error (never silently empty) so
+          a malformed manifest fails closed
+      - name: invariant-kinds-evaluator
+        after: [invariant-manifest-schema]
+        done: >-
+          an evaluator computes a per-invariant pass/fail/unevaluable outcome for
+          all three kinds — deterministic predicate over run state, monotonic
+          measure compared to the baseline run's recorded value, snapshot compared
+          to its golden — recording each invariant's measure/evidence and treating
+          any kind that cannot be evaluated (missing baseline measure, absent
+          golden, predicate error) as a fail-closed violation, not a pass
+      - name: invariants-contributor
+        after: [invariant-kinds-evaluator]
+        done: >-
+          the `invariants` contributor in aggregate.ts evaluates the loaded
+          manifest's ACTIVE invariants via the evaluator (inert ones skipped, never
+          counted as vacuous passes), a violated invariant is a hard fail surfaced
+          first as a sibling to regression, the contributor runs run-level on every
+          `eval run` and batch `verify`, toggles via `eval.gate.invariants` /
+          `--no-invariants`, and fails closed when any active invariant is
+          unevaluable
+      - name: init-default-manifest
+        after: [invariant-manifest-schema]
+        done: >-
+          `ratchet init` writes one agent-neutral `.ratchet/evals/invariants.yaml`
+          with `spec-not-weakened` (scenario count) ACTIVE and the stack-specific
+          `tests-still-exist` / `public-api-unchanged` scaffolded-but-inert
+          (detected where possible, else a commented per-stack placeholder), with
+          no ratchet-specific toolchain string and never an active-but-vacuous
+          invariant
 
   # ---------------------------------------------------------------------------
   - name: judge-hardening

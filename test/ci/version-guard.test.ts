@@ -1,13 +1,23 @@
+// Covers: core-remainder-tests/version-guard.feature
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import {
   runVersionGuard,
   writeShouldPublishOutput,
+  fetchPublishedVersionsFromRegistry,
   type PublishedVersionsResult,
 } from '../../src/core/ci/version-guard.js';
 import { PUBLISH, SKIP } from '../../src/core/ci/version-decision.js';
+
+// Mock the registry shell-out so the default fetcher is unit-testable offline.
+// The runVersionGuard tests below inject their own fetcher and never reach this,
+// so the mock is inert for them.
+vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
+const execFileSyncMock = execFileSync as unknown as ReturnType<typeof vi.fn>;
 
 /**
  * The version-guard runner is the thin bridge between the workflow's environment
@@ -57,6 +67,23 @@ describe('runVersionGuard', () => {
     const result = runVersionGuard(env({ version: '0.1.0', published: '' }));
 
     expect(result.should_publish).toBe(true);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('falls back to the repo package.json version when PACKAGE_VERSION is unset', () => {
+    // No PACKAGE_VERSION override forces resolveLocalVersion to read the real
+    // package.json; the PUBLISHED_VERSIONS override keeps the registry untouched.
+    // The repo's own version is already published, so this is a SKIP — but the
+    // point is the local version was resolved from package.json without error.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(
+      readFileSync(path.resolve(here, '../../package.json'), 'utf8')
+    ) as { version: string };
+
+    const result = runVersionGuard({ PUBLISHED_VERSIONS: pkg.version });
+
+    expect(result.should_publish).toBe(false);
+    expect(result.decision.outcome).toBe(SKIP);
     expect(result.exitCode).toBe(0);
   });
 });
@@ -163,5 +190,68 @@ describe('should_publish step output (GITHUB_OUTPUT)', () => {
 
   it('is a no-op when GITHUB_OUTPUT is unset (keeps the local/pure path clean)', () => {
     expect(() => writeShouldPublishOutput({}, true)).not.toThrow();
+  });
+});
+
+/**
+ * The DEFAULT published-set source shells out to `npm view <pkg> versions --json`
+ * via `execFileSync`. These tests mock `node:child_process` so the fetcher is
+ * exercised offline: an E404 ("package not found") failure resolves to the empty
+ * set (so the first release publishes), a bare-string JSON return is normalized
+ * to a one-element list, a JSON array is mapped via String, and any other failure
+ * is reported as an ambiguous error so the runner can fail SAFE.
+ */
+describe('fetchPublishedVersionsFromRegistry (default registry source, mocked)', () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('resolves an E404 (package-not-found) failure to an empty set', () => {
+    execFileSyncMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error('npm ERR! 404'), { stderr: 'E404 Not Found' });
+    });
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result).toEqual({ status: 'ok', versions: [] });
+  });
+
+  it('normalizes a bare-string JSON return to a single-version list', () => {
+    execFileSyncMock.mockReturnValueOnce(JSON.stringify('1.0.0'));
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result).toEqual({ status: 'ok', versions: ['1.0.0'] });
+  });
+
+  it('maps a JSON array return via String', () => {
+    execFileSyncMock.mockReturnValueOnce(JSON.stringify(['1.0.0', '1.1.0', '2.0.0']));
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result).toEqual({ status: 'ok', versions: ['1.0.0', '1.1.0', '2.0.0'] });
+  });
+
+  it('treats a non-array, non-string JSON return as an empty set', () => {
+    // `npm view` normally returns an array (or a bare string); any other JSON
+    // shape (e.g. an object) is defensively normalized to an empty set.
+    execFileSyncMock.mockReturnValueOnce(JSON.stringify({ unexpected: true }));
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result).toEqual({ status: 'ok', versions: [] });
+  });
+
+  it('reports a genuine non-404 failure as an ambiguous error', () => {
+    execFileSyncMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error('ETIMEDOUT'), { stderr: 'network timeout' });
+    });
+
+    const result = fetchPublishedVersionsFromRegistry('ratchet-ai');
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.message).toContain('ETIMEDOUT');
+    }
   });
 });

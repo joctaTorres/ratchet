@@ -15,7 +15,10 @@ export const ART_COLUMN_WIDTH = 20;
 const MIN_WIDTH = 58;
 
 /**
- * Welcome text content (right column)
+ * Welcome text content (right column).
+ *
+ * Module-private: exercised through the public `showWelcomeScreen` seam (its
+ * lines are written to stdout), not imported by tests directly.
  */
 function getWelcomeText(): string[] {
   return [
@@ -36,7 +39,10 @@ function getWelcomeText(): string[] {
 }
 
 /**
- * Renders a single frame with side-by-side layout
+ * Renders a single frame with side-by-side layout.
+ *
+ * Module-private: exercised through `showWelcomeScreen` (its padded output is
+ * what `showWelcomeScreen` writes to stdout).
  */
 function renderFrame(artLines: string[], textLines: string[]): string {
   const maxLines = Math.max(artLines.length, textLines.length);
@@ -60,7 +66,10 @@ function renderFrame(artLines: string[], textLines: string[]): string {
 }
 
 /**
- * Checks if the terminal supports animation
+ * Checks if the terminal supports animation.
+ *
+ * Module-private: its TTY / NO_COLOR / width branches are reached through
+ * `showWelcomeScreen` (which gates the animated vs. static path on this result).
  */
 function canAnimate(): boolean {
   // Must be TTY
@@ -77,7 +86,10 @@ function canAnimate(): boolean {
 }
 
 /**
- * Wait for Enter key press
+ * Wait for Enter key press.
+ *
+ * Module-private: its non-TTY and raw-mode keypress branches are reached
+ * through `showWelcomeScreen` (which awaits it on the animated path).
  */
 function waitForEnter(): Promise<void> {
   return new Promise((resolve) => {
@@ -117,8 +129,15 @@ function waitForEnter(): Promise<void> {
 }
 
 /**
- * Shows the animated welcome screen.
- * Returns when user presses Enter.
+ * Shows the welcome screen and resolves once the user presses Enter (or
+ * immediately when input is non-interactive).
+ *
+ * The public seam for the module: it composes the private helpers
+ * (`getWelcomeText`/`renderFrame`/`canAnimate`/`waitForEnter`), which are
+ * exercised through this function rather than exported. When the terminal
+ * supports animation (`canAnimate`) it renders an animated loop and blocks on
+ * `waitForEnter`; otherwise it writes a single static frame and returns without
+ * blocking. Ctrl+C during the wait exits the process.
  */
 export async function showWelcomeScreen(): Promise<void> {
   const textLines = getWelcomeText();

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -353,6 +353,25 @@ ${RATCHET_MARKERS.end}`);
       expect(result.files).toContain('.opencode/command/rct-propose.md');
       expect(result.files).toContain('.opencode/command/ratchet-new.md');
     });
+
+    it('swallows a readdir failure and returns no files for that pattern', async () => {
+      // Directory exists (so directoryExists passes) but readdir throws —
+      // exercises the catch in findLegacySlashCommandFiles.
+      const dirPath = path.join(testDir, '.cursor', 'commands');
+      await fs.mkdir(dirPath, { recursive: true });
+      await fs.writeFile(path.join(dirPath, 'ratchet-proposal.md'), 'content');
+
+      const readdirSpy = vi
+        .spyOn(fs, 'readdir')
+        .mockRejectedValue(new Error('EIO: cannot read directory'));
+      try {
+        // Must not throw; the cursor pattern yields nothing because readdir failed.
+        const result = await detectLegacySlashCommands(testDir);
+        expect(result.files).not.toContain('.cursor/commands/ratchet-proposal.md');
+      } finally {
+        readdirSpy.mockRestore();
+      }
+    });
   });
 
   describe('detectLegacyStructureFiles', () => {
@@ -589,6 +608,74 @@ ${RATCHET_MARKERS.end}`);
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors[0]).toContain('NON_EXISTENT.md');
     });
+
+    it('records (and swallows) an error when deleting a slash-command directory fails', async () => {
+      const dirPath = path.join(testDir, '.claude', 'commands', 'ratchet');
+      await fs.mkdir(dirPath, { recursive: true });
+      await fs.writeFile(path.join(dirPath, 'proposal.md'), 'content');
+
+      const detection = await detectLegacyArtifacts(testDir);
+
+      const rmSpy = vi.spyOn(fs, 'rm').mockRejectedValue(new Error('EPERM: cannot remove'));
+      try {
+        const result = await cleanupLegacyArtifacts(testDir, detection);
+        expect(result.deletedDirs).not.toContain('.claude/commands/ratchet');
+        expect(
+          result.errors.some(
+            (e) => e.includes('.claude/commands/ratchet') && e.includes('EPERM: cannot remove')
+          )
+        ).toBe(true);
+      } finally {
+        rmSpy.mockRestore();
+      }
+    });
+
+    it('records (and swallows) an error when deleting a slash-command file fails', async () => {
+      const dirPath = path.join(testDir, '.cursor', 'commands');
+      await fs.mkdir(dirPath, { recursive: true });
+      await fs.writeFile(path.join(dirPath, 'ratchet-proposal.md'), 'content');
+
+      const detection = await detectLegacyArtifacts(testDir);
+
+      const unlinkSpy = vi
+        .spyOn(fs, 'unlink')
+        .mockRejectedValue(new Error('EBUSY: file in use'));
+      try {
+        const result = await cleanupLegacyArtifacts(testDir, detection);
+        expect(result.deletedFiles).not.toContain('.cursor/commands/ratchet-proposal.md');
+        expect(
+          result.errors.some(
+            (e) =>
+              e.includes('.cursor/commands/ratchet-proposal.md') &&
+              e.includes('EBUSY: file in use')
+          )
+        ).toBe(true);
+      } finally {
+        unlinkSpy.mockRestore();
+      }
+    });
+
+    it('records (and swallows) an error when deleting .ratchet/AGENTS.md fails', async () => {
+      const agentsPath = path.join(testDir, '.ratchet', 'AGENTS.md');
+      await fs.writeFile(agentsPath, 'content');
+
+      const detection = await detectLegacyArtifacts(testDir);
+
+      const unlinkSpy = vi
+        .spyOn(fs, 'unlink')
+        .mockRejectedValue(new Error('EACCES: denied'));
+      try {
+        const result = await cleanupLegacyArtifacts(testDir, detection);
+        expect(result.deletedFiles).not.toContain('.ratchet/AGENTS.md');
+        expect(
+          result.errors.some(
+            (e) => e.includes('.ratchet/AGENTS.md') && e.includes('EACCES: denied')
+          )
+        ).toBe(true);
+      } finally {
+        unlinkSpy.mockRestore();
+      }
+    });
   });
 
   describe('formatCleanupSummary', () => {
@@ -673,6 +760,44 @@ ${RATCHET_MARKERS.end}`);
 
       const summary = formatCleanupSummary(result);
       expect(summary).toBe('');
+    });
+
+    it('separates the migration hint from earlier cleanup lines with a blank line', () => {
+      // Both cleanup lines AND projectMd migration → the migration hint is
+      // prefixed with a blank-line separator (exercises that branch).
+      const result = {
+        deletedFiles: ['.cursor/commands/ratchet-proposal.md'],
+        modifiedFiles: [],
+        deletedDirs: [],
+        projectMdNeedsMigration: true,
+        errors: [],
+      };
+
+      const summary = formatCleanupSummary(result);
+      const lines = summary.split('\n');
+      const migrationIdx = lines.findIndex((l) => l.includes('Needs your attention'));
+      expect(migrationIdx).toBeGreaterThan(0);
+      // The line immediately before the migration hint is the blank separator.
+      expect(lines[migrationIdx - 1]).toBe('');
+      expect(summary).toContain('Cleaned up legacy files:');
+    });
+
+    it('separates the errors section from earlier lines with a blank line', () => {
+      // Cleanup lines AND errors → the "Errors during cleanup:" header is
+      // prefixed with a blank-line separator (exercises that branch).
+      const result = {
+        deletedFiles: ['.cursor/commands/ratchet-proposal.md'],
+        modifiedFiles: [],
+        deletedDirs: [],
+        projectMdNeedsMigration: false,
+        errors: ['Failed to delete something: Permission denied'],
+      };
+
+      const summary = formatCleanupSummary(result);
+      const lines = summary.split('\n');
+      const errIdx = lines.findIndex((l) => l.includes('Errors during cleanup:'));
+      expect(errIdx).toBeGreaterThan(0);
+      expect(lines[errIdx - 1]).toBe('');
     });
   });
 

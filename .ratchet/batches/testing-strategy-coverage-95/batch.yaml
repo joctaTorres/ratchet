@@ -1,0 +1,225 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# Objective: improve the testing STRATEGY (codify a standard + harden the
+# coverage gate) and RATCHET line coverage from the current ~68.67% baseline up
+# to 95%. The repo's coverage-gate is already a ratchet: COVERAGE_THRESHOLD
+# (default 68) gates total.lines.pct. Each phase covers a surface area and lifts
+# the enforced floor — so every phase ships an enforced, runnable increase a
+# user can exercise via the gate, governed by the new `testing` standard.
+#
+# Relevant standards to embed when each phase is decomposed:
+#   - testing            (authored in phase 1; governs all later test-writing)
+#   - documentation      (code changes ship /docs reference + README updates)
+#   - generalizable-defaults (no hardcoded toolchain in any shipped default)
+
+name: testing-strategy-coverage-95
+created: 2026-06-29
+
+phases:
+  # ---------------------------------------------------------------------------
+  # PHASE 1 — Strategy foundation + first coverage wave (decomposed now)
+  # Ships: the testing standard, a hardened/ratcheted coverage gate, and the
+  # first floor lift by covering the highest-gap surface (commands/ core verbs).
+  # ---------------------------------------------------------------------------
+  - name: strategy-and-commands-core
+    goal: >-
+      Codify a `testing` standard in the standards library and harden the
+      coverage-gate so the enforced floor is data-driven and ratchetable, then
+      prove it by covering the highest-gap surface — the commands/ core verbs
+      (apply.ts, verify.ts, validate.ts, propose.ts) — and lifting the enforced
+      COVERAGE_THRESHOLD above the current ~68.67% baseline.
+    success: >-
+      `.ratchet/standards/testing.md` exists, validates, and is surfaced as an
+      active standard by `ratchet instructions`; the coverage gate enforces a
+      raised floor (>= 72); the four commands/ core verbs have unit tests; the
+      full vitest suite is green and the gate exits 0 at the raised floor.
+    proofOfWork:
+      kind: integration
+      run: >-
+        pnpm build && pnpm vitest run --coverage &&
+        COVERAGE_THRESHOLD=72 node dist/core/ci/coverage-gate.js
+      # `run` is an && chain ending in the coverage gate (exits 1 on red), so
+      # exit 0 ⇔ build ok AND suite green AND gate green at the raised floor.
+      pass: exit-zero
+    changes:
+      - name: testing-standard
+        done: >-
+          .ratchet/standards/testing.md authored (test pyramid / what-to-test-
+          where / 95% line-coverage minimum / fixture + E2E patterns), passes
+          standard validation, appears in `ratchet instructions` active
+          standards, and ships a /docs reference page per the documentation
+          standard.
+      - name: ratchet-coverage-gate
+        done: >-
+          coverage-gate raised above the 68 baseline and documented as
+          ratchetable via COVERAGE_THRESHOLD; gate unit tests cover the new
+          threshold behavior (green at/above, red below); /docs + README note
+          the COVERAGE_THRESHOLD knob per the documentation standard.
+      - name: commands-core-verb-tests
+        after: [testing-standard, ratchet-coverage-gate]
+        done: >-
+          apply.ts, verify.ts, validate.ts and propose.ts each have unit tests
+          (happy path + key error/edge paths) following the testing standard;
+          measured total.lines.pct >= 72 and the gate is green at the raised
+          floor.
+
+  # ---------------------------------------------------------------------------
+  # PHASE 2 — Cover the remaining command groups (goal + proof only)
+  # ---------------------------------------------------------------------------
+  - name: command-groups-coverage
+    goal: >-
+      Cover the remaining under-tested command groups — commands/batch/,
+      commands/workflow/ and commands/eval/ — following the `testing` standard,
+      and ratchet the enforced floor up to ~80%.
+    success: >-
+      The batch, workflow and eval command groups have tests for their main
+      behaviors; the suite is green and the coverage gate enforces the raised
+      floor (~80).
+    proofOfWork:
+      kind: integration
+      # Floor refined at phase entry to the achieved value (target ~80).
+      run: >-
+        pnpm build && pnpm vitest run --coverage &&
+        COVERAGE_THRESHOLD=80 node dist/core/ci/coverage-gate.js
+      pass: exit-zero
+    changes:
+      - name: batch-command-group-tests
+        done: >-
+          The commands/batch/ verbs that lack coverage — apply.ts, config.ts,
+          new-batch.ts, report.ts, status.ts and view.ts — have integration
+          tests over a tmpdir fixture repo covering their main behaviors plus key
+          error/edge paths, per the `testing` standard (fixture isolation,
+          .feature mirrored in the header where one exists). The full vitest
+          suite is green.
+      - name: workflow-command-group-tests
+        done: >-
+          The commands/workflow/ verbs that lack coverage — new-change.ts,
+          status.ts and shared.ts, plus the remaining untested instructions.ts
+          paths — have integration tests over a tmpdir fixture repo covering
+          their main behaviors plus key error/edge paths, per the `testing`
+          standard. The full vitest suite is green.
+      - name: eval-command-group-tests
+        done: >-
+          The commands/eval/ group — baseline.ts, record.ts, report.ts, run.ts,
+          set.ts and shared.ts — has integration tests over a tmpdir fixture repo
+          covering its main behaviors plus key error/edge paths, per the
+          `testing` standard. The full vitest suite is green.
+      - name: ratchet-floor-to-80
+        after: [batch-command-group-tests, workflow-command-group-tests, eval-command-group-tests]
+        done: >-
+          With the three command groups covered, measured total.lines.pct >= 80;
+          DEFAULT_COVERAGE_THRESHOLD is raised to 80 with the gate unit tests
+          updated for the new floor (green at/above 80, red below), and the gate
+          exits 0 at the raised floor. /docs + README note the raised floor per
+          the documentation standard.
+
+  # ---------------------------------------------------------------------------
+  # PHASE 3 — Cover core utilities (goal + proof only)
+  # ---------------------------------------------------------------------------
+  - name: core-utilities-coverage
+    goal: >-
+      Cover the untested core utilities — core/migration.ts,
+      core/change-status-policy.ts, core/shared/config-schema.ts and the utils
+      helpers (match.ts, item-discovery.ts, task-progress.ts) — per the
+      `testing` standard, and ratchet the enforced floor up to ~87%.
+    success: >-
+      The targeted core utilities and helpers have unit tests covering their
+      branches; the suite is green and the gate enforces the raised floor (~87).
+    proofOfWork:
+      kind: integration
+      # Floor refined at phase entry to the achieved value (target ~87).
+      run: >-
+        pnpm build && pnpm vitest run --coverage &&
+        COVERAGE_THRESHOLD=87 node dist/core/ci/coverage-gate.js
+      pass: exit-zero
+    # Decomposed at phase entry from phase 2's shipped results (command groups
+    # covered, floor at 80): two parallel test-writing changes feed a
+    # floor-ratchet change, mirroring phase 2's pattern.
+    changes:
+      - name: core-util-tests
+        done: >-
+          core/migration.ts, core/change-status-policy.ts and
+          core/shared/config-schema.ts have unit tests covering their main
+          behaviors and key branches per the `testing` standard (right layer,
+          tmpdir fixture isolation where they touch the filesystem, `.feature`
+          mirrored in the header); the full vitest suite is green.
+      - name: utils-helper-tests
+        done: >-
+          utils/match.ts, utils/item-discovery.ts and utils/task-progress.ts have
+          unit tests covering their branches per the `testing` standard; the full
+          vitest suite is green.
+      - name: ratchet-floor-to-87
+        after: [core-util-tests, utils-helper-tests]
+        done: >-
+          First scope vitest coverage to the application: exclude the non-app
+          terminal-animation demo scripts (scripts/**) and root tooling config
+          (eslint.config.js) from coverage in vitest.config.ts, joining the
+          existing .agents/** exclusion (website/ stays measured — it is now
+          covered). Then raise DEFAULT_COVERAGE_THRESHOLD to the floor the suite
+          now clears (target ~87) with the gate unit tests updated for the new
+          floor (green at/above, red below), and docs/engine/coverage-gate.md
+          (documenting both the raised floor and the coverage scope) + README
+          updated per the documentation standard; the gate exits 0 at the raised
+          floor.
+
+  # ---------------------------------------------------------------------------
+  # PHASE 4 — Cover CLI entry + large files; reach the 95% target
+  # ---------------------------------------------------------------------------
+  - name: cli-and-large-files-to-95
+    goal: >-
+      Close the remaining coverage gap to 95%. Measured at phase entry (app
+      scope) the real gaps are broader than the original four files: cli/index.ts
+      (43%), commands/validate.ts (29%), ui/welcome-screen.ts, telemetry, and a
+      core remainder (archive, init/update remainders, version-guard,
+      file-system, proof-of-work, list, move-directory, markdown-parser, …) —
+      ~1040 uncovered lines to cover, per the `testing` standard. Then ratchet
+      the enforced floor to 95%, locking it in as the new permanent minimum.
+    success: >-
+      Total line coverage is >= 95% (measured 95.39%) and the coverage gate's
+      enforced minimum is locked at 95, with the full vitest suite green at that
+      floor — the testing standard's permanent minimum, reached.
+    proofOfWork:
+      kind: integration
+      # Floor locked at the testing standard's 95% minimum, ratcheted from 87.
+      run: >-
+        pnpm build && pnpm vitest run --coverage &&
+        COVERAGE_THRESHOLD=95 node dist/core/ci/coverage-gate.js
+      pass: exit-zero
+    # Decomposed at phase entry from measured per-file coverage: four parallel
+    # test-writing changes targeting the real gaps feed a floor-ratchet to 95.
+    changes:
+      - name: cli-index-tests
+        done: >-
+          src/cli/index.ts (currently ~43%) has tests covering its command
+          dispatch, flag parsing, and error/exit paths per the `testing`
+          standard (integration over a tmpdir fixture / driving the built CLI as
+          fits each path); its line coverage rises substantially and the full
+          vitest suite is green.
+      - name: validate-deep-tests
+        done: >-
+          src/commands/validate.ts (currently ~29%) has tests covering its
+          validation branches and reporting paths per the `testing` standard;
+          its line coverage rises substantially and the full suite is green.
+      - name: ui-telemetry-tests
+        done: >-
+          src/ui/welcome-screen.ts, src/telemetry/index.ts and
+          src/prompts/searchable-multi-select.ts have tests covering their main
+          behaviors and branches per the `testing` standard; their line coverage
+          rises substantially and the full suite is green.
+      - name: core-remainder-tests
+        done: >-
+          The core remainder is covered enough to clear 95% overall:
+          core/archive.ts, the init.ts/update.ts remainders, ci/version-guard.ts,
+          utils/file-system.ts, batch/engine/proof-of-work.ts, parsers/
+          markdown-parser.ts, core/list.ts, utils/move-directory.ts and
+          features-apply.ts (and any tail needed) get tests per the `testing`
+          standard; the full suite is green and measured total.lines.pct >= 95.
+      - name: ratchet-floor-to-95
+        after: [cli-index-tests, validate-deep-tests, ui-telemetry-tests, core-remainder-tests]
+        done: >-
+          With the gaps covered and measured total.lines.pct >= 95 (95.39%),
+          raise DEFAULT_COVERAGE_THRESHOLD from 87 to 95 (the testing standard's
+          permanent minimum) with the gate unit tests updated for the new floor
+          (green at/above 95, red below) and docs/engine/coverage-gate.md +
+          README updated to 95 per the documentation standard; the gate exits 0
+          at the 95 floor, locked in as the new permanent minimum.

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   runProofOfWork,
   evaluatePassCondition,
+  realBashRunner,
   type BashRunner,
   type LlmJudge,
 } from '../../src/core/batch/engine/proof-of-work.js';
@@ -103,6 +104,32 @@ describe('evaluatePassCondition', () => {
     });
     expect(miss.passed).toBe(false);
     expect(miss.reason).toBe('pass-condition-unmet');
+  });
+
+  it('an invalid regex: pattern never throws and reports not-passed', () => {
+    let r: ReturnType<typeof evaluatePassCondition> | undefined;
+    expect(() => {
+      r = evaluatePassCondition('regex:([', { exitCode: 0, stdout: 'anything', stderr: '' });
+    }).not.toThrow();
+    expect(r?.passed).toBe(false);
+    expect(r?.reason).toBe('pass-condition-unmet');
+  });
+});
+
+// The default runner really shells out. These exercise it with trivial,
+// hermetic built-ins (`echo`, `exit`) — no network, no agents, no fixtures —
+// so the real spawn path is covered without depending on any external command.
+describe('realBashRunner (default spawn)', () => {
+  it('captures stdout and a zero exit code for a successful command', async () => {
+    const result = await realBashRunner('echo hello', process.cwd());
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('hello');
+  });
+
+  it('surfaces a nonzero exit code and stderr for a failing command', async () => {
+    const result = await realBashRunner('echo oops >&2; exit 3', process.cwd());
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr).toContain('oops');
   });
 });
 

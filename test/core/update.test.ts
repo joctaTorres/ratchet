@@ -6,6 +6,7 @@ import { RATCHET_MARKERS } from '../../src/core/config.js';
 import type { GlobalConfig } from '../../src/core/global-config.js';
 import path from 'path';
 import fs from 'fs/promises';
+import * as nodeFs from 'fs';
 import os from 'os';
 import { randomUUID } from 'crypto';
 
@@ -26,6 +27,32 @@ vi.mock('../../src/core/global-config.js', async (importOriginal) => {
     ...actual,
     getGlobalConfig: () => ({ ...mockState.config }),
     saveGlobalConfig: vi.fn(),
+  };
+});
+
+// Interactive-prompt seams. By default isInteractive() falls through to the real
+// implementation; individual tests flip `interactiveState.value` to drive the
+// interactive legacy-cleanup / tool-selection branches without a real TTY.
+const { confirmMock, searchableMultiSelectMock, interactiveState } = vi.hoisted(() => ({
+  confirmMock: vi.fn(),
+  searchableMultiSelectMock: vi.fn(),
+  interactiveState: { value: null as boolean | null },
+}));
+
+vi.mock('@inquirer/prompts', () => ({
+  confirm: confirmMock,
+}));
+
+vi.mock('../../src/prompts/searchable-multi-select.js', () => ({
+  searchableMultiSelect: searchableMultiSelectMock,
+}));
+
+vi.mock('../../src/utils/interactive.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/utils/interactive.js')>();
+  return {
+    ...actual,
+    isInteractive: (value?: boolean | import('../../src/utils/interactive.js').InteractiveOptions) =>
+      interactiveState.value === null ? actual.isInteractive(value) : interactiveState.value,
   };
 });
 
@@ -56,6 +83,11 @@ describe('UpdateCommand', () => {
     // Reset mock config to defaults
     resetMockConfig();
 
+    // Reset interactive-prompt seams; default to the real isInteractive().
+    interactiveState.value = null;
+    confirmMock.mockReset();
+    searchableMultiSelectMock.mockReset();
+
     // Clear all mocks before each test
     vi.restoreAllMocks();
   });
@@ -63,6 +95,7 @@ describe('UpdateCommand', () => {
   afterEach(async () => {
     // Restore all mocks after each test
     vi.restoreAllMocks();
+    interactiveState.value = null;
 
     // Clean up test directory
     await fs.rm(testDir, { recursive: true, force: true });
@@ -1739,6 +1772,300 @@ content
       expect(hasToolsList).toBe(true);
 
       consoleSpy.mockRestore();
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Legacy-cleanup decision branches & interactive legacy tool-selection.
+  // Mirrors features/core-remainder-tests/init-update-remainders.feature
+  //   - Scenario: update warns and continues when legacy cleanup needs --force
+  //   - Scenario: declining update's interactive cleanup continues the skill update
+  //   - Scenario: selecting no tools during update skips tool setup
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('legacy-cleanup decision branches', () => {
+    it('warns to re-run with --force or interactively and continues without cleaning up (non-interactive, no --force)', async () => {
+      // Configured tool so the update proceeds past the "no tools" short-circuit.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+
+      // Legacy CLAUDE.md with Ratchet markers.
+      await fs.writeFile(
+        path.join(testDir, 'CLAUDE.md'),
+        `${RATCHET_MARKERS.start}\n# Ratchet Instructions\n${RATCHET_MARKERS.end}\n`
+      );
+
+      // Force the non-interactive branch explicitly.
+      interactiveState.value = false;
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      // No --force, non-interactive.
+      await updateCommand.execute(testDir);
+
+      // Warns to re-run with --force / interactively.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Run with --force to auto-cleanup legacy files, or run interactively.')
+      );
+
+      // Continues with the skill update.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Updated: Claude Code')
+      );
+
+      // No cleanup happened: legacy markers remain.
+      const content = await fs.readFile(path.join(testDir, 'CLAUDE.md'), 'utf-8');
+      expect(content).toContain(RATCHET_MARKERS.start);
+      expect(content).toContain(RATCHET_MARKERS.end);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('skips cleanup and proceeds with the skill update when the interactive cleanup confirmation is declined', async () => {
+      // Configured tool so the update proceeds.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+
+      // Legacy CLAUDE.md with Ratchet markers.
+      await fs.writeFile(
+        path.join(testDir, 'CLAUDE.md'),
+        `${RATCHET_MARKERS.start}\n# Ratchet Instructions\n${RATCHET_MARKERS.end}\n`
+      );
+
+      // Interactive session; user declines the cleanup confirmation.
+      interactiveState.value = true;
+      confirmMock.mockResolvedValue(false);
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      await updateCommand.execute(testDir);
+
+      // Confirmation was prompted and declined.
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+
+      // Reports skipping cleanup but continuing the skill update.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Skipping legacy cleanup. Continuing with skill update...')
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Updated: Claude Code')
+      );
+
+      // Cleanup skipped: legacy markers remain.
+      const content = await fs.readFile(path.join(testDir, 'CLAUDE.md'), 'utf-8');
+      expect(content).toContain(RATCHET_MARKERS.start);
+      expect(content).toContain(RATCHET_MARKERS.end);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('reports skipping tool setup when no tools are selected during the interactive legacy tool-selection', async () => {
+      // Legacy slash-command directory (no skills yet) so update offers to set up
+      // the detected legacy tool via the interactive multi-select.
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
+      await fs.mkdir(legacyCommandDir, { recursive: true });
+      await fs.writeFile(path.join(legacyCommandDir, 'proposal.md'), 'old command');
+
+      // Interactive session; accept cleanup, then select NO tools.
+      interactiveState.value = true;
+      confirmMock.mockResolvedValue(true);
+      searchableMultiSelectMock.mockResolvedValue([]);
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      await updateCommand.execute(testDir);
+
+      // The legacy tool-selection prompt fired.
+      expect(searchableMultiSelectMock).toHaveBeenCalledTimes(1);
+
+      // Reports skipping tool setup.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Skipping tool setup.')
+      );
+
+      // No skills were generated for the deselected tool.
+      const skillFile = path.join(testDir, '.claude', 'skills', 'ratchet-propose', 'SKILL.md');
+      expect(await FileSystemUtils.fileExists(skillFile)).toBe(false);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('surfaces a per-tool failure when setting up a legacy tool throws during upgrade', async () => {
+      // Legacy slash-command directory (no skills yet) so update upgrades the tool.
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
+      await fs.mkdir(legacyCommandDir, { recursive: true });
+      await fs.writeFile(path.join(legacyCommandDir, 'proposal.md'), 'old command');
+
+      // Make skill writes during the legacy-tool setup fail, exercising the
+      // upgradeLegacyTools catch (spinner.fail + error line).
+      const originalWriteFile = FileSystemUtils.writeFile.bind(FileSystemUtils);
+      const writeSpy = vi
+        .spyOn(FileSystemUtils, 'writeFile')
+        .mockImplementation(async (filePath, content) => {
+          if (filePath.includes('SKILL.md')) {
+            throw new Error('EACCES: legacy setup denied');
+          }
+          return originalWriteFile(filePath, content);
+        });
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      const forceUpdateCommand = new UpdateCommand({ force: true });
+      await forceUpdateCommand.execute(testDir);
+
+      // The per-tool setup-failure error line is printed.
+      const calls = consoleSpy.mock.calls.map(call =>
+        call.map(arg => String(arg)).join(' ')
+      );
+      expect(calls.some(call => call.includes('legacy setup denied'))).toBe(true);
+
+      writeSpy.mockRestore();
+      consoleSpy.mockRestore();
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Remaining validation / note / cleanup branches.
+  //   - displayOldCoreCustomProfileNote (custom profile matching the OLD core set)
+  //   - the swallow-error catch in each remove* helper
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('old-core custom profile note', () => {
+    it('suggests opting back into core when a custom profile matches the old core set', async () => {
+      // The pre-sync core set the note watches for. "explore" is not in
+      // ALL_WORKFLOWS, so it is filtered from the generated workflows but still
+      // counts toward the old-core match (which keys on globalConfig.workflows).
+      setMockConfig({
+        featureFlags: {},
+        profile: 'custom',
+        delivery: 'both',
+        workflows: ['propose', 'explore', 'apply', 'archive'],
+      });
+
+      // A configured tool so update proceeds past the no-tools short-circuit.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      await updateCommand.execute(testDir);
+
+      const calls = consoleSpy.mock.calls.map(call =>
+        call.map(arg => String(arg)).join(' ')
+      );
+      expect(
+        calls.some(call => call.includes('The core profile now includes sync'))
+      ).toBe(true);
+      expect(
+        calls.some(call => call.includes('ratchet config profile core'))
+      ).toBe(true);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('does not show the old-core note when the custom profile differs from the old core set', async () => {
+      setMockConfig({
+        featureFlags: {},
+        profile: 'custom',
+        delivery: 'both',
+        workflows: ['apply'],
+      });
+
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-apply-change'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-apply-change', 'SKILL.md'), 'old');
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      await updateCommand.execute(testDir);
+
+      const calls = consoleSpy.mock.calls.map(call =>
+        call.map(arg => String(arg)).join(' ')
+      );
+      expect(
+        calls.some(call => call.includes('The core profile now includes sync'))
+      ).toBe(false);
+
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe('remove-helper error tolerance', () => {
+    it('swallows rm errors when removing skill dirs for a commands-only delivery switch', async () => {
+      setMockConfig({ featureFlags: {}, profile: 'core', delivery: 'commands' });
+
+      // A skill dir exists so the commands-only switch tries to remove it.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+
+      // fs.promises.rm throws -> the catch in removeSkillDirs swallows it, the
+      // update still completes without throwing.
+      const rmSpy = vi
+        .spyOn(nodeFs.promises, 'rm')
+        .mockRejectedValue(new Error('EPERM: rm denied'));
+
+      const forceUpdateCommand = new UpdateCommand({ force: true });
+      await expect(forceUpdateCommand.execute(testDir)).resolves.toBeUndefined();
+
+      rmSpy.mockRestore();
+    });
+
+    it('swallows unlink errors when removing command files for a skills-only delivery switch', async () => {
+      setMockConfig({ featureFlags: {}, profile: 'core', delivery: 'skills' });
+
+      // A configured skill + an existing command file so the skills-only switch
+      // tries to unlink the command.
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+      const commandsDir = path.join(testDir, '.claude', 'commands', 'rct');
+      await fs.mkdir(commandsDir, { recursive: true });
+      await fs.writeFile(path.join(commandsDir, 'propose.md'), 'old command');
+
+      // fs.promises.unlink throws -> the catch in removeCommandFiles swallows it.
+      const unlinkSpy = vi
+        .spyOn(nodeFs.promises, 'unlink')
+        .mockRejectedValue(new Error('EPERM: unlink denied'));
+
+      const forceUpdateCommand = new UpdateCommand({ force: true });
+      await expect(forceUpdateCommand.execute(testDir)).resolves.toBeUndefined();
+
+      unlinkSpy.mockRestore();
+    });
+
+    it('swallows rm/unlink errors when removing deselected-workflow artifacts', async () => {
+      // Custom profile selecting only propose; verify is deselected and present
+      // as both a skill dir and a command file, so both remove-unselected helpers
+      // run and hit their swallow-error catch when fs rejects.
+      setMockConfig({
+        featureFlags: {},
+        profile: 'custom',
+        delivery: 'both',
+        workflows: ['propose'],
+      });
+
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-propose', 'SKILL.md'), 'old');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-verify-change'), { recursive: true });
+      await fs.writeFile(path.join(skillsDir, 'ratchet-verify-change', 'SKILL.md'), 'old');
+      const extraCommandFile = path.join(testDir, '.claude', 'commands', 'rct', 'verify.md');
+      await fs.mkdir(path.dirname(extraCommandFile), { recursive: true });
+      await fs.writeFile(extraCommandFile, 'old');
+
+      const rmSpy = vi
+        .spyOn(nodeFs.promises, 'rm')
+        .mockRejectedValue(new Error('EPERM: rm denied'));
+      const unlinkSpy = vi
+        .spyOn(nodeFs.promises, 'unlink')
+        .mockRejectedValue(new Error('EPERM: unlink denied'));
+
+      await expect(updateCommand.execute(testDir)).resolves.toBeUndefined();
+
+      rmSpy.mockRestore();
+      unlinkSpy.mockRestore();
     });
   });
 });

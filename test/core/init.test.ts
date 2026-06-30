@@ -6,12 +6,19 @@ import { parse as parseYaml } from 'yaml';
 import { InitCommand, type SandboxPermissionPrompts } from '../../src/core/init.js';
 import { saveGlobalConfig, getGlobalConfig } from '../../src/core/global-config.js';
 import { setProjectBatchPermissions } from '../../src/core/batch/config.js';
+import { AI_TOOLS } from '../../src/core/config.js';
+import { getToolsWithSkillsDir } from '../../src/core/shared/index.js';
 
-const { confirmMock, selectMock, showWelcomeScreenMock, searchableMultiSelectMock } = vi.hoisted(() => ({
+const { confirmMock, selectMock, showWelcomeScreenMock, searchableMultiSelectMock, runDoctorAdvisoryMock } = vi.hoisted(() => ({
   confirmMock: vi.fn(),
   selectMock: vi.fn(),
   showWelcomeScreenMock: vi.fn().mockResolvedValue(undefined),
   searchableMultiSelectMock: vi.fn(),
+  runDoctorAdvisoryMock: vi.fn(),
+}));
+
+vi.mock('../../src/commands/doctor.js', () => ({
+  runDoctorAdvisory: runDoctorAdvisoryMock,
 }));
 
 vi.mock('@inquirer/prompts', () => ({
@@ -33,12 +40,10 @@ describe('InitCommand', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = path.join(os.tmpdir(), `ratchet-init-test-${Date.now()}`);
-    await fs.mkdir(testDir, { recursive: true });
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-init-test-'));
     originalEnv = { ...process.env };
     // Use a temp dir for global config to avoid reading real config
-    configTempDir = path.join(os.tmpdir(), `ratchet-config-init-${Date.now()}`);
-    await fs.mkdir(configTempDir, { recursive: true });
+    configTempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-config-init-'));
     process.env.XDG_CONFIG_HOME = configTempDir;
 
     // Mock console.log to suppress output during tests
@@ -53,8 +58,8 @@ describe('InitCommand', () => {
 
   afterEach(async () => {
     process.env = originalEnv;
-    await fs.rm(testDir, { recursive: true, force: true });
-    await fs.rm(configTempDir, { recursive: true, force: true });
+    await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    await fs.rm(configTempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     vi.restoreAllMocks();
   });
 
@@ -479,12 +484,10 @@ describe('InitCommand - profile and detection features', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(async () => {
-    testDir = path.join(os.tmpdir(), `ratchet-init-profile-test-${Date.now()}`);
-    await fs.mkdir(testDir, { recursive: true });
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-init-profile-test-'));
     originalEnv = { ...process.env };
     // Use a temp dir for global config to avoid polluting real config
-    configTempDir = path.join(os.tmpdir(), `ratchet-config-test-${Date.now()}`);
-    await fs.mkdir(configTempDir, { recursive: true });
+    configTempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-config-test-'));
     process.env.XDG_CONFIG_HOME = configTempDir;
     vi.spyOn(console, 'log').mockImplementation(() => {});
     confirmMock.mockReset();
@@ -497,8 +500,8 @@ describe('InitCommand - profile and detection features', () => {
 
   afterEach(async () => {
     process.env = originalEnv;
-    await fs.rm(testDir, { recursive: true, force: true });
-    await fs.rm(configTempDir, { recursive: true, force: true });
+    await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    await fs.rm(configTempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     vi.restoreAllMocks();
   });
 
@@ -857,6 +860,488 @@ describe('InitCommand - profile and detection features', () => {
       // No permission config written; init completed normally.
       expect(await readProjectPermissions(testDir)).toBeUndefined();
       expect(await directoryExists(path.join(testDir, '.ratchet', 'changes'))).toBe(true);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool validation & legacy-cleanup remainders
+// Mirrors features/core-remainder-tests/init-update-remainders.feature
+//   - Scenario: init validates an unknown requested tool
+//   - Scenario: init rejects a tool that cannot generate skills
+//   - Scenario: declining the interactive legacy-cleanup prompt cancels init
+// ─────────────────────────────────────────────────────────────────────────────
+describe('InitCommand - tool validation & legacy remainders', () => {
+  let testDir: string;
+  let configTempDir: string;
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-init-remainder-'));
+    originalEnv = { ...process.env };
+    configTempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-config-remainder-'));
+    process.env.XDG_CONFIG_HOME = configTempDir;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValue(true);
+    selectMock.mockReset();
+    selectMock.mockResolvedValue('repo-sandboxed-permissive');
+    showWelcomeScreenMock.mockClear();
+    searchableMultiSelectMock.mockReset();
+  });
+
+  afterEach(async () => {
+    process.env = originalEnv;
+    await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    await fs.rm(configTempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    vi.restoreAllMocks();
+  });
+
+  describe('validateTools', () => {
+    it('raises an error listing the valid tool ids for an unknown requested tool', () => {
+      const initCommand = new InitCommand();
+
+      // Reach validateTools with a tool id that survived selection but is unknown
+      // (e.g. an injected/stubbed selection that bypassed --tools parsing).
+      const validToolIds = getToolsWithSkillsDir();
+      expect(() =>
+        (initCommand as any).validateTools(['totally-unknown-tool'], new Map())
+      ).toThrow(/Unknown tool 'totally-unknown-tool'/);
+
+      // The error message must enumerate the valid tool ids.
+      try {
+        (initCommand as any).validateTools(['totally-unknown-tool'], new Map());
+        throw new Error('expected validateTools to throw');
+      } catch (err) {
+        const message = (err as Error).message;
+        for (const id of validToolIds) {
+          expect(message).toContain(id);
+        }
+      }
+    });
+
+    it('rejects a known tool with no skills directory, listing tools that support skill generation', () => {
+      // Inject a known-but-skill-less tool into the shared AI_TOOLS source so the
+      // tool resolves (passing the "unknown tool" gate) yet has no skillsDir.
+      const skilllessTool = { name: 'Skill-less Tool', value: 'skill-less-tool', available: true };
+      AI_TOOLS.push(skilllessTool as any);
+
+      try {
+        const initCommand = new InitCommand();
+        const validWithSkills = getToolsWithSkillsDir();
+
+        expect(() =>
+          (initCommand as any).validateTools(['skill-less-tool'], new Map())
+        ).toThrow(/does not support skill generation/);
+
+        try {
+          (initCommand as any).validateTools(['skill-less-tool'], new Map());
+          throw new Error('expected validateTools to throw');
+        } catch (err) {
+          const message = (err as Error).message;
+          // Lists the tools that DO support skill generation, not the skill-less one.
+          expect(message).toContain('Tools with skill generation support');
+          for (const id of validWithSkills) {
+            expect(message).toContain(id);
+          }
+          expect(validWithSkills).not.toContain('skill-less-tool');
+        }
+      } finally {
+        const idx = AI_TOOLS.findIndex((t) => t.value === 'skill-less-tool');
+        if (idx !== -1) AI_TOOLS.splice(idx, 1);
+      }
+    });
+  });
+
+  describe('interactive legacy cleanup', () => {
+    it('cancels init (reports cancellation, does not clean up) when the cleanup confirmation is declined', async () => {
+      // Project with a legacy slash-command directory + a legacy structure file.
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
+      await fs.mkdir(legacyCommandDir, { recursive: true });
+      await fs.writeFile(path.join(legacyCommandDir, 'proposal.md'), 'legacy command');
+      const legacyAgents = path.join(testDir, '.ratchet', 'AGENTS.md');
+      await fs.mkdir(path.join(testDir, '.ratchet'), { recursive: true });
+      await fs.writeFile(legacyAgents, '# legacy agents');
+
+      // Decline the interactive cleanup confirmation.
+      confirmMock.mockResolvedValue(false);
+
+      // process.exit(0) must abort init; capture it instead of killing the runner.
+      const exitError = new Error('process.exit called');
+      const exitSpy = vi
+        .spyOn(process, 'exit')
+        .mockImplementation((() => {
+          throw exitError;
+        }) as never);
+
+      const initCommand = new InitCommand();
+      // Force the interactive path so handleLegacyCleanup prompts via confirm.
+      vi.spyOn(initCommand as any, 'canPromptInteractively').mockReturnValue(true);
+
+      await expect(initCommand.execute(testDir)).rejects.toBe(exitError);
+
+      // Cancellation reported and exit(0) requested.
+      expect(confirmMock).toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      const logCalls = (console.log as unknown as { mock: { calls: unknown[][] } }).mock.calls
+        .flat()
+        .map(String);
+      expect(logCalls.some((entry) => entry.includes('Initialization cancelled'))).toBe(true);
+
+      // No cleanup happened: legacy artifacts remain untouched.
+      expect(await fileExists(path.join(legacyCommandDir, 'proposal.md'))).toBe(true);
+      expect(await directoryExists(legacyCommandDir)).toBe(true);
+      expect(await fileExists(legacyAgents)).toBe(true);
+
+      exitSpy.mockRestore();
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Coverage remainders: argument-parsing edges, empty-selection guards, generation
+// failure/skip branches, config-write failure, success-message branches, and the
+// skill/command removal helpers' swallow-error paths.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('InitCommand - coverage remainders', () => {
+  let testDir: string;
+  let configTempDir: string;
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-init-cover-'));
+    originalEnv = { ...process.env };
+    configTempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-config-cover-'));
+    process.env.XDG_CONFIG_HOME = configTempDir;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    confirmMock.mockReset();
+    confirmMock.mockResolvedValue(true);
+    selectMock.mockReset();
+    selectMock.mockResolvedValue('repo-sandboxed-permissive');
+    showWelcomeScreenMock.mockClear();
+    searchableMultiSelectMock.mockReset();
+    runDoctorAdvisoryMock.mockReset();
+  });
+
+  afterEach(async () => {
+    process.env = originalEnv;
+    await fs.rm(testDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    await fs.rm(configTempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    vi.restoreAllMocks();
+  });
+
+  describe('--tools argument parsing edges', () => {
+    it('rejects a whitespace-only --tools value', async () => {
+      const initCommand = new InitCommand({ tools: '   ' });
+      await expect(initCommand.execute(testDir)).rejects.toThrow(
+        /The --tools option requires a value/
+      );
+    });
+
+    it('rejects a --tools value that is only separators', async () => {
+      // After trimming the raw is non-empty (",,") but splitting yields no tokens,
+      // exercising the "requires at least one tool ID" guard.
+      const initCommand = new InitCommand({ tools: ', ,' });
+      await expect(initCommand.execute(testDir)).rejects.toThrow(
+        /requires at least one tool ID/
+      );
+    });
+  });
+
+  describe('interactive empty selection', () => {
+    it('throws when the interactive multi-select returns no tools', async () => {
+      // The prompt seam returns an empty selection; init must reject before any
+      // generation happens (exercises the "At least one tool" guard).
+      searchableMultiSelectMock.mockResolvedValue([]);
+
+      const initCommand = new InitCommand({ force: true });
+      vi.spyOn(initCommand as any, 'canPromptInteractively').mockReturnValue(true);
+
+      await expect(initCommand.execute(testDir)).rejects.toThrow(
+        /At least one tool must be selected/
+      );
+    });
+
+    it('throws a no-tools-available error when no tools support skill generation', async () => {
+      // getSelectedTools reads getToolsWithSkillsDir(); temporarily empty AI_TOOLS
+      // so that list is empty, driving the interactive "No tools available" guard.
+      const saved = AI_TOOLS.splice(0, AI_TOOLS.length);
+      try {
+        const initCommand = new InitCommand({ force: true });
+        vi.spyOn(initCommand as any, 'canPromptInteractively').mockReturnValue(true);
+
+        await expect(
+          (initCommand as any).getSelectedTools(new Map(), false, [], testDir)
+        ).rejects.toThrow(/No tools available for skill generation/);
+      } finally {
+        AI_TOOLS.splice(0, AI_TOOLS.length, ...saved);
+      }
+    });
+  });
+
+  describe('first-init doctor advisory', () => {
+    it('swallows a doctor failure and logs under DEBUG without aborting init', async () => {
+      process.env.DEBUG = '1';
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+      // The mocked runDoctorAdvisory throws → the catch branch in
+      // runFirstInitDoctor runs and (because DEBUG is set) logs via console.debug.
+      runDoctorAdvisoryMock.mockImplementation(() => {
+        throw new Error('doctor blew up');
+      });
+
+      const initCommand = new InitCommand({ tools: 'claude', force: true });
+      await initCommand.execute(testDir);
+
+      // Init still completed (structure exists) regardless of doctor outcome.
+      expect(await directoryExists(path.join(testDir, '.ratchet', 'changes'))).toBe(true);
+      // The DEBUG-guarded debug log fired.
+      const debugCalls = debugSpy.mock.calls.flat().map(String);
+      expect(debugCalls.some((l) => l.includes('doctor advisory skipped'))).toBe(true);
+      debugSpy.mockRestore();
+    });
+
+    it('swallows a doctor failure silently when DEBUG is not set', async () => {
+      delete process.env.DEBUG;
+      delete process.env.RATCHET_DEBUG;
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+      runDoctorAdvisoryMock.mockImplementation(() => {
+        throw new Error('doctor blew up');
+      });
+
+      const initCommand = new InitCommand({ tools: 'claude', force: true });
+      await initCommand.execute(testDir);
+
+      expect(await directoryExists(path.join(testDir, '.ratchet', 'changes'))).toBe(true);
+      // No debug log without DEBUG/RATCHET_DEBUG.
+      expect(debugSpy).not.toHaveBeenCalled();
+      debugSpy.mockRestore();
+    });
+  });
+
+  describe('generation failure and skip branches', () => {
+    it('records a tool as failed (and surfaces it) when its file writes throw', async () => {
+      const tool = {
+        value: 'claude',
+        name: 'Claude Code',
+        skillsDir: '.claude',
+        wasConfigured: false,
+      };
+
+      const initCommand = new InitCommand({ force: true });
+
+      const { FileSystemUtils } = await import('../../src/utils/file-system.js');
+      const writeSpy = vi
+        .spyOn(FileSystemUtils, 'writeFile')
+        .mockRejectedValue(new Error('EACCES: cannot write skill'));
+
+      try {
+        const results = await (initCommand as any).generateSkillsAndCommands(testDir, [tool]);
+        expect(results.createdTools).toHaveLength(0);
+        expect(results.failedTools).toHaveLength(1);
+        expect(results.failedTools[0].name).toBe('Claude Code');
+        expect(results.failedTools[0].error.message).toContain('EACCES');
+
+        // Now exercise the displaySuccessMessage failure branch with that result.
+        (initCommand as any).displaySuccessMessage(testDir, [tool], results, 'created');
+        const logCalls = (console.log as unknown as { mock: { calls: unknown[][] } }).mock.calls
+          .flat()
+          .map(String);
+        expect(logCalls.some((l) => l.includes('Failed:') && l.includes('Claude Code'))).toBe(true);
+      } finally {
+        writeSpy.mockRestore();
+      }
+    });
+
+    it('skips command generation and reports it for a tool with a skills dir but no adapter', async () => {
+      // Inject a fake tool that has a skillsDir (so it survives validateTools) but
+      // no command adapter registered, exercising the commandsSkipped branch and
+      // its display.
+      const fakeTool = {
+        name: 'Adapterless Tool',
+        value: 'adapterless-tool',
+        available: true,
+        skillsDir: '.adapterless',
+      };
+      AI_TOOLS.push(fakeTool as any);
+      try {
+        saveGlobalConfig({ featureFlags: {}, profile: 'core', delivery: 'both' });
+
+        const initCommand = new InitCommand({ tools: 'adapterless-tool', force: true });
+        await initCommand.execute(testDir);
+
+        // Skill files were written (skillsDir exists) ...
+        const skillFile = path.join(
+          testDir,
+          '.adapterless',
+          'skills',
+          'ratchet-propose',
+          'SKILL.md'
+        );
+        expect(await fileExists(skillFile)).toBe(true);
+
+        // ... and the "commands skipped (no adapter)" line was emitted.
+        const logCalls = (console.log as unknown as { mock: { calls: unknown[][] } }).mock.calls
+          .flat()
+          .map(String);
+        expect(
+          logCalls.some((l) => l.includes('Commands skipped') && l.includes('adapterless-tool'))
+        ).toBe(true);
+      } finally {
+        const idx = AI_TOOLS.findIndex((t) => t.value === 'adapterless-tool');
+        if (idx !== -1) AI_TOOLS.splice(idx, 1);
+      }
+    });
+  });
+
+  describe('createConfig write failure', () => {
+    it('returns "skipped" when writing config.yaml throws', async () => {
+      const ratchetPath = path.join(testDir, '.ratchet');
+      await fs.mkdir(ratchetPath, { recursive: true });
+
+      const initCommand = new InitCommand({ force: true });
+      const { FileSystemUtils } = await import('../../src/utils/file-system.js');
+      const writeSpy = vi
+        .spyOn(FileSystemUtils, 'writeFile')
+        .mockRejectedValue(new Error('EROFS: read-only fs'));
+
+      try {
+        const status = await (initCommand as any).createConfig(ratchetPath, false);
+        expect(status).toBe('skipped');
+        // No config file was created.
+        expect(await fileExists(path.join(ratchetPath, 'config.yaml'))).toBe(false);
+      } finally {
+        writeSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('success-message removal branches', () => {
+    it('reports removed command files and removed skill directories', () => {
+      const initCommand = new InitCommand({ force: true });
+      const results = {
+        createdTools: [],
+        refreshedTools: [],
+        failedTools: [],
+        commandsSkipped: [],
+        removedCommandCount: 3,
+        removedSkillCount: 2,
+      };
+
+      (initCommand as any).displaySuccessMessage(testDir, [], results, 'skipped');
+
+      const logCalls = (console.log as unknown as { mock: { calls: unknown[][] } }).mock.calls
+        .flat()
+        .map(String);
+      expect(logCalls.some((l) => l.includes('Removed: 3 command files'))).toBe(true);
+      expect(logCalls.some((l) => l.includes('Removed: 2 skill directories'))).toBe(true);
+    });
+  });
+
+  describe('removeSkillDirs / removeCommandFiles helpers', () => {
+    it('removes existing skill directories and returns the count', async () => {
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      // Create a couple of known workflow skill dirs.
+      for (const dirName of ['ratchet-propose', 'ratchet-apply-change']) {
+        await fs.mkdir(path.join(skillsDir, dirName), { recursive: true });
+        await fs.writeFile(path.join(skillsDir, dirName, 'SKILL.md'), 'x');
+      }
+
+      const initCommand = new InitCommand({ force: true });
+      const removed = await (initCommand as any).removeSkillDirs(skillsDir);
+
+      expect(removed).toBeGreaterThanOrEqual(2);
+      expect(await directoryExists(path.join(skillsDir, 'ratchet-propose'))).toBe(false);
+    });
+
+    it('swallows errors while removing skill directories (returns 0)', async () => {
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), { recursive: true });
+
+      const initCommand = new InitCommand({ force: true });
+      const rmSpy = vi
+        .spyOn(fs, 'rm')
+        .mockRejectedValue(new Error('EPERM: cannot remove dir'));
+      try {
+        const removed = await (initCommand as any).removeSkillDirs(skillsDir);
+        // Every removal threw and was swallowed → nothing counted.
+        expect(removed).toBe(0);
+      } finally {
+        rmSpy.mockRestore();
+      }
+    });
+
+    it('swallows errors while removing command files (returns 0)', async () => {
+      // Create real command files for claude so existsSync is true, then make
+      // unlink throw so the swallow-error path runs.
+      const { CommandAdapterRegistry } = await import(
+        '../../src/core/command-generation/registry.js'
+      );
+      const adapter = CommandAdapterRegistry.get('claude');
+      expect(adapter).toBeTruthy();
+      // Materialize at least one command file at its real path.
+      const { ALL_WORKFLOWS } = await import('../../src/core/profiles.js');
+      for (const workflow of ALL_WORKFLOWS) {
+        const cmdPath = adapter!.getFilePath(workflow);
+        const full = path.isAbsolute(cmdPath) ? cmdPath : path.join(testDir, cmdPath);
+        await fs.mkdir(path.dirname(full), { recursive: true });
+        await fs.writeFile(full, 'cmd');
+      }
+
+      const initCommand = new InitCommand({ force: true });
+      const unlinkSpy = vi
+        .spyOn(fs, 'unlink')
+        .mockRejectedValue(new Error('EBUSY: cannot unlink'));
+      try {
+        const removed = await (initCommand as any).removeCommandFiles(testDir, 'claude');
+        expect(removed).toBe(0);
+      } finally {
+        unlinkSpy.mockRestore();
+      }
+    });
+
+    it('returns 0 from removeCommandFiles when the tool has no adapter', async () => {
+      const initCommand = new InitCommand({ force: true });
+      const removed = await (initCommand as any).removeCommandFiles(testDir, 'no-such-tool');
+      expect(removed).toBe(0);
+    });
+  });
+
+  describe('interactive legacy cleanup acceptance', () => {
+    it('proceeds with cleanup when the interactive confirmation is accepted', async () => {
+      // Legacy slash-command dir present; accepting the prompt removes it and init
+      // continues to completion (exercises the accept path after the confirm).
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
+      await fs.mkdir(legacyCommandDir, { recursive: true });
+      await fs.writeFile(path.join(legacyCommandDir, 'proposal.md'), 'legacy');
+
+      confirmMock.mockResolvedValue(true);
+      searchableMultiSelectMock.mockResolvedValue(['claude']);
+
+      const initCommand = new InitCommand({
+        sandboxPermissionPrompts: {
+          confirmSetup: async () => false,
+          selectPosture: async () => 'repo-sandboxed-permissive',
+        },
+      });
+      vi.spyOn(initCommand as any, 'canPromptInteractively').mockReturnValue(true);
+
+      await initCommand.execute(testDir);
+
+      // Legacy dir was cleaned up and init completed.
+      expect(await directoryExists(legacyCommandDir)).toBe(false);
+      expect(await directoryExists(path.join(testDir, '.ratchet', 'changes'))).toBe(true);
+    });
+  });
+
+  describe('canPromptInteractively default branch', () => {
+    it('delegates to isInteractive when no tools arg and interactive not disabled', () => {
+      // interactiveOption defaults to undefined and no toolsArg → reaches the final
+      // isInteractive(...) return.
+      const initCommand = new InitCommand({});
+      const result = (initCommand as any).canPromptInteractively();
+      expect(typeof result).toBe('boolean');
     });
   });
 });

@@ -135,7 +135,7 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--gate <i
 | `--no-invariants` | | Disable the `invariants` contributor for this run (the manifest is not evaluated and no invariant command runs). |
 | `--judge` | `auto \| deterministic \| llm-judge` | **Deprecated** legacy alias mapped onto the gate: `deterministic` disables `llm-judge`, `llm-judge` disables `deterministic`, `auto` enables both. Prefer `--gate`/`--only`/`--no-llm-judge`. |
 | `--include-skipped` | | Judge cases that would otherwise be excluded by skip filters (`eval.skip` config or an in-file `@skip` tag), overriding both sources for this run. |
-| `--json` | | Output as JSON: `{ runId, overall, scorecard, contributors, invariants, regressions, warnings }` (`invariantLoadError` is added when the manifest could not be loaded). |
+| `--json` | | Output as JSON: `{ runId, overall, scorecard, contributors, invariants, regressions, warnings, cases }` (`invariantLoadError` is added when the manifest could not be loaded). `cases[]` is one entry per case — `{ id, scenario, verdict, source, rubric, clauses, votes, skip? }` — carrying a judged case's resolved rubric/per-clause evidence/per-juror votes or a skipped case's skip source/detail. |
 
 The contributor gate selects which verdict contributors execute and gate the
 run. Resolution precedence is default (all contributors enabled) ◁ the project
@@ -188,7 +188,14 @@ fails the command with the valid ids listed. See
    `.ratchet/evals/runs/<run-id>.json`. The run id is a UTC timestamp plus a
    3-byte hex suffix (`YYYYMMDDTHHMMSSmmmZ-<hex>`), ensuring chronological
    sort order and no collisions.
-8. **Output.** The run id, the aggregated overall verdict, the
+8. **Structured per-case detail.** Alongside the flattened `reason` sentence,
+   the run JSON persists each judged case's resolved rubric, every clause's
+   boolean pass/fail with its cited evidence, and each juror's individual vote
+   (a deterministic check carries the same shape as a one-clause/one-vote
+   `llm-judge` case); a skipped case persists its skip source (`tag` or
+   `config`) and matched detail. `eval run --json` surfaces this under
+   `cases[]`.
+9. **Output.** The run id, the aggregated overall verdict, the
    pass/fail/unjudged/skipped scorecard, and a per-contributor breakdown are
    printed (`deterministic`, `llm-judge`, `invariants`, `regression`).
    Run-level gate violations — a violated/unevaluable invariant (or an
@@ -249,7 +256,7 @@ ratchet eval report --run <id> [--json]
 | Option | Argument | Description |
 |---|---|---|
 | `--run` | `<id>` | Run id to report. Required. |
-| `--json` | | Output the full `EvalReport` object as JSON. |
+| `--json` | | Output the full `EvalReport` object as JSON, including `cases[]` (see below). |
 
 ### Behavior
 
@@ -269,6 +276,13 @@ ratchet eval report --run <id> [--json]
    [verdict-aggregation core](../eval-verdict-aggregation.md) as a logical AND
    over named contributors: it is `pass` only when every contributor passes. The
    `EvalReport` carries the per-contributor breakdown under `contributors`.
+5. **Structured per-case detail.** `EvalReport.cases[]` holds one entry per run
+   case — `{ id, scenario, verdict, source, rubric, clauses, votes, skip? }` —
+   surfacing every judged case's resolved rubric, per-clause pass/fail
+   evidence, and per-juror votes, or a skipped case's skip source/detail.
+   `eval report --json` surfaces this under `cases[]`; the text rendering
+   prints each failing case's per-clause breakdown beneath its evidence line,
+   plus a `Jury: x/y passed` line when more than one vote was cast.
 
 ---
 

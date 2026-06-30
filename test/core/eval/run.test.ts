@@ -69,6 +69,34 @@ describe('eval run persistence', () => {
     expect(existsSync(file)).toBe(true);
     expect(loadRun(root, run.runId).cases[0].id).toBe('f/x#one');
   });
+
+  // features/eval-judge/structured-evidence-persistence.feature — the structured
+  // judging detail (rubric, per-clause evidence, per-juror votes) and a skipped
+  // case's skip source/detail round-trip through persistRun/loadRun unchanged.
+  it('round-trips rubric/clauses/votes/skip on a CaseRecord unchanged', () => {
+    const root = makeProject();
+    const run = sampleRun('20260101T000000000Z-roundtrip');
+    run.verdicts['f/x#one'] = {
+      verdict: 'pass',
+      reason: '[pass] it works: saw it',
+      source: 'judged',
+      rubric: ['it works'],
+      clauses: [{ clause: 'it works', pass: true, evidence: 'saw it' }],
+      votes: [{ pass: true, clauses: [{ clause: 'it works', pass: true, evidence: 'saw it' }] }],
+    };
+    persistRun(root, run);
+    expect(loadRun(root, run.runId).verdicts['f/x#one']).toEqual(run.verdicts['f/x#one']);
+
+    const skipRun = sampleRun('20260101T000000000Z-skip');
+    skipRun.verdicts['f/x#one'] = {
+      verdict: 'skipped',
+      reason: 'Skipped: tagged @skip in f/x.feature.',
+      source: 'judged',
+      skip: { source: 'tag', detail: 'f/x.feature' },
+    };
+    persistRun(root, skipRun);
+    expect(loadRun(root, skipRun.runId).verdicts['f/x#one']).toEqual(skipRun.verdicts['f/x#one']);
+  });
 });
 
 describe('recordVerdict', () => {
@@ -83,6 +111,10 @@ describe('recordVerdict', () => {
       reason: 'by hand',
       source: 'manual',
     });
+    // A manually-overridden verdict carries no judging detail.
+    expect(updated.verdicts['f/x#one'].rubric).toBeUndefined();
+    expect(updated.verdicts['f/x#one'].clauses).toBeUndefined();
+    expect(updated.verdicts['f/x#one'].votes).toBeUndefined();
   });
 
   it('rejects an unknown case and leaves the run unchanged', () => {

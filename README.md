@@ -434,7 +434,10 @@ the cast votes into one verdict — layered from a project-level `eval.jury`
 default down to a per-binding `jury:` override; when the votes do not reach
 the configured quorum, the case is recorded `unjudged` — never silently `fail`
 — so judge noise can't manufacture a regression. Prefer a `deterministic`
-binding.
+binding. The run JSON persists this structured detail per judged case — the
+resolved rubric, each clause's boolean pass/fail with its cited evidence, and
+every juror's individual vote — surfaced via `eval run --json`/`eval report
+--json`'s `cases[]`.
 
 **Verdicts & baseline.** Each case is `pass`, `fail`, `unjudged`, or `skipped`. A
 regression is a case that **passed in the baseline and fails now**; new/retired
@@ -447,7 +450,9 @@ matches a project `eval.skip` glob pattern, is excluded from judging by
 default and recorded `skipped` — counted in the scorecard, never silently
 dropped, and never blocking baseline promotion. `--include-skipped` overrides
 both sources for a run. Skipping a case that was `pass` in the promoted
-baseline prints a visible warning naming it.
+baseline prints a visible warning naming it. The run JSON persists a skipped
+case's skip source (`tag` or `config`) and matched detail, surfaced via `eval
+run --json`/`eval report --json`'s `cases[]`.
 
 **One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
 place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a

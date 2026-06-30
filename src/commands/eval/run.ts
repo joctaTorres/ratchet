@@ -82,6 +82,7 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
           ...(report.loadError ? { invariantLoadError: report.loadError } : {}),
           regressions: report.diff.regressions,
           warnings,
+          cases: report.cases,
         },
         null,
         2

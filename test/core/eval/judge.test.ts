@@ -290,6 +290,9 @@ describe('judgeCase: deterministic', () => {
     expect(r.evidence).toEqual([
       { clause: 'contains:applyRequires', pass: true, evidence: 'check passed (contains:applyRequires)' },
     ]);
+    // A deterministic check carries the same uniform one-item rubric/one-vote shape as llm-judge.
+    expect(r.rubric).toEqual(['contains:applyRequires']);
+    expect(r.votes).toEqual([{ pass: true, clauses: r.evidence }]);
   });
 
   it('fails when the condition is not met', async () => {
@@ -297,6 +300,8 @@ describe('judgeCase: deterministic', () => {
     const r = await judgeCase(CASE, deterministicBinding, '/c', { bash });
     expect(r.verdict).toBe('fail');
     expect(r.evidence[0].pass).toBe(false);
+    expect(r.rubric).toEqual(['contains:applyRequires']);
+    expect(r.votes).toEqual([{ pass: false, clauses: r.evidence }]);
   });
 
   // The judge shares evaluatePassCondition with the batch proof-of-work gate, so a
@@ -336,6 +341,17 @@ describe('judgeCase: llm-judge', () => {
     expect(cwds).toEqual(['/fixture/copy']);
     expect(r.verdict).toBe('pass');
     expect(r.evidence).toEqual([{ clause: 'it works', pass: true, evidence: 'printed JSON output' }]);
+    // The resolved rubric (derived from the case's single Then step) and the
+    // single cast juror vote both survive on the returned verdict.
+    expect(r.rubric).toEqual(['it works']);
+    expect(r.votes).toEqual([{ pass: true, clauses: r.evidence }]);
+  });
+
+  it('persists the declared rubric verbatim when the binding overrides it', async () => {
+    const overrideBinding: Binding = llmJudgeBinding({ rubric: ['declared clause'] });
+    const { spawner } = spawnerReturning('[{"verdict": "yes", "evidence": "matched"}]');
+    const r = await judgeCase(CASE, overrideBinding, '/c', { spawner });
+    expect(r.rubric).toEqual(['declared clause']);
   });
 
   it('fails closed when the judge finds no concrete evidence', async () => {
@@ -345,7 +361,7 @@ describe('judgeCase: llm-judge', () => {
     expect(r.evidence[0].evidence).toMatch(/evidence/i);
   });
 
-  it('judges by N repeat votes and takes the majority', async () => {
+  it('judges by N repeat votes and takes the majority, persisting every juror vote', async () => {
     const threeVoteBinding: Binding = { ...binding, jury: { votes: 3 } };
     const { spawner, cwds } = spawnerReturning(
       '[{"verdict": "yes", "evidence": "a"}]',
@@ -355,9 +371,13 @@ describe('judgeCase: llm-judge', () => {
     const r = await judgeCase(CASE, threeVoteBinding, '/c', { spawner });
     expect(cwds).toHaveLength(3);
     expect(r.verdict).toBe('pass');
+    // All 3 cast votes survive, not only the deciding one.
+    expect(r.votes).toHaveLength(3);
+    expect(r.votes.map((v) => v.pass)).toEqual([true, true, false]);
+    expect(r.votes[2].clauses[0].evidence).toBe('c');
   });
 
-  it('records unjudged (never fail) when repeat votes disagree', async () => {
+  it('records unjudged (never fail) when repeat votes disagree, keeping every dissenting vote', async () => {
     const twoVoteBinding: Binding = { ...binding, jury: { votes: 2 } };
     const { spawner } = spawnerReturning(
       '[{"verdict": "yes", "evidence": "yes evidence"}]',
@@ -365,5 +385,9 @@ describe('judgeCase: llm-judge', () => {
     );
     const r = await judgeCase(CASE, twoVoteBinding, '/c', { spawner });
     expect(r.verdict).toBe('unjudged');
+    // The sub-quorum case still records both dissenting juror votes structurally.
+    expect(r.votes).toHaveLength(2);
+    expect(r.votes[0].pass).toBe(true);
+    expect(r.votes[1].pass).toBe(false);
   });
 });

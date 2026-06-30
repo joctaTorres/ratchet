@@ -80,7 +80,12 @@ function flattenSkipReason(reason: SkipReason): string {
 
 /** Record a case excluded by a skip filter: an intentional, counted exclusion, never an unjudged incompleteness. */
 function skipped(reason: SkipReason): CaseRecord {
-  return { verdict: 'skipped', reason: flattenSkipReason(reason), source: 'judged' };
+  return {
+    verdict: 'skipped',
+    reason: flattenSkipReason(reason),
+    source: 'judged',
+    skip: { source: reason.source, detail: reason.detail },
+  };
 }
 
 async function judgeBound(
@@ -92,14 +97,17 @@ async function judgeBound(
   const { cwd } = await fixtures.materialize(bound.binding.fixture, bound.binding.setup);
   // The gate already decided this case runs; judge it by its bound kind.
   const verdict = await judgeCase(c, bound.binding, cwd, judge);
-  return { verdict: verdict.verdict, reason: summarizeEvidence(verdict.evidence), source: 'judged' };
+  return {
+    verdict: verdict.verdict,
+    reason: summarizeEvidence(verdict.evidence),
+    source: 'judged',
+    rubric: verdict.rubric,
+    clauses: verdict.evidence,
+    votes: verdict.votes,
+  };
 }
 
-/**
- * Flatten the structured per-clause evidence into the single `reason` string
- * `CaseRecord` still persists in this slice (the run JSON gains structured
- * per-clause persistence in a later judge-hardening change).
- */
+/** Flatten the structured per-clause evidence into the single `reason` string `CaseRecord` persists. */
 function summarizeEvidence(evidence: CaseVerdict['evidence']): string {
   return evidence.map((cl) => `[${cl.pass ? 'pass' : 'fail'}] ${cl.clause}: ${cl.evidence}`).join('\n');
 }

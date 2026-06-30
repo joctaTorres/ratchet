@@ -34,6 +34,7 @@ export {
   type Verdict,
   type CaseVerdict,
   type JudgeDeps,
+  type JurorVote,
 } from './judge.js';
 export {
   resolveJury,
@@ -68,6 +69,7 @@ export {
   type Scorecard,
   type FailingCase,
   type BaselineDiff,
+  type CaseDetail,
 } from './report.js';
 export {
   evaluateInvariantGate,

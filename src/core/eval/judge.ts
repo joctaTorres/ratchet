@@ -46,10 +46,18 @@ export interface ClauseResult {
   evidence: string;
 }
 
-export interface CaseVerdict {
+/** The narrow result `resolveVotes` (and `subQuorum`) decide from already-cast votes. */
+export interface VoteResolution {
   verdict: Verdict;
   /** Structured per-clause result of the deciding vote (or `votes[0]` when no vote decided the case). */
   evidence: ClauseResult[];
+}
+
+export interface CaseVerdict extends VoteResolution {
+  /** The resolved rubric used to judge the case (derived from Then-clauses, or the declared `rubric:` override). */
+  rubric: string[];
+  /** Every juror's individual vote, in cast order. */
+  votes: JurorVote[];
 }
 
 export interface JudgeDeps {
@@ -61,8 +69,8 @@ export interface JudgeDeps {
   jury?: Jury;
 }
 
-/** A spawned-agent vote: the structured per-clause result plus the all-yes-derived overall pass. */
-interface AgentVote {
+/** A juror's vote: the structured per-clause result plus the all-yes-derived overall pass. */
+export interface JurorVote {
   pass: boolean;
   clauses: ClauseResult[];
 }
@@ -182,7 +190,7 @@ function judgeClause(clauseText: string, entry: RawClauseEntry | undefined): Cla
  * missing or unparseable entry at a clause's position fails that clause
  * closed; the vote passes only when every clause passes.
  */
-export function parseAgentVote(stdout: string, rubric: string[]): AgentVote {
+export function parseAgentVote(stdout: string, rubric: string[]): JurorVote {
   const raw = extractVerdictJson(stdout);
   const clauses: ClauseResult[] = rubric.map((clauseText, i) => judgeClause(clauseText, raw?.[i]));
   const pass = clauses.length > 0 && clauses.every((cl) => cl.pass);
@@ -273,7 +281,7 @@ async function castVote(
   cwd: string,
   spawner: Spawner,
   agentName?: string
-): Promise<AgentVote> {
+): Promise<JurorVote> {
   const request = buildVoteRequest(c, binding, cwd, agentName);
   const result = await spawner(request);
   return parseAgentVote(result.stdout, rubric);
@@ -290,7 +298,7 @@ async function castVote(
  *   - `unanimous`: `pass` only when every vote passes, `fail` only when every
  *     vote fails, otherwise (any split) sub-quorum.
  */
-export function resolveVotes(votes: AgentVote[], quorum: Quorum = 'majority'): CaseVerdict {
+export function resolveVotes(votes: JurorVote[], quorum: Quorum = 'majority'): VoteResolution {
   const passes = votes.filter((v) => v.pass).length;
   const fails = votes.length - passes;
   if (quorum === 'unanimous') {
@@ -310,7 +318,7 @@ export function resolveVotes(votes: AgentVote[], quorum: Quorum = 'majority'): C
 }
 
 /** Build the `unjudged` verdict for a vote tally that did not reach its configured quorum. */
-function subQuorum(votes: AgentVote[], quorum: Quorum): CaseVerdict {
+function subQuorum(votes: JurorVote[], quorum: Quorum): VoteResolution {
   const summary = votes.map((v, i) => `vote ${i + 1}: ${v.pass ? 'pass' : 'fail'}`).join(', ');
   return {
     verdict: 'unjudged',
@@ -333,11 +341,11 @@ async function judgeAgent(
   const spawner = deps.spawner ?? realSpawner;
   const rubric = deriveRubric(c, binding);
   const { votes: n, quorum } = resolveJury({ config: deps.jury, binding: binding.jury });
-  const votes: AgentVote[] = [];
+  const votes: JurorVote[] = [];
   for (let i = 0; i < n; i++) {
     votes.push(await castVote(c, binding, rubric, cwd, spawner, deps.agentName));
   }
-  return resolveVotes(votes, quorum);
+  return { ...resolveVotes(votes, quorum), rubric, votes };
 }
 
 async function judgeCheck(
@@ -348,23 +356,22 @@ async function judgeCheck(
   const bash = deps.bash ?? realBashRunner;
   const result = await bash(binding.check.run, cwd);
   const evaluation = evaluatePassCondition(binding.check.pass, result);
+  const rubric = [binding.check.pass];
   if (evaluation.passed) {
-    return {
-      verdict: 'pass',
-      evidence: [{ clause: binding.check.pass, pass: true, evidence: `check passed (${binding.check.pass})` }],
-    };
+    const clauses: ClauseResult[] = [
+      { clause: binding.check.pass, pass: true, evidence: `check passed (${binding.check.pass})` },
+    ];
+    return { verdict: 'pass', evidence: clauses, rubric, votes: [{ pass: true, clauses }] };
   }
   const detail = result.stderr.trim() || result.stdout.trim();
-  return {
-    verdict: 'fail',
-    evidence: [
-      {
-        clause: binding.check.pass,
-        pass: false,
-        evidence: `check failed (${evaluation.reason})${detail ? `: ${detail.slice(0, 500)}` : ''}`,
-      },
-    ],
-  };
+  const clauses: ClauseResult[] = [
+    {
+      clause: binding.check.pass,
+      pass: false,
+      evidence: `check failed (${evaluation.reason})${detail ? `: ${detail.slice(0, 500)}` : ''}`,
+    },
+  ];
+  return { verdict: 'fail', evidence: clauses, rubric, votes: [{ pass: false, clauses }] };
 }
 
 /**

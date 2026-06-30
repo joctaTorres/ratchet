@@ -18,7 +18,7 @@
 
 import type { EvalRun } from './run.js';
 import { loadRun, loadBaselineRunId } from './run.js';
-import type { Verdict } from './judge.js';
+import type { ClauseResult, JurorVote, Verdict } from './judge.js';
 import { aggregateRun, DEFAULT_CONTRIBUTORS, type ContributorOutcome } from './aggregate.js';
 import { evaluateInvariantGate } from './invariant-gate.js';
 import type { InvariantOutcome } from './invariant-evaluator.js';
@@ -41,6 +41,18 @@ export interface FailingCase {
   source: string;
 }
 
+/** The complete structured detail of one run case: judging detail when judged, skip detail when skipped. */
+export interface CaseDetail {
+  id: string;
+  scenario: string;
+  verdict: Verdict;
+  source: string;
+  rubric: string[];
+  clauses: ClauseResult[];
+  votes: JurorVote[];
+  skip?: { source: 'tag' | 'config'; detail: string };
+}
+
 export interface BaselineDiff {
   baselineRunId: string | null;
   regressions: string[];
@@ -55,6 +67,8 @@ export interface EvalReport {
   scorecard: Scorecard;
   failing: FailingCase[];
   unjudgedCases: string[];
+  /** The complete structured per-case view: rubric, per-clause evidence, per-juror votes, and skip detail. */
+  cases: CaseDetail[];
   diff: BaselineDiff;
   /** Overall verdict, decided by the aggregation core as an AND over contributors. */
   overall: 'pass' | 'fail';
@@ -99,6 +113,23 @@ function failingCases(run: EvalRun): FailingCase[] {
 
 function unjudgedIds(run: EvalRun): string[] {
   return run.cases.filter((c) => verdictOf(run, c.id) === 'unjudged').map((c) => c.id);
+}
+
+/** Build the complete per-case structured view: one `CaseDetail` per case in `run.cases`. */
+function caseDetails(run: EvalRun): CaseDetail[] {
+  return run.cases.map((c) => {
+    const record = run.verdicts[c.id];
+    return {
+      id: c.id,
+      scenario: c.scenario,
+      verdict: record?.verdict ?? 'unjudged',
+      source: c.source,
+      rubric: record?.rubric ?? [],
+      clauses: record?.clauses ?? [],
+      votes: record?.votes ?? [],
+      ...(record?.skip ? { skip: record.skip } : {}),
+    };
+  });
 }
 
 /** Diff a run against the baseline, classifying regressions/new/retired. */
@@ -161,6 +192,7 @@ export async function buildReport(projectRoot: string, runId: string): Promise<E
     scorecard,
     failing: failingCases(run),
     unjudgedCases: unjudgedIds(run),
+    cases: caseDetails(run),
     diff,
     overall: aggregate.overall,
     contributors: aggregate.contributors,

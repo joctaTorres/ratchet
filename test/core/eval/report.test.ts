@@ -4,7 +4,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { buildReport, diffAgainstBaseline } from '../../../src/core/eval/report.js';
-import { persistRun, promoteBaseline, toSnapshot, type EvalRun } from '../../../src/core/eval/run.js';
+import { persistRun, promoteBaseline, toSnapshot, type EvalRun, type CaseRecord } from '../../../src/core/eval/run.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
 import type { Verdict } from '../../../src/core/eval/judge.js';
 import type { BindingKind } from '../../../src/core/eval/spec.js';
@@ -348,5 +348,87 @@ describe('invariants gate run-level through buildReport', () => {
     expect(report.contributors.map((c) => c.id)).not.toContain('invariants');
     expect(report.invariants).toEqual([]);
     expect(report.loadError).toBeUndefined();
+  });
+});
+
+// features/eval-judge/structured-evidence-persistence.feature — buildReport
+// exposes one CaseDetail per run case: rubric/clauses/votes for a judged case,
+// skip source/detail for a skipped case, and empty arrays for a case with no
+// judging detail.
+describe('cases: CaseDetail[]', () => {
+  it('includes one CaseDetail per run case with the expected rubric/clauses/votes/skip', async () => {
+    const root = makeProject();
+    const judgedRecord: CaseRecord = {
+      verdict: 'pass',
+      reason: '[pass] it works: saw it',
+      source: 'judged',
+      rubric: ['it works'],
+      clauses: [{ clause: 'it works', pass: true, evidence: 'saw it' }],
+      votes: [{ pass: true, clauses: [{ clause: 'it works', pass: true, evidence: 'saw it' }] }],
+    };
+    const skippedRecord: CaseRecord = {
+      verdict: 'skipped',
+      reason: 'Skipped: tagged @skip in f/x.feature.',
+      source: 'judged',
+      skip: { source: 'tag', detail: 'f/x.feature' },
+    };
+    const unjudgedRecord: CaseRecord = {
+      verdict: 'unjudged',
+      reason: 'No eval-spec binding for this case; recorded unjudged (never passed).',
+      source: 'judged',
+    };
+    const run: EvalRun = {
+      runId: 'r1',
+      createdAt: new Date().toISOString(),
+      scope: { kind: 'store' },
+      cases: [mkCase('a#judged'), mkCase('a#skipped'), mkCase('a#unbound')].map((c, i) =>
+        toSnapshot(c, i === 0 ? 'deterministic' : null)
+      ),
+      verdicts: {
+        'a#judged': judgedRecord,
+        'a#skipped': skippedRecord,
+        'a#unbound': unjudgedRecord,
+      },
+    };
+    persistRun(root, run);
+    const report = await buildReport(root, 'r1');
+
+    expect(report.cases).toHaveLength(3);
+    const judged = report.cases.find((c) => c.id === 'a#judged');
+    expect(judged).toMatchObject({
+      verdict: 'pass',
+      rubric: ['it works'],
+      clauses: judgedRecord.clauses,
+      votes: judgedRecord.votes,
+    });
+    expect(judged?.skip).toBeUndefined();
+
+    const skipped = report.cases.find((c) => c.id === 'a#skipped');
+    expect(skipped).toMatchObject({
+      verdict: 'skipped',
+      rubric: [],
+      clauses: [],
+      votes: [],
+      skip: { source: 'tag', detail: 'f/x.feature' },
+    });
+
+    const unbound = report.cases.find((c) => c.id === 'a#unbound');
+    expect(unbound).toMatchObject({ verdict: 'unjudged', rubric: [], clauses: [], votes: [] });
+    expect(unbound?.skip).toBeUndefined();
+  });
+
+  it('leaves the existing overall-verdict/contributor/scorecard assertions unchanged by the new field', async () => {
+    const root = makeProject();
+    persistRun(
+      root,
+      mkRun('r1', {
+        'a#pass': { verdict: 'pass' },
+        'a#fail': { verdict: 'fail', reason: 'boom' },
+      })
+    );
+    const report = await buildReport(root, 'r1');
+    expect(report.overall).toBe('fail');
+    expect(report.scorecard).toMatchObject({ total: 2, pass: 1, fail: 1 });
+    expect(report.cases).toHaveLength(2);
   });
 });

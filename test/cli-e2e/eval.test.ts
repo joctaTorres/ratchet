@@ -525,4 +525,48 @@ features/cli/status#status-as-text:
     expect(text.stdout).toContain('warn:');
     expect(text.stdout).toContain('features/cli/status#status-as-json');
   });
+
+  // features/eval-judge/structured-evidence-persistence.feature — both `eval
+  // run --json` and `eval report --json` surface the run JSON's per-case
+  // structured detail: a judged case's rubric/clauses/votes and a skipped
+  // case's skip source/detail.
+  it('eval run --json and eval report --json both include cases[] with structured per-case detail', async () => {
+    const cwd = await prepareProject();
+    await write(
+      path.join(cwd, '.ratchet', 'features', 'skip', 's.feature'),
+      'Feature: Skip\n  @skip\n  Scenario: Tag skipped\n    Given a\n    Then b\n'
+    );
+    const run = await runCLI(['eval', 'run', '--json'], {
+      cwd,
+      env: agentEnv(true, 'the output is readable text'),
+    });
+    expect(run.exitCode).toBe(0);
+    const runParsed = JSON.parse(run.stdout);
+    expect(Array.isArray(runParsed.cases)).toBe(true);
+
+    const judged = runParsed.cases.find((c: { id: string }) => c.id === 'features/cli/status#status-as-text');
+    expect(judged.verdict).toBe('pass');
+    expect(judged.rubric).toEqual(['it prints text']);
+    expect(judged.clauses).toEqual([
+      { clause: 'it prints text', pass: true, evidence: 'the output is readable text' },
+    ]);
+    expect(judged.votes).toEqual([{ pass: true, clauses: judged.clauses }]);
+
+    const skipped = runParsed.cases.find((c: { id: string }) => c.id === 'features/skip/s#tag-skipped');
+    expect(skipped.verdict).toBe('skipped');
+    expect(skipped.skip).toEqual({ source: 'tag', detail: 'features/skip/s.feature' });
+
+    const report = await runCLI(['eval', 'report', '--run', runParsed.runId, '--json'], { cwd });
+    expect(report.exitCode).toBe(0);
+    const reportParsed = JSON.parse(report.stdout);
+    const judgedFromReport = reportParsed.cases.find(
+      (c: { id: string }) => c.id === 'features/cli/status#status-as-text'
+    );
+    expect(judgedFromReport.rubric).toEqual(['it prints text']);
+    expect(judgedFromReport.votes).toEqual(judged.votes);
+    const skippedFromReport = reportParsed.cases.find(
+      (c: { id: string }) => c.id === 'features/skip/s#tag-skipped'
+    );
+    expect(skippedFromReport.skip).toEqual({ source: 'tag', detail: 'features/skip/s.feature' });
+  });
 });

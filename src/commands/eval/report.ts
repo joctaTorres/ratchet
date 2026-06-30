@@ -36,7 +36,10 @@ function renderReport(report: EvalReport): void {
     for (const id of diff.regressions) {
       const f = report.failing.find((x) => x.id === id);
       console.log(chalk.red(`    - ${id}`));
-      if (f) console.log(chalk.dim(`        ${f.evidence}`));
+      if (f) {
+        console.log(chalk.dim(`        ${f.evidence}`));
+        printCaseDetail(report, id);
+      }
     }
   }
 
@@ -52,11 +55,26 @@ function renderReport(report: EvalReport): void {
     for (const f of nonRegressionFails) {
       console.log(chalk.red(`    - ${f.id}`));
       console.log(chalk.dim(`        ${f.evidence}`));
+      printCaseDetail(report, f.id);
     }
   }
 
   if (diff.newCases.length > 0) console.log(chalk.cyan(`  New: ${diff.newCases.join(', ')}`));
   if (diff.retiredCases.length > 0) {
     console.log(chalk.dim(`  Retired: ${diff.retiredCases.join(', ')}`));
+  }
+}
+
+/** Print a failing case's per-clause pass/fail breakdown, plus a jury tally when more than one vote was cast. */
+function printCaseDetail(report: EvalReport, caseId: string): void {
+  const detail = report.cases.find((c) => c.id === caseId);
+  if (!detail) return;
+  for (const cl of detail.clauses) {
+    const mark = cl.pass ? chalk.green('[pass]') : chalk.red('[fail]');
+    console.log(chalk.dim(`        ${mark} ${cl.clause}`));
+  }
+  if (detail.votes.length > 1) {
+    const passed = detail.votes.filter((v) => v.pass).length;
+    console.log(chalk.dim(`        Jury: ${passed}/${detail.votes.length} passed`));
   }
 }

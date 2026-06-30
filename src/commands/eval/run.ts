@@ -1,16 +1,26 @@
 /**
- * `ratchet eval run [scope] [--judge auto|deterministic|llm-judge] [--json]`
+ * `ratchet eval run [scope] [--gate <ids>] [--only <ids>] [--no-llm-judge] [--judge <mode>] [--json]`
  *
- * Snapshot the in-scope set, judge every bound case through the engine seams
- * against its fixture working copy, persist the run under `.ratchet/evals/runs/`
- * and print the scorecard. Unbound cases record `unjudged`.
+ * Snapshot the in-scope set, judge every bound case whose contributor is enabled
+ * through the engine seams against its fixture working copy, persist the run
+ * under `.ratchet/evals/runs/` and print the scorecard. A case bound to a
+ * disabled contributor — and any unbound case — records `unjudged`. Contributor
+ * selection comes from `eval.gate` config overridden by the CLI selectors
+ * (`--gate`/`--only`/`--no-llm-judge`); `--judge` is a deprecated legacy alias.
  */
 
 import chalk from 'chalk';
 import { executeRun, buildReport, type EvalReport } from '../../core/eval/index.js';
-import { projectRoot, resolveScope, resolveJudgeMode, type ScopeFlags } from './shared.js';
+import { projectRoot, resolveScope, resolveContributorGate, type ScopeFlags } from './shared.js';
 
 export interface EvalRunOptions extends ScopeFlags {
+  /** `--gate <ids>`: set the enabled contributor set outright. */
+  gate?: string;
+  /** `--only <ids>`: restrict the run to the listed contributors. */
+  only?: string;
+  /** `--no-llm-judge` ⇒ `false`; disables the llm-judge contributor. */
+  llmJudge?: boolean;
+  /** Legacy `--judge <mode>` alias (deprecated), mapped onto the gate. */
   judge?: string;
   json?: boolean;
 }
@@ -18,9 +28,14 @@ export interface EvalRunOptions extends ScopeFlags {
 export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void> {
   const root = projectRoot();
   const scope = resolveScope(options);
-  const mode = resolveJudgeMode(root, options.judge);
+  const gate = resolveContributorGate(root, {
+    gate: options.gate,
+    only: options.only,
+    llmJudge: options.llmJudge,
+    judge: options.judge,
+  });
 
-  const { run, warnings } = await executeRun(root, { scope, mode });
+  const { run, warnings } = await executeRun(root, { scope, gate });
   const report = buildReport(root, run.runId);
 
   if (options.json) {

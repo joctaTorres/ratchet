@@ -5,9 +5,13 @@
  * persists a run under `.ratchet/evals/runs/` and reports the case as unjudged
  * with the "Run is incomplete" notice (text), emits `{ runId, scorecard,
  * warnings }` (--json), and rejects an invalid --judge before any run is
- * persisted. The run is exercised over an unbound case so the engine records
- * `unjudged` without ever spawning a coding agent (the agent seam is covered by
- * test/cli-e2e/eval.test.ts). The verb is pointed at an isolated tmpdir fixture
+ * persisted. It also covers features/eval-contributor-gate/disabled-contributor-incompleteness.feature:
+ * a case bound to a disabled contributor is recorded `unjudged` (the reason
+ * names the contributor) without executing, leaving the run incomplete and the
+ * enabled set persisted on the run. The run is exercised over unbound /
+ * disabled cases so the engine records `unjudged` without ever spawning a coding
+ * agent (the agent seam is covered by test/cli-e2e/eval.test.ts). The verb is
+ * pointed at an isolated tmpdir fixture
  * by mocking `resolveCurrentPlanningHomeSync`; console.log is spied and the
  * fixture removed in afterEach.
  */
@@ -118,5 +122,32 @@ describe('evalRunCommand', () => {
       /Invalid --judge/
     );
     expect(await persistedRunIds()).toHaveLength(0);
+  });
+
+  it('records a disabled-contributor case unjudged (naming the contributor) and stays incomplete', async () => {
+    // Bind the solo case as a deterministic check, then disable the deterministic
+    // contributor via --only. The bound case must be recorded unjudged WITHOUT
+    // executing its check (no fixture is materialized), leaving the run incomplete.
+    await fixture.writeSpec(
+      'solo.yaml',
+      `${SOLO_CASE}:\n  fixture: fx\n  kind: deterministic\n  check:\n    run: "true"\n    pass: exit-zero\n`
+    );
+
+    await evalRunCommand({ only: 'llm-judge', json: true });
+    const parsed = JSON.parse(output());
+
+    expect(parsed.scorecard.unjudged).toBe(1);
+    expect(parsed.scorecard.complete).toBe(false);
+
+    const run = JSON.parse(
+      await fs.readFile(
+        path.join(fixture.root, '.ratchet', 'evals', 'runs', `${parsed.runId}.json`),
+        'utf-8'
+      )
+    );
+    expect(run.verdicts[SOLO_CASE].verdict).toBe('unjudged');
+    expect(run.verdicts[SOLO_CASE].reason).toMatch(/deterministic.*disabled/i);
+    // The enabled set is persisted on the run, in display order.
+    expect(run.gate).toEqual(['llm-judge']);
   });
 });

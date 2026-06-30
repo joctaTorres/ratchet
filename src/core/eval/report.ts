@@ -17,7 +17,7 @@
 import type { EvalRun } from './run.js';
 import { loadRun, loadBaselineRunId } from './run.js';
 import type { Verdict } from './judge.js';
-import { aggregateRun, type ContributorOutcome } from './aggregate.js';
+import { aggregateRun, DEFAULT_CONTRIBUTORS, type ContributorOutcome } from './aggregate.js';
 
 export interface Scorecard {
   total: number;
@@ -117,8 +117,14 @@ export function buildReport(projectRoot: string, runId: string): EvalReport {
   const diff = diffAgainstBaseline(run, baseline);
   const scorecard = scoreRun(run);
   // The aggregation core is the single decider of the overall verdict: a logical
-  // AND over named contributors. No inline pass/fail expression lives here.
-  const aggregate = aggregateRun({ run, diff });
+  // AND over named contributors. No inline pass/fail expression lives here. The
+  // AND runs over exactly the contributors that gated the run — `run.gate` — so a
+  // disabled contributor takes no part in the verdict. A legacy run with no gate
+  // recorded ANDs over the full built-in set.
+  const contributors = run.gate
+    ? DEFAULT_CONTRIBUTORS.filter((c) => run.gate!.includes(c.id))
+    : DEFAULT_CONTRIBUTORS;
+  const aggregate = aggregateRun({ run, diff }, contributors);
   return {
     runId,
     scorecard,

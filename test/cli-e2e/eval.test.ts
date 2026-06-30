@@ -128,6 +128,51 @@ describe('ratchet eval CLI e2e', () => {
     expect(text.stdout).toContain('deterministic:');
   });
 
+  // features/eval-contributor-gate/* — the contributor gate is driven from the
+  // CLI on the built binary: --no-llm-judge / --only disable a contributor so its
+  // cases go unjudged and the run is incomplete; an unknown id is rejected.
+  it('runs --no-llm-judge: the llm-judge case is unjudged and the run incomplete', async () => {
+    const cwd = await prepareProject();
+    const res = await runCLI(['eval', 'run', '--no-llm-judge', '--json'], { cwd });
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    // deterministic check passes; the llm-judge case is left unjudged (disabled).
+    expect(parsed.scorecard.pass).toBe(1);
+    expect(parsed.scorecard.unjudged).toBe(1);
+    expect(parsed.scorecard.complete).toBe(false);
+    // The persisted run records the enabled set without llm-judge.
+    const run = JSON.parse(
+      await fs.readFile(
+        path.join(cwd, '.ratchet', 'evals', 'runs', `${parsed.runId}.json`),
+        'utf-8'
+      )
+    );
+    expect(run.gate).toEqual(['deterministic', 'invariants', 'regression']);
+    expect(run.verdicts['features/cli/status#status-as-text'].verdict).toBe('unjudged');
+    expect(run.verdicts['features/cli/status#status-as-text'].reason.toLowerCase()).toContain(
+      'llm-judge'
+    );
+  });
+
+  it('runs --only deterministic: only the deterministic contributor executes', async () => {
+    const cwd = await prepareProject();
+    const res = await runCLI(['eval', 'run', '--only', 'deterministic', '--json'], { cwd });
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.scorecard.pass).toBe(1);
+    expect(parsed.scorecard.unjudged).toBe(1);
+    expect(parsed.contributors.map((c: { id: string }) => c.id)).toEqual(['deterministic']);
+  });
+
+  it('rejects --only with an unknown contributor id, listing the valid ids', async () => {
+    const cwd = await prepareProject();
+    const res = await runCLI(['eval', 'run', '--only', 'not-a-contributor', '--json'], { cwd });
+    expect(res.exitCode).not.toBe(0);
+    const out = `${res.stdout}${res.stderr}`;
+    expect(out).toContain('not-a-contributor');
+    expect(out).toContain('deterministic, llm-judge, invariants, regression');
+  });
+
   it('runs the agent judge through the stub and passes on evidence', async () => {
     const cwd = await prepareProject();
     const res = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {

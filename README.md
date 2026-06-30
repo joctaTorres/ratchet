@@ -229,7 +229,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
 | `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
-| `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|deterministic\|llm-judge`, `--json`) |
+| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, deprecated `--judge auto\|deterministic\|llm-judge`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
 | `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
@@ -435,6 +435,14 @@ Contributors are the extension point for future gate capabilities. An
 **incomplete** run (any case `unjudged`) **cannot be promoted to baseline** — so
 an unfinished run can never become the regression baseline future runs are judged
 against.
+
+**The gate is configurable.** Which contributors execute and gate a run is
+selectable, generalizing the old `--judge` flag: set `eval.gate` in
+`.ratchet/config.yaml` (a `contributor → boolean` map; unset ⇒ all enabled) and
+override per run with `--gate <ids>`, `--only <ids>`, or `--no-llm-judge`. A
+disabled contributor records its cases `unjudged` — leaving the run incomplete
+and unpromotable — and takes no part in the AND. `--judge` remains as a
+deprecated alias mapped onto the gate.
 
 ## Agent workflows (skills / `/rct:` commands)
 

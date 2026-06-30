@@ -146,4 +146,34 @@ describe('baseline', () => {
     expect(() => promoteBaseline(root, 'incomplete')).toThrow(/incomplete/i);
     expect(loadBaselineRunId(root)).toBeNull();
   });
+
+  // features/eval-contributor-gate/disabled-contributor-incompleteness.feature:
+  // a run left incomplete by a disabled contributor (its case unjudged) cannot
+  // be promoted, leaving any existing baseline untouched.
+  it('refuses to promote a run made incomplete by a disabled contributor', () => {
+    const root = makeProject();
+    persistRun(root, completeRun('good'));
+    promoteBaseline(root, 'good');
+
+    // A run whose only llm-judge case is unjudged because llm-judge is disabled.
+    const gated: EvalRun = {
+      runId: 'gated',
+      createdAt: new Date().toISOString(),
+      judgeMode: 'auto',
+      scope: { kind: 'store' },
+      gate: ['deterministic', 'invariants', 'regression'],
+      cases: [toSnapshot(CASE, 'llm-judge')],
+      verdicts: {
+        'f/x#one': {
+          verdict: 'unjudged',
+          reason: "Contributor 'llm-judge' is disabled for this run; case recorded unjudged (never executed).",
+          source: 'judged',
+        },
+      },
+    };
+    persistRun(root, gated);
+
+    expect(() => promoteBaseline(root, 'gated')).toThrow(/incomplete/i);
+    expect(loadBaselineRunId(root)).toBe('good');
+  });
 });

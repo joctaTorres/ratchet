@@ -7,6 +7,7 @@ import { persistRun, promoteBaseline, toSnapshot, type EvalRun } from '../../../
 import type { EvalCase } from '../../../src/core/eval/set.js';
 import type { Verdict } from '../../../src/core/eval/judge.js';
 import type { BindingKind } from '../../../src/core/eval/spec.js';
+import type { ContributorId } from '../../../src/core/eval/aggregate.js';
 
 const roots: string[] = [];
 
@@ -28,7 +29,8 @@ function mkCase(id: string): EvalCase {
 
 function mkRun(
   runId: string,
-  verdicts: Record<string, { verdict: Verdict; reason?: string; kind?: BindingKind | null }>
+  verdicts: Record<string, { verdict: Verdict; reason?: string; kind?: BindingKind | null }>,
+  gate?: ContributorId[]
 ): EvalRun {
   const ids = Object.keys(verdicts);
   // A judged case is a bound case: pass/fail default to a deterministic binding
@@ -41,6 +43,7 @@ function mkRun(
     createdAt: new Date().toISOString(),
     judgeMode: 'auto',
     scope: { kind: 'store' },
+    ...(gate ? { gate } : {}),
     cases: ids.map((id) => toSnapshot(mkCase(id), kindFor(verdicts[id]))),
     verdicts: Object.fromEntries(
       ids.map((id) => [
@@ -113,6 +116,52 @@ describe('overall verdict routed through the aggregation core', () => {
     // Both the deterministic check and the regression fire on this case.
     expect(failing).toContain('regression');
     expect(report.contributors.find((c) => c.id === 'regression')?.failing).toEqual(['a#x']);
+  });
+});
+
+// features/eval-contributor-gate/gate-selection.feature — the report ANDs only
+// over the contributors recorded on `run.gate`; a disabled one takes no part.
+describe('AND over the enabled contributor set (run.gate)', () => {
+  it('excludes a disabled contributor from the AND so the run can still pass', () => {
+    const root = makeProject();
+    // An llm-judge case fails, but the llm-judge contributor is NOT in run.gate.
+    persistRun(
+      root,
+      mkRun(
+        'gated',
+        {
+          'a#det': { verdict: 'pass', kind: 'deterministic' },
+          'a#llm': { verdict: 'fail', reason: 'would fail', kind: 'llm-judge' },
+        },
+        ['deterministic', 'invariants', 'regression']
+      )
+    );
+    const report = buildReport(root, 'gated');
+    // The disabled llm-judge contributor is absent from the breakdown and the AND.
+    expect(report.contributors.map((c) => c.id)).toEqual([
+      'deterministic',
+      'invariants',
+      'regression',
+    ]);
+    expect(report.overall).toBe('pass');
+  });
+
+  it('includes the contributor in the AND when it is enabled (control)', () => {
+    const root = makeProject();
+    persistRun(
+      root,
+      mkRun(
+        'enabled',
+        {
+          'a#det': { verdict: 'pass', kind: 'deterministic' },
+          'a#llm': { verdict: 'fail', reason: 'would fail', kind: 'llm-judge' },
+        },
+        ['deterministic', 'llm-judge', 'invariants', 'regression']
+      )
+    );
+    const report = buildReport(root, 'enabled');
+    expect(report.contributors.find((c) => c.id === 'llm-judge')?.status).toBe('fail');
+    expect(report.overall).toBe('fail');
   });
 });
 

@@ -15,7 +15,7 @@ import { RATCHET_DIR_NAME } from '../config.js';
 import type { EvalCase } from './set.js';
 import type { Verdict } from './judge.js';
 import type { BindingKind } from './spec.js';
-import { isRunComplete } from './aggregate.js';
+import { isRunComplete, type ContributorId } from './aggregate.js';
 
 export type VerdictSource = 'judged' | 'manual';
 
@@ -41,6 +41,13 @@ export interface EvalRun {
   createdAt: string;
   judgeMode: string;
   scope: { kind: string; target?: string };
+  /**
+   * The enabled contributor ids that gated this run, in display order. A case
+   * bound to a contributor absent here was recorded `unjudged` rather than
+   * executed, and `buildReport` ANDs only over these contributors. Absent on
+   * legacy runs persisted before the gate existed ⇒ treated as all-enabled.
+   */
+  gate?: ContributorId[];
   cases: CaseSnapshot[];
   verdicts: Record<string, CaseRecord>;
 }

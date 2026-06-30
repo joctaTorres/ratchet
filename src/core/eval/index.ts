@@ -77,3 +77,10 @@ export {
   type RunAggregate,
 } from './aggregate.js';
 export { executeRun, type RunOptions, type RunOutcome } from './execute.js';
+export {
+  resolveGate,
+  ALL_CONTRIBUTOR_IDS,
+  type GateConfig,
+  type GateFlags,
+  type ResolveGateInput,
+} from './gate.js';

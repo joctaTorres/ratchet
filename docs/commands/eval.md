@@ -59,7 +59,7 @@ working copy and persist the run.
 ### Synopsis
 
 ```bash
-ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--judge <mode>] [--json]
+ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--gate <ids> | --only <ids> | --no-llm-judge] [--judge <mode>] [--json]
 ```
 
 ### Options
@@ -69,8 +69,17 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--judge <
 | `--changes` | | Include active changes alongside the feature store. |
 | `--change` | `<name>` | Scope to a single active change. |
 | `--path` | `<dir-or-file>` | Narrow to a capability directory or `.feature` file within the feature store. |
-| `--judge` | `auto \| deterministic \| llm-judge` | Judge mode. Default: project config `eval.judge`, or `auto` when not configured. |
+| `--gate` | `<ids>` | Set the enabled contributor set outright (comma-separated ids from `deterministic`, `llm-judge`, `invariants`, `regression`). |
+| `--only` | `<ids>` | Restrict the enabled set to the listed contributor ids (intersection with the config default). |
+| `--no-llm-judge` | | Disable the `llm-judge` contributor for this run. |
+| `--judge` | `auto \| deterministic \| llm-judge` | **Deprecated** legacy alias mapped onto the gate: `deterministic` disables `llm-judge`, `llm-judge` disables `deterministic`, `auto` enables both. Prefer `--gate`/`--only`/`--no-llm-judge`. |
 | `--json` | | Output as JSON: `{ runId, overall, scorecard, contributors, warnings }`. |
+
+The contributor gate selects which verdict contributors execute and gate the
+run. Resolution precedence is default (all contributors enabled) ◁ the project
+config `eval.gate` map ◁ these CLI flags. An unknown id in `--gate`/`--only`
+fails the command with the valid ids listed. See
+[Eval verdict aggregation](../eval-verdict-aggregation.md#contributor-selection-the-gate).
 
 ### Behavior
 
@@ -84,13 +93,15 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--judge <
    fixture+setup pair; subsequent cases bound to the same fixture+setup reuse
    the cached copy. Each case judges in an isolated working copy; the
    checked-in fixture and host repository are never modified.
-4. **Judge modes.** Three modes control which binding kind is exercised:
-   - `auto` — follows the bound kind: `deterministic` bindings run the
-     deterministic check, `llm-judge` bindings spawn the judge agent.
-   - `deterministic` — runs deterministic check bindings; llm-judge-only cases
-     are recorded `unjudged`.
-   - `llm-judge` — forces the llm-judge path; deterministic check cases are
-     recorded `unjudged`.
+4. **Contributor gating.** The resolved enabled contributor set decides which
+   bound cases execute. An enabled case is judged by its bound kind:
+   `deterministic` bindings run the deterministic check, `llm-judge` bindings
+   spawn the judge agent. A bound case whose binding-kind contributor is
+   **disabled** is recorded `unjudged` (the reason names the disabled
+   contributor) without materializing a fixture or spawning a judge, so the run
+   is **incomplete**. The enabled set is persisted on the run as `gate`. The
+   `invariants` and `regression` contributors are run-level (not per-case), so
+   disabling them affects only the aggregated verdict, not per-case execution.
 5. **Unbound cases.** A case with no binding in any spec is recorded `unjudged`
    with reason `"No eval-spec binding for this case"` and is never passed.
 6. **Persistence.** The completed run is persisted atomically to

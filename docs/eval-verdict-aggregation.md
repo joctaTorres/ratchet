@@ -16,6 +16,13 @@ point.
 
 ```mermaid
 flowchart TD
+    CFG[🔧 eval.gate config<br/>contributor → boolean]
+    CLI[👤 CLI selectors<br/>--gate / --only / --no-llm-judge / --judge]
+    GATE{{⚙️ resolveGate<br/>default ◁ config ◁ CLI}}
+    CFG --> GATE
+    CLI --> GATE
+    GATE --> ENABLED[📦 enabled set<br/>run.gate]
+
     CTX[📦 ContributorContext<br/>run + baseline diff]
 
     CTX --> DET[⚙️ deterministic<br/>fails of deterministic-kind cases]
@@ -23,7 +30,12 @@ flowchart TD
     CTX --> INV[⚙️ invariants<br/>neutral placeholder ⇒ pass]
     CTX --> REG[⚙️ regression<br/>baseline regressions]
 
-    DET --> AND{🔀 aggregateRun<br/>logical AND}
+    ENABLED -. filters .-> DET
+    ENABLED -. filters .-> LLM
+    ENABLED -. filters .-> INV
+    ENABLED -. filters .-> REG
+
+    DET --> AND{🔀 aggregateRun<br/>logical AND over enabled}
     LLM --> AND
     INV --> AND
     REG --> AND
@@ -35,12 +47,14 @@ flowchart TD
     COMPLETE --> GUARD[🔐 promoteBaseline guard<br/>reject incomplete run]
 
     classDef input    fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef select   fill:#FFDEAD,stroke:#333,stroke-width:2px,color:saddlebrown
     classDef contrib  fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
     classDef core     fill:#FFD700,stroke:#333,stroke-width:2px,color:black
     classDef sink     fill:#ADD8E6,stroke:#333,stroke-width:2px,color:darkblue
     classDef guard    fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
 
-    class CTX input
+    class CTX,ENABLED input
+    class CFG,CLI,GATE select
     class DET,LLM,INV,REG contrib
     class AND,COMPLETE core
     class OVERALL,REPORT sink
@@ -114,6 +128,39 @@ function aggregateRun(
 `DEFAULT_CONTRIBUTORS` is the built-in set. Callers may pass an explicit
 contributor list to select a subset; selection by config and CLI is layered on
 top of this parameter without reshaping the core.
+
+## Contributor selection (the gate)
+
+Which contributors execute and gate a run is resolved by `resolveGate`
+(`src/core/eval/gate.ts`) into the **enabled contributor set**. The resolution
+precedence is `default(all-enabled) ◁ config ◁ CLI`:
+
+1. **Default** — every built-in contributor is enabled.
+2. **Config** — the `eval.gate` map in `.ratchet/config.yaml` toggles individual
+   contributors (`{ contributor-id: boolean }`); an omitted contributor stays
+   enabled.
+3. **CLI** — flags on `ratchet eval run` override the config: `--gate <ids>` sets
+   the enabled set outright, `--only <ids>` restricts to the listed ids,
+   `--no-llm-judge` clears the `llm-judge` contributor, and the deprecated
+   `--judge <mode>` is mapped onto the gate (`deterministic` ⇒ `llm-judge` off,
+   `llm-judge` ⇒ `deterministic` off, `auto` ⇒ both on). Unknown ids in
+   `--gate`/`--only` are rejected with the valid ids listed.
+
+`ALL_CONTRIBUTOR_IDS` is the contributor vocabulary, derived from
+`DEFAULT_CONTRIBUTORS` so there is one source of truth. The resolved enabled set
+is persisted on the run as `EvalRun.gate` (display order). Selection effects:
+
+- **Execution** — `executeRun` records a bound case whose binding-kind
+  contributor is disabled as `unjudged` (the reason names the disabled
+  contributor) instead of executing it; no fixture is materialized and no judge
+  is spawned. A disabled contributor therefore leaves the run **incomplete**.
+- **Aggregation** — `buildReport` filters `DEFAULT_CONTRIBUTORS` by `run.gate`
+  before calling `aggregateRun`, so the AND and the per-contributor breakdown
+  cover exactly the enabled contributors. A disabled contributor takes no part in
+  the verdict. (A legacy run persisted with no `gate` ANDs over the full set.)
+- **Promotion** — because a disabled contributor leaves cases `unjudged`, the
+  run is incomplete and the `promoteBaseline` guard refuses it (below), so a
+  partial run can never become the baseline.
 
 ## Routing
 

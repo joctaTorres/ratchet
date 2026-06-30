@@ -19,6 +19,7 @@
 import type { EvalRun } from './run.js';
 import type { BaselineDiff } from './report.js';
 import type { Verdict } from './judge.js';
+import type { InvariantGateResult } from './invariant-gate.js';
 
 export type ContributorId = 'deterministic' | 'llm-judge' | 'invariants' | 'regression';
 
@@ -26,6 +27,15 @@ export type ContributorId = 'deterministic' | 'llm-judge' | 'invariants' | 'regr
 export interface ContributorContext {
   run: EvalRun;
   diff: BaselineDiff;
+  /**
+   * The precomputed run-level invariant gate result. Evaluating an invariant
+   * runs commands (async), which the aggregation core must not do — so the gate
+   * is computed upstream (in `buildReport`) and the pure `invariants`
+   * contributor merely reads `invariants.failing`, mirroring how `regression`
+   * reads `diff.regressions`. Absent when the contributor is disabled or no
+   * invariants are declared.
+   */
+  invariants?: InvariantGateResult;
 }
 
 /** One contributor's verdict over the run, with the case ids that failed it. */
@@ -87,13 +97,16 @@ export const regressionContributor: Contributor = {
 };
 
 /**
- * Neutral placeholder. Registered as a defined extension point with nothing to
- * evaluate yet, so it always reports `pass` and is identity to the AND. The
- * `invariant-set` change fills this in without reshaping the aggregation seam.
+ * Fails on any active invariant the run violates. The async manifest load and
+ * per-invariant evaluation happen upstream (`evaluateInvariantGate`); this pure
+ * contributor only reads the precomputed violating ids — `fail` when any
+ * invariant violated (or the manifest was unloadable), `pass` when the gate is
+ * absent or empty. Inert invariants are never in `failing`, so they are never a
+ * vacuous pass.
  */
 export const invariantsContributor: Contributor = {
   id: 'invariants',
-  evaluate: () => outcome('invariants', []),
+  evaluate: (ctx) => outcome('invariants', ctx.invariants?.failing ?? []),
 };
 
 /** The built-in contributor set, in display order. */

@@ -15,9 +15,14 @@ vacuous pass.
 The typed set the loader produces is then handed one invariant at a time to the
 per-invariant **evaluator** (`src/core/eval/invariant-evaluator.ts`), which
 computes a `pass` / `fail` / `unevaluable` outcome for each kind (documented under
-[Evaluator outcome model](#evaluator-outcome-model)). Threading the evaluator
-through the `invariants` gate contributor over the whole manifest, and gating the
-run verdict on it, are downstream of this slice.
+[Evaluator outcome model](#evaluator-outcome-model)).
+
+The run-level **gate** (`src/core/eval/invariant-gate.ts`) ties the two together:
+on every `eval run` (and any batch `verify` that surfaces an eval verdict) it
+loads the manifest fail-closed, evaluates **only the active invariants** through
+the evaluator, and reduces them to one pass/fail signal the verdict-aggregation
+core consumes as the `invariants` contributor — a sibling to `regression`. See
+[Gate contributor](#gate-contributor).
 
 ## Overview
 
@@ -85,6 +90,45 @@ flowchart TD
     class DET,MON,SNAP kind
     class PASS ok
     class FAILV,UNEV err
+```
+
+Run-level, the gate reduces the manifest's active invariants to the `invariants`
+contributor, which the verdict-aggregation core ANDs with its siblings —
+`regression` first among them — to decide the run's pass:
+
+```mermaid
+flowchart TD
+    MANIFEST[📄 .ratchet/evals/invariants.yaml<br/>authored invariant list]
+    GATE{{⚙️ evaluateInvariantGate<br/>load fail-closed · active only}}
+    SKIP[💤 inert invariants<br/>skipped · never counted]
+    OUTCOMES[📦 active outcomes<br/>pass · fail · unevaluable]
+    CONTRIB{{🛡️ invariants contributor<br/>fail iff any violation}}
+    AND{{🧮 aggregateRun<br/>logical AND over contributors}}
+    REG[🔁 regression contributor<br/>run-level sibling]
+    VERDICT[⚖️ run verdict<br/>pass · fail]
+
+    MANIFEST --> GATE
+    GATE -->|active: false| SKIP
+    GATE -->|active: true| OUTCOMES
+    GATE -->|🔐 manifest unloadable| CONTRIB
+    OUTCOMES --> CONTRIB
+    CONTRIB --> AND
+    REG --> AND
+    AND --> VERDICT
+
+    classDef source   fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef core     fill:#FFD700,stroke:#333,stroke-width:2px,color:black
+    classDef gate     fill:#87CEFA,stroke:#333,stroke-width:2px,color:black
+    classDef skip     fill:#D3D3D3,stroke:#333,stroke-width:2px,color:black
+    classDef out      fill:#FFE4B5,stroke:#333,stroke-width:2px,color:black
+    classDef verdict  fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+
+    class MANIFEST source
+    class GATE,AND core
+    class CONTRIB,REG gate
+    class SKIP skip
+    class OUTCOMES out
+    class VERDICT verdict
 ```
 
 ## Manifest schema
@@ -223,10 +267,59 @@ spawn or filesystem.
   stdout (trimmed) against the golden (trimmed): equal is pass, differing is fail.
   An **absent golden**, or a `produce` command that **throws**, is `unevaluable`.
 
+## Gate contributor
+
+`evaluateInvariantGate({ projectRoot, run, baseline, bash?, readFile? })` is the
+run-level seam that wires the manifest into the verdict. It runs **once per run**,
+inside `buildReport` — the single place a run's verdict is aggregated, shared by
+`eval run`, `eval report`, and any batch `verify` that surfaces an eval verdict.
+
+1. **Load fail-closed.** A present-but-broken manifest (`InvariantManifestError`)
+   returns a non-empty `failing` (the manifest filename) plus a `loadError`, so the
+   contributor fails rather than passing on an empty set. An **absent** manifest is
+   the only path to a passing, empty gate (nothing declared).
+2. **Active only.** Only `active: true` invariants are evaluated; inert invariants
+   are skipped — never run, and **never recorded as a passing invariant**. A
+   manifest of only inert invariants yields zero outcomes and the contributor
+   passes, but no inert invariant is counted as a vacuous pass.
+3. **Collect violations.** Each active invariant is evaluated through
+   `evaluateInvariant`; every outcome `isInvariantViolation` flags (both `fail` and
+   `unevaluable`) has its `id` collected into `failing`.
+
+The result (`InvariantGateResult` = `{ outcomes, failing, loadError? }`) is
+precomputed upstream and fed into the pure, synchronous aggregation core through
+`ContributorContext.invariants`; the `invariants` contributor merely reads
+`failing` — `fail` when non-empty, `pass` otherwise — exactly as `regression`
+reads `diff.regressions`. The async command-running stays out of the aggregation
+core, which remains I/O-free.
+
+`buildReport` evaluates the gate **only when the `invariants` contributor is in
+the run's enabled set** (`run.gate`). A disabled contributor runs no manifest
+command and takes no part in the AND. The per-invariant breakdown is exposed on
+`EvalReport.invariants` (and `EvalReport.loadError`), and `ratchet eval run`
+surfaces a violated/unevaluable invariant — or an unloadable manifest — **first,
+as a sibling to a regression**, ahead of the per-case contributor breakdown.
+
+### Toggling the contributor
+
+The `invariants` contributor is enabled by default and toggles through the
+standard contributor gate:
+
+- **`eval.gate.invariants: false`** in `.ratchet/config.yaml` disables it for the
+  project (see [config-yaml](configuration/config-yaml.md)).
+- **`--no-invariants`** on `ratchet eval run` disables it for a single run,
+  overriding the config (see [eval command](commands/eval.md)).
+
+When disabled, the gate is not evaluated, no invariant command runs, and the
+contributor is absent from the verdict — the same generic mechanism as
+`--no-llm-judge` / `eval.gate.llm-judge`.
+
 ## API
 
 | Export                            | Description                                                         |
 | --------------------------------- | ------------------------------------------------------------------- |
+| `evaluateInvariantGate(input)`    | Run-level gate: loads fail-closed, evaluates active invariants, returns `{ outcomes, failing, loadError? }`. |
+| `InvariantGateResult` / `InvariantGateInput` | The gate result and its inputs (`projectRoot`, `run`, `baseline`, injectable `bash` / `readFile`). |
 | `loadInvariantManifest(root)`     | Loads and validates the manifest; fail-closed.                      |
 | `invariantsManifestPath(root)`    | Resolves the manifest path under `.ratchet/evals/`.                 |
 | `InvariantManifestError`          | Error raised for any present-but-broken manifest.                   |
@@ -241,6 +334,7 @@ spawn or filesystem.
 | `InvariantEvalContext`            | Evaluator inputs: `projectRoot`, `run`, `baseline`, injectable `bash` / `readFile`. |
 | `MeasureResolver` / `FileReader` / `realFileReader` | The injectable seam types and the default fs reader. |
 
-> **No user-facing CLI/flag/config surface in this slice**, so `README.md` is
-> unchanged: the evaluator is pure core logic that the downstream `invariants`
-> contributor and default-manifest slices expose to users.
+> Writing the **default manifest** at `ratchet init` (with `spec-not-weakened`
+> active and the stack-specific invariants scaffolded inert) is the separate
+> downstream `init-default-manifest` slice; this gate runs over whatever manifest
+> already exists.

@@ -18,6 +18,8 @@ import type { EvalRun } from './run.js';
 import { loadRun, loadBaselineRunId } from './run.js';
 import type { Verdict } from './judge.js';
 import { aggregateRun, DEFAULT_CONTRIBUTORS, type ContributorOutcome } from './aggregate.js';
+import { evaluateInvariantGate } from './invariant-gate.js';
+import type { InvariantOutcome } from './invariant-evaluator.js';
 
 export interface Scorecard {
   total: number;
@@ -52,6 +54,11 @@ export interface EvalReport {
   overall: 'pass' | 'fail';
   /** Per-contributor breakdown from the aggregation core. */
   contributors: ContributorOutcome[];
+  /** Per-invariant breakdown for the active invariants the gate evaluated (empty
+   *  when the `invariants` contributor is disabled or nothing is declared). */
+  invariants: InvariantOutcome[];
+  /** Set when the invariant manifest was present but could not be loaded (fail-closed). */
+  loadError?: string;
 }
 
 function verdictOf(run: EvalRun, caseId: string): Verdict {
@@ -110,7 +117,7 @@ export function diffAgainstBaseline(
 }
 
 /** Build the full report for a run, loading the baseline if one is promoted. */
-export function buildReport(projectRoot: string, runId: string): EvalReport {
+export async function buildReport(projectRoot: string, runId: string): Promise<EvalReport> {
   const run = loadRun(projectRoot, runId);
   const baselineId = loadBaselineRunId(projectRoot);
   const baseline = baselineId ? safeLoad(projectRoot, baselineId) : null;
@@ -124,7 +131,15 @@ export function buildReport(projectRoot: string, runId: string): EvalReport {
   const contributors = run.gate
     ? DEFAULT_CONTRIBUTORS.filter((c) => run.gate!.includes(c.id))
     : DEFAULT_CONTRIBUTORS;
-  const aggregate = aggregateRun({ run, diff }, contributors);
+  // The run-level invariant gate is evaluated only when the `invariants`
+  // contributor is in the enabled set — a disabled contributor runs no manifest
+  // command. The async load/evaluation happens here, once, and feeds the pure
+  // aggregation core through the precomputed `invariants` field.
+  const invariantsEnabled = contributors.some((c) => c.id === 'invariants');
+  const gate = invariantsEnabled
+    ? await evaluateInvariantGate({ projectRoot, run, baseline })
+    : undefined;
+  const aggregate = aggregateRun({ run, diff, invariants: gate }, contributors);
   return {
     runId,
     scorecard,
@@ -133,6 +148,8 @@ export function buildReport(projectRoot: string, runId: string): EvalReport {
     diff,
     overall: aggregate.overall,
     contributors: aggregate.contributors,
+    invariants: gate?.outcomes ?? [],
+    ...(gate?.loadError ? { loadError: gate.loadError } : {}),
   };
 }
 

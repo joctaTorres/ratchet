@@ -59,7 +59,7 @@ working copy and persist the run.
 ### Synopsis
 
 ```bash
-ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--gate <ids> | --only <ids> | --no-llm-judge] [--judge <mode>] [--json]
+ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--gate <ids> | --only <ids> | --no-llm-judge | --no-invariants] [--judge <mode>] [--json]
 ```
 
 ### Options
@@ -72,8 +72,9 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--gate <i
 | `--gate` | `<ids>` | Set the enabled contributor set outright (comma-separated ids from `deterministic`, `llm-judge`, `invariants`, `regression`). |
 | `--only` | `<ids>` | Restrict the enabled set to the listed contributor ids (intersection with the config default). |
 | `--no-llm-judge` | | Disable the `llm-judge` contributor for this run. |
+| `--no-invariants` | | Disable the `invariants` contributor for this run (the manifest is not evaluated and no invariant command runs). |
 | `--judge` | `auto \| deterministic \| llm-judge` | **Deprecated** legacy alias mapped onto the gate: `deterministic` disables `llm-judge`, `llm-judge` disables `deterministic`, `auto` enables both. Prefer `--gate`/`--only`/`--no-llm-judge`. |
-| `--json` | | Output as JSON: `{ runId, overall, scorecard, contributors, warnings }`. |
+| `--json` | | Output as JSON: `{ runId, overall, scorecard, contributors, invariants, regressions, warnings }` (`invariantLoadError` is added when the manifest could not be loaded). |
 
 The contributor gate selects which verdict contributors execute and gate the
 run. Resolution precedence is default (all contributors enabled) ◁ the project
@@ -102,6 +103,11 @@ fails the command with the valid ids listed. See
    is **incomplete**. The enabled set is persisted on the run as `gate`. The
    `invariants` and `regression` contributors are run-level (not per-case), so
    disabling them affects only the aggregated verdict, not per-case execution.
+   When the `invariants` contributor is enabled, the run-level invariant gate
+   loads `.ratchet/evals/invariants.yaml` fail-closed and evaluates its **active**
+   invariants (a violated, unevaluable, or unloadable invariant hard-fails the
+   run; inert invariants are skipped). See
+   [Eval invariant manifest](../eval-invariants.md#gate-contributor).
 5. **Unbound cases.** A case with no binding in any spec is recorded `unjudged`
    with reason `"No eval-spec binding for this case"` and is never passed.
 6. **Persistence.** The completed run is persisted atomically to
@@ -110,7 +116,9 @@ fails the command with the valid ids listed. See
    sort order and no collisions.
 7. **Output.** The run id, the aggregated overall verdict, the
    pass/fail/unjudged scorecard, and a per-contributor breakdown are printed
-   (`deterministic`, `llm-judge`, `invariants`, `regression`). The overall
+   (`deterministic`, `llm-judge`, `invariants`, `regression`). Run-level gate
+   violations — a violated/unevaluable invariant (or an unloadable manifest), then
+   a regression — are surfaced **first**, ahead of the per-case detail. The overall
    verdict is decided by the [verdict-aggregation core](../eval-verdict-aggregation.md)
    as a logical AND over the contributors. Any spec-load warnings are printed as
    dim lines.

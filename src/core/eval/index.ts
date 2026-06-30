@@ -63,6 +63,11 @@ export {
   type BaselineDiff,
 } from './report.js';
 export {
+  evaluateInvariantGate,
+  type InvariantGateResult,
+  type InvariantGateInput,
+} from './invariant-gate.js';
+export {
   aggregateRun,
   isRunComplete,
   DEFAULT_CONTRIBUTORS,

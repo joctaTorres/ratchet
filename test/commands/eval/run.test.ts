@@ -124,6 +124,60 @@ describe('evalRunCommand', () => {
     expect(await persistedRunIds()).toHaveLength(0);
   });
 
+  // features/eval-invariants/contributor.feature — a violated/unevaluable active
+  // invariant is surfaced as a run-level gate violation first, ahead of the
+  // per-case contributor breakdown; --no-invariants disables it entirely.
+  it('surfaces a run-level invariant violation first, ahead of the contributor breakdown', async () => {
+    // An active monotonic invariant with no promoted baseline is unevaluable ⇒
+    // a fail-closed violation. No command runs (scenario-count is command-free).
+    await fixture.write(
+      '.ratchet/evals/invariants.yaml',
+      'invariants:\n  - id: spec-not-weakened\n    kind: monotonic\n    active: true\n    measure: scenario-count\n'
+    );
+    await evalRunCommand({});
+    const text = output();
+    expect(text).toContain('[FAIL]');
+    expect(text).toContain('INVARIANT VIOLATIONS');
+    expect(text).toContain('spec-not-weakened');
+    // The run-level violation block precedes the per-case contributor breakdown.
+    expect(text.indexOf('INVARIANT VIOLATIONS')).toBeLessThan(text.indexOf('Contributors:'));
+  });
+
+  it('emits the invariant breakdown in --json and fails the run', async () => {
+    await fixture.write(
+      '.ratchet/evals/invariants.yaml',
+      'invariants:\n  - id: spec-not-weakened\n    kind: monotonic\n    active: true\n    measure: scenario-count\n'
+    );
+    await evalRunCommand({ json: true });
+    const parsed = JSON.parse(output());
+    expect(parsed.overall).toBe('fail');
+    expect(parsed.invariants.map((o: { id: string }) => o.id)).toEqual(['spec-not-weakened']);
+    expect(parsed.invariants[0].status).toBe('unevaluable');
+    expect(parsed.contributors.find((c: { id: string }) => c.id === 'invariants').status).toBe('fail');
+  });
+
+  it('does not evaluate the invariant gate under --no-invariants', async () => {
+    // The same violated manifest is present, but --no-invariants drops the
+    // contributor so the gate is never evaluated and takes no part in the verdict.
+    await fixture.write(
+      '.ratchet/evals/invariants.yaml',
+      'invariants:\n  - id: spec-not-weakened\n    kind: monotonic\n    active: true\n    measure: scenario-count\n'
+    );
+    await evalRunCommand({ invariants: false, json: true });
+    const parsed = JSON.parse(output());
+    // invariants is absent from the breakdown and the AND; no breakdown recorded.
+    expect(parsed.contributors.map((c: { id: string }) => c.id)).not.toContain('invariants');
+    expect(parsed.invariants).toEqual([]);
+    // The persisted run records the enabled set without invariants.
+    const run = JSON.parse(
+      await fs.readFile(
+        path.join(fixture.root, '.ratchet', 'evals', 'runs', `${parsed.runId}.json`),
+        'utf-8'
+      )
+    );
+    expect(run.gate).not.toContain('invariants');
+  });
+
   it('records a disabled-contributor case unjudged (naming the contributor) and stays incomplete', async () => {
     // Bind the solo case as a deterministic check, then disable the deterministic
     // contributor via --only. The bound case must be recorded unjudged WITHOUT

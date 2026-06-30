@@ -20,6 +20,7 @@ import {
 } from '../../../src/core/eval/aggregate.js';
 import { toSnapshot, type EvalRun } from '../../../src/core/eval/run.js';
 import type { BaselineDiff } from '../../../src/core/eval/report.js';
+import type { InvariantGateResult } from '../../../src/core/eval/invariant-gate.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
 import type { Verdict } from '../../../src/core/eval/judge.js';
 import type { BindingKind } from '../../../src/core/eval/spec.js';
@@ -57,8 +58,12 @@ const NO_DIFF: BaselineDiff = {
   retiredCases: [],
 };
 
-function ctx(run: EvalRun, diff: BaselineDiff = NO_DIFF): ContributorContext {
-  return { run, diff };
+function ctx(
+  run: EvalRun,
+  diff: BaselineDiff = NO_DIFF,
+  invariants?: InvariantGateResult
+): ContributorContext {
+  return { run, diff, invariants };
 }
 
 describe('aggregateRun', () => {
@@ -125,6 +130,27 @@ describe('aggregateRun', () => {
       DEFAULT_CONTRIBUTORS.filter((c) => c.id !== 'invariants')
     );
     expect(withNeutral.overall).toBe(withoutNeutral.overall);
+  });
+
+  it('fails the invariants contributor on a precomputed gate violation, naming it', () => {
+    const run = mkRun({ 'a#det': { verdict: 'pass', kind: 'deterministic' } });
+    const gate: InvariantGateResult = { outcomes: [], failing: ['spec-not-weakened'] };
+    const agg = aggregateRun(ctx(run, NO_DIFF, gate));
+    expect(agg.overall).toBe('fail');
+    const inv = agg.contributors.find((c) => c.id === 'invariants');
+    expect(inv?.status).toBe('fail');
+    expect(inv?.failing).toEqual(['spec-not-weakened']);
+  });
+
+  it('passes the invariants contributor when the gate result is absent or empty', () => {
+    const run = mkRun({ 'a#det': { verdict: 'pass', kind: 'deterministic' } });
+    // Absent gate result.
+    expect(invariantsContributor.evaluate(ctx(run)).status).toBe('pass');
+    // Present but empty (no active invariants / all passed).
+    const empty: InvariantGateResult = { outcomes: [], failing: [] };
+    expect(invariantsContributor.evaluate(ctx(run, NO_DIFF, empty)).status).toBe('pass');
+    // Identity to the AND: a passing invariants gate does not change the verdict.
+    expect(aggregateRun(ctx(run, NO_DIFF, empty)).overall).toBe('pass');
   });
 
   it('passes with an empty contributor set (AND over nothing is true)', () => {

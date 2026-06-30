@@ -20,6 +20,8 @@ export interface EvalRunOptions extends ScopeFlags {
   only?: string;
   /** `--no-llm-judge` ⇒ `false`; disables the llm-judge contributor. */
   llmJudge?: boolean;
+  /** `--no-invariants` ⇒ `false`; disables the invariants contributor. */
+  invariants?: boolean;
   /** Legacy `--judge <mode>` alias (deprecated), mapped onto the gate. */
   judge?: string;
   json?: boolean;
@@ -32,11 +34,12 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
     gate: options.gate,
     only: options.only,
     llmJudge: options.llmJudge,
+    invariants: options.invariants,
     judge: options.judge,
   });
 
   const { run, warnings } = await executeRun(root, { scope, gate });
-  const report = buildReport(root, run.runId);
+  const report = await buildReport(root, run.runId);
 
   if (options.json) {
     console.log(
@@ -46,6 +49,10 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
           overall: report.overall,
           scorecard: report.scorecard,
           contributors: report.contributors,
+          // Run-level gate breakdown, surfaced ahead of per-case detail.
+          invariants: report.invariants,
+          ...(report.loadError ? { invariantLoadError: report.loadError } : {}),
+          regressions: report.diff.regressions,
           warnings,
         },
         null,
@@ -57,6 +64,30 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
   renderRun(run.runId, report, warnings);
 }
 
+/**
+ * Surface the two run-level gate violations first — invariants, then regression
+ * — as siblings, ahead of the per-case contributor breakdown. A violated
+ * invariant (or an unloadable manifest) is therefore the first thing reported.
+ */
+function renderRunLevelViolations(report: EvalReport): void {
+  const violations = report.invariants.filter((o) => o.status !== 'pass');
+  if (violations.length > 0 || report.loadError) {
+    console.log(chalk.red.bold(`  INVARIANT VIOLATIONS (${violations.length || 1}):`));
+    if (report.loadError) {
+      console.log(chalk.red(`    - manifest could not be loaded`));
+      console.log(chalk.dim(`        ${report.loadError}`));
+    }
+    for (const v of violations) {
+      console.log(chalk.red(`    - ${v.id} (${v.kind}: ${v.status})`));
+      console.log(chalk.dim(`        ${v.evidence}`));
+    }
+  }
+  if (report.diff.regressions.length > 0) {
+    console.log(chalk.red.bold(`  REGRESSIONS (${report.diff.regressions.length}):`));
+    for (const id of report.diff.regressions) console.log(chalk.red(`    - ${id}`));
+  }
+}
+
 function renderRun(runId: string, report: EvalReport, warnings: string[]): void {
   const { scorecard } = report;
   console.log(chalk.bold(`Eval run ${runId}  [${report.overall.toUpperCase()}]`));
@@ -65,6 +96,8 @@ function renderRun(runId: string, report: EvalReport, warnings: string[]): void 
       `${chalk.red(`${scorecard.fail} fail`)}  ` +
       `${chalk.yellow(`${scorecard.unjudged} unjudged`)}  (of ${scorecard.total})`
   );
+  // Run-level gate violations (invariants, then regression) come first.
+  renderRunLevelViolations(report);
   console.log('  Contributors:');
   for (const c of report.contributors) {
     const mark = c.status === 'pass' ? chalk.green('pass') : chalk.red('fail');

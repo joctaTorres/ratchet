@@ -77,6 +77,19 @@ describe('resolveContributorGate', () => {
     expect(gate.has('llm-judge')).toBe(false);
   });
 
+  it('disables invariants from the eval.gate config default', async () => {
+    await fixture.writeConfig('schema: ratchet\neval:\n  gate:\n    invariants: false\n');
+    const gate = resolveContributorGate(fixture.root, {});
+    expect(gate.has('invariants')).toBe(false);
+    expect(gate.has('deterministic')).toBe(true);
+  });
+
+  it('lets --no-invariants override the config default', async () => {
+    await fixture.writeConfig('schema: ratchet\n');
+    const gate = resolveContributorGate(fixture.root, { invariants: false });
+    expect(gate.has('invariants')).toBe(false);
+  });
+
   it('rejects an unknown --only id listing the valid ids', async () => {
     await fixture.writeConfig('schema: ratchet\n');
     expect(() => resolveContributorGate(fixture.root, { only: 'not-a-contributor' })).toThrow(

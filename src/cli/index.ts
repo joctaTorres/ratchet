@@ -669,6 +669,7 @@ withScopeFlags(
     )
     .option('--only <ids>', 'Restrict the run to the listed contributor ids (comma-separated)')
     .option('--no-llm-judge', 'Disable the llm-judge contributor for this run')
+    .option('--no-invariants', 'Disable the invariants contributor for this run')
     .option('--judge <mode>', '[deprecated] Legacy judge-mode alias: auto | deterministic | llm-judge')
     .option('--json', 'Output as JSON')
 ).action(async (options: EvalRunOptions) => {

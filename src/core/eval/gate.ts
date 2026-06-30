@@ -43,6 +43,8 @@ export interface GateFlags {
   only?: string;
   /** `--no-llm-judge`: clear the llm-judge contributor (commander default `true`). */
   llmJudge?: boolean;
+  /** `--no-invariants`: clear the invariants contributor (commander default `true`). */
+  invariants?: boolean;
   /** Legacy `--judge auto|deterministic|llm-judge`, mapped onto the gate. */
   judge?: string;
 }
@@ -136,6 +138,9 @@ export function resolveGate({ config, flags }: ResolveGateInput): Set<Contributo
 
   // `--no-llm-judge` clears the llm-judge contributor.
   if (flags.llmJudge === false) enabled.delete('llm-judge');
+
+  // `--no-invariants` clears the invariants contributor.
+  if (flags.invariants === false) enabled.delete('invariants');
 
   return enabled;
 }

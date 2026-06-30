@@ -173,6 +173,61 @@ describe('ratchet eval CLI e2e', () => {
     expect(out).toContain('deterministic, llm-judge, invariants, regression');
   });
 
+  // features/eval-invariants/contributor.feature — the invariant gate runs on the
+  // built CLI: an active violated invariant fails the run and is surfaced first
+  // as a sibling to regression; --no-invariants disables the contributor.
+  it('fails the run on an active violated invariant, surfacing it first', async () => {
+    const cwd = await prepareProject();
+    // An active deterministic invariant whose predicate fails (non-zero exit).
+    await write(
+      path.join(cwd, '.ratchet', 'evals', 'invariants.yaml'),
+      'invariants:\n  - id: tests-still-exist\n    kind: deterministic\n    active: true\n    check:\n      run: "exit 1"\n      pass: exit-zero\n'
+    );
+    const json = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
+    expect(json.exitCode).toBe(0);
+    const parsed = JSON.parse(json.stdout);
+    expect(parsed.overall).toBe('fail');
+    const inv = parsed.contributors.find((c: { id: string }) => c.id === 'invariants');
+    expect(inv.status).toBe('fail');
+    expect(inv.failing).toContain('tests-still-exist');
+    expect(parsed.invariants.map((o: { id: string }) => o.id)).toContain('tests-still-exist');
+
+    // The text rendering surfaces the invariant violation ahead of the breakdown.
+    const text = await runCLI(['eval', 'run', '--judge', 'deterministic'], { cwd });
+    expect(text.stdout).toContain('[FAIL]');
+    expect(text.stdout).toContain('INVARIANT VIOLATIONS');
+    expect(text.stdout).toContain('tests-still-exist');
+    expect(text.stdout.indexOf('INVARIANT VIOLATIONS')).toBeLessThan(
+      text.stdout.indexOf('Contributors:')
+    );
+  });
+
+  it('disables the invariant gate under --no-invariants', async () => {
+    const cwd = await prepareProject();
+    await write(
+      path.join(cwd, '.ratchet', 'evals', 'invariants.yaml'),
+      'invariants:\n  - id: tests-still-exist\n    kind: deterministic\n    active: true\n    check:\n      run: "exit 1"\n      pass: exit-zero\n'
+    );
+    const res = await runCLI(
+      ['eval', 'run', '--judge', 'deterministic', '--no-invariants', '--json'],
+      { cwd }
+    );
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    // The invariants contributor is dropped, so the violated invariant is never
+    // evaluated and the deterministic-only run passes.
+    expect(parsed.contributors.map((c: { id: string }) => c.id)).not.toContain('invariants');
+    expect(parsed.invariants).toEqual([]);
+    expect(parsed.overall).toBe('pass');
+    const run = JSON.parse(
+      await fs.readFile(
+        path.join(cwd, '.ratchet', 'evals', 'runs', `${parsed.runId}.json`),
+        'utf-8'
+      )
+    );
+    expect(run.gate).not.toContain('invariants');
+  });
+
   it('runs the agent judge through the stub and passes on evidence', async () => {
     const cwd = await prepareProject();
     const res = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {

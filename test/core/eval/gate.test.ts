@@ -56,6 +56,31 @@ describe('resolveGate', () => {
     expect(resolveGate({ flags: { llmJudge: true } }).has('llm-judge')).toBe(true);
   });
 
+  it('disables invariants from --no-invariants (invariants=false)', () => {
+    const set = resolveGate({ flags: { invariants: false } });
+    expect(set.has('invariants')).toBe(false);
+    expect(set.has('deterministic')).toBe(true);
+    expect(set.has('regression')).toBe(true);
+  });
+
+  it('leaves invariants enabled when the --no-invariants flag is absent (invariants=true)', () => {
+    expect(resolveGate({ flags: { invariants: true } }).has('invariants')).toBe(true);
+  });
+
+  it('disables invariants through eval.gate config', () => {
+    const set = resolveGate({ config: { invariants: false } });
+    expect(set.has('invariants')).toBe(false);
+    expect(set.has('deterministic')).toBe(true);
+    expect(set.has('llm-judge')).toBe(true);
+    expect(set.has('regression')).toBe(true);
+  });
+
+  it('lets --no-invariants override an enabling config (CLI precedence)', () => {
+    expect(
+      resolveGate({ config: { invariants: true }, flags: { invariants: false } }).has('invariants')
+    ).toBe(false);
+  });
+
   it('restricts the set to the listed ids with --only', () => {
     expect(enabled(undefined, { only: 'deterministic' })).toEqual(['deterministic']);
     expect(enabled(undefined, { only: 'deterministic,regression' })).toEqual([

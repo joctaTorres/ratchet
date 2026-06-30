@@ -17,18 +17,18 @@ point.
 ```mermaid
 flowchart TD
     CFG[🔧 eval.gate config<br/>contributor → boolean]
-    CLI[👤 CLI selectors<br/>--gate / --only / --no-llm-judge / --judge]
+    CLI[👤 CLI selectors<br/>--gate / --only / --no-llm-judge / --no-invariants / --judge]
     GATE{{⚙️ resolveGate<br/>default ◁ config ◁ CLI}}
     CFG --> GATE
     CLI --> GATE
     GATE --> ENABLED[📦 enabled set<br/>run.gate]
 
-    CTX[📦 ContributorContext<br/>run + baseline diff]
+    CTX[📦 ContributorContext<br/>run + baseline diff + invariant gate]
 
     CTX --> DET[⚙️ deterministic<br/>fails of deterministic-kind cases]
     CTX --> LLM[⚙️ llm-judge<br/>fails of llm-judge-kind cases]
-    CTX --> INV[⚙️ invariants<br/>neutral placeholder ⇒ pass]
-    CTX --> REG[⚙️ regression<br/>baseline regressions]
+    CTX --> INV[🛡️ invariants<br/>active invariant violations]
+    CTX --> REG[🔁 regression<br/>baseline regressions]
 
     ENABLED -. filters .-> DET
     ENABLED -. filters .-> LLM
@@ -74,6 +74,7 @@ type ContributorId = 'deterministic' | 'llm-judge' | 'invariants' | 'regression'
 interface ContributorContext {
   run: EvalRun;
   diff: BaselineDiff;
+  invariants?: InvariantGateResult; // precomputed run-level invariant gate
 }
 
 interface ContributorOutcome {
@@ -88,8 +89,9 @@ interface Contributor {
 }
 ```
 
-The context is assembled in memory by `report.ts` from the already-loaded run and
-its baseline diff; contributors do no filesystem or process I/O.
+The context is assembled in memory by `report.ts` from the already-loaded run, its
+baseline diff, and the precomputed invariant gate result; contributors do no
+filesystem or process I/O.
 
 ### Built-in contributors
 
@@ -97,13 +99,19 @@ its baseline diff; contributors do no filesystem or process I/O.
 |---|---|---|
 | `deterministic` | any `deterministic`-bound case is judged `fail` | those case ids |
 | `llm-judge` | any `llm-judge`-bound case is judged `fail` | those case ids |
+| `invariants` | any **active** manifest invariant is violated or unevaluable, or the manifest is unloadable | the violating invariant ids (or the manifest filename) |
 | `regression` | the baseline diff reports a regression (passed in baseline, fails now) | the regressed case ids |
-| `invariants` | never (neutral placeholder with nothing to evaluate) | always empty |
 
-The `deterministic` and `llm-judge` contributors partition the run's cases by
-each case snapshot's `bindingKind`. The `invariants` contributor is registered as
-a placeholder that always reports `pass`; it is identity to the AND and exists so
-a later capability can fill it in without reshaping the aggregation seam.
+The `deterministic` and `llm-judge` contributors partition the run's cases by each
+case snapshot's `bindingKind`. The `invariants` and `regression` contributors are
+the two **run-level** gates (their failing ids are invariant/case names, not
+per-case verdicts). Like `regression`, which reads the precomputed
+`diff.regressions`, the pure `invariants` contributor reads a precomputed
+`invariants.failing`: the async manifest load and per-invariant evaluation happen
+upstream in the run-level **invariant gate** (`evaluateInvariantGate`, see
+[Eval invariant manifest](eval-invariants.md#gate-contributor)), so the
+aggregation core stays synchronous and I/O-free. When the contributor is disabled
+the gate is not evaluated and `invariants` is absent from the context.
 
 ## The AND rule
 
@@ -141,10 +149,11 @@ precedence is `default(all-enabled) ◁ config ◁ CLI`:
    enabled.
 3. **CLI** — flags on `ratchet eval run` override the config: `--gate <ids>` sets
    the enabled set outright, `--only <ids>` restricts to the listed ids,
-   `--no-llm-judge` clears the `llm-judge` contributor, and the deprecated
-   `--judge <mode>` is mapped onto the gate (`deterministic` ⇒ `llm-judge` off,
-   `llm-judge` ⇒ `deterministic` off, `auto` ⇒ both on). Unknown ids in
-   `--gate`/`--only` are rejected with the valid ids listed.
+   `--no-llm-judge` clears the `llm-judge` contributor, `--no-invariants` clears
+   the `invariants` contributor, and the deprecated `--judge <mode>` is mapped onto
+   the gate (`deterministic` ⇒ `llm-judge` off, `llm-judge` ⇒ `deterministic` off,
+   `auto` ⇒ both on). Unknown ids in `--gate`/`--only` are rejected with the valid
+   ids listed.
 
 `ALL_CONTRIBUTOR_IDS` is the contributor vocabulary, derived from
 `DEFAULT_CONTRIBUTORS` so there is one source of truth. The resolved enabled set
@@ -157,19 +166,25 @@ is persisted on the run as `EvalRun.gate` (display order). Selection effects:
 - **Aggregation** — `buildReport` filters `DEFAULT_CONTRIBUTORS` by `run.gate`
   before calling `aggregateRun`, so the AND and the per-contributor breakdown
   cover exactly the enabled contributors. A disabled contributor takes no part in
-  the verdict. (A legacy run persisted with no `gate` ANDs over the full set.)
+  the verdict. (A legacy run persisted with no `gate` ANDs over the full set.) When
+  the `invariants` contributor survives the filter, `buildReport` evaluates the
+  run-level invariant gate once and feeds the result into the context; when it is
+  disabled, the gate is not evaluated and no manifest command runs.
 - **Promotion** — because a disabled contributor leaves cases `unjudged`, the
   run is incomplete and the `promoteBaseline` guard refuses it (below), so a
   partial run can never become the baseline.
 
 ## Routing
 
-- **`report.ts`** builds the `ContributorContext` from the loaded run and the
-  baseline diff, calls `aggregateRun`, and sets `EvalReport.overall` to
-  `aggregate.overall` and `EvalReport.contributors` to the breakdown. No inline
+- **`report.ts`** builds the `ContributorContext` from the loaded run, the
+  baseline diff, and the run-level invariant gate result, calls `aggregateRun`, and
+  sets `EvalReport.overall` to `aggregate.overall` and `EvalReport.contributors` to
+  the breakdown (plus `EvalReport.invariants` / `EvalReport.loadError`). No inline
   pass/fail expression decides the overall verdict.
 - **`ratchet eval run`** renders the aggregated `overall` verdict and the
-  per-contributor breakdown in both text and `--json` output.
+  per-contributor breakdown in both text and `--json` output, surfacing a violated
+  invariant (and a regression) as a run-level violation first, ahead of the
+  per-case detail.
 - **`promoteBaseline`** rejects a run whose `complete` signal is `false`,
   throwing an error that names the run as incomplete and leaving
   `.ratchet/evals/baseline.json` unchanged. An incomplete run can therefore never

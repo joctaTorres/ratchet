@@ -15,9 +15,12 @@ export const ART_COLUMN_WIDTH = 20;
 const MIN_WIDTH = 58;
 
 /**
- * Welcome text content (right column)
+ * Welcome text content (right column).
+ *
+ * Module-private: exercised through the public `showWelcomeScreen` seam (its
+ * lines are written to stdout), not imported by tests directly.
  */
-export function getWelcomeText(): string[] {
+function getWelcomeText(): string[] {
   return [
     chalk.white.bold('Welcome to Ratchet'),
     chalk.dim('A lightweight spec-driven framework'),
@@ -36,9 +39,12 @@ export function getWelcomeText(): string[] {
 }
 
 /**
- * Renders a single frame with side-by-side layout
+ * Renders a single frame with side-by-side layout.
+ *
+ * Module-private: exercised through `showWelcomeScreen` (its padded output is
+ * what `showWelcomeScreen` writes to stdout).
  */
-export function renderFrame(artLines: string[], textLines: string[]): string {
+function renderFrame(artLines: string[], textLines: string[]): string {
   const maxLines = Math.max(artLines.length, textLines.length);
   const lines: string[] = [];
 
@@ -60,9 +66,12 @@ export function renderFrame(artLines: string[], textLines: string[]): string {
 }
 
 /**
- * Checks if the terminal supports animation
+ * Checks if the terminal supports animation.
+ *
+ * Module-private: its TTY / NO_COLOR / width branches are reached through
+ * `showWelcomeScreen` (which gates the animated vs. static path on this result).
  */
-export function canAnimate(): boolean {
+function canAnimate(): boolean {
   // Must be TTY
   if (!process.stdout.isTTY) return false;
 
@@ -77,9 +86,12 @@ export function canAnimate(): boolean {
 }
 
 /**
- * Wait for Enter key press
+ * Wait for Enter key press.
+ *
+ * Module-private: its non-TTY and raw-mode keypress branches are reached
+ * through `showWelcomeScreen` (which awaits it on the animated path).
  */
-export function waitForEnter(): Promise<void> {
+function waitForEnter(): Promise<void> {
   return new Promise((resolve) => {
     const { stdin } = process;
 

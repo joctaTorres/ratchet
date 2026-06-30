@@ -10,8 +10,12 @@
 export type {
   ResolvedStepContext,
   ChangeStepContext,
+  DecompositionStepContext,
+  PriorPhaseResult,
+  ShippedChange,
   StepResult,
   StepState,
+  StepKind,
   Transition,
 } from './contract.js';
 export { RatchetBatchEngine, type EngineDeps, type LinePrinter } from './engine.js';
@@ -35,11 +39,21 @@ export {
   type AgentSpawnRequest,
   type AgentSpawnResult,
 } from './agent.js';
-export { buildAgentInstructions } from './instructions.js';
+export { buildAgentInstructions, buildDecompositionInstructions, decompositionJournalKey } from './instructions.js';
+export {
+  ensureSkillInSpawnLocus,
+  ensureCommandInSpawnLocus,
+  rctCommandIdForTransition,
+  DECOMPOSE_COMMAND_ID,
+  SkillLocusError,
+  type SkillLocusDeps,
+} from './skill-locus.js';
 export { mapSessionToOutcome } from './outcome.js';
 export {
   computeNextTransition,
   readChangeDiskState,
+  hasJournaledVerify,
+  isChangeDone,
   type ChangeDiskState,
 } from './transition.js';
 export {
@@ -53,6 +67,7 @@ export {
   evaluatePassCondition,
   realBashRunner,
   type ProofOfWorkResult,
+  type RunProofOfWorkDeps,
   type BashRunner,
   type LlmJudge,
   type JudgeVerdict,

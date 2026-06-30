@@ -8,7 +8,70 @@
  * (the agent's single communication channel — no interactive prompt required).
  */
 
-import type { ChangeStepContext } from './contract.js';
+import { CommandAdapterRegistry } from '../../command-generation/index.js';
+import { rctCommandIdForTransition, DECOMPOSE_COMMAND_ID } from './skill-locus.js';
+import { DEFAULT_AGENT } from './agent.js';
+import type { ChangeStepContext, DecompositionStepContext } from './contract.js';
+
+/**
+ * Resolve the `/rct:<transition> <change>` skill-invocation token the spawned
+ * agent should run for this step. The command id comes from the SINGLE-SOURCE
+ * transition → command-id map (`rctCommandIdForTransition`) the spawn-locus
+ * guarantee also uses, so the invocation and the rendered command can never
+ * drift. The invocation TOKEN is resolved from the CONFIGURED spawn agent's
+ * command adapter — claude `/rct:<id>`, cursor/gemini/codex `/rct-<id>` — never a
+ * hard-coded literal, because the syntax genuinely differs per agent
+ * (`multi-agent-support` / `delegated-lifecycle`).
+ *
+ * A synthetic spawn stand-in (a test fake or `RATCHET_BATCH_AGENT_CMD` override)
+ * has no command adapter; it falls back to the DEFAULT_AGENT's adapter so the
+ * shared path always resolves a token through an adapter, never an inline string.
+ *
+ * Delegation is context-PRESERVING (`delegated-lifecycle`): the caller's `-m`
+ * guidance and any resolved resume answer/feedback are appended to the
+ * invocation AS ARGUMENTS (`$ARGUMENTS`) the skill consumes — handed WITH the
+ * invocation, never floated off in a detached prose block. Agent-neutrality is
+ * preserved by construction: only the trailing arguments are appended; the
+ * invocation TOKEN still comes from the configured spawn agent's adapter. When
+ * the caller supplied no guidance and the step is not resuming, the invocation
+ * stays the bare `/rct:<transition> <change>` with no trailing argument noise
+ * (the plain `batch apply` path).
+ */
+function rctInvocation(context: ChangeStepContext): string {
+  const commandId = rctCommandIdForTransition(context.transition);
+  const agentId = context.settings.agent ?? DEFAULT_AGENT;
+  const adapter =
+    CommandAdapterRegistry.get(agentId) ?? CommandAdapterRegistry.get(DEFAULT_AGENT)!;
+  const base = `${adapter.getInvocation(commandId)} ${context.change}`;
+  const args = invocationArguments(context);
+  return args ? `${base} ${args}` : base;
+}
+
+/**
+ * The argument payload appended to the `/rct:<transition> <change>` invocation:
+ * the caller's `-m` guidance and the resolved resume answer/feedback, in that
+ * order, both present when both exist (neither dropped). Each is the raw text
+ * the CLI already resolved, handed to the skill as `$ARGUMENTS`. Empty (no
+ * trailing argument) when the caller supplied no guidance and the step is not
+ * resuming — so the plain `batch apply` invocation stays bare.
+ *
+ * Parts join with a SINGLE newline so the whole payload is one CONTIGUOUS block
+ * glued to the invocation — distinct from the blank-line-separated prose
+ * sections around it. That keeps the arguments unambiguously "attached to the
+ * invocation" rather than floating off as a detached block.
+ */
+function invocationArguments(context: ChangeStepContext): string {
+  const parts: string[] = [];
+  const guidance = context.guidance?.trim();
+  if (guidance) parts.push(guidance);
+  const resume = context.resume;
+  if (resume?.kind === 'blocked' && resume.answer?.trim()) {
+    parts.push(resume.answer.trim());
+  } else if (resume?.kind === 'awaiting-approval' && resume.feedback?.trim()) {
+    parts.push(resume.feedback.trim());
+  }
+  return parts.join('\n');
+}
 
 function reportChannel(batch: string | undefined, change: string): string {
   return [
@@ -37,69 +100,76 @@ function strategyGuidance(context: ChangeStepContext): string {
   ].join('\n');
 }
 
+/**
+ * Delegate the transition to the canonical rct skill instead of re-describing
+ * the propose/apply/verify steps inline (`delegated-lifecycle`: the engine
+ * orchestrates the lifecycle, it does not re-author it). The prompt tells the
+ * agent to invoke the resolved `/rct:<transition> <change>` skill, which loads
+ * `.ratchet/standards/` and authors/advances the change to the canonical
+ * definition of done — the engine no longer carries a parallel inline copy of
+ * the lifecycle instructions.
+ *
+ * The prose is agent-neutral (names no coding agent); only the invocation TOKEN
+ * is agent-specific, and that is resolved through the configured spawn agent's
+ * adapter in {@link rctInvocation}. The resolved phase goal/success/proof-of-work
+ * and the per-change `Definition of done:` stay in the prompt's top block (see
+ * {@link buildAgentInstructions}), so the delegation is context-preserving. Any
+ * caller `-m` guidance and resolved resume answer/feedback ride along as the
+ * invocation's trailing arguments (see {@link invocationArguments}), so the
+ * agent passes them to the skill as `$ARGUMENTS` rather than reading them from a
+ * detached block.
+ */
 function transitionGuidance(context: ChangeStepContext): string {
-  switch (context.transition) {
-    case 'propose':
-      return [
-        `Create the change "${context.change}" and its artifacts (features + plan)`,
-        'by writing files directly on disk. Concretely:',
-        `  1. Create the change directory ".ratchet/changes/${context.change}/".`,
-        '  2. Write one or more feature files under',
-        `     ".ratchet/changes/${context.change}/features/**/*.feature" describing`,
-        '     the behavior to satisfy (Gherkin-style Feature/Scenario text).',
-        `  3. Write ".ratchet/changes/${context.change}/plan.md" containing a`,
-        '     "## Tasks" section with a checklist of "- [ ]" task items.',
-        'Do NOT implement tasks in this step — only create the change and its',
-        'artifacts.',
-      ].join('\n');
-    case 'apply':
-      return [
-        `Implement the planned tasks for change "${context.change}".`,
-        `Work through the "## Tasks" checklist in`,
-        `".ratchet/changes/${context.change}/plan.md", editing the source as needed`,
-        'and checking off each "- [ ]" box (to "- [x]") as you complete it. Do NOT',
-        're-propose or change the plan scope.',
-      ].join('\n');
-    case 'verify':
-      return [
-        `Verify change "${context.change}" against its feature scenarios.`,
-        'Run the relevant checks/tests and confirm the implementation satisfies',
-        'the feature files. Report completion only if verification passes; raise a',
-        'blocker if it does not.',
-      ].join('\n');
+  // The invocation may carry a multi-line argument payload; indent every line so
+  // the trailing arguments render as an attached continuation of the call.
+  const invocation = rctInvocation(context)
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n');
+  const lines = [
+    `Advance this change by invoking the ratchet ${context.transition} skill — run:`,
+    invocation,
+    'It loads the project standards under ".ratchet/standards/" and is the single',
+    `author of the ${context.transition} lifecycle. Do NOT hand-build or re-describe`,
+    `the ${context.transition} steps yourself — delegate to the skill and let it`,
+    'author/advance the change to its canonical definition of done.',
+  ];
+  if (invocationArguments(context)) {
+    lines.push(
+      'Anything after the change name above is the caller guidance / resume',
+      'context the engine already resolved — pass it to the skill as its',
+      'arguments ($ARGUMENTS); do not treat it as a separate, optional note.'
+    );
   }
+  return lines.join('\n');
 }
 
 /**
- * Free-text guidance the caller appended to this step (e.g. the propose verb's
- * `-m` values). Rendered as an "Additional guidance:" block for the forced
- * transition. Absent (the batch path leaves `guidance` undefined) → empty, so
- * batch instructions are unchanged.
+ * Resume INTENT framing for a step that was parked. The answer/feedback TEXT
+ * itself now rides on the invocation as a trailing argument (see
+ * {@link invocationArguments}); this block keeps only the directive — what the
+ * resume means and how to act on it (incorporate the answer / revise the draft,
+ * do not start over) — plus the original question/proposal for context. It never
+ * re-emits the answer as a detached block. Absent resume → empty.
  */
-function additionalGuidance(context: ChangeStepContext): string {
-  const guidance = context.guidance?.trim();
-  if (!guidance) return '';
-  return ['Additional guidance:', guidance].join('\n');
-}
-
 function resumeGuidance(context: ChangeStepContext): string {
   const resume = context.resume;
   if (!resume) return '';
-  if (resume.kind === 'blocked' && resume.answer) {
+  if (resume.kind === 'blocked' && resume.answer?.trim()) {
     return [
-      'This step was previously parked on a blocker. Resume with the answer:',
+      'This step was previously parked on a blocker:',
       `  Question: ${resume.reason}`,
-      `  Answer:   ${resume.answer}`,
-      'Incorporate the answer and continue the transition.',
+      'The resolved answer is attached to the invocation above as an argument —',
+      'incorporate it and continue the transition. Do not start over.',
     ].join('\n');
   }
-  if (resume.kind === 'awaiting-approval' && resume.feedback) {
+  if (resume.kind === 'awaiting-approval' && resume.feedback?.trim()) {
     return [
       'The prior proposal was REJECTED with feedback. Re-run propose against the',
       'existing draft (do NOT start over and do NOT roll back other work):',
       `  Prior proposal: ${resume.reason}`,
-      `  Feedback:       ${resume.feedback}`,
-      'Revise the draft to address the feedback.',
+      'The reviewer feedback is attached to the invocation above as an argument —',
+      'revise the draft to address it.',
     ].join('\n');
   }
   return '';
@@ -126,12 +196,188 @@ export function buildAgentInstructions(context: ChangeStepContext): string {
   const strategy = strategyGuidance(context);
   if (strategy) sections.push('', strategy);
 
-  const guidance = additionalGuidance(context);
-  if (guidance) sections.push('', guidance);
-
+  // The caller's `-m` guidance is NOT emitted as a detached block any more:
+  // it rides on the invocation as a trailing argument (see invocationArguments),
+  // so delegation hands it to the skill as `$ARGUMENTS` rather than floating it
+  // off where the skill has no contract to read it (`delegated-lifecycle`).
   const resume = resumeGuidance(context);
   if (resume) sections.push('', resume);
 
   sections.push('', reportChannel(context.batch, context.change));
+  return sections.join('\n');
+}
+
+/**
+ * The journal key a decomposition step reports under. A decomposition has no
+ * `change`, so its journal entries (progress/blocker/completion) and the engine's
+ * outcome mapping key off the PHASE name instead. The decomposition agent reports
+ * with `ratchet batch report <batch> --change <phase> ...` and the engine
+ * snapshots that key — the same single channel a change step uses, just keyed by
+ * phase rather than change.
+ */
+export function decompositionJournalKey(phase: string): string {
+  return phase;
+}
+
+/**
+ * Resolve the `/rct:decompose-phase <phase>` skill-invocation token the spawned
+ * decomposition agent should run. The command id is the single-source
+ * {@link DECOMPOSE_COMMAND_ID} the spawn-locus guarantee also renders, and the
+ * invocation TOKEN is resolved through the CONFIGURED spawn agent's command
+ * adapter (claude `/rct:<id>`, others `/rct-<id>`) — never a hard-coded literal,
+ * exactly as {@link rctInvocation} does for transitions. A synthetic spawn
+ * stand-in (a test fake or `RATCHET_BATCH_AGENT_CMD` override) with no adapter
+ * falls back to the DEFAULT_AGENT's adapter, so the token always comes from an
+ * adapter rather than an inline string.
+ */
+function rctDecomposeInvocation(context: DecompositionStepContext): string {
+  const agentId = context.settings.agent ?? DEFAULT_AGENT;
+  const adapter =
+    CommandAdapterRegistry.get(agentId) ?? CommandAdapterRegistry.get(DEFAULT_AGENT)!;
+  const base = `${adapter.getInvocation(DECOMPOSE_COMMAND_ID)} ${context.phase.name}`;
+  const args = decompositionInvocationArguments(context);
+  return args ? `${base} ${args}` : base;
+}
+
+/**
+ * The argument payload appended to the `/rct:decompose-phase <phase>` invocation:
+ * the resolved resume answer/feedback (W1), handed to the skill as `$ARGUMENTS`
+ * exactly as a change step's {@link invocationArguments} does. Empty when the step
+ * is not resuming, so the plain decomposition invocation stays bare.
+ */
+function decompositionInvocationArguments(context: DecompositionStepContext): string {
+  const resume = context.resume;
+  if (resume?.kind === 'blocked' && resume.answer?.trim()) {
+    return resume.answer.trim();
+  }
+  if (resume?.kind === 'awaiting-approval' && resume.feedback?.trim()) {
+    return resume.feedback.trim();
+  }
+  return '';
+}
+
+/**
+ * Resume INTENT framing for a parked decomposition step (W1), mirroring a change
+ * step's {@link resumeGuidance}: the answer/feedback TEXT rides on the invocation
+ * as a trailing argument; this block keeps only the directive (incorporate the
+ * answer / revise per feedback, do not start over) plus the original
+ * question/proposal for context. Absent resume → empty.
+ */
+function decompositionResumeGuidance(context: DecompositionStepContext): string {
+  const resume = context.resume;
+  if (!resume) return '';
+  if (resume.kind === 'blocked' && resume.answer?.trim()) {
+    return [
+      'This decomposition step was previously parked on a blocker:',
+      `  Question: ${resume.reason}`,
+      'The resolved answer is attached to the invocation above as an argument —',
+      'incorporate it and author the change intents. Do not start over.',
+    ].join('\n');
+  }
+  if (resume.kind === 'awaiting-approval' && resume.feedback?.trim()) {
+    return [
+      'The prior decomposition was REJECTED with feedback. Re-author the phase',
+      'intents against the existing draft (do NOT start over):',
+      `  Prior proposal: ${resume.reason}`,
+      'The reviewer feedback is attached to the invocation above as an argument —',
+      'revise the intents to address it.',
+    ].join('\n');
+  }
+  return '';
+}
+
+/**
+ * The prior phases' shipped results, rendered as the decomposition's grounding
+ * context: each shipped change intent and its definition of done, grouped by
+ * phase. This is the basis the canonical skill authors the new phase's intents
+ * from (`delegated-lifecycle`: the delegation is context-preserving — the engine
+ * hands the skill the real shipped results, never a bare, context-free call).
+ */
+function priorResultsContext(context: DecompositionStepContext): string {
+  const lines: string[] = ['Prior phase shipped results (the basis for decomposition):'];
+  if (context.priorResults.length === 0) {
+    lines.push('  (none — this is the first reachable phase)');
+    return lines.join('\n');
+  }
+  for (const prior of context.priorResults) {
+    lines.push(`  Phase "${prior.phase}":`);
+    if (prior.changes.length === 0) {
+      lines.push('    (no change intents)');
+      continue;
+    }
+    for (const change of prior.changes) {
+      lines.push(`    - ${change.name}: ${change.done}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Delegate the phase decomposition to the canonical decomposition skill rather
+ * than re-describing the authoring steps inline (`delegated-lifecycle`: the
+ * engine orchestrates the spawn; the canonical skill authors the change intents).
+ * The prose is agent-neutral; only the invocation TOKEN is agent-specific, and
+ * that is resolved through the configured spawn agent's adapter in
+ * {@link rctDecomposeInvocation}.
+ */
+function decompositionGuidance(context: DecompositionStepContext): string {
+  // The invocation may carry a trailing resume argument; indent every line so the
+  // argument renders as an attached continuation of the call (mirrors the change
+  // path's transition guidance).
+  const invocation = rctDecomposeInvocation(context)
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n');
+  const lines = [
+    'Decompose this phase by invoking the ratchet decompose-phase skill — run:',
+    invocation,
+    'It loads the project standards under ".ratchet/standards/" and is the single',
+    'author of phase decomposition. Do NOT hand-build or re-describe the',
+    'decomposition steps yourself — delegate to the skill and let it author this',
+    "phase's concrete change intents into batch.yaml from the prior phase's shipped",
+    'results. Author ONLY the manifest edit — never change directories.',
+  ];
+  if (decompositionInvocationArguments(context)) {
+    lines.push(
+      'Anything after the phase name above is the resume context the engine already',
+      'resolved — pass it to the skill as its arguments ($ARGUMENTS); do not treat',
+      'it as a separate, optional note.'
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Build the spawned agent's instructions for ONE phase-decomposition step. Unlike
+ * {@link buildAgentInstructions} (a per-change transition), this directs the agent
+ * to author the reachable empty phase's concrete change intents into `batch.yaml`
+ * by delegating to the canonical decomposition skill. The empty phase's
+ * goal/success/proof-of-work and the prior phases' shipped results are injected as
+ * the delegation context, so the delegation is context-preserving and never a
+ * bare, context-free skill call (`delegated-lifecycle`).
+ */
+export function buildDecompositionInstructions(context: DecompositionStepContext): string {
+  const key = decompositionJournalKey(context.phase.name);
+  const sections = [
+    `You are advancing the ratchet batch "${context.batch}".`,
+    `Perform EXACTLY ONE step: DECOMPOSE the phase "${context.phase.name}" — author its concrete change intents into batch.yaml.`,
+    `You MUST finish by running \`ratchet batch report ${context.batch} --change ${key} --complete "<summary>"\` — without it this step is treated as unreported and parked.`,
+    '',
+    `Phase to decompose: ${context.phase.name}`,
+    `Phase goal: ${context.phase.goal}`,
+    `Phase success criteria: ${context.phase.success}`,
+    `Phase proof-of-work (${context.phase.proofOfWork.kind}): run \`${context.phase.proofOfWork.run}\`, passes when ${context.phase.proofOfWork.pass}`,
+    '',
+    priorResultsContext(context),
+    '',
+    decompositionGuidance(context),
+  ];
+
+  // Resume framing (W1): when the step was parked and the user answered, surface
+  // the resume intent — the answer text itself rides on the invocation argument.
+  const resume = decompositionResumeGuidance(context);
+  if (resume) sections.push('', resume);
+
+  sections.push('', reportChannel(context.batch, key));
   return sections.join('\n');
 }

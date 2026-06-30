@@ -97,6 +97,34 @@ phases:
     expect(PROOF_OF_WORK_KINDS).toEqual(['integration', 'blackbox', 'llm-judge']);
   });
 
+  it('rejects an llm-judge proof-of-work as not yet supported', () => {
+    const judged = `
+name: q3-auth
+phases:
+  - name: foundation
+    goal: g
+    success: s
+    proofOfWork:
+      kind: llm-judge
+      run: exercise the slice
+      pass: works end to end
+    changes:
+      - name: ok-change
+        done: it works
+`;
+    try {
+      parseBatchManifest(judged);
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(BatchManifestError);
+      const msg = (err as Error).message;
+      expect(msg).toContain('llm-judge proof-of-work is not yet supported');
+      expect(msg).toContain('integration');
+      expect(msg).toContain('blackbox');
+      expect((err as BatchManifestError).location).toBe('phases.0.proofOfWork.kind');
+    }
+  });
+
   // Per-change `done` criterion (required, non-empty) — manifest-schema.feature.
   it('retains a change intent done criterion when present', () => {
     const withDone = `

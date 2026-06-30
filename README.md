@@ -227,6 +227,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `batch config [name]` | Resolved batch settings: project defaults + manifest overrides + agent permissions |
 | `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step) |
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
+| `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
 | `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|check\|agent`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
@@ -234,6 +235,16 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
 
 In `ratchet --help`, the workflow commands `propose`, `apply`, `verify`, `batch`, and `eval` are gathered (in that order) under a single **`Workflow:`** heading; every other command keeps its default placement.
+
+### Reference documentation
+
+Full per-command and internals reference lives in [`docs/`](docs/) and is published at [ratchet-ai.dev](https://ratchet-ai.dev/). It is organized into three areas:
+
+- **[Commands](docs/commands/)** — one Reference entry per command and flag: `init`, `update`, `list`, `view`, `status`, `instructions`, `validate`, `doctor`, `archive`, `template`, `new`, the headless `propose`/`apply`/`verify` verbs, and the `batch` and `eval` groups.
+- **[Engine API](docs/engine/)** — the bundled in-process engine and the SWE-ReX agent runtime that every workflow verb spawns through: [engine overview](docs/engine/overview.md), [change-step core](docs/engine/change-step.md), [agent runtime (SWE-ReX)](docs/engine/agent-runtime.md), [run-state locus](docs/engine/run-state.md), and [standalone settings](docs/engine/standalone-settings.md).
+- **[Configuration](docs/configuration/)** — the [`.ratchet/config.yaml`](docs/configuration/config-yaml.md) keys and the [generated artifacts](docs/configuration/generated-artifacts.md) `init`/`update` write to disk.
+
+Per the project's `documentation` standard, every code change that touches a command, flag, config key, generated artifact, or engine behavior updates the matching `docs/` entry and this README in the same change.
 
 ### Headless workflow verbs
 
@@ -277,8 +288,8 @@ from the phase's. A batch is intent you can revise before applying.
 
 | Workflow | Command | What it does |
 |---|---|---|
-| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox` / `llm-judge`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Ends with a **gated hand-off into `/rct:apply-batch`** to drive the batch now (this session as orchestrator) or defer it to a later run. |
-| **apply-batch** | `/rct:apply-batch <name>` | Autonomous orchestrator that drives the batch to completion. It **loops** `ratchet batch apply` (which stays single-step) until done, surfacing halts (blocked / awaiting-approval) and proof-of-work failures to you, recording your answers via `ratchet batch report`, then resuming. The orchestrator does **no coding itself** — it only runs `ratchet` CLI commands and talks to you; the coding happens inside the engine-spawned agent. |
+| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Ends with a **gated hand-off into `/rct:apply-batch`** to drive the batch now (this session as orchestrator) or defer it to a later run. |
+| **apply-batch** | `/rct:apply-batch <name>` | Autonomous orchestrator that drives the batch to completion. It **loops** `ratchet batch apply` (which stays single-step) until done, surfacing halts (blocked / awaiting-approval) and proof-of-work failures to you, recording your answers via `ratchet batch report`, then resuming. The orchestrator does **no coding itself** — it only runs `ratchet` CLI commands and talks to you; the coding happens inside the engine-spawned agent. When the next step is a reachable phase whose changes are still empty, `batch apply` decomposes it **natively** — spawning an agent that delegates to the canonical `decompose-phase` skill to author that phase's change intents from the prior phase's shipped results — then the loop continues into the new changes, with no manual stop/propose/resume detour. |
 
 ```
 You: /rct:propose-batch ship a checkout flow
@@ -353,7 +364,10 @@ dials under `.ratchet/config.yaml` `batch:`, with manifest-level overrides).
 
 The coding agent itself runs through a **SWE-ReX agent runtime** with live
 output streaming, configurable to execute **locally**, in **Docker**, or on a
-**remote** host — with pluggable adapters (claude / codex / gemini / cursor).
+**remote** host — with pluggable adapters (claude / codex / gemini / cursor). The
+per-agent timeout defaults to 10 minutes and is raised with the
+`batch.agentTimeoutMs` config key or the `RATCHET_AGENT_TIMEOUT_MS` environment
+variable (env wins) when a slow-but-passing proof-of-work needs more time.
 
 ## Eval suite
 
@@ -386,7 +400,7 @@ features/cli/status#status-as-json:
   setup: pnpm install         # optional: runs ONCE into a cached working copy
   check:
     run: ratchet status --json
-    pass: contains:applyRequires   # exit-zero | contains:<text> | regex:<pattern>
+    pass: contains:applyRequires   # exit-zero (or "exit code 0 — ..." prose) | contains:<text> | regex:<pattern>
 
 features/cli/status#status-as-text:
   fixture: verify-sample

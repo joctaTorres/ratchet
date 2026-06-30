@@ -15,7 +15,7 @@
  */
 
 import { resolveCurrentPlanningHomeSync } from '../../planning-home.js';
-import type { StepResult, StepState, Transition } from './contract.js';
+import type { StepResult, StepState, StepKind } from './contract.js';
 
 /** Richer outcome states the engine distinguishes internally. */
 export type EngineOutcomeState = StepState | 'failed';
@@ -23,7 +23,7 @@ export type EngineOutcomeState = StepState | 'failed';
 export interface EngineStepOutcome {
   state: EngineOutcomeState;
   change: string;
-  transition: Transition;
+  transition: StepKind;
   blocker?: string;
   approvalRequest?: string;
   /** Captured agent output, surfaced on failure. */

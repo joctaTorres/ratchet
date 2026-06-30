@@ -11,7 +11,7 @@ describe('skill-generation', () => {
   describe('getSkillTemplates', () => {
     it('should return the generated skill templates', () => {
       const templates = getSkillTemplates();
-      expect(templates).toHaveLength(10);
+      expect(templates).toHaveLength(11);
     });
 
     it('should have unique directory names', () => {
@@ -138,7 +138,7 @@ describe('skill-generation', () => {
   describe('getCommandTemplates', () => {
     it('should return the generated command templates', () => {
       const templates = getCommandTemplates();
-      expect(templates).toHaveLength(10);
+      expect(templates).toHaveLength(11);
     });
 
     it('should have unique IDs', () => {
@@ -193,7 +193,7 @@ describe('skill-generation', () => {
   describe('getCommandContents', () => {
     it('should return the generated command contents', () => {
       const contents = getCommandContents();
-      expect(contents).toHaveLength(10);
+      expect(contents).toHaveLength(11);
     });
 
     it('should have valid content structure', () => {

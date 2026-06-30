@@ -166,9 +166,10 @@ describe('RatchetBatchEngine.runStep — success with real on-disk work', () => 
     expect(r2.transition).toBe('apply');
     expect(r2.state).toBe('advanced');
     expect(step2.calls).toHaveLength(1);
-    // The apply step's instructions must target implementing the planned tasks.
+    // The apply step's instructions delegate to the canonical rct skill rather
+    // than re-describing the apply steps inline (delegated-lifecycle).
     expect(step2.calls[0].instructions).toContain('APPLY');
-    expect(step2.calls[0].instructions).toContain('Implement the planned tasks');
+    expect(step2.calls[0].instructions).toContain('/rct:apply add-login-api');
   });
 });
 

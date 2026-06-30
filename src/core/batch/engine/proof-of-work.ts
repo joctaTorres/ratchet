@@ -5,13 +5,22 @@
  * proof-of-work to decide whether the phase ships:
  *
  *   - `integration` / `blackbox` run a bash command and pass when the pass
- *     condition holds against the command output/exit status.
- *   - `llm-judge` spawns an agent that exercises the software directly (bash or
- *     an MCP tool) and returns a pass/fail verdict against the success criteria.
+ *     condition holds against the command output/exit status. These are the only
+ *     kinds `batch apply` runs today.
  *
  * Policy gates the phase: under `hard-gate` (default) a failure blocks the phase
  * and the next phase and is surfaced as a blocker; under `warn` the failure is
  * recorded and the phase is allowed to complete.
+ *
+ * NOT YET WIRED — `llm-judge`: a recognized proof-of-work kind whose design is to
+ * spawn an agent that exercises the software directly (bash or an MCP tool) and
+ * returns a pass/fail verdict against the success criteria. `batch apply` does
+ * NOT support it yet: `parseBatchManifest` (`manifest.ts`) REJECTS an `llm-judge`
+ * phase at validation, so the `kind === 'llm-judge'` branch below is currently
+ * unreachable from the live caller. The branch (and the `JudgeRequest` /
+ * `LlmJudge` / `JudgeVerdict` contract) is retained as fail-closed scaffolding
+ * for when a judge adapter is wired — it returns a failing verdict when no judge
+ * is configured, so a phase can never silently pass an unrun judge.
  *
  * STUBBED BOUNDARY: the bash runner is injectable (`BashRunner`) so tests do not
  * shell out; the default runner really executes the command via child_process.
@@ -44,7 +53,8 @@ export const realBashRunner: BashRunner = (command, cwd) =>
     child.on('close', (exitCode) => resolve({ exitCode, stdout, stderr }));
   });
 
-/** A judge returns a verdict; spawned for `llm-judge` proof-of-work. */
+/** A judge returns a verdict; would be spawned for the not-yet-wired `llm-judge`
+ *  proof-of-work (see file header — `batch apply` rejects that kind today). */
 export interface JudgeRequest {
   success: string;
   run: string;
@@ -79,12 +89,26 @@ export interface ProofOfWorkResult {
  *
  * Pass conditions are intentionally simple and declarative (the manifest author
  * writes them):
- *   - "exit 0" / "exit-zero" / "" -> passes when the command exits 0
+ *   - "" / "exit 0" / "exit-zero" / "exit code 0" -> passes when the command
+ *     exits 0. A *leading* exit-zero directive is recognized even when followed
+ *     by punctuation/prose, e.g. "exit code 0 — new tests pass" or
+ *     "exit-zero: suite green"; such a condition gates on the exit status and is
+ *     NOT substring-matched against stdout.
  *   - `contains:<text>`           -> passes when stdout contains <text>
  *   - `regex:<pattern>`           -> passes when stdout matches the pattern
- * Anything else is treated as substring-in-stdout, with exit 0 still required.
+ * Anything else (a bare string that is not an exit-code directive) is treated as
+ * substring-in-stdout, with exit 0 still required.
  */
 type PassEvaluation = { passed: boolean; reason: ProofOfWorkPassReason | ProofOfWorkFailReason };
+
+/**
+ * Matches a pass condition that *begins* with an exit-zero directive: `exit`,
+ * an optional `code` and `-`/space separators, then `0` or `zero`, terminated by
+ * end-of-string or a non-alphanumeric boundary (whitespace or punctuation such
+ * as `—`, `:`, `,`). Recognizes `exit 0`, `exit-zero`, `exit code 0`, and prose
+ * forms like `Exit 0, then ...` or `EXIT CODE 0 — everything passes`.
+ */
+const EXIT_ZERO_DIRECTIVE = /^exit(?:[- ]?code)?[- ]?(?:0|zero)(?![a-z0-9_])/i;
 
 /** Pass when exit 0; otherwise fail as nonzero-exit. */
 function exitZeroHandler(exitedZero: boolean): PassEvaluation {
@@ -115,7 +139,7 @@ export function evaluatePassCondition(pass: string, result: BashResult): PassEva
   const exitedZero = result.exitCode === 0;
   const condition = pass.trim();
 
-  if (condition === '' || /^exit[- ]?0$/i.test(condition) || /^exit-zero$/i.test(condition)) {
+  if (condition === '' || EXIT_ZERO_DIRECTIVE.test(condition)) {
     return exitZeroHandler(exitedZero);
   }
   if (condition.startsWith('contains:')) {
@@ -149,16 +173,23 @@ export interface RunProofOfWorkDeps {
  * (proof-of-work never runs while a phase has in-progress changes).
  *
  * `success` is the phase's success criteria from the resolved step context. The
- * `llm-judge` kind judges the running software against THAT criteria, not the
- * bash pass-condition (`proofOfWork.pass`) which only applies to the
- * integration/blackbox kinds.
+ * (not-yet-wired) `llm-judge` kind would judge the running software against THAT
+ * criteria; the bash pass-condition (`proofOfWork.pass`) drives the live
+ * integration/blackbox kinds. See the file header: `batch apply` rejects
+ * `llm-judge` at manifest validation, so its branch here is currently unreachable
+ * from the live caller and fails closed when no judge is configured.
  *
- * DEFERRED (by design): this function has no live caller yet. The single-step
- * `batch apply` path advances changes only; phase gating in `computeBatchStatus`
- * is currently modeled as "prior phase all changes done" and does not consult
- * `gatePassed`. Wiring proof-of-work into the gate belongs to the future
- * host/internal loop (the engine is single-step by design; looping is a separate
- * planned change). See `status.ts` `computeBatchStatus` for the matching note.
+ * LIVE CALLER: `batch apply` (`runProofAtBoundary` in `src/commands/batch/apply.ts`)
+ * runs this at the phase boundary — when a phase's changes are all done and the
+ * next reachable phase still has work — and journals the verdict as a durable
+ * `ProofOfWorkRecord` (see `journal.ts`). It executes at most once per boundary.
+ *
+ * GATED ON: the recorded verdict now drives the phase gate. `computeBatchStatus`
+ * derives the next phase's gate from the prior phase's recorded `gatePassed`: a
+ * failing `hard-gate` proof (`gatePassed: false`) keeps the next phase `blocked`
+ * with a report citing the failing proof, while a passing proof (or `warn`, which
+ * records `gatePassed: true`) opens it. Both selection seams read that single
+ * derived gate, so a recorded failure blocks progression by construction.
  */
 export async function runProofOfWork(
   proofOfWork: ProofOfWork,

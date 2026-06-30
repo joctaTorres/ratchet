@@ -54,6 +54,9 @@ describe('batch view and list', () => {
         phases: [{ name: 'foundation', changes: [{ name: 'c-done' }, { name: 'c-ready' }] }],
       });
       await fixture.writeChangeWithTasks('c-done', { done: 1, total: 1 });
+      // A journaled verify makes c-done truly done, so c-ready is the next step
+      // (without it, c-done renders as awaiting-verify and is itself next).
+      fixture.completeVerify('b', 'c-done');
 
       await batchViewCommand('b', {});
 

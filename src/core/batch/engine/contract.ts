@@ -13,6 +13,15 @@ import type { JournalEntry } from '../journal.js';
 
 export type Transition = 'propose' | 'apply' | 'verify';
 
+/**
+ * What the engine ran for one step: a per-change transition, or a phase
+ * decomposition. `decompose` is NOT a per-change transition — it is never derived
+ * by `computeNextTransition` and never keys a change's done-rule. It exists only
+ * so a decomposition step's {@link StepResult} can name its kind for rendering,
+ * alongside the per-change transitions, without inventing a fourth transition.
+ */
+export type StepKind = Transition | 'decompose';
+
 /** Phase framing surfaced in the agent instructions for one step. */
 export interface StepPhase {
   name: string;
@@ -74,12 +83,54 @@ export interface ChangeStepContext extends BaseStepContext {
    */
   batch?: string;
   /**
-   * Optional free-text guidance appended verbatim to the agent instructions as
-   * an "Additional guidance:" block (e.g. the headless propose verb's `-m`
-   * values). Left undefined by `batch apply`, so batch instructions stay
-   * byte-identical.
+   * Optional free-text guidance (e.g. the headless propose verb's `-m` values)
+   * injected as a trailing ARGUMENT of the `/rct:<transition> <change>` skill
+   * invocation, so the agent hands it to the skill as `$ARGUMENTS` rather than
+   * reading it from a detached block (`delegated-lifecycle`). Left undefined by
+   * `batch apply`, so the invocation stays the bare, byte-identical call.
    */
   guidance?: string;
+}
+
+/**
+ * A change intent shipped by a prior phase, surfaced to the decomposition agent
+ * as the basis for authoring a later phase's concrete intents. Carries only what
+ * the agent needs to ground the decomposition — the change's name and its
+ * definition of done — never engine internals.
+ */
+export interface ShippedChange {
+  name: string;
+  done: string;
+}
+
+/** A prior phase's shipped results: its name and the change intents it shipped. */
+export interface PriorPhaseResult {
+  phase: string;
+  changes: ShippedChange[];
+}
+
+/**
+ * The phase-scoped subset the engine needs to drive ONE decomposition spawn for a
+ * reachable, ungated phase whose `changes` list is still empty. Unlike a change
+ * step it carries NO `change` and NO `transition`: the spawned agent delegates to
+ * the canonical decomposition skill (`DECOMPOSE_COMMAND_ID`) to AUTHOR the phase's
+ * concrete change intents into `batch.yaml` from `priorResults`. The engine never
+ * derives a per-change transition for it and never authors the intents itself.
+ */
+export interface DecompositionStepContext {
+  batch: string;
+  /** The reachable empty phase to decompose (its goal/success/proof framing). */
+  phase: StepPhase;
+  /** Prior phases' shipped results — the basis for authoring this phase's intents. */
+  priorResults: PriorPhaseResult[];
+  settings: BatchSettings;
+  /**
+   * Resume context when the decomposition step was parked (W1). Mirrors a change
+   * step's `resume`: when the user answered a blocker (or rejected with feedback),
+   * the resolved text rides along as a trailing argument of the decompose-phase
+   * invocation so a resumed decomposition does not silently drop the answer.
+   */
+  resume?: StepResume;
 }
 
 export type StepState =
@@ -89,11 +140,16 @@ export type StepState =
   | 'phase-gated'
   | 'nothing-ready';
 
-/** The structured result the engine returns after one transition. */
+/**
+ * The structured result the engine returns after one step — a per-change
+ * transition or a phase decomposition. `change` carries the decomposed phase's
+ * name on a decomposition result (there is no change), and `transition` is
+ * `decompose` there, so `renderResult` shows the outcome like any other step.
+ */
 export interface StepResult {
   state: StepState;
   change: string;
-  transition: Transition;
+  transition: StepKind;
   /** Present when state is `blocked`: the question requiring an answer. */
   blocker?: string;
   /** Present when state is `awaiting-approval`: the proposal summary. */

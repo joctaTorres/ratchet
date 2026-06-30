@@ -53,6 +53,9 @@ describe('batchStatusCommand', () => {
       phases: [{ name: 'foundation', changes: [{ name: 'c-done' }, { name: 'c-ready' }] }],
     });
     await fixture.writeChangeWithTasks('c-done', { done: 1, total: 1 });
+    // Tasks-checked alone is `awaiting-verify`; a journaled verify makes it done
+    // so the next ready step is c-ready (not the still-unverified c-done).
+    fixture.completeVerify('b', 'c-done');
 
     await batchStatusCommand('b', {});
 
@@ -142,6 +145,10 @@ describe('batchStatusCommand', () => {
       phases: [{ name: 'foundation', changes: [{ name: 'c-done' }] }],
     });
     await fixture.writeChangeWithTasks('c-done', { done: 1, total: 1 });
+    // Done now requires a journaled verify on the change AND a satisfied
+    // terminal-phase boundary proof-of-work.
+    fixture.completeVerify('b', 'c-done');
+    fixture.passProof('b', 'foundation');
 
     await batchStatusCommand('b', {});
 
@@ -155,6 +162,8 @@ describe('batchStatusCommand', () => {
       phases: [{ name: 'foundation', changes: [{ name: 'c-done' }] }],
     });
     await fixture.writeChangeWithTasks('c-done', { done: 1, total: 1 });
+    fixture.completeVerify('b', 'c-done');
+    fixture.passProof('b', 'foundation');
 
     await batchStatusCommand('b', { json: true });
 

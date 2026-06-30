@@ -78,6 +78,8 @@ export function toJson(status: BatchStatusInfo, gate: string): unknown {
         // voluntarily parked it as a blocker awaiting input.
         blocked: change.status === 'blocked',
         awaitingApproval: change.status === 'awaiting-approval',
+        // Tasks all checked but the verify gate has not run yet — NOT done.
+        awaitingVerify: change.status === 'awaiting-verify',
         parked: change.parked ?? null,
       })),
     })),
@@ -90,6 +92,9 @@ function symbolFor(statusValue: string): string {
       return chalk.green('✓');
     case 'in-progress':
       return chalk.yellow('◉');
+    case 'awaiting-verify':
+      // Tasks done, verify gate pending — distinct from done (✓) and approval (⏸).
+      return chalk.magenta('⧖');
     case 'ready':
       return chalk.cyan('○');
     case 'blocked':
@@ -155,9 +160,10 @@ function printText(status: BatchStatusInfo): void {
   }
 
   if (status.next) {
-    console.log(
-      chalk.bold(`\nNext: ${status.next.change} (phase ${status.next.phase})`)
-    );
+    const label = status.next.decompose
+      ? `decompose phase ${status.next.phase}`
+      : `${status.next.change} (phase ${status.next.phase})`;
+    console.log(chalk.bold(`\nNext: ${label}`));
   } else if (status.status === 'done') {
     console.log(chalk.green('\nAll changes done.'));
   } else {

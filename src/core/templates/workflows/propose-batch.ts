@@ -81,12 +81,13 @@ derive one from the objective.
 
    For **every** phase you must have, before scaffolding:
    - a **success criterion** (what "done" means for the phase), and
-   - a **proof-of-work** whose \`kind\` is one of \`integration\`, \`blackbox\`,
-     or \`llm-judge\`.
+   - a **proof-of-work** whose \`kind\` is one of \`integration\` or \`blackbox\`.
+     (\`llm-judge\` is NOT yet supported by \`batch apply\` — do not use it; a
+     manifest with an \`llm-judge\` proof-of-work fails validation.)
 
    **Refuse to scaffold** a phase missing either. If success criteria are
    missing, grill the user for them. If a proof-of-work is missing, require the
-   user to declare its kind from the three allowed values.
+   user to declare its kind from the two allowed values.
 
    - **Phase one** is being built first, so its proof-of-work must be
      **concrete**: a runnable command (\`run\`) and a concrete pass condition

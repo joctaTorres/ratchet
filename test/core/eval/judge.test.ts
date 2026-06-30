@@ -134,6 +134,31 @@ describe('judgeCase: check', () => {
     const r = await judgeCase(CASE, checkBinding, '/c', 'agent', { bash });
     expect(r.verdict).toBe('unjudged');
   });
+
+  // The judge shares evaluatePassCondition with the batch proof-of-work gate, so a
+  // leading exit-zero prose condition must gate on exit status here too (not be
+  // substring-matched against stdout and silently fail closed).
+  it('passes a leading exit-zero prose condition on exit 0 without substring matching', async () => {
+    const prose: Binding = {
+      fixture: 'fx',
+      kind: 'check',
+      check: { run: 'run-suite', pass: 'exit code 0 — new tests assert the slice works' },
+    };
+    const bash: BashRunner = async () => ({ exitCode: 0, stdout: 'totally unrelated output', stderr: '' });
+    const r = await judgeCase(CASE, prose, '/c', 'auto', { bash });
+    expect(r.verdict).toBe('pass');
+  });
+
+  it('fails a leading exit-zero prose condition on a non-zero exit', async () => {
+    const prose: Binding = {
+      fixture: 'fx',
+      kind: 'check',
+      check: { run: 'run-suite', pass: 'exit code 0 — new tests assert the slice works' },
+    };
+    const bash: BashRunner = async () => ({ exitCode: 1, stdout: '', stderr: 'boom' });
+    const r = await judgeCase(CASE, prose, '/c', 'auto', { bash });
+    expect(r.verdict).toBe('fail');
+  });
 });
 
 describe('judgeCase: agent', () => {

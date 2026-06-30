@@ -69,6 +69,10 @@ export const BatchSettingsOverrideSchema = z
     // schema stays `.strict()` (it rejects unknown keys, not this one).
     permissions: PermissionsPolicySchema.optional(),
     insecure: z.boolean().optional(),
+    // Per-agent ReX timeout (ms). Positive integer; overrides the project
+    // config key for this batch (and is itself overridden by the
+    // RATCHET_AGENT_TIMEOUT_MS env var at resolution time).
+    agentTimeoutMs: z.number().int().positive().optional(),
   })
   .strict();
 
@@ -153,6 +157,21 @@ export function parseBatchManifest(content: string): BatchManifest {
       issues[0]
     );
   }
+
+  // `llm-judge` is a recognized proof-of-work kind (the schema enum keeps it so
+  // the type and validation message stay precise), but it is NOT yet executable
+  // by `batch apply` — no judge is wired. Reject it here, at validation, with an
+  // actionable message rather than letting a batch reach apply carrying a proof
+  // that can never pass. Both the `ratchet validate` and `loadBatchManifest`
+  // (apply) paths route through this parser, so the rejection covers both.
+  result.data.phases.forEach((phase, index) => {
+    if (phase.proofOfWork.kind === 'llm-judge') {
+      throw new BatchManifestError(
+        'llm-judge proof-of-work is not yet supported by `batch apply`; use `integration` or `blackbox`.',
+        `phases.${index}.proofOfWork.kind`
+      );
+    }
+  });
 
   return result.data;
 }

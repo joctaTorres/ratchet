@@ -22,8 +22,10 @@ import { CommandFixture } from '../change-fixture.js';
 import {
   parkStep,
   appendJournal,
+  recordProofOfWork,
   type ParkedStep,
   type JournalEntry,
+  type ProofOfWorkRecord,
 } from '../../../src/core/batch/journal.js';
 
 /** The default executable proof-of-work stamped on a fixture phase. */
@@ -105,6 +107,38 @@ export class BatchFixture extends CommandFixture {
   /** Append a journal entry for a change. */
   journal(batch: string, entry: Omit<JournalEntry, 'at'> & { at?: string }): JournalEntry {
     return appendJournal(this.root, batch, entry);
+  }
+
+  /**
+   * Journal a verify completion for a change so it satisfies the single
+   * journal-aware done-rule. Under the current (post-#37) behavior a change is
+   * `done` only when its tasks are all checked AND a verify completion is
+   * journaled; tasks-checked alone is `awaiting-verify`, not done.
+   */
+  completeVerify(batch: string, change: string): JournalEntry {
+    return appendJournal(this.root, batch, {
+      change,
+      kind: 'completion',
+      message: 'verified',
+      transition: 'verify',
+    });
+  }
+
+  /**
+   * Record a passing boundary proof-of-work for a phase. The terminal phase's
+   * proof-of-work must be recorded as satisfied before a batch whose changes are
+   * all done reports `done` (the terminal-phase proof gate, C2).
+   */
+  passProof(batch: string, phase: string, over: Partial<ProofOfWorkRecord> = {}): void {
+    recordProofOfWork(this.root, batch, phase, {
+      phase,
+      passed: true,
+      gatePassed: true,
+      policy: 'hard-gate',
+      reason: 'pass-condition-met',
+      detail: 'Proof-of-work passed (exit 0).',
+      ...over,
+    });
   }
 }
 

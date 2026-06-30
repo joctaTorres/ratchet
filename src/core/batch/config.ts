@@ -131,6 +131,16 @@ export interface BatchSettings {
    * scope, and each agent's `raw` entry is nearest-wins.
    */
   permissions?: ResolvedPermissionsPolicy;
+  /**
+   * Per-agent ReX timeout in milliseconds (positive integer). Raises the guard
+   * each runtime applies against a hung agent. When unset, each runtime keeps
+   * applying its own built-in default (600000ms / 10 minutes), so "unset" stays
+   * distinct from "set to the default" and the default lives in one place.
+   *
+   * The effective value is resolved by {@link resolveAgentTimeoutMs} with the
+   * `RATCHET_AGENT_TIMEOUT_MS` env override taking precedence over this key.
+   */
+  agentTimeoutMs?: number;
 }
 
 /**
@@ -264,6 +274,7 @@ const SETTING_KEYS: (keyof BatchSettings)[] = [
   'port',
   'authToken',
   'insecure',
+  'agentTimeoutMs',
 ];
 
 const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
@@ -277,6 +288,7 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
   port: null, // numeric string (swerex-remote port)
   authToken: null, // free-form secret string (swerex-remote X-API-Key)
   insecure: ['true', 'false'], // boolean opt-in for plaintext to a non-local host
+  agentTimeoutMs: null, // free-form numeric (positive integer ms; like `port`)
 };
 
 /**
@@ -307,6 +319,7 @@ export function resolveBatchSettings(
     authToken: 'default',
     permissions: 'default',
     insecure: 'default',
+    agentTimeoutMs: 'default',
   };
 
   const writable = settings as { [K in keyof BatchSettings]: BatchSettings[K] };
@@ -355,6 +368,41 @@ export function resolveBatchSettings(
   sources.permissions = postureSource;
 
   return { settings, sources };
+}
+
+/** Environment variable that overrides the per-agent ReX timeout. */
+export const AGENT_TIMEOUT_ENV_VAR = 'RATCHET_AGENT_TIMEOUT_MS';
+
+/**
+ * Resolve the effective per-agent ReX timeout (ms), with precedence
+ * `env > config > undefined`:
+ *
+ *   - `RATCHET_AGENT_TIMEOUT_MS` wins when it parses to an integer > 0. A
+ *     non-numeric, zero, negative, or empty value is IGNORED (a typo never
+ *     shortens or removes the guard) and resolution falls through to config.
+ *   - else `settings.agentTimeoutMs` when it is a positive integer.
+ *   - else `undefined`, so each runtime keeps applying its own built-in
+ *     `DEFAULT_TIMEOUT_MS` (600000ms). Returning `undefined` keeps the default
+ *     in exactly one place and keeps "unset" distinct from "set to the default".
+ *
+ * Pure and env-injectable (mirroring the runtime seams) so the feature scenarios
+ * unit-test it directly.
+ */
+export function resolveAgentTimeoutMs(
+  settings: Pick<BatchSettings, 'agentTimeoutMs'>,
+  env: NodeJS.ProcessEnv = process.env
+): number | undefined {
+  const raw = env[AGENT_TIMEOUT_ENV_VAR];
+  if (raw !== undefined && raw.trim().length > 0) {
+    const parsed = Number(raw.trim());
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    // Invalid env value: ignore it and fall through to the config/default.
+  }
+  const fromConfig = settings.agentTimeoutMs;
+  if (typeof fromConfig === 'number' && Number.isInteger(fromConfig) && fromConfig > 0) {
+    return fromConfig;
+  }
+  return undefined;
 }
 
 /**
@@ -448,6 +496,14 @@ export function validateSetting(key: string, value: string): SetResult {
     return {
       ok: false,
       error: `Invalid value for 'port': it must be a positive integer (got '${value}').`,
+    };
+  }
+  // `agentTimeoutMs` is a positive integer (milliseconds), validated like `port`
+  // so a malformed value is rejected before the project config is written.
+  if (key === 'agentTimeoutMs' && !isValidPort(value)) {
+    return {
+      ok: false,
+      error: `Invalid value for 'agentTimeoutMs': it must be a positive integer (got '${value}').`,
     };
   }
 
@@ -570,7 +626,7 @@ export function setProjectBatchSetting(
   // `port` is a number and `insecure` is a boolean in the schema, so persist
   // them with their real type (a quoted string would be rejected by the
   // manifest/project-config schemas on read).
-  if (key === 'port') {
+  if (key === 'port' || key === 'agentTimeoutMs') {
     batch[key] = Number(value.trim());
   } else if (key === 'insecure') {
     batch[key] = value.trim() === 'true';

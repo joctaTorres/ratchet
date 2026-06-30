@@ -32,6 +32,11 @@ export const codexAdapter: ToolCommandAdapter = {
     return path.join(getCodexHome(), 'prompts', `rct-${commandId}.md`);
   },
 
+  // Codex prompt files are named rct-<id>, invoked as /rct-<id>.
+  getInvocation(commandId: string): string {
+    return `/rct-${commandId}`;
+  },
+
   formatFile(content: CommandContent): string {
     return `---
 description: ${content.description}

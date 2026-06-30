@@ -59,6 +59,10 @@ export const ProjectConfigSchema = z.object({
       // Shared schema; merged across user/project/manifest in resolveBatchSettings.
       permissions: PermissionsPolicySchema.optional(),
       insecure: z.boolean().optional(),
+      // Per-agent ReX timeout (ms). Positive integer; a malformed value is
+      // rejected at config load. When unset, the runtime default (600000ms)
+      // applies. The RATCHET_AGENT_TIMEOUT_MS env var overrides this key.
+      agentTimeoutMs: z.number().int().positive().optional(),
     })
     .partial()
     .optional()

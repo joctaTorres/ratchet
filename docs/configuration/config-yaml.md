@@ -63,6 +63,25 @@ Scalar settings (all keys except `permissions`) are nearest-wins across scopes.
 | `agent` | string | — | free-form | Coding-agent binary to spawn (e.g. `claude`, `codex`, `cursor-agent`, `gemini`). When unset, the engine uses the agent configured at init time. |
 | `image` | string | — | free-form | Container image reference for `locus: docker`. Must be non-empty when set. When unset and `locus` is `docker`, the runtime falls back to `python:3.12`. |
 
+### Agent timeout
+
+Applies to every locus (`local`, `docker`, `remote`) and every coding agent.
+
+| Key | Type | Default | Accepted values | Description |
+|---|---|---|---|---|
+| `agentTimeoutMs` | number | `600000` | positive integer (ms) | Per-agent ReX timeout in milliseconds — the guard against a hung agent. When unset, the runtime applies its built-in default of `600000` (10 minutes). Raise it when a slow-but-passing transition (e.g. a full-suite coverage proof-of-work) is being killed at the default. |
+
+The `RATCHET_AGENT_TIMEOUT_MS` environment variable overrides this key. It must
+parse to a positive integer; a zero, negative, non-numeric, or empty value is
+ignored (a typo never shortens or removes the guard) and resolution falls
+through to the config key, then to the built-in default. The effective timeout
+resolves with precedence **env > manifest > project config > built-in default**.
+
+```bash
+# Raise the per-agent timeout to 30 minutes for one run, overriding any config key.
+RATCHET_AGENT_TIMEOUT_MS=1800000 ratchet batch run
+```
+
 ### Remote-locus settings
 
 These keys are required when `locus: remote` and ignored for `local` and `docker`.

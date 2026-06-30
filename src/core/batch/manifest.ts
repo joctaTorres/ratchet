@@ -69,6 +69,10 @@ export const BatchSettingsOverrideSchema = z
     // schema stays `.strict()` (it rejects unknown keys, not this one).
     permissions: PermissionsPolicySchema.optional(),
     insecure: z.boolean().optional(),
+    // Per-agent ReX timeout (ms). Positive integer; overrides the project
+    // config key for this batch (and is itself overridden by the
+    // RATCHET_AGENT_TIMEOUT_MS env var at resolution time).
+    agentTimeoutMs: z.number().int().positive().optional(),
   })
   .strict();
 

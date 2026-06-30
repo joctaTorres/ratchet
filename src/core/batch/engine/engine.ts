@@ -43,7 +43,7 @@ import {
 import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
 import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
 import { makeRexRemoteRuntime } from './runtime/rex-remote-runtime.js';
-import { validateRemoteSettings } from '../config.js';
+import { validateRemoteSettings, resolveAgentTimeoutMs } from '../config.js';
 import { makeStreamJsonRenderer } from './runtime/stream-json-renderer.js';
 import { buildAgentInstructions, buildDecompositionInstructions, decompositionJournalKey } from './instructions.js';
 import {
@@ -180,6 +180,10 @@ export class RatchetBatchEngine {
   private selectRuntime(projectRoot: string, settings: BatchSettings): AgentRuntime {
     if (this.runtimeOverride) return this.runtimeOverride;
     const locus = settings.locus ?? 'local';
+    // Resolve the per-agent timeout once (env > config > undefined). When
+    // undefined, the key is OMITTED below so each runtime keeps applying its own
+    // built-in DEFAULT_TIMEOUT_MS — today's behavior is preserved exactly.
+    const timeoutMs = resolveAgentTimeoutMs(settings);
     // The enum is validated upstream, so an unknown locus here is a programming
     // error. `image` is threaded only for docker (ignored by the local path).
     if (locus === 'remote') {
@@ -196,12 +200,14 @@ export class RatchetBatchEngine {
         // The runtime picks https for a non-local host and refuses plaintext to
         // one unless this explicit opt-in is set; loopback always allows http.
         allowInsecure: settings.insecure === true,
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
     }
     return makeRexSidecarRuntime({
       locus,
       projectRoot,
       ...(locus === 'docker' ? { image: settings.image } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
   }
 

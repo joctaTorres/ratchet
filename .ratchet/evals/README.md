@@ -19,11 +19,11 @@ and *what codebase to judge it against*.
    `.ratchet/features/**` (the store) and, with scope flags, from active changes.
    Each case has a stable id: `<feature-path-sans-ext>#<scenario-slug>`.
 2. An **eval-spec** under `specs/` binds a case id to a `fixture` and a judge:
-   - `kind: check` — a deterministic bash command run against the fixture, with a
-     `pass` condition (`exit-zero` | `contains:<text>` | `regex:<pattern>` |
+   - `kind: deterministic` — a deterministic bash command run against the fixture,
+     with a `pass` condition (`exit-zero` | `contains:<text>` | `regex:<pattern>` |
      substring). No agent; same answer every time.
-   - `kind: agent` — a fresh coding agent is spawned against the fixture and judged
-     against `success` criteria (fail-closed on uncertainty; optional N-of-M
+   - `kind: llm-judge` — a fresh coding agent is spawned against the fixture and
+     judged against `success` criteria (fail-closed on uncertainty; optional N-of-M
      `agentVotes`, disagreement → `unjudged`). For prose-y scenarios.
    A case with no binding is **`unjudged`** — never counted as a pass.
 3. At judge time each case gets its **own throwaway copy** of the fixture as its
@@ -47,13 +47,13 @@ by the fixtures here.)
 
 ```bash
 ratchet eval set  --path <dir-or-file> --json     # list cases (+ binding status)
-ratchet eval run  --path archive-change --judge check   # judge bound cases, persist a run
+ratchet eval run  --path archive-change --judge deterministic   # judge bound cases, persist a run
 ratchet eval report  --run <run-id>               # scorecard + baseline diff
 ratchet eval baseline <run-id>                    # lock in a clean run as the baseline
 ```
 
-`--judge auto` (default) judges each case by its bound `kind`; `--judge check`
-runs only deterministic checks; `--judge agent` forces the spawned-agent judge.
+`--judge auto` (default) judges each case by its bound `kind`; `--judge deterministic`
+runs only deterministic checks; `--judge llm-judge` forces the spawned-agent judge.
 
 ---
 
@@ -61,7 +61,7 @@ runs only deterministic checks; `--judge agent` forces the spawned-agent judge.
 
 The `archive-change` feature (`.ratchet/features/archive-change/archive.feature`,
 6 scenarios) is fully covered by `specs/archive-change.yaml` — all six bindings
-are deterministic `check`s, and `ratchet eval run --path archive-change` reports
+are `deterministic`, and `ratchet eval run --path archive-change` reports
 **6 pass / 0 fail / 0 unjudged**.
 
 ### Where the ratchet CLI is exercised
@@ -123,7 +123,7 @@ only in the precondition:
 ### Re-running / locking it in
 
 ```bash
-ratchet eval run --path archive-change --judge check   # → 6 pass
+ratchet eval run --path archive-change --judge deterministic   # → 6 pass
 ratchet eval baseline <run-id>                         # lock as baseline
 ```
 
@@ -136,16 +136,16 @@ surface as a **regression** in `ratchet eval report`.
 2. Create a fixture under `fixtures/<name>/` — generate it by running ratchet in a
    scratch dir for realism, then copy it in. Keep it minimal and self-contained.
 3. Add a binding per case in a `specs/*.yaml` file (top-level `caseId: {…}` or
-   under a `bindings:` key). Prefer `kind: check` with a self-asserting `run`
-   script; fall back to `kind: agent` + `success` only for genuinely prose-y
-   scenarios.
-4. Iterate `ratchet eval run --path <dir> --judge check` until green.
+   under a `bindings:` key). Prefer `kind: deterministic` with a self-asserting
+   `run` script; fall back to `kind: llm-judge` + `success` only for genuinely
+   prose-y scenarios.
+4. Iterate `ratchet eval run --path <dir> --judge deterministic` until green.
 5. Verify `ratchet eval set` (store / `--changes`) case counts are unchanged by
    your fixtures.
 
-## Agent-judged fixtures need a tool allowlist
+## LLM-judged fixtures need a tool allowlist
 
-For `kind: agent` bindings, the judge is a freshly spawned coding-agent
+For `kind: llm-judge` bindings, the judge is a freshly spawned coding-agent
 subprocess whose cwd is the throwaway fixture copy. `FixtureManager` copies the
 whole fixture recursively, so a **fixture-local agent config travels into that
 copy** and is what grants the spawned judge permission to act.
@@ -161,13 +161,13 @@ copy** and is what grants the spawned judge permission to act.
   `RATCHET_EVAL_AGENT_CMD` test stub). Selecting the adapter is a possible
   follow-up in the eval implementation.
 
-See `fixtures/eval-self-run/` — an agent-judged case that dogfoods eval itself
-(its inner binding is a deterministic `check`, so the recursion depth is 1).
+See `fixtures/eval-self-run/` — an llm-judged case that dogfoods eval itself
+(its inner binding is `deterministic`, so the recursion depth is 1).
 
 ## Driving `ratchet batch apply` deterministically (the agent stub seam)
 
 `ratchet batch apply` normally spawns a real coding agent to drive a transition,
-which a `kind: check` cannot do reproducibly. The **batch-agent-stub-seam** adds
+which a `kind: deterministic` binding cannot do reproducibly. The **batch-agent-stub-seam** adds
 an env override mirroring `RATCHET_EVAL_AGENT_CMD`: when `RATCHET_BATCH_AGENT_CMD`
 is set, the engine runs that command via `bash -c` (feeding the step instructions
 on stdin) **instead of** resolving/spawning the configured adapter; unset → the

@@ -5,7 +5,7 @@
 # the `marker` sub-fixture and asserting the marker file is present.
 features/demo/demo#the-marker-file-is-present-in-the-working-copy:
   fixture: marker
-  kind: check
+  kind: deterministic
   check:
     pass: contains:ok
     run: |

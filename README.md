@@ -229,7 +229,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
 | `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
-| `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|check\|agent`, `--json`) |
+| `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|deterministic\|llm-judge`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
 | `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
@@ -396,7 +396,7 @@ eval-spec says how to judge it. Each binding maps a case id to a **fixture**
 # .ratchet/evals/specs/status.yaml
 features/cli/status#status-as-json:
   fixture: status-ok          # .ratchet/evals/fixtures/status-ok/
-  kind: check                 # deterministic — preferred
+  kind: deterministic         # preferred
   setup: pnpm install         # optional: runs ONCE into a cached working copy
   check:
     run: ratchet status --json
@@ -404,7 +404,7 @@ features/cli/status#status-as-json:
 
 features/cli/status#status-as-text:
   fixture: verify-sample
-  kind: agent                 # spawned-judge fallback for prose-y scenarios
+  kind: llm-judge             # spawned-judge fallback for prose-y scenarios
   success: the status output is human-readable text
   agentVotes: 3               # N-of-M repeat votes; majority wins
 ```
@@ -418,7 +418,7 @@ fixture+setup and reused across every case bound to it.
 **The agent judge is guarded.** It **fails closed on uncertainty** (no concrete
 evidence ⇒ not a pass) and may cast **N-of-M votes** (`agentVotes`, default 1).
 When votes disagree, the case is recorded `unjudged` — never silently `fail` — so
-judge noise can't manufacture a regression. Prefer a deterministic `check`.
+judge noise can't manufacture a regression. Prefer a `deterministic` binding.
 
 **Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
 is a case that **passed in the baseline and fails now**; new/retired cases are

@@ -1,16 +1,16 @@
 # Host agent-judged binding: eval evaluating eval.
 #
 # The target case is the run-and-score scenario of the eval-runs feature. It is
-# judged by a freshly SPAWNED coding agent (kind: agent) that runs inside a
+# judged by a freshly SPAWNED coding agent (kind: llm-judge) that runs inside a
 # throwaway copy of the `eval-self-run` fixture — itself a fully self-contained
-# ratchet project whose OWN eval binding is a deterministic `check` (no
+# ratchet project whose OWN eval binding is a `deterministic` binding (no
 # agent-inside-agent; recursion depth stays at 1).
 #
 # The spawned judge must RUN `ratchet eval run --json` in its working directory
 # and base its verdict on the command's real output and the files it writes.
 changes/eval-system/features/eval-runs/run-and-score#a-run-judges-in-scope-cases-and-is-persisted:
   fixture: eval-self-run
-  kind: agent
+  kind: llm-judge
   success: >-
     You are judging this scenario inside a self-contained ratchet project (your
     current working directory). To decide, ACTUALLY RUN `ratchet eval run --json`

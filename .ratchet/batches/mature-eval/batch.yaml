@@ -1,0 +1,213 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# A batch coordinates related changes across ordered phases. It references
+# changes by NAME and never owns them: changes live under .ratchet/changes/
+# like any other change and can be inspected, validated, and archived on their
+# own. Status is derived live from change state on disk — never stored here.
+#
+# Phases ship functional software behind an executable proof-of-work, so errors
+# surface early. A later phase is blocked until the prior phase's proof-of-work
+# passes. Changes are created lazily as the batch progresses: an entry with no
+# change directory yet is simply "pending", not an error.
+#
+# GOAL OF THIS BATCH
+# Mature `ratchet eval` from a check/agent pass-fail suite into a configurable,
+# fail-closed verifier hierarchy with an anti-gaming invariant set. Foundation
+# first: one configurable verdict/aggregation core decides every pass, and the
+# five capabilities (invariant set, judge hardening, hold-outs, Playwright web
+# tier, mutation invariant) each plug into it as an independently-provable
+# vertical slice. Validated via /rct:brainstorm.
+#
+# DESIGN INVARIANTS BAKED INTO EVERY PHASE:
+#   - Fail-closed governs everywhere: when a pass can't be proven, fail or abstain
+#     (unjudged/skipped) — never a silent pass. A false pass ratcheted into the
+#     baseline is the failure mode that must never exist.
+#   - Tool-agnostic per .ratchet/standards/multi-agent-support.md: shared content
+#     authored once, no agent special-casing.
+#   - Dependency-light / BYOA: heavy external tools (Playwright) stay opt-in and
+#     user-owned.
+#   - DEFERRED (out of scope, YAGNI): extra mechanical verifier classes
+#     (HTTP/schema/DB/a11y/perf/visual-regression/security), cross-family panel
+#     CONFIG (schema reserved only), per-invariant gate toggling, dual-order
+#     pairwise judging.
+
+name: mature-eval
+created: 2026-06-30
+
+settings:
+  strategy: vertical-slice  # each phase is a thin end-to-end slice
+  proofOfWork: hard-gate     # a phase blocks the next until its proof-of-work passes
+
+phases:
+  # ---------------------------------------------------------------------------
+  - name: foundation-verdict-core
+    goal: >-
+      Replace the inline pass/fail logic with ONE configurable verdict/aggregation
+      core and rename the binding kinds to the tier vocabulary. Ship `ratchet eval
+      run` deciding the gate as a single AND over selectable contributors
+      (deterministic / llm-judge / invariants / regression), with ratchet's own
+      eval specs migrated to the new kinds and dogfooded through the new system.
+    success: >-
+      Eval specs use `kind: deterministic` (was check) and `kind: llm-judge` (was
+      agent); a single aggregation module is the ONLY place a run pass is decided
+      (AND over contributors, with a defined extension point for later
+      capabilities); contributor selection is configurable via `.ratchet/config.yaml`
+      `eval.gate` and overridable by CLI (`--only`, `--no-llm-judge`, `--gate`),
+      generalizing the old `--judge` flag; a disabled contributor records its cases
+      `unjudged` (incomplete run) and an incomplete run CANNOT be promoted to
+      baseline; ratchet's own `.ratchet/evals/specs/*.yaml` are migrated and run
+      green under the new system.
+    proofOfWork:
+      kind: integration
+      run: pnpm build && pnpm vitest run eval
+      pass: >-
+        exit code 0 — tests assert the deterministic/llm-judge kind vocabulary, a
+        single aggregation core deciding pass as an AND over contributors,
+        configurable contributor selection (config + CLI override), and that an
+        incomplete run is blocked from baseline promotion
+    changes:
+      - name: rename-binding-kinds
+        after: []
+        done: >-
+          spec.ts parses `kind: deterministic` and `kind: llm-judge`, ratchet's own
+          .ratchet/evals/specs/*.yaml are migrated to the new names, and
+          `ratchet eval set` reports the new kind labels
+      - name: verdict-aggregation-core
+        after: [rename-binding-kinds]
+        done: >-
+          a single aggregation module computes the run pass as a logical AND over
+          contributors with a defined contributor extension point, and report.ts /
+          run.ts route their overall verdict through it (no inline pass logic left)
+      - name: configurable-contributor-gate
+        after: [verdict-aggregation-core]
+        done: >-
+          `eval.gate` config + CLI selector (`--only` / `--no-llm-judge` / `--gate`)
+          choose which contributors execute/gate (generalizing `--judge`); a
+          disabled contributor records cases `unjudged`; an incomplete run is
+          refused for baseline promotion
+
+  # ---------------------------------------------------------------------------
+  - name: invariant-set
+    goal: >-
+      Ship the anti-gaming invariant set as a first-class gate contributor: a
+      checked-in `.ratchet/evals/invariants.yaml` manifest (deterministic /
+      monotonic / snapshot kinds) evaluated run-level on every `eval run` and batch
+      `verify`, plus a tool-agnostic default manifest shipped by `ratchet init`.
+    success: >-
+      `ratchet eval run` evaluates run-level invariants from
+      `.ratchet/evals/invariants.yaml` as the `invariants` gate contributor; a
+      violated invariant is a hard fail surfaced first (sibling to regression); the
+      three kinds work (deterministic absolute predicate, monotonic non-decreasing
+      vs the baseline run's recorded measure, snapshot vs a checked-in golden); the
+      contributor toggles via `eval.gate.invariants` / `--no-invariants` and fails
+      closed when an invariant can't be evaluated; `ratchet init` writes one
+      agent-neutral default manifest with `spec-not-weakened` (scenario count)
+      ACTIVE and the stack-specific invariants (`tests-still-exist`,
+      `public-api-unchanged`) scaffolded-but-inert (detected where possible, else a
+      commented per-stack placeholder), never active-but-vacuous.
+    proofOfWork:
+      kind: integration
+      run: pnpm build && pnpm vitest run invariant   # refined at phase entry
+      pass: >-
+        exit code 0 — tests assert the three invariant kinds gate the verdict
+        run-level, fail-closed on an unevaluable invariant, and that `ratchet init`
+        emits the tool-agnostic default manifest with the stack-agnostic invariant
+        active and stack-specific ones inert
+
+  # ---------------------------------------------------------------------------
+  - name: judge-hardening
+    goal: >-
+      Harden the `llm-judge` contributor: per-Then-clause binary rubric
+      decomposition, a panel-ready `jury` block with project-level defaults,
+      transparent skip filters, and structured evidence persistence — without
+      changing where the judge plugs into the gate.
+    success: >-
+      An `llm-judge` case is judged per Gherkin Then-clause (rubric auto-derived,
+      optional explicit `rubric:` override) returning structured
+      [{clause, pass, evidence}] and passing only on all-yes (fail-closed on any
+      no/can't-tell); the `jury` block (votes + quorum majority|unanimous, project
+      default in `eval.jury` with per-binding override) resolves with sub-quorum →
+      unjudged and reserves a `panel:` slot for future cross-family use; skip
+      filters (project `eval.skip`, in-file `@skip` tag, CLI `--include-skipped`)
+      record cases `skipped` and count them (never silently dropped), with a warning
+      when a baseline-`pass` case is skipped; the run JSON persists structured
+      rubric + per-clause booleans + per-juror votes + cited evidence; CoT-before-
+      verdict and anti-sycophancy are enforced.
+    proofOfWork:
+      kind: integration
+      run: pnpm build && pnpm vitest run judge       # refined at phase entry
+      pass: >-
+        exit code 0 — tests assert per-clause rubric decomposition with all-yes
+        gating, jury quorum resolution with project/per-binding layering and
+        sub-quorum abstention, skip filters recording counted `skipped` with the
+        baseline-skip warning, and structured evidence persisted in the run JSON
+
+  # ---------------------------------------------------------------------------
+  - name: holdout-scenarios
+    goal: >-
+      Add `@holdout` scenarios as an anti-overfitting visibility split: hidden from
+      the building agent during apply, included as ordinary gating cases at verify —
+      reusing the existing gate unchanged.
+    success: >-
+      A `@holdout`-tagged Scenario/Feature is excluded from the spec context handed
+      to the building agent during `apply` (the change-step/prompt assembly filters
+      it out) yet enumerated and gated normally at `eval run` / batch `verify` with
+      no verdict/aggregation/persistence change; `ratchet eval set` reports hold-out
+      status and a `--holdout` / `--no-holdout` scope filter runs just the held-out
+      set; the stronger sibling-location isolation option is documented.
+    proofOfWork:
+      kind: integration
+      run: pnpm build && pnpm vitest run holdout      # refined at phase entry
+      pass: >-
+        exit code 0 — tests assert a `@holdout` scenario is absent from the agent's
+        materialized apply spec but present and gating at verify, and that `eval set`
+        reports hold-out status with the scope filter working
+
+  # ---------------------------------------------------------------------------
+  - name: playwright-web-tier
+    goal: >-
+      Make tier-4 cover browser scenarios mechanically: a `web` binding lifecycle
+      harness (start → readiness → run Playwright → teardown) folded into the
+      deterministic contributor, with Playwright kept an opt-in, user-owned
+      dependency probed conditionally by `ratchet doctor`.
+    success: >-
+      A `web` binding boots the app, waits for readiness within a timeout (the
+      fail-closed boundary), runs the Playwright spec driving Given/When/Then, gates
+      on Playwright exit-zero as a deterministic contributor, and captures
+      trace/screenshot on failure into the run as evidence; `ratchet doctor` probes
+      for Playwright ONLY when a web binding is in scope and surfaces install
+      guidance; the harness is DOM/state assertions only (pixel/perf cousins stay
+      deferred) and is invoked agent-neutrally via bash.
+    proofOfWork:
+      kind: integration
+      run: pnpm build && pnpm vitest run web          # refined at phase entry
+      pass: >-
+        exit code 0 — tests assert the web lifecycle harness (start/readiness-
+        timeout/run/teardown) gates on Playwright exit through the deterministic
+        contributor with failure artifacts captured, and that the doctor probe is
+        conditional on a web binding being in scope
+
+  # ---------------------------------------------------------------------------
+  - name: mutation-invariant
+    goal: >-
+      Add a `kind: mutation` invariant that proves tests aren't vacuous: the
+      configured agent seeds a small fault, the user's EXISTING test suite is the
+      oracle, and a survived mutant is a hard, reproducible finding — no external
+      mutation framework.
+    success: >-
+      A `kind: mutation` invariant in `invariants.yaml` (`test`, `budget`,
+      `threshold`) drives the configured agent via the existing spawn seam to seed N
+      mutants, runs the user's test command as the deterministic oracle per mutant,
+      and records each mutant + kill/survive outcome as evidence; a survived mutant
+      fails the invariant (hard fail) while no runnable test suite records
+      `skipped`/`unjudged` (never a silent pass); it pairs with `tests-still-exist`
+      and ships scaffolded-but-inert from `ratchet init`, agent-neutral, with no new
+      external dependency.
+    proofOfWork:
+      kind: integration
+      run: pnpm build && pnpm vitest run mutation     # refined at phase entry
+      pass: >-
+        exit code 0 — tests assert the mutation invariant seeds mutants via the spawn
+        seam, gates on the user's test oracle (survived = hard fail, no-tests =
+        skipped/unjudged), records each mutant outcome as replayable evidence, and
+        scaffolds inert from init

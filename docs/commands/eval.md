@@ -45,7 +45,7 @@ error.
    produced per Scenario, assigned its stable case id, and sorted by id for
    deterministic output.
 3. **Binding status.** Each case id is looked up in the loaded eval specs. The
-   reported binding is `check`, `agent`, or `unbound`.
+   reported binding is `deterministic`, `llm-judge`, or `unbound`.
 4. **Archive exclusion.** The archive (`changes/archive/`) is never a scope
    root regardless of flags.
 
@@ -69,7 +69,7 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--judge <
 | `--changes` | | Include active changes alongside the feature store. |
 | `--change` | `<name>` | Scope to a single active change. |
 | `--path` | `<dir-or-file>` | Narrow to a capability directory or `.feature` file within the feature store. |
-| `--judge` | `auto \| check \| agent` | Judge mode. Default: project config `eval.judge`, or `auto` when not configured. |
+| `--judge` | `auto \| deterministic \| llm-judge` | Judge mode. Default: project config `eval.judge`, or `auto` when not configured. |
 | `--json` | | Output as JSON: `{ runId, scorecard, warnings }`. |
 
 ### Behavior
@@ -85,12 +85,12 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--judge <
    the cached copy. Each case judges in an isolated working copy; the
    checked-in fixture and host repository are never modified.
 4. **Judge modes.** Three modes control which binding kind is exercised:
-   - `auto` — follows the bound kind: `check` bindings run the deterministic
-     check, `agent` bindings spawn the judge agent.
-   - `check` — runs deterministic check bindings; agent-only cases are recorded
-     `unjudged`.
-   - `agent` — forces the agent path; deterministic check cases are recorded
-     `unjudged`.
+   - `auto` — follows the bound kind: `deterministic` bindings run the
+     deterministic check, `llm-judge` bindings spawn the judge agent.
+   - `deterministic` — runs deterministic check bindings; llm-judge-only cases
+     are recorded `unjudged`.
+   - `llm-judge` — forces the llm-judge path; deterministic check cases are
+     recorded `unjudged`.
 5. **Unbound cases.** A case with no binding in any spec is recorded `unjudged`
    with reason `"No eval-spec binding for this case"` and is never passed.
 6. **Persistence.** The completed run is persisted atomically to
@@ -238,12 +238,12 @@ nested under a top-level `bindings:` key. All spec files are loaded and merged;
 when the same case id appears in more than one file, the last file in
 alphabetical sort order wins and a warning is emitted.
 
-### Check binding
+### Deterministic binding
 
 ```yaml
 "features/auth/login#valid-credentials":
   fixture: auth-app
-  kind: check
+  kind: deterministic
   setup: "pnpm install"       # optional; runs once per fixture+setup pair
   check:
     run: "pnpm test"
@@ -253,7 +253,7 @@ alphabetical sort order wins and a warning is emitted.
 | Field | Type | Description |
 |---|---|---|
 | `fixture` | string | Name of the fixture directory under `.ratchet/evals/fixtures/`. Required. |
-| `kind` | `"check"` | Discriminant. Required. |
+| `kind` | `"deterministic"` | Discriminant. Required. |
 | `setup` | string | Shell command run once to bootstrap the fixture working copy. Optional. |
 | `check.run` | string | Shell command executed in the fixture working copy. Required. |
 | `check.pass` | string | Pass condition. Default `exit-zero`. See pass conditions below. |
@@ -268,12 +268,12 @@ alphabetical sort order wins and a warning is emitted.
 | `regex:<pattern>` | Stdout matches the regex pattern after the prefix. |
 | anything else (not an exit-code directive) | Treated as a stdout substring: command exits 0 and stdout contains the string. |
 
-### Agent binding
+### LLM-judge binding
 
 ```yaml
 "features/search#full-text-results":
   fixture: search-app
-  kind: agent
+  kind: llm-judge
   setup: "pnpm install --frozen-lockfile"   # optional
   success: "The search endpoint returns ranked results for multi-word queries."
   agentVotes: 3    # optional; default 1
@@ -282,7 +282,7 @@ alphabetical sort order wins and a warning is emitted.
 | Field | Type | Description |
 |---|---|---|
 | `fixture` | string | Name of the fixture directory under `.ratchet/evals/fixtures/`. Required. |
-| `kind` | `"agent"` | Discriminant. Required. |
+| `kind` | `"llm-judge"` | Discriminant. Required. |
 | `setup` | string | Shell command run once to bootstrap the fixture working copy. Optional. |
 | `success` | string | Success criteria passed to the spawned judge agent. Required. |
 | `agentVotes` | integer ≥ 1 | Number of independent judge votes to cast. Default `1`. |

@@ -3,7 +3,7 @@
 # metadata-keyed discovery used by validate/list/archive — not only by the
 # looser directory-keyed `batch status`/`list`.
 #
-# Deterministic `check`, store-scoped (the feature lives in the permanent store
+# A `deterministic` binding, store-scoped (the feature lives in the permanent store
 # at features/batch-apply/apply-handoff.feature). The batch-apply fixture ships a
 # scripted agent (agent.sh) that — exactly like a real coding agent and exactly
 # as the bug was observed — scaffolds plan.md + features/ on PROPOSE but does NOT
@@ -15,7 +15,7 @@
 
 features/batch-apply/apply-handoff#propose-stamps-change-metadata-so-the-change-stays-discoverable:
   fixture: batch-apply
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |

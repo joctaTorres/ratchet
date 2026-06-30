@@ -31,14 +31,14 @@ export function resolveScope(flags: ScopeFlags): EvalScope {
   return { kind: 'store' };
 }
 
-const VALID_MODES: JudgeMode[] = ['auto', 'check', 'agent'];
+const VALID_MODES: JudgeMode[] = ['auto', 'deterministic', 'llm-judge'];
 
 /** Resolve the judge mode: explicit flag wins, else the project config default,
  * else `auto`. */
 export function resolveJudgeMode(root: string, flag: string | undefined): JudgeMode {
   if (flag) {
     if (!VALID_MODES.includes(flag as JudgeMode)) {
-      throw new Error(`Invalid --judge '${flag}'. Use auto | check | agent.`);
+      throw new Error(`Invalid --judge '${flag}'. Use auto | deterministic | llm-judge.`);
     }
     return flag as JudgeMode;
   }

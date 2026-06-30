@@ -59,18 +59,18 @@ describe('resolveJudgeMode', () => {
   it('uses an explicit valid --judge flag without reading project config', () => {
     // No config.yaml is written, so a config read would surface as `auto`;
     // the explicit flag must win regardless.
-    expect(resolveJudgeMode(fixture.root, 'check')).toBe('check');
+    expect(resolveJudgeMode(fixture.root, 'deterministic')).toBe('deterministic');
   });
 
   it('rejects an invalid --judge flag listing the valid modes', () => {
     expect(() => resolveJudgeMode(fixture.root, 'nonsense')).toThrow(
-      /auto \| check \| agent/
+      /auto \| deterministic \| llm-judge/
     );
   });
 
   it('uses the configured eval.judge default when no flag is given', async () => {
-    await fixture.writeConfig('schema: ratchet\neval:\n  judge: agent\n');
-    expect(resolveJudgeMode(fixture.root, undefined)).toBe('agent');
+    await fixture.writeConfig('schema: ratchet\neval:\n  judge: llm-judge\n');
+    expect(resolveJudgeMode(fixture.root, undefined)).toBe('llm-judge');
   });
 
   it('falls back to auto when unflagged and the config does not set eval.judge', async () => {

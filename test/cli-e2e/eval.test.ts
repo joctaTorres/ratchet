@@ -50,19 +50,19 @@ async function prepareProject(): Promise<string> {
     'a codebase\n'
   );
 
-  // The check case passes when the fixture file contains "applyRequires".
-  // The agent case is bound; its verdict comes from the stub agent at run time.
+  // The deterministic case passes when the fixture file contains "applyRequires".
+  // The llm-judge case is bound; its verdict comes from the stub agent at run time.
   await write(
     path.join(root, '.ratchet', 'evals', 'specs', 'cli.yaml'),
     `features/cli/status#status-as-json:
   fixture: status-ok
-  kind: check
+  kind: deterministic
   check:
     run: cat output.txt
     pass: "contains:applyRequires"
 features/cli/status#status-as-text:
   fixture: agent-fx
-  kind: agent
+  kind: llm-judge
   success: the status output is human readable text
 `
   );
@@ -92,14 +92,14 @@ describe('ratchet eval CLI e2e', () => {
     const parsed = JSON.parse(res.stdout);
     expect(parsed.count).toBe(2);
     const bindings = Object.fromEntries(parsed.cases.map((c: any) => [c.id, c.binding]));
-    expect(bindings['features/cli/status#status-as-json']).toBe('check');
-    expect(bindings['features/cli/status#status-as-text']).toBe('agent');
+    expect(bindings['features/cli/status#status-as-json']).toBe('deterministic');
+    expect(bindings['features/cli/status#status-as-text']).toBe('llm-judge');
     expect(JSON.stringify(parsed)).not.toContain('archive');
   });
 
-  it('runs --judge check: only the deterministic check is judged, agent unjudged', async () => {
+  it('runs --judge deterministic: only the deterministic check is judged, llm-judge unjudged', async () => {
     const cwd = await prepareProject();
-    const res = await runCLI(['eval', 'run', '--judge', 'check', '--json'], { cwd });
+    const res = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
     expect(res.exitCode).toBe(0);
     const parsed = JSON.parse(res.stdout);
     expect(parsed.scorecard.pass).toBe(1);
@@ -108,20 +108,20 @@ describe('ratchet eval CLI e2e', () => {
 
   it('runs the agent judge through the stub and passes on evidence', async () => {
     const cwd = await prepareProject();
-    const res = await runCLI(['eval', 'run', '--judge', 'agent', '--json'], {
+    const res = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: agentEnv(true, 'the output is readable text'),
     });
     expect(res.exitCode).toBe(0);
     const parsed = JSON.parse(res.stdout);
-    // check case is skipped under agent mode; agent case passes.
+    // deterministic case is skipped under llm-judge mode; llm-judge case passes.
     expect(parsed.scorecard.pass).toBe(1);
     expect(parsed.scorecard.unjudged).toBe(1);
   });
 
   it('agent judge fails closed when the verdict carries no evidence', async () => {
     const cwd = await prepareProject();
-    const run = await runCLI(['eval', 'run', '--judge', 'agent', '--json'], {
+    const run = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: { RATCHET_EVAL_AGENT_CMD: `cat >/dev/null; echo 'I am not sure either way.'` },
     });
@@ -149,12 +149,12 @@ describe('ratchet eval CLI e2e', () => {
       path.join(cwd, '.ratchet', 'evals', 'specs', 'multi.yaml'),
       `features/multi/m#one:
   fixture: boot
-  kind: agent
+  kind: llm-judge
   success: ok
   setup: echo x >> ${counter}
 features/multi/m#two:
   fixture: boot
-  kind: agent
+  kind: llm-judge
   success: ok
   setup: echo x >> ${counter}
 `
@@ -179,19 +179,19 @@ features/multi/m#two:
       path.join(cwd, '.ratchet', 'evals', 'specs', 'cli.yaml'),
       `features/cli/status#status-as-json:
   fixture: status-ok
-  kind: check
+  kind: deterministic
   check:
     run: cat output.txt
     pass: "contains:applyRequires"
 features/cli/status#status-as-text:
   fixture: agent-fx
-  kind: agent
+  kind: llm-judge
   success: readable text
   agentVotes: 2
 `
     );
     const stub = `cat >/dev/null; n=$(cat ${counter} 2>/dev/null || echo 0); echo $((n+1)) > ${counter}; if [ "$n" = "0" ]; then echo '{"pass": true, "reason": "looks good"}'; else echo '{"pass": false, "reason": "actually broken"}'; fi`;
-    const run = await runCLI(['eval', 'run', '--judge', 'agent', '--json'], {
+    const run = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: { RATCHET_EVAL_AGENT_CMD: stub },
     });
@@ -204,7 +204,7 @@ features/cli/status#status-as-text:
 
   it('records a manual override and rejects a fail without evidence', async () => {
     const cwd = await prepareProject();
-    const run = await runCLI(['eval', 'run', '--judge', 'check', '--json'], { cwd });
+    const run = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
     const runId = JSON.parse(run.stdout).runId;
     const caseId = 'features/cli/status#status-as-text'; // the unjudged agent case
 
@@ -230,7 +230,7 @@ features/cli/status#status-as-text:
   it('promotes a baseline and flags a regression on a later run', async () => {
     const cwd = await prepareProject();
     // First run: check passes. Promote it as baseline.
-    const first = await runCLI(['eval', 'run', '--judge', 'check', '--json'], { cwd });
+    const first = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
     const baseId = JSON.parse(first.stdout).runId;
     const promote = await runCLI(['eval', 'baseline', baseId], { cwd });
     expect(promote.exitCode).toBe(0);
@@ -240,7 +240,7 @@ features/cli/status#status-as-text:
       path.join(cwd, '.ratchet', 'evals', 'fixtures', 'status-ok', 'output.txt'),
       'nothing useful here\n'
     );
-    const second = await runCLI(['eval', 'run', '--judge', 'check', '--json'], { cwd });
+    const second = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
     const curId = JSON.parse(second.stdout).runId;
 
     const report = await runCLI(['eval', 'report', '--run', curId, '--json'], { cwd });

@@ -23,14 +23,14 @@ afterEach(() => {
 });
 
 describe('loadEvalSpecs', () => {
-  it('loads a check binding with a pass condition', () => {
+  it('loads a deterministic binding with a pass condition', () => {
     const root = makeProject();
     writeSpec(
       root,
       'cli.yaml',
       `features/cli/status#status-as-json:
   fixture: status-ok
-  kind: check
+  kind: deterministic
   check:
     run: ratchet status --json
     pass: "contains:applyRequires"
@@ -38,30 +38,30 @@ describe('loadEvalSpecs', () => {
     );
     const specs = loadEvalSpecs(root);
     const b = resolveBinding(specs, 'features/cli/status#status-as-json');
-    expect(b?.binding.kind).toBe('check');
-    if (b?.binding.kind === 'check') {
+    expect(b?.binding.kind).toBe('deterministic');
+    if (b?.binding.kind === 'deterministic') {
       expect(b.binding.fixture).toBe('status-ok');
       expect(b.binding.check.pass).toBe('contains:applyRequires');
     }
     expect(specs.warnings).toHaveLength(0);
   });
 
-  it('loads an agent binding with success criteria and votes', () => {
+  it('loads an llm-judge binding with success criteria and votes', () => {
     const root = makeProject();
     writeSpec(
       root,
       'cli.yaml',
       `features/cli/status#x:
   fixture: fx
-  kind: agent
+  kind: llm-judge
   success: it prints a JSON object
   agentVotes: 3
 `
     );
     const specs = loadEvalSpecs(root);
     const b = resolveBinding(specs, 'features/cli/status#x');
-    expect(b?.binding.kind).toBe('agent');
-    if (b?.binding.kind === 'agent') {
+    expect(b?.binding.kind).toBe('llm-judge');
+    if (b?.binding.kind === 'llm-judge') {
       expect(b.binding.success).toContain('JSON');
       expect(b.binding.agentVotes).toBe(3);
     }
@@ -75,18 +75,18 @@ describe('loadEvalSpecs', () => {
       `bindings:
   a#one:
     fixture: fx
-    kind: check
+    kind: deterministic
     check:
       run: "true"
   a#two:
     fixture: fx
-    kind: agent
+    kind: llm-judge
     success: works
 `
     );
     const specs = loadEvalSpecs(root);
-    expect(resolveBinding(specs, 'a#one')?.binding.kind).toBe('check');
-    expect(resolveBinding(specs, 'a#two')?.binding.kind).toBe('agent');
+    expect(resolveBinding(specs, 'a#one')?.binding.kind).toBe('deterministic');
+    expect(resolveBinding(specs, 'a#two')?.binding.kind).toBe('llm-judge');
   });
 
   it('warns on an invalid binding and leaves the case unbound', () => {
@@ -96,12 +96,29 @@ describe('loadEvalSpecs', () => {
       'bad.yaml',
       `a#bad:
   fixture: fx
-  kind: check
+  kind: deterministic
 `
     );
     const specs = loadEvalSpecs(root);
     expect(resolveBinding(specs, 'a#bad')).toBeUndefined();
     expect(specs.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('rejects a legacy "check" kind, warns, and leaves the case unbound', () => {
+    const root = makeProject();
+    writeSpec(
+      root,
+      'legacy.yaml',
+      `a#legacy:
+  fixture: fx
+  kind: check
+  check:
+    run: "true"
+`
+    );
+    const specs = loadEvalSpecs(root);
+    expect(resolveBinding(specs, 'a#legacy')).toBeUndefined();
+    expect(specs.warnings.some((w) => w.includes('a#legacy'))).toBe(true);
   });
 
   it('returns undefined for a case with no binding (unbound)', () => {

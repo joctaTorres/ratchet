@@ -663,7 +663,7 @@ withScopeFlags(
   evalCmd
     .command('run')
     .description('Judge every bound in-scope case through the engine and persist a run')
-    .option('--judge <mode>', 'Judge mode: auto | check | agent')
+    .option('--judge <mode>', 'Judge mode: auto | deterministic | llm-judge')
     .option('--json', 'Output as JSON')
 ).action(async (options: EvalRunOptions) => {
   try {

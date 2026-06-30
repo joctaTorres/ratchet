@@ -105,10 +105,10 @@ describe('resolveVotes', () => {
   });
 });
 
-describe('judgeCase: check', () => {
-  const checkBinding: Binding = {
+describe('judgeCase: deterministic', () => {
+  const deterministicBinding: Binding = {
     fixture: 'fx',
-    kind: 'check',
+    kind: 'deterministic',
     check: { run: 'echo applyRequires', pass: 'contains:applyRequires' },
   };
 
@@ -118,20 +118,20 @@ describe('judgeCase: check', () => {
       usedCwd = cwd;
       return { exitCode: 0, stdout: 'has applyRequires here', stderr: '' };
     };
-    const r = await judgeCase(CASE, checkBinding, '/fixture/copy', 'auto', { bash });
+    const r = await judgeCase(CASE, deterministicBinding, '/fixture/copy', 'auto', { bash });
     expect(usedCwd).toBe('/fixture/copy');
     expect(r.verdict).toBe('pass');
   });
 
   it('fails when the condition is not met', async () => {
     const bash: BashRunner = async () => ({ exitCode: 0, stdout: 'nope', stderr: '' });
-    const r = await judgeCase(CASE, checkBinding, '/c', 'auto', { bash });
+    const r = await judgeCase(CASE, deterministicBinding, '/c', 'auto', { bash });
     expect(r.verdict).toBe('fail');
   });
 
-  it('is left unjudged under --judge agent', async () => {
+  it('is left unjudged under --judge llm-judge', async () => {
     const bash: BashRunner = async () => ({ exitCode: 0, stdout: 'applyRequires', stderr: '' });
-    const r = await judgeCase(CASE, checkBinding, '/c', 'agent', { bash });
+    const r = await judgeCase(CASE, deterministicBinding, '/c', 'llm-judge', { bash });
     expect(r.verdict).toBe('unjudged');
   });
 
@@ -141,7 +141,7 @@ describe('judgeCase: check', () => {
   it('passes a leading exit-zero prose condition on exit 0 without substring matching', async () => {
     const prose: Binding = {
       fixture: 'fx',
-      kind: 'check',
+      kind: 'deterministic',
       check: { run: 'run-suite', pass: 'exit code 0 — new tests assert the slice works' },
     };
     const bash: BashRunner = async () => ({ exitCode: 0, stdout: 'totally unrelated output', stderr: '' });
@@ -152,7 +152,7 @@ describe('judgeCase: check', () => {
   it('fails a leading exit-zero prose condition on a non-zero exit', async () => {
     const prose: Binding = {
       fixture: 'fx',
-      kind: 'check',
+      kind: 'deterministic',
       check: { run: 'run-suite', pass: 'exit code 0 — new tests assert the slice works' },
     };
     const bash: BashRunner = async () => ({ exitCode: 1, stdout: '', stderr: 'boom' });
@@ -161,12 +161,12 @@ describe('judgeCase: check', () => {
   });
 });
 
-describe('judgeCase: agent', () => {
-  const agentBinding: Binding = { fixture: 'fx', kind: 'agent', success: 'prints JSON' };
+describe('judgeCase: llm-judge', () => {
+  const llmJudgeBinding: Binding = { fixture: 'fx', kind: 'llm-judge', success: 'prints JSON' };
 
   it('spawns in the fixture cwd and captures the verdict', async () => {
     const { spawner, cwds } = spawnerReturning('{"pass": true, "reason": "printed JSON"}');
-    const r = await judgeCase(CASE, agentBinding, '/fixture/copy', 'auto', { spawner });
+    const r = await judgeCase(CASE, llmJudgeBinding, '/fixture/copy', 'auto', { spawner });
     expect(cwds).toEqual(['/fixture/copy']);
     expect(r.verdict).toBe('pass');
     expect(r.reason).toContain('printed JSON');
@@ -174,13 +174,13 @@ describe('judgeCase: agent', () => {
 
   it('fails closed when the judge finds no concrete evidence', async () => {
     const { spawner } = spawnerReturning('I could not find anything conclusive.');
-    const r = await judgeCase(CASE, agentBinding, '/c', 'auto', { spawner });
+    const r = await judgeCase(CASE, llmJudgeBinding, '/c', 'auto', { spawner });
     expect(r.verdict).toBe('fail');
     expect(r.reason).toMatch(/evidence/i);
   });
 
   it('judges by N repeat votes and takes the majority', async () => {
-    const binding: Binding = { ...agentBinding, agentVotes: 3 };
+    const binding: Binding = { ...llmJudgeBinding, agentVotes: 3 };
     const { spawner, cwds } = spawnerReturning(
       '{"pass": true, "reason": "a"}',
       '{"pass": true, "reason": "b"}',
@@ -192,7 +192,7 @@ describe('judgeCase: agent', () => {
   });
 
   it('records unjudged (never fail) when repeat votes disagree', async () => {
-    const binding: Binding = { ...agentBinding, agentVotes: 2 };
+    const binding: Binding = { ...llmJudgeBinding, agentVotes: 2 };
     const { spawner } = spawnerReturning(
       '{"pass": true, "reason": "yes"}',
       '{"pass": false, "reason": "no"}'
@@ -201,9 +201,9 @@ describe('judgeCase: agent', () => {
     expect(r.verdict).toBe('unjudged');
   });
 
-  it('is left unjudged under --judge check', async () => {
+  it('is left unjudged under --judge deterministic', async () => {
     const { spawner } = spawnerReturning('{"pass": true, "reason": "x"}');
-    const r = await judgeCase(CASE, agentBinding, '/c', 'check', { spawner });
+    const r = await judgeCase(CASE, llmJudgeBinding, '/c', 'deterministic', { spawner });
     expect(r.verdict).toBe('unjudged');
   });
 });

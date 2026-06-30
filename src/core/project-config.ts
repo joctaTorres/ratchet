@@ -72,7 +72,7 @@ export const ProjectConfigSchema = z.object({
   // default mode is used by `ratchet eval run` when no `--judge` flag is given.
   eval: z
     .object({
-      judge: z.enum(['auto', 'check', 'agent']).optional(),
+      judge: z.enum(['auto', 'deterministic', 'llm-judge']).optional(),
     })
     .partial()
     .optional()
@@ -215,7 +215,7 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
           config.eval = evalResult.data;
         }
       } else {
-        console.warn(`Invalid 'eval' field in config (check judge value: auto|check|agent)`);
+        console.warn(`Invalid 'eval' field in config (check judge value: auto|deterministic|llm-judge)`);
       }
     }
 

@@ -1,13 +1,13 @@
 /**
  * Judge an eval case through the batch engine seams.
  *
- *   - `check` kind  -> `realBashRunner` runs the binding's command in the
+ *   - `deterministic` kind -> `realBashRunner` runs the binding's command in the
  *     fixture working copy; `evaluatePassCondition` decides pass/fail.
- *   - `agent` kind  -> `resolveAdapter` + `realSpawner` spawn a fresh coding
+ *   - `llm-judge` kind -> `resolveAdapter` + `realSpawner` spawn a fresh coding
  *     agent in the fixture working copy with instructions built from the
  *     scenario steps + the binding's success criteria, returning {pass, reason}.
  *
- * The agent path is guarded so judge noise can never manufacture a regression:
+ * The llm-judge path is guarded so judge noise can never manufacture a regression:
  *   - FAIL CLOSED on uncertainty: a verdict without concrete evidence is not a
  *     pass; the missing evidence is named in the reason.
  *   - N-of-M votes (`agentVotes`, default 1, majority wins). When the votes do
@@ -19,7 +19,7 @@
  */
 
 import type { EvalCase } from './set.js';
-import type { Binding, AgentBinding, CheckBinding } from './spec.js';
+import type { Binding, LlmJudgeBinding, DeterministicBinding } from './spec.js';
 import {
   evaluatePassCondition,
   realBashRunner,
@@ -32,7 +32,7 @@ import {
 } from '../batch/engine/index.js';
 
 export type Verdict = 'pass' | 'fail' | 'unjudged';
-export type JudgeMode = 'auto' | 'check' | 'agent';
+export type JudgeMode = 'auto' | 'deterministic' | 'llm-judge';
 
 export interface CaseVerdict {
   verdict: Verdict;
@@ -182,7 +182,7 @@ function buildVoteRequest(c: EvalCase, cwd: string, success: string, agentName?:
 
 async function castVote(
   c: EvalCase,
-  binding: AgentBinding,
+  binding: LlmJudgeBinding,
   cwd: string,
   spawner: Spawner,
   agentName?: string
@@ -222,7 +222,7 @@ function disagreement(votes: AgentVote[]): CaseVerdict {
 
 async function judgeAgent(
   c: EvalCase,
-  binding: AgentBinding,
+  binding: LlmJudgeBinding,
   cwd: string,
   deps: JudgeDeps
 ): Promise<CaseVerdict> {
@@ -236,7 +236,7 @@ async function judgeAgent(
 }
 
 async function judgeCheck(
-  binding: CheckBinding,
+  binding: DeterministicBinding,
   cwd: string,
   deps: JudgeDeps
 ): Promise<CaseVerdict> {
@@ -255,9 +255,9 @@ async function judgeCheck(
 
 /**
  * Judge a single bound case against its materialized fixture working copy.
- * `mode` honours `--judge`: `check` skips agent cases (→ unjudged), `agent`
- * forces the agent path where success criteria exist, `auto` follows the bound
- * kind.
+ * `mode` honours `--judge`: `deterministic` skips llm-judge cases (→ unjudged),
+ * `llm-judge` forces the spawned-judge path where success criteria exist, `auto`
+ * follows the bound kind.
  */
 export async function judgeCase(
   c: EvalCase,
@@ -266,15 +266,15 @@ export async function judgeCase(
   mode: JudgeMode,
   deps: JudgeDeps = {}
 ): Promise<CaseVerdict> {
-  if (binding.kind === 'check') {
-    if (mode === 'agent') {
-      return { verdict: 'unjudged', reason: 'Judge mode "agent" but case is bound as a deterministic check.' };
+  if (binding.kind === 'deterministic') {
+    if (mode === 'llm-judge') {
+      return { verdict: 'unjudged', reason: 'Judge mode "llm-judge" but case is bound as a deterministic check.' };
     }
     return judgeCheck(binding, cwd, deps);
   }
-  // agent binding
-  if (mode === 'check') {
-    return { verdict: 'unjudged', reason: 'Judge mode "check" skips agent-only cases.' };
+  // llm-judge binding
+  if (mode === 'deterministic') {
+    return { verdict: 'unjudged', reason: 'Judge mode "deterministic" skips llm-judge-only cases.' };
   }
   return judgeAgent(c, binding, cwd, deps);
 }

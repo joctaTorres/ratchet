@@ -1,5 +1,5 @@
 /**
- * `ratchet eval run [scope] [--judge auto|check|agent] [--json]`
+ * `ratchet eval run [scope] [--judge auto|deterministic|llm-judge] [--json]`
  *
  * Snapshot the in-scope set, judge every bound case through the engine seams
  * against its fixture working copy, persist the run under `.ratchet/evals/runs/`

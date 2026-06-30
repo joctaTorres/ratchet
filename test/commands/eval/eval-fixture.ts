@@ -16,7 +16,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 
-/** A feature-store file with one check-bindable scenario and one left unbound. */
+/** A feature-store file with one deterministically-bindable scenario and one left unbound. */
 export const TWO_CASE_FEATURE = `Feature: Status
   Scenario: Status as JSON
     Given a project
@@ -33,9 +33,9 @@ export const CASE_JSON = 'features/cli/status#status-as-json';
 export const CASE_TEXT = 'features/cli/status#status-as-text';
 
 /** A spec binding the `status-as-json` case to a deterministic check. */
-export const CHECK_SPEC = `${CASE_JSON}:
+export const DETERMINISTIC_SPEC = `${CASE_JSON}:
   fixture: status-ok
-  kind: check
+  kind: deterministic
   check:
     run: cat output.txt
     pass: "contains:applyRequires"

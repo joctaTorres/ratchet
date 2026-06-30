@@ -129,7 +129,7 @@ Project-level defaults for `ratchet eval` orchestration.
 
 | Key | Type | Default | Accepted values | Description |
 |---|---|---|---|---|
-| `judge` | string | — | `auto` `check` `agent` | Default judge mode for `ratchet eval run` when no `--judge` flag is given. |
+| `judge` | string | — | `auto` `deterministic` `llm-judge` | Default judge mode for `ratchet eval run` when no `--judge` flag is given. |
 
 ---
 

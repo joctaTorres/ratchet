@@ -27,6 +27,7 @@ import type { BindingKind } from './spec.js';
 import type { WebArtifacts } from './web-lifecycle.js';
 import type { MutantOutcome, MutantEvidence } from './mutation-harness.js';
 import type { InvariantOutcome } from './invariant-evaluator.js';
+import type { InvariantGateResult } from './invariant-gate.js';
 import { isRunComplete, type ContributorId } from './aggregate.js';
 import type { SkipReason } from './skip.js';
 
@@ -70,6 +71,17 @@ export interface EvalRun {
    * legacy runs persisted before the gate existed ⇒ treated as all-enabled.
    */
   gate?: ContributorId[];
+  /**
+   * The run-level invariant gate result, persisted by `evaluateRun` at run time
+   * (the per-invariant `outcomes`, the violating `failing` ids, and any
+   * `loadError`). The read-only `renderReport` path reads this back rather than
+   * re-evaluating the gate — so reporting a run never re-runs a check command,
+   * spawns a mutation agent, or mutates the tree. Absent when the `invariants`
+   * contributor was disabled for the run, or on a legacy run persisted before
+   * gate persistence existed ⇒ the report renders those invariants
+   * "not evaluated".
+   */
+  invariantGate?: InvariantGateResult;
   cases: CaseSnapshot[];
   verdicts: Record<string, CaseRecord>;
 }

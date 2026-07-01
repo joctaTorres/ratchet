@@ -88,8 +88,10 @@ export {
   type RecordRequest,
 } from './run.js';
 export {
-  buildReport,
+  evaluateRun,
+  renderReport,
   diffAgainstBaseline,
+  type EvaluateRunDeps,
   type EvalReport,
   type Scorecard,
   type FailingCase,

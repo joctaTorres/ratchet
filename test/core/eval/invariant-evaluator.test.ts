@@ -14,6 +14,7 @@ import type {
   DeterministicInvariant,
   MonotonicInvariant,
   SnapshotInvariant,
+  MutationInvariant,
 } from '../../../src/core/eval/invariants.js';
 import type { EvalRun, CaseSnapshot } from '../../../src/core/eval/run.js';
 import type { BashRunner } from '../../../src/core/batch/engine/index.js';
@@ -220,5 +221,23 @@ describe('evaluateInvariant: snapshot', () => {
     expect(o.status).toBe('unevaluable');
     expect(isInvariantViolation(o)).toBe(true);
     expect(o.evidence).toMatch(/produce command could not run/i);
+  });
+});
+
+describe('evaluateInvariant: mutation (schema-only placeholder)', () => {
+  const inv: MutationInvariant = {
+    id: 'mutants-are-killed',
+    kind: 'mutation',
+    active: true,
+    test: 'pnpm test',
+    budget: 5,
+    threshold: 3,
+  };
+
+  it('fails closed to unevaluable, since seeding/oracle evaluation is not implemented yet', async () => {
+    const o = await evaluateInvariant(inv, { projectRoot: '/p', run: runWith(1), baseline: null });
+    expect(o.status).toBe('unevaluable');
+    expect(isInvariantViolation(o)).toBe(true);
+    expect(o.evidence).toMatch(/not implemented/i);
   });
 });

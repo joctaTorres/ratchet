@@ -5,12 +5,30 @@ title: Eval verdict aggregation
 # Eval verdict aggregation
 
 The verdict-aggregation core (`src/core/eval/aggregate.ts`) is the single place an
-eval run's overall pass/fail is decided. It computes the run-level verdict as a
-logical **AND over named contributors**: the run passes only when every
-contributor passes. `report.ts` routes its `overall` verdict through this core
-and `promoteBaseline` routes its completeness check through it, so the gate has
-one source of truth and new gate capabilities plug in at one defined extension
-point.
+eval run's overall pass/fail is decided. Rather than scatter pass/fail logic
+across the commands, every signal that can fail a run is modelled as a named
+**contributor**, and the run's verdict is a logical **AND** over them: the run
+passes only when every contributor passes. `report.ts` routes its `overall`
+verdict through this core and `promoteBaseline` routes its completeness check
+through it, so the gate has one source of truth and new gate capabilities plug in
+at one defined extension point.
+
+Key terms used throughout this document:
+
+- **contributor** — a named gate signal that reduces the whole run to one
+  pass/fail outcome (e.g. `deterministic`, `llm-judge`, `invariants`,
+  `regression`). Contributors are the defined extension point: a new gate
+  capability is a new contributor, and the aggregation logic does not change.
+- **the AND rule** — the run is `pass` only if *every* evaluated contributor is
+  `pass`; a single failing contributor fails the whole run. AND over no
+  contributors is `pass`, so a neutral or disabled contributor never changes the
+  verdict.
+- **enabled set (the gate)** — which contributors actually run and count,
+  resolved with precedence `default (all enabled) ◁ config ◁ CLI` and persisted on
+  the run as `EvalRun.gate`. A disabled contributor takes no part in the AND.
+- **complete** — a run in which no case is left `unjudged`. Completeness is
+  separate from the pass/fail verdict and is what the baseline-promotion guard
+  requires: only a complete run may be promoted.
 
 ## Overview
 

@@ -9,6 +9,66 @@ Turn `.feature` files into a scored, baseline-diffed regression suite. Judging
 is delegated to the bundled batch engine seams run against checked-in fixture
 working copies; the live repository is never read or mutated during judging.
 
+## Overview
+
+An eval turns behavioral `.feature` specifications into a graded, tracked
+regression suite. Every Scenario becomes one **eval case**. A **binding** in
+`.ratchet/evals/specs/` attaches a case to a checked-in **fixture** (a sample
+codebase) and to a judging method — a `deterministic` command whose exit/output
+decides pass, or an `llm-judge` agent that reads success criteria. Judging never
+touches the working repository: each case is judged in a throwaway copy of its
+fixture.
+
+The five subcommands are one lifecycle. `eval set` lists the cases in scope and
+whether each is bound. `eval run` judges every bound case, applies the run-level
+gates (invariants and baseline regression), and persists the result as a **run**.
+`eval record` manually overrides a single case's verdict in a stored run. `eval
+report` prints a run's scorecard and its diff against the promoted baseline.
+`eval baseline` promotes a complete run so later runs are diffed against it.
+
+```mermaid
+flowchart TD
+    FEATURES[📄 .feature files<br/>.ratchet/features · changes]
+    SPECS[📄 eval specs<br/>.ratchet/evals/specs · bindings]
+    FIXTURES[💾 fixtures<br/>.ratchet/evals/fixtures]
+
+    SET{{⚙️ eval set<br/>enumerate cases · binding status}}
+    RUN{{⚙️ eval run<br/>judge bound cases · run-level gates}}
+    RECORD{{✏️ eval record<br/>manual verdict override}}
+    REPORT{{📊 eval report<br/>scorecard · baseline diff}}
+    BASELINE{{🏁 eval baseline<br/>promote a complete run}}
+
+    RUNSTORE[💾 runs<br/>.ratchet/evals/runs]
+    BASESTORE[💾 baseline.json<br/>promoted run id]
+
+    FEATURES --> SET
+    SPECS --> SET
+
+    FEATURES --> RUN
+    SPECS --> RUN
+    FIXTURES --> RUN
+    RUN --> RUNSTORE
+
+    RUNSTORE --> RECORD
+    RECORD --> RUNSTORE
+
+    RUNSTORE --> REPORT
+    BASESTORE -. baseline .-> REPORT
+
+    RUNSTORE --> BASELINE
+    BASELINE --> BASESTORE
+
+    classDef source  fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef store   fill:#ADD8E6,stroke:#333,stroke-width:2px,color:darkblue
+    classDef cmd     fill:#FFD700,stroke:#333,stroke-width:2px,color:black
+    classDef promote fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+
+    class FEATURES,SPECS source
+    class FIXTURES,RUNSTORE,BASESTORE store
+    class SET,RUN,RECORD,REPORT cmd
+    class BASELINE promote
+```
+
 ---
 
 ## `eval set`
@@ -94,20 +154,22 @@ fails the command with the valid ids listed. See
    fixture+setup pair; subsequent cases bound to the same fixture+setup reuse
    the cached copy. Each case judges in an isolated working copy; the
    checked-in fixture and host repository are never modified.
-4. **Contributor gating.** The resolved enabled contributor set decides which
-   bound cases execute. An enabled case is judged by its bound kind:
-   `deterministic` bindings run the deterministic check, `llm-judge` bindings
-   spawn the judge agent. A bound case whose binding-kind contributor is
-   **disabled** is recorded `unjudged` (the reason names the disabled
-   contributor) without materializing a fixture or spawning a judge, so the run
-   is **incomplete**. The enabled set is persisted on the run as `gate`. The
-   `invariants` and `regression` contributors are run-level (not per-case), so
-   disabling them affects only the aggregated verdict, not per-case execution.
-   When the `invariants` contributor is enabled, the run-level invariant gate
-   loads `.ratchet/evals/invariants.yaml` fail-closed and evaluates its **active**
-   invariants (a violated, unevaluable, or unloadable invariant hard-fails the
-   run; inert invariants are skipped). See
-   [Eval invariant manifest](../eval-invariants.md#gate-contributor).
+4. **Contributor gating.** The enabled contributor set (resolved from config and
+   CLI flags, persisted on the run as `gate`) decides what runs. It has two
+   distinct effects:
+   - *Per-case judging.* A bound case is judged by its binding kind — a
+     `deterministic` binding runs its check command, an `llm-judge` binding spawns
+     the judge agent. If that case's binding-kind contributor is **disabled**, the
+     case is not judged at all: it is recorded `unjudged` (the reason names the
+     disabled contributor) with no fixture materialized and no judge spawned, which
+     leaves the run **incomplete**.
+   - *Run-level gates.* The `invariants` and `regression` contributors judge the
+     run as a whole rather than any single case, so disabling them changes only the
+     aggregated verdict, never per-case execution. When `invariants` is enabled, the
+     run-level gate loads `.ratchet/evals/invariants.yaml` **fail-closed** and checks
+     only its **active** invariants; any violated, unevaluable, or unloadable
+     invariant fails the run, while inert (`active: false`) invariants are skipped.
+     See [Eval invariant manifest](../eval-invariants.md#gate-contributor).
 5. **Unbound cases.** A case with no binding in any spec is recorded `unjudged`
    with reason `"No eval-spec binding for this case"` and is never passed.
 6. **Persistence.** The completed run is persisted atomically to

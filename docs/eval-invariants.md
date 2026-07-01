@@ -4,25 +4,46 @@ title: Eval invariant manifest
 
 # Eval invariant manifest
 
-The invariant manifest (`.ratchet/evals/invariants.yaml`) declares the run-level,
-anti-gaming invariants the eval gate's `invariants` contributor enforces. The
-typed loader (`src/core/eval/invariants.ts`) parses the manifest into three
-invariant kinds and decides exactly one thing: whether the manifest is
-well-formed. It is **fail-closed** — an absent file is the only path to an empty
-set; a present-but-broken manifest raises an error rather than degrading to a
-vacuous pass.
+An **invariant** is a property of the project that a run must always uphold, no
+matter what a change did to make the per-case suite pass. Its purpose is
+**anti-gaming**: it closes the ways an eval can *look* green without the project
+actually being sound. Two failure modes it guards against are a **vacuous pass**
+(the gate passes because nothing was really checked) and **spec weakening** (a
+change quietly deletes or waters down scenarios so fewer things are tested). The
+invariant manifest (`.ratchet/evals/invariants.yaml`) declares these run-level
+invariants; the eval gate's `invariants` contributor enforces them.
 
-The typed set the loader produces is then handed one invariant at a time to the
-per-invariant **evaluator** (`src/core/eval/invariant-evaluator.ts`), which
-computes a `pass` / `fail` / `unevaluable` outcome for each kind (documented under
-[Evaluator outcome model](#evaluator-outcome-model)).
+Key terms used throughout this document:
 
-The run-level **gate** (`src/core/eval/invariant-gate.ts`) ties the two together:
-on every `eval run` (and any batch `verify` that surfaces an eval verdict) it
-loads the manifest fail-closed, evaluates **only the active invariants** through
-the evaluator, and reduces them to one pass/fail signal the verdict-aggregation
-core consumes as the `invariants` contributor — a sibling to `regression`. See
-[Gate contributor](#gate-contributor).
+- **invariant kinds** — the three shapes an invariant can take. A
+  **`deterministic`** invariant is an absolute predicate (a command that must
+  pass). A **`monotonic`** invariant is a named measure that must never decrease
+  versus the baseline (e.g. `scenario-count` — the anti-spec-weakening check). A
+  **`snapshot`** invariant diffs current output against a checked-in golden file.
+- **`active` flag** — a per-invariant boolean, required on every entry and never
+  active-by-default. Only `active: true` invariants are enforced; **inert**
+  (`active: false`) ones are declared but skipped, so activating one is always a
+  deliberate edit.
+- **fail-closed** — when the system cannot be sure a property holds, it fails
+  rather than passes. An absent manifest is the *only* way to reach an empty set;
+  a present-but-broken manifest raises an error instead of degrading to a vacuous
+  pass, and an invariant that cannot be checked at all counts as a violation, not
+  a pass.
+
+Three components implement this, each with a single job:
+
+- The typed **loader** (`src/core/eval/invariants.ts`) parses the manifest into
+  the three invariant kinds and decides exactly one thing — whether the manifest
+  is well-formed — fail-closed.
+- The per-invariant **evaluator** (`src/core/eval/invariant-evaluator.ts`) takes
+  one typed invariant at a time and computes a `pass` / `fail` / `unevaluable`
+  outcome (see [Evaluator outcome model](#evaluator-outcome-model)).
+- The run-level **gate** (`src/core/eval/invariant-gate.ts`) ties the two
+  together: on every `eval run` (and any batch `verify` that surfaces an eval
+  verdict) it loads the manifest fail-closed, evaluates **only the active
+  invariants**, and reduces them to one pass/fail signal the verdict-aggregation
+  core consumes as the `invariants` contributor — a sibling to `regression`. See
+  [Gate contributor](#gate-contributor).
 
 ## Overview
 
@@ -51,33 +72,31 @@ flowchart TD
     class FAIL err
 ```
 
-Each typed invariant is then evaluated against the run to one outcome — and
-anything that cannot be checked fails closed to a violation rather than a pass:
+Each typed invariant is then evaluated against the run to one outcome. Each kind
+is checked its own way, but all three resolve into the same three-valued outcome,
+and anything that cannot be checked fails closed to a violation rather than a
+pass. The diagram funnels the three kinds through a single outcome node rather
+than fanning every kind to every result:
 
 ```mermaid
 flowchart TD
     INV[📦 one typed invariant<br/>+ run · baseline run]
     EVAL{{⚙️ evaluateInvariant<br/>dispatch on kind}}
-    DET[🧪 deterministic<br/>run check.run · evaluatePassCondition]
-    MON[📈 monotonic<br/>measure vs baseline value]
-    SNAP[📷 snapshot<br/>produce.run vs golden]
 
     INV --> EVAL
-    EVAL --> DET
-    EVAL --> MON
-    EVAL --> SNAP
 
-    DET -->|✓ predicate holds| PASS[✅ pass]
-    MON -->|✓ current ≥ baseline| PASS
-    SNAP -->|✓ output = golden| PASS
+    EVAL -->|deterministic| DET[🧪 check.run<br/>evaluatePassCondition]
+    EVAL -->|monotonic| MON[📈 measure vs<br/>baseline value]
+    EVAL -->|snapshot| SNAP[📷 produce.run<br/>vs golden]
 
-    DET -->|✗ predicate breaks| FAILV[❌ fail — violation]
-    MON -->|✗ current &lt; baseline| FAILV
-    SNAP -->|✗ output ≠ golden| FAILV
+    DET --> OUTCOME
+    MON --> OUTCOME
+    SNAP --> OUTCOME
 
-    DET -->|🔐 predicate errors| UNEV[🔐 unevaluable — violation]
-    MON -->|🔐 missing baseline · unknown measure| UNEV
-    SNAP -->|🔐 golden absent · produce errors| UNEV
+    OUTCOME{{🔀 three-valued outcome}}
+    OUTCOME -->|✓ checked · holds| PASS[✅ pass]
+    OUTCOME -->|✗ checked · violated| FAILV[❌ fail — violation]
+    OUTCOME -->|🔐 could not check| UNEV[🔐 unevaluable — violation]
 
     classDef source   fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
     classDef core     fill:#FFD700,stroke:#333,stroke-width:2px,color:black
@@ -86,7 +105,7 @@ flowchart TD
     classDef err      fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
 
     class INV source
-    class EVAL core
+    class EVAL,OUTCOME core
     class DET,MON,SNAP kind
     class PASS ok
     class FAILV,UNEV err

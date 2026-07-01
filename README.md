@@ -141,6 +141,7 @@ ratchet --version
 | **A supported coding-agent CLI** — Claude Code (`claude`), Codex (`codex`), Gemini (`gemini`), or Cursor (`cursor-agent`) | ratchet drives a coding agent for batch changes; at least one must be on your PATH. Install it from the agent's own docs. | To run batch changes |
 | **Python 3.10+ (with `venv` + `pip`), or [`uv`](https://docs.astral.sh/uv/) (preferred)** | Bootstraps the isolated SWE-ReX sidecar runtime. `uv` is preferred for faster, more reliable builds. | To run batch changes |
 | **Docker** | Only needed for the `docker` execution locus. Local runs never use it. | Optional |
+| **Playwright** | Drives the Given/When/Then browser scenarios of a `kind: web` eval binding. | Only when a `kind: web` eval binding is in scope |
 
 Run **`ratchet doctor`** to validate your setup — it checks each of these and prints an actionable remedy for anything missing. `ratchet init` also runs these checks once, automatically, the first time you initialize a project (advisory only — it never blocks setup).
 

@@ -1,5 +1,5 @@
-import { afterEach, describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -8,6 +8,8 @@ import {
   loadRun,
   recordVerdict,
   toSnapshot,
+  evalsDir,
+  hasEvalIntent,
   promoteBaseline,
   loadBaselineRunId,
   runArtifactsDir,
@@ -323,5 +325,37 @@ describe('baseline', () => {
 
     expect(() => promoteBaseline(root, 'gated')).toThrow(/incomplete/i);
     expect(loadBaselineRunId(root)).toBe('good');
+  });
+});
+
+describe('evalsDir / hasEvalIntent', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(path.join(tmpdir(), 'eval-intent-'));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('evalsDir returns the .ratchet/evals path under projectRoot', () => {
+    expect(evalsDir(root)).toBe(path.join(root, '.ratchet', 'evals'));
+  });
+
+  it('hasEvalIntent returns true when .ratchet/evals/ is a directory', () => {
+    mkdirSync(path.join(root, '.ratchet', 'evals'), { recursive: true });
+    expect(hasEvalIntent(root)).toBe(true);
+  });
+
+  it('hasEvalIntent returns false when .ratchet/evals/ does not exist', () => {
+    // No evals directory created — just the tmpdir root.
+    expect(hasEvalIntent(root)).toBe(false);
+  });
+
+  it('hasEvalIntent returns false when the path is a file, not a directory', () => {
+    mkdirSync(path.join(root, '.ratchet'), { recursive: true });
+    writeFileSync(path.join(root, '.ratchet', 'evals'), 'not-a-dir');
+    expect(hasEvalIntent(root)).toBe(false);
   });
 });

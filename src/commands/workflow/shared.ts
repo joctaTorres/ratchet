@@ -27,6 +27,10 @@ export interface ApplyInstructions {
   changeDir: string;
   schemaName: string;
   contextFiles: Record<string, string[]>;
+  /** Per-artifact count of `@holdout` Scenario blocks stripped from `.feature` files. */
+  heldOutCounts: Record<string, number>;
+  /** Total `@holdout` Scenario blocks stripped across all artifacts (sum of `heldOutCounts`). */
+  heldOutCount: number;
   progress: {
     total: number;
     complete: number;

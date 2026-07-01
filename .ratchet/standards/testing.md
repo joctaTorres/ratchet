@@ -90,3 +90,6 @@ the enforced `COVERAGE_THRESHOLD`.
 - core-remainder-tests/move-directory.feature
 - core-remainder-tests/proof-of-work.feature
 - core-remainder-tests/version-guard.feature
+- core-util-tests/change-status-policy.feature
+- core-util-tests/config-schema.feature
+- core-util-tests/migration.feature

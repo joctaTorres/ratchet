@@ -255,10 +255,15 @@ invariants:
     threshold: 3
 ```
 
-This kind is schema-typed only as of this document: nothing can construct an
-*active* mutation invariant yet (the `ratchet init` scaffold and the agent-driven
-seeding harness are follow-on changes), and `evaluateInvariant` resolves every
-`kind: mutation` entry to a fail-closed `unevaluable` placeholder — see
+The seed/run-oracle/classify/revert harness now exists standalone at
+`src/core/eval/mutation-harness.ts` — see [Mutation harness](eval-mutation-harness.md).
+It drives the configured coding agent through the same spawn seam the
+`llm-judge` binding uses to seed one fault at a time, runs `test` as the
+deterministic oracle, and classifies each fault killed or survived. It is
+**not yet wired into evaluation**: nothing can construct an *active* mutation
+invariant yet (the `ratchet init` scaffold is a follow-on change), and
+`evaluateInvariant` resolves every `kind: mutation` entry to a fail-closed
+`unevaluable` placeholder — see
 [How each kind is evaluated](#how-each-kind-is-evaluated).
 
 ## Loader contract

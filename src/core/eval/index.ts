@@ -38,6 +38,13 @@ export {
   type WebLifecycleOutcome,
   type WebArtifacts,
 } from './web-lifecycle.js';
+export {
+  runMutationHarness,
+  buildSeedInstructions,
+  type MutantOutcome,
+  type MutationHarnessOutcome,
+  type MutationHarnessDeps,
+} from './mutation-harness.js';
 export { FixtureManager, type MaterializeResult, type FixtureManagerDeps } from './fixture.js';
 export {
   judgeCase,

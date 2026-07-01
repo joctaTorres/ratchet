@@ -454,6 +454,13 @@ baseline prints a visible warning naming it. The run JSON persists a skipped
 case's skip source (`tag` or `config`) and matched detail, surfaced via `eval
 run --json`/`eval report --json`'s `cases[]`.
 
+**Hold-out scenarios.** A Scenario tagged `@holdout` is an anti-overfitting
+visibility split, not a skip: `ratchet instructions apply` hands the building
+agent a materialized copy of each `.feature` artifact with `@holdout`-tagged
+content stripped out, so the agent implementing a change never sees a
+held-out case, while `eval run`/`ratchet verify` keep reading the real source
+file and gate it exactly like any other case.
+
 **One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
 place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a
 logical **AND over named contributors** (`deterministic`, `llm-judge`,

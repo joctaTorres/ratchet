@@ -44,6 +44,7 @@ export {
   type ResolvedJury,
 } from './jury.js';
 export { resolveSkip, SKIP_TAG, type SkipReason } from './skip.js';
+export { resolveHoldout, HOLDOUT_TAG } from './holdout.js';
 export {
   generateRunId,
   persistRun,

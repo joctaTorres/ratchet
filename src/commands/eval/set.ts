@@ -7,7 +7,12 @@
  */
 
 import chalk from 'chalk';
-import { enumerateEvalSet, loadEvalSpecs, resolveBinding } from '../../core/eval/index.js';
+import {
+  enumerateEvalSet,
+  loadEvalSpecs,
+  resolveBinding,
+  resolveHoldout,
+} from '../../core/eval/index.js';
 import { projectRoot, resolveScope, type ScopeFlags } from './shared.js';
 
 export interface EvalSetOptions extends ScopeFlags {
@@ -21,6 +26,7 @@ interface SetCaseView {
   source: string;
   steps: { keyword: string; text: string }[];
   binding: 'deterministic' | 'llm-judge' | 'unbound';
+  holdout: boolean;
 }
 
 export async function evalSetCommand(options: EvalSetOptions = {}): Promise<void> {
@@ -38,6 +44,7 @@ export async function evalSetCommand(options: EvalSetOptions = {}): Promise<void
       source: c.source,
       steps: c.steps.map((s) => ({ keyword: s.keyword, text: s.text })),
       binding: bound ? bound.binding.kind : 'unbound',
+      holdout: resolveHoldout(c),
     };
   });
 
@@ -55,7 +62,8 @@ function renderSet(views: SetCaseView[], scopeKind: string): void {
       v.binding === 'unbound'
         ? chalk.yellow('[unbound]')
         : chalk.green(`[${v.binding}]`);
-    console.log(`  ${tag} ${v.id}`);
+    const holdoutTag = v.holdout ? ` ${chalk.magenta('[holdout]')}` : '';
+    console.log(`  ${tag} ${v.id}${holdoutTag}`);
     console.log(chalk.dim(`         ${v.feature} › ${v.scenario}`));
   }
 }

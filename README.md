@@ -379,7 +379,7 @@ delegated to the bundled batch engine, run against fixtures** — never the live
 working tree — so a scenario that passes today can't silently regress tomorrow.
 
 ```bash
-ratchet eval set --json                 # one case per Scenario, with binding status
+ratchet eval set --json                 # one case per Scenario, with binding + hold-out status
 ratchet eval run --json                 # judge bound cases through the engine, persist a run
 ratchet eval report --run <run-id> --json   # scorecard + baseline regression diff
 ratchet eval baseline <run-id>          # promote a clean run as the baseline
@@ -459,7 +459,10 @@ visibility split, not a skip: `ratchet instructions apply` hands the building
 agent a materialized copy of each `.feature` artifact with `@holdout`-tagged
 content stripped out, so the agent implementing a change never sees a
 held-out case, while `eval run`/`ratchet verify` keep reading the real source
-file and gate it exactly like any other case.
+file and gate it exactly like any other case. `ratchet eval set` reports each
+case's hold-out status alongside its binding kind — `holdout: true`/`false`
+in JSON, a `[holdout]` tag in text — reporting only, with no effect on
+gating.
 
 **One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
 place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a

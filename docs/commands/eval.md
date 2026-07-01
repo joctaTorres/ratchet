@@ -106,7 +106,12 @@ error.
    deterministic output.
 3. **Binding status.** Each case id is looked up in the loaded eval specs. The
    reported binding is `deterministic`, `llm-judge`, or `unbound`.
-4. **Archive exclusion.** The archive (`changes/archive/`) is never a scope
+4. **Hold-out status.** Each case is checked for the `@holdout` Gherkin tag via
+   `resolveHoldout()`. JSON reports a `holdout: true`/`false` field per case;
+   text appends a `[holdout]` tag after the case id when true. This is
+   reporting only — it has no effect on gating, and is independent of (shown
+   alongside, not instead of) the binding tag.
+5. **Archive exclusion.** The archive (`changes/archive/`) is never a scope
    root regardless of flags.
 
 ---

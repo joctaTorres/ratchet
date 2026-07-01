@@ -50,6 +50,14 @@ export type MutationHarnessOutcome =
   | { kind: 'unusable-working-tree'; reason: string }
   | { kind: 'completed'; mutants: MutantOutcome[] };
 
+/** The persisted, project-relative form of a `MutantOutcome`'s in-memory `diff`/`testResult`. */
+export interface MutantEvidence {
+  index: number;
+  outcome: 'killed' | 'survived';
+  diffPath: string;
+  testOutputPath: string;
+}
+
 export interface MutationHarnessDeps {
   bash?: BashRunner;
   spawner?: Spawner;

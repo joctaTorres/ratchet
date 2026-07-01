@@ -161,6 +161,9 @@ describe('evaluateInvariantGate', () => {
 
     expect(result.failing).toEqual(['mutants-are-killed']);
     expect(result.outcomes[0].status).toBe('fail');
+    // features/mutation-evidence-recording/replayable-evidence.feature —
+    // persisted evidence surfaces through the gate unchanged.
+    expect(result.outcomes[0].artifacts).toHaveLength(1);
   });
 
   it('fails closed with a loadError when the manifest cannot be loaded', async () => {

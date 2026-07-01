@@ -24,6 +24,8 @@ import type { EvalCase } from './set.js';
 import type { ClauseResult, JurorVote, Verdict } from './judge.js';
 import type { BindingKind } from './spec.js';
 import type { WebArtifacts } from './web-lifecycle.js';
+import type { MutantOutcome, MutantEvidence } from './mutation-harness.js';
+import type { InvariantOutcome } from './invariant-evaluator.js';
 import { isRunComplete, type ContributorId } from './aggregate.js';
 import type { SkipReason } from './skip.js';
 
@@ -112,6 +114,78 @@ export function persistCaseArtifacts(
     persisted[key] = path.relative(projectRoot, dest);
   }
   return persisted;
+}
+
+/** The durable evidence directory for one invariant's evaluation of one run. */
+export function invariantArtifactsDir(projectRoot: string, runId: string, invariantId: string): string {
+  return path.join(runsDir(projectRoot), runId, 'artifacts', 'invariants', invariantId);
+}
+
+function outcomePath(projectRoot: string, runId: string, invariantId: string): string {
+  return path.join(invariantArtifactsDir(projectRoot, runId, invariantId), 'outcome.json');
+}
+
+/**
+ * Write each mutant's diff and oracle stdout/stderr to disk under
+ * `invariantArtifactsDir`, one `mutant-<index>.diff` and one `mutant-<index>.log`
+ * per mutant. Unlike `persistCaseArtifacts`, there is no pre-existing file to
+ * copy — a mutant's evidence originates as in-memory strings the harness
+ * already holds (`diff` / `testResult`) — so this writes content directly.
+ * Returns `MutantEvidence[]` with project-relative paths, one entry per mutant,
+ * killed or survived alike.
+ */
+export function persistMutationEvidence(
+  projectRoot: string,
+  runId: string,
+  invariantId: string,
+  mutants: MutantOutcome[]
+): MutantEvidence[] {
+  const dir = invariantArtifactsDir(projectRoot, runId, invariantId);
+  mkdirSync(dir, { recursive: true });
+  return mutants.map((mutant) => {
+    const diffDest = path.join(dir, `mutant-${mutant.index}.diff`);
+    const logDest = path.join(dir, `mutant-${mutant.index}.log`);
+    writeFileSync(diffDest, mutant.diff, 'utf-8');
+    writeFileSync(
+      logDest,
+      `exit code: ${mutant.testResult.exitCode}\n\n--- stdout ---\n${mutant.testResult.stdout}\n--- stderr ---\n${mutant.testResult.stderr}\n`,
+      'utf-8'
+    );
+    return {
+      index: mutant.index,
+      outcome: mutant.outcome,
+      diffPath: path.relative(projectRoot, diffDest),
+      testOutputPath: path.relative(projectRoot, logDest),
+    };
+  });
+}
+
+/**
+ * Round-trip the full reduced `InvariantOutcome` (status/measure/evidence/
+ * artifacts) for one run+invariant to `outcome.json` in its artifacts
+ * directory — the manifest that makes evaluation of this run+invariant
+ * idempotent.
+ */
+export function persistMutationOutcome(
+  projectRoot: string,
+  runId: string,
+  invariantId: string,
+  outcome: InvariantOutcome
+): void {
+  const dir = invariantArtifactsDir(projectRoot, runId, invariantId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(outcomePath(projectRoot, runId, invariantId), JSON.stringify(outcome, null, 2), 'utf-8');
+}
+
+/** Read back a persisted mutation outcome, or `undefined` when none has been persisted yet. */
+export function loadPersistedMutationOutcome(
+  projectRoot: string,
+  runId: string,
+  invariantId: string
+): InvariantOutcome | undefined {
+  const file = outcomePath(projectRoot, runId, invariantId);
+  if (!existsSync(file)) return undefined;
+  return JSON.parse(readFileSync(file, 'utf-8')) as InvariantOutcome;
 }
 
 /** Generate a sortable run id: `YYYYMMDDTHHMMSSmmmZ-<suffix>`. */

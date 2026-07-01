@@ -419,8 +419,10 @@ A third kind, `web`, declares a browser-scenario lifecycle instead of a check or
 a judge — `start` (boot command), `readiness` (a `url`-or-`command` probe with a
 required `timeoutMs`), and `spec` (the Playwright test that drives the case). It
 gates as a `deterministic` contributor case (exit-zero Playwright run = pass; a
-non-zero exit or a readiness timeout = fail). See
-[`ratchet eval`](docs/commands/eval.md#bindings) for its full field shape.
+non-zero exit or a readiness timeout = fail). A failure persists its captured
+Playwright trace (and a screenshot, when the project's own Playwright config
+captures one) as durable run evidence, referenced by path from the run record.
+See [`ratchet eval`](docs/commands/eval.md#bindings) for its full field shape.
 
 **Fixtures run isolated.** Before judging, the fixture is materialized into a
 throwaway temp working copy that becomes the judging cwd, so a check or agent may

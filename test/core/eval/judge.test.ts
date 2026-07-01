@@ -461,5 +461,37 @@ describe('judgeCase: web', () => {
     expect(r.verdict).toBe('fail');
     expect(r.evidence[0].pass).toBe(false);
     expect(r.evidence[0].evidence).toMatch(/timeout|did not become ready/i);
+    expect(r.artifacts).toBeUndefined();
+  });
+
+  // features/web-failure-evidence/failure-artifacts.feature
+  function playwrightReport(attachments: Array<{ name: string; path: string }>): string {
+    return JSON.stringify({ suites: [{ specs: [{ tests: [{ results: [{ attachments }] }] }] }] });
+  }
+
+  it('carries a failing spec\'s reported trace and screenshot through to CaseVerdict.artifacts', async () => {
+    const checkReadiness: ReadinessChecker = async () => true;
+    const bash: BashRunner = async () => ({ exitCode: 1, stdout: '', stderr: '1 failed' });
+    const readReport = async () =>
+      playwrightReport([
+        { name: 'trace', path: '/c/trace.zip' },
+        { name: 'screenshot', path: '/c/test-failed-1.png' },
+      ]);
+    const r = await judgeCase(CASE, webBinding, '/c', {
+      web: { start: fakeStart, checkReadiness, bash, readReport },
+    });
+    expect(r.verdict).toBe('fail');
+    expect(r.artifacts).toEqual({ trace: '/c/trace.zip', screenshot: '/c/test-failed-1.png' });
+  });
+
+  it('reports no artifacts for a passing spec with an empty attachments list', async () => {
+    const checkReadiness: ReadinessChecker = async () => true;
+    const bash: BashRunner = async () => ({ exitCode: 0, stdout: '1 passed', stderr: '' });
+    const readReport = async () => playwrightReport([]);
+    const r = await judgeCase(CASE, webBinding, '/c', {
+      web: { start: fakeStart, checkReadiness, bash, readReport },
+    });
+    expect(r.verdict).toBe('pass');
+    expect(r.artifacts).toBeUndefined();
   });
 });

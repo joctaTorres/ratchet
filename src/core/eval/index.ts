@@ -36,6 +36,7 @@ export {
   type ReadinessChecker,
   type WebLifecycleDeps,
   type WebLifecycleOutcome,
+  type WebArtifacts,
 } from './web-lifecycle.js';
 export { FixtureManager, type MaterializeResult, type FixtureManagerDeps } from './fixture.js';
 export {
@@ -69,6 +70,8 @@ export {
   runsDir,
   runPath,
   baselinePath,
+  runArtifactsDir,
+  persistCaseArtifacts,
   type EvalRun,
   type CaseRecord,
   type CaseSnapshot,

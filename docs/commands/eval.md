@@ -214,8 +214,11 @@ fails the command with the valid ids listed. See
    boolean pass/fail with its cited evidence, and each juror's individual vote
    (a deterministic check carries the same shape as a one-clause/one-vote
    `llm-judge` case); a skipped case persists its skip source (`tag` or
-   `config`) and matched detail. `eval run --json` surfaces this under
-   `cases[]`.
+   `config`) and matched detail. A failed, judged `web`-bound case additionally
+   persists `artifacts.trace`/`artifacts.screenshot` — project-relative paths
+   under `.ratchet/evals/runs/<run-id>/artifacts/<case-id>/` pointing at its
+   captured Playwright trace and (when the project's own Playwright config
+   captures one) screenshot. `eval run --json` surfaces this under `cases[]`.
 10. **Output.** The run id, the aggregated overall verdict, the
    pass/fail/unjudged/skipped scorecard, and a per-contributor breakdown are
    printed (`deterministic`, `llm-judge`, `invariants`, `regression`).
@@ -298,12 +301,15 @@ ratchet eval report --run <id> [--json]
    over named contributors: it is `pass` only when every contributor passes. The
    `EvalReport` carries the per-contributor breakdown under `contributors`.
 5. **Structured per-case detail.** `EvalReport.cases[]` holds one entry per run
-   case — `{ id, scenario, verdict, source, rubric, clauses, votes, skip? }` —
-   surfacing every judged case's resolved rubric, per-clause pass/fail
-   evidence, and per-juror votes, or a skipped case's skip source/detail.
-   `eval report --json` surfaces this under `cases[]`; the text rendering
-   prints each failing case's per-clause breakdown beneath its evidence line,
-   plus a `Jury: x/y passed` line when more than one vote was cast.
+   case — `{ id, scenario, verdict, source, rubric, clauses, votes, skip?,
+   artifacts? }` — surfacing every judged case's resolved rubric, per-clause
+   pass/fail evidence, and per-juror votes, a skipped case's skip
+   source/detail, or a failed `web`-bound case's captured `artifacts.trace`/
+   `artifacts.screenshot` paths. `eval report --json` surfaces this under
+   `cases[]`; the text rendering prints each failing case's per-clause
+   breakdown beneath its evidence line, plus a `Jury: x/y passed` line when
+   more than one vote was cast, and `Trace: <path>`/`Screenshot: <path>` lines
+   when the case captured them.
 
 ---
 
@@ -464,19 +470,23 @@ alphabetical sort order wins and a warning is emitted.
 (`runWebLifecycle`): `start` is launched as a background process, `readiness`
 is polled check-then-sleep until it succeeds or `readiness.timeoutMs` elapses
 (a fail-closed timeout, never an assumed-ready pass), `spec` then runs via a
-plain `npx playwright test <spec>` bash invocation, and the started process is
-torn down in a `finally` on every path. See
-[Web binding lifecycle harness](../eval-web-lifecycle.md) for the full
-start/poll/run/teardown contract and its injectable seams. A `web` binding
-runs through `ratchet eval run` like any other binding kind: `judgeCase`
-dispatches it through the harness and reduces the result to a `pass`/`fail`
-verdict (exit-zero Playwright run = `pass`; a non-zero exit or a readiness
-timeout = `fail`), which gates through the `deterministic` contributor — see
-[Verdict aggregation](../eval-verdict-aggregation.md) — so
+bash invocation that forces `--trace=retain-on-failure` and a `list,json`
+reporter pair, and the started process is torn down in a `finally` on every
+path. See [Web binding lifecycle harness](../eval-web-lifecycle.md) for the
+full start/poll/run/teardown contract and its injectable seams. A `web`
+binding runs through `ratchet eval run` like any other binding kind:
+`judgeCase` dispatches it through the harness and reduces the result to a
+`pass`/`fail` verdict (exit-zero Playwright run = `pass`; a non-zero exit or a
+readiness timeout = `fail`), which gates through the `deterministic`
+contributor — see [Verdict aggregation](../eval-verdict-aggregation.md) — so
 `eval.gate.deterministic`/`--only`/`--gate` control a `web`-bound case exactly
-like a `deterministic`-bound one. Trace/screenshot capture on failure and the
-conditional `ratchet doctor` Playwright probe are still deferred to later
-changes in the `playwright-web-tier` phase.
+like a `deterministic`-bound one. A failed case's captured Playwright trace
+(and a screenshot, when the project's own Playwright config enables
+`use.screenshot`) is persisted as durable run evidence under
+`.ratchet/evals/runs/<run-id>/artifacts/<case-id>/` and referenced by path
+from the run JSON — see the "Structured per-case detail" steps of `eval run`
+and `eval report` above. The conditional `ratchet doctor` Playwright probe is
+still deferred to a later change in the `playwright-web-tier` phase.
 
 ---
 

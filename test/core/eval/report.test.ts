@@ -417,6 +417,41 @@ describe('cases: CaseDetail[]', () => {
     expect(unbound?.skip).toBeUndefined();
   });
 
+  // features/web-failure-evidence/failure-artifacts.feature — the report
+  // surfaces a failing case's captured trace/screenshot paths alongside its
+  // rubric, clauses, and votes.
+  it('includes artifacts for a run whose CaseRecord carries it, and omits it for one that does not', async () => {
+    const root = makeProject();
+    const withArtifacts: CaseRecord = {
+      verdict: 'fail',
+      reason: '[fail] spec failed',
+      source: 'judged',
+      rubric: ["Playwright spec 'e2e/checkout.spec.ts' exits zero"],
+      clauses: [{ clause: "Playwright spec 'e2e/checkout.spec.ts' exits zero", pass: false, evidence: 'failed' }],
+      votes: [{ pass: false, clauses: [] }],
+      artifacts: {
+        trace: '.ratchet/evals/runs/r1/artifacts/a#web/trace.zip',
+        screenshot: '.ratchet/evals/runs/r1/artifacts/a#web/test-failed-1.png',
+      },
+    };
+    const withoutArtifacts: CaseRecord = { verdict: 'pass', reason: '', source: 'judged' };
+    const run: EvalRun = {
+      runId: 'r1',
+      createdAt: new Date().toISOString(),
+      scope: { kind: 'store' },
+      cases: [mkCase('a#web'), mkCase('a#other')].map((c) => toSnapshot(c, 'deterministic')),
+      verdicts: { 'a#web': withArtifacts, 'a#other': withoutArtifacts },
+    };
+    persistRun(root, run);
+    const report = await buildReport(root, 'r1');
+
+    const web = report.cases.find((c) => c.id === 'a#web');
+    expect(web?.artifacts).toEqual(withArtifacts.artifacts);
+
+    const other = report.cases.find((c) => c.id === 'a#other');
+    expect(other?.artifacts).toBeUndefined();
+  });
+
   it('leaves the existing overall-verdict/contributor/scorecard assertions unchanged by the new field', async () => {
     const root = makeProject();
     persistRun(

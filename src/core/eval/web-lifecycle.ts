@@ -18,8 +18,16 @@
  */
 
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { WebBinding, WebReadiness } from './spec.js';
 import { realBashRunner, type BashRunner, type BashResult } from '../batch/engine/index.js';
+
+/** The Playwright trace and/or screenshot attachments a completed run captured, keyed by artifact kind. */
+export interface WebArtifacts {
+  trace?: string;
+  screenshot?: string;
+}
 
 /** A background process the harness started, kept alive across the readiness poll and spec run. */
 export interface ProcessHandle {
@@ -64,8 +72,12 @@ export const defaultReadinessChecker: ReadinessChecker = async (readiness, cwd, 
 };
 
 const DEFAULT_POLL_INTERVAL_MS = 250;
+const REPORT_FILE_NAME = '.ratchet-web-report.json';
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Reads a file's contents as a string, mirroring `invariant-evaluator.ts`'s `FileReader` seam. */
+const realReadReport = (filePath: string): Promise<string> => readFile(filePath, 'utf-8');
 
 export interface WebLifecycleDeps {
   start?: ProcessStarter;
@@ -74,11 +86,88 @@ export interface WebLifecycleDeps {
   pollIntervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** Reads the Playwright JSON report at a path; real default reads the file (tests inject canned JSON). */
+  readReport?: (path: string) => Promise<string>;
 }
 
 export type WebLifecycleOutcome =
   | { kind: 'readiness-timeout' }
-  | { kind: 'completed'; passed: boolean; result: BashResult };
+  | { kind: 'completed'; passed: boolean; result: BashResult; artifacts?: WebArtifacts };
+
+/** One Playwright JSON-reporter attachment, as recorded on a test result. */
+interface PlaywrightAttachment {
+  name?: unknown;
+  path?: unknown;
+}
+
+interface PlaywrightResult {
+  attachments?: PlaywrightAttachment[];
+}
+
+interface PlaywrightTest {
+  results?: PlaywrightResult[];
+}
+
+interface PlaywrightSpec {
+  tests?: PlaywrightTest[];
+}
+
+/** Suites can nest (project / describe-block grouping), so specs are collected recursively. */
+interface PlaywrightSuite {
+  suites?: PlaywrightSuite[];
+  specs?: PlaywrightSpec[];
+}
+
+interface PlaywrightReport {
+  suites?: PlaywrightSuite[];
+}
+
+/** Walk `suites[].specs[].tests[].results[].attachments[]`, recursing into nested `suites[]`. */
+function collectAttachments(suites: PlaywrightSuite[] | undefined): PlaywrightAttachment[] {
+  const attachments: PlaywrightAttachment[] = [];
+  for (const suite of suites ?? []) {
+    for (const spec of suite.specs ?? []) {
+      for (const test of spec.tests ?? []) {
+        for (const result of test.results ?? []) {
+          attachments.push(...(result.attachments ?? []));
+        }
+      }
+    }
+    attachments.push(...collectAttachments(suite.suites));
+  }
+  return attachments;
+}
+
+/**
+ * Read and parse the Playwright JSON report, extracting whichever `trace`/
+ * `screenshot` attachments Playwright itself recorded. Any read or parse
+ * failure (report never written, unexpected schema) is caught and treated as
+ * "no artifacts" — never thrown, never a signal that changes the verdict.
+ */
+async function extractArtifacts(
+  reportPath: string,
+  readReport: (path: string) => Promise<string>
+): Promise<WebArtifacts | undefined> {
+  try {
+    const raw = await readReport(reportPath);
+    const report = JSON.parse(raw) as PlaywrightReport;
+    const artifacts: WebArtifacts = {};
+    for (const attachment of collectAttachments(report.suites)) {
+      if (attachment.name === 'trace' && typeof attachment.path === 'string' && !artifacts.trace) {
+        artifacts.trace = attachment.path;
+      } else if (
+        attachment.name === 'screenshot' &&
+        typeof attachment.path === 'string' &&
+        !artifacts.screenshot
+      ) {
+        artifacts.screenshot = attachment.path;
+      }
+    }
+    return artifacts.trace || artifacts.screenshot ? artifacts : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Run a `web` binding's lifecycle: start the app, poll `readiness` until it
@@ -97,6 +186,7 @@ export async function runWebLifecycle(
   const pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const sleep = deps.sleep ?? realSleep;
   const now = deps.now ?? Date.now;
+  const readReport = deps.readReport ?? realReadReport;
 
   const handle = start(binding.start, cwd);
   try {
@@ -113,8 +203,12 @@ export async function runWebLifecycle(
     if (!ready) {
       return { kind: 'readiness-timeout' };
     }
-    const result = await bash(`npx playwright test ${binding.spec}`, cwd);
-    return { kind: 'completed', passed: result.exitCode === 0, result };
+    const result = await bash(
+      `PLAYWRIGHT_JSON_OUTPUT_NAME=${REPORT_FILE_NAME} npx playwright test ${binding.spec} --trace=retain-on-failure --reporter=list,json`,
+      cwd
+    );
+    const artifacts = await extractArtifacts(path.join(cwd, REPORT_FILE_NAME), readReport);
+    return { kind: 'completed', passed: result.exitCode === 0, result, ...(artifacts ? { artifacts } : {}) };
   } finally {
     handle.kill();
   }

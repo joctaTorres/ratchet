@@ -8,13 +8,22 @@
  * does an atomic read-modify-write to override a single case's verdict.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, renameSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  renameSync,
+  copyFileSync,
+} from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { RATCHET_DIR_NAME } from '../config.js';
 import type { EvalCase } from './set.js';
 import type { ClauseResult, JurorVote, Verdict } from './judge.js';
 import type { BindingKind } from './spec.js';
+import type { WebArtifacts } from './web-lifecycle.js';
 import { isRunComplete, type ContributorId } from './aggregate.js';
 import type { SkipReason } from './skip.js';
 
@@ -43,6 +52,8 @@ export interface CaseRecord {
   votes?: JurorVote[];
   /** The skip source/detail this case matched. Present only on a `skipped` record. */
   skip?: SkipReason;
+  /** Durable, project-relative Playwright trace/screenshot paths. Present only on a failed judged `web`-bound case that captured at least one file. */
+  artifacts?: WebArtifacts;
 }
 
 export interface EvalRun {
@@ -70,6 +81,37 @@ export function runPath(projectRoot: string, runId: string): string {
 
 export function baselinePath(projectRoot: string): string {
   return path.join(projectRoot, RATCHET_DIR_NAME, 'evals', 'baseline.json');
+}
+
+export function runArtifactsDir(projectRoot: string, runId: string, caseId: string): string {
+  return path.join(runsDir(projectRoot), runId, 'artifacts', caseId);
+}
+
+/**
+ * Copy a `web` binding's ephemeral, fixture-cwd-scoped trace/screenshot files
+ * into the run's durable evidence directory, the moment ephemeral evidence
+ * becomes persisted run evidence. Returns paths relative to `projectRoot`
+ * pointing at the copies, or `undefined` when neither field is present
+ * (nothing to persist, nothing created on disk).
+ */
+export function persistCaseArtifacts(
+  projectRoot: string,
+  runId: string,
+  caseId: string,
+  artifacts: WebArtifacts
+): WebArtifacts | undefined {
+  const present = (['trace', 'screenshot'] as const).filter((key) => artifacts[key] !== undefined);
+  if (present.length === 0) return undefined;
+  const dir = runArtifactsDir(projectRoot, runId, caseId);
+  mkdirSync(dir, { recursive: true });
+  const persisted: WebArtifacts = {};
+  for (const key of present) {
+    const source = artifacts[key] as string;
+    const dest = path.join(dir, path.basename(source));
+    copyFileSync(source, dest);
+    persisted[key] = path.relative(projectRoot, dest);
+  }
+  return persisted;
 }
 
 /** Generate a sortable run id: `YYYYMMDDTHHMMSSmmmZ-<suffix>`. */

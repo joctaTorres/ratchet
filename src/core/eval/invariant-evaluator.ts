@@ -20,6 +20,13 @@
  *   - `snapshot` — read the checked-in `golden`, run `produce.run`, and diff its
  *     trimmed stdout against the trimmed golden; equal passes, differing fails.
  *     An absent golden, or a `produce` command that throws, is `unevaluable`.
+ *   - `mutation` — run the mutation harness (seeds up to `budget` mutants via
+ *     the configured agent, gates each on the invariant's own `test` command as
+ *     the oracle) and reduce its per-mutant kill/survive results: any survived
+ *     mutant is a hard `fail` regardless of how many others were killed; fewer
+ *     than `threshold` evaluated mutants (with none surviving) is `unevaluable`
+ *     — not enough evidence to trust a "no survivors" claim. A harness call that
+ *     throws, or an unusable working tree, is also `unevaluable`.
  *
  * The governing rule for every kind is **fail-closed**: any invariant that
  * cannot be evaluated is recorded `unevaluable`, which `isInvariantViolation`
@@ -44,7 +51,8 @@ import type {
   MutationInvariant,
 } from './invariants.js';
 import type { EvalRun } from './run.js';
-import { evaluatePassCondition, realBashRunner, type BashRunner } from '../batch/engine/index.js';
+import { evaluatePassCondition, realBashRunner, type BashRunner, type Spawner } from '../batch/engine/index.js';
+import { runMutationHarness, type MutationHarnessOutcome } from './mutation-harness.js';
 
 /** Three-valued status. `unevaluable` is *not pass*: it is a fail-closed violation. */
 export type InvariantStatus = 'pass' | 'fail' | 'unevaluable';
@@ -81,6 +89,8 @@ export interface InvariantEvalContext {
   baseline: EvalRun | null;
   bash?: BashRunner;
   readFile?: FileReader;
+  spawner?: Spawner;
+  agentName?: string;
 }
 
 /**
@@ -207,18 +217,62 @@ async function evaluateSnapshot(
 }
 
 /**
- * `mutation` is schema-only as of this slice: nothing can construct an
- * *active* mutation invariant yet (that lands with the `ratchet init`
- * scaffold), and seeding mutants / running them against `test` is the
- * downstream `mutation-oracle-harness` change. Fail closed rather than
- * silently passing until that evaluation exists.
+ * `mutation` runs the mutation harness (seed via the configured agent, the
+ * user's own `test` command as the oracle) and reduces its per-mutant
+ * kill/survive results to an outcome: any `survived` mutant is a hard `fail`
+ * regardless of how many others were killed (checked before the threshold,
+ * since a survived mutant is real evidence of a test-suite gap no matter how
+ * few mutants the budget allowed); short of that, fewer evaluated mutants
+ * than `threshold` is `unevaluable` (too little evidence to trust "no
+ * survivors"); a harness call that throws, or an `unusable-working-tree`
+ * result, is also `unevaluable` — fail-closed, never a silent pass.
  */
-function evaluateMutation(inv: MutationInvariant): InvariantOutcome {
-  return unevaluable(
-    inv,
-    `mutation: ${inv.test}`,
-    'mutation evaluation is not implemented yet (schema-only kind)'
-  );
+async function evaluateMutation(
+  inv: MutationInvariant,
+  ctx: InvariantEvalContext
+): Promise<InvariantOutcome> {
+  const measureBase = `mutation: ${inv.test} (budget ${inv.budget}, threshold ${inv.threshold})`;
+  let harnessOutcome: MutationHarnessOutcome;
+  try {
+    harnessOutcome = await runMutationHarness(inv, ctx.projectRoot, {
+      bash: ctx.bash,
+      spawner: ctx.spawner,
+      agentName: ctx.agentName,
+    });
+  } catch (err) {
+    // Fail closed: an oracle/harness that cannot run at all is unevaluable,
+    // never a silent pass — mirrors evaluateDeterministic's predicate-throws path.
+    return unevaluable(inv, measureBase, `mutation harness could not run: ${(err as Error).message}`);
+  }
+
+  if (harnessOutcome.kind === 'unusable-working-tree') {
+    return unevaluable(
+      inv,
+      measureBase,
+      `working tree was not usable for mutation seeding: ${harnessOutcome.reason}`
+    );
+  }
+
+  const { mutants } = harnessOutcome;
+  const survived = mutants.filter((m) => m.outcome === 'survived');
+  const measure = `${measureBase} — ${mutants.length} evaluated, ${survived.length} survived`;
+
+  if (survived.length > 0) {
+    const first = survived[0]!;
+    return fail(
+      inv,
+      measure,
+      `${survived.length} of ${mutants.length} evaluated mutant(s) survived (e.g. attempt #${first.index}): ${first.diff.slice(0, 500)}`
+    );
+  }
+  if (mutants.length < inv.threshold) {
+    return unevaluable(
+      inv,
+      measure,
+      `only ${mutants.length} of ${inv.threshold} required mutants reached a kill/survive verdict (budget ${inv.budget}); too few to trust the invariant`
+    );
+  }
+  return pass(inv, measure, `all ${mutants.length} evaluated mutant(s) were killed`);
 }
 
 /**
@@ -238,6 +292,6 @@ export async function evaluateInvariant(
     case 'snapshot':
       return evaluateSnapshot(invariant, context);
     case 'mutation':
-      return evaluateMutation(invariant);
+      return evaluateMutation(invariant, context);
   }
 }

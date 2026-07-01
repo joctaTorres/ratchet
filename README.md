@@ -491,9 +491,10 @@ draws its run-level, anti-gaming checks from a checked-in manifest: a YAML list
 of invariants, each one of four kinds — `deterministic` (an absolute predicate),
 `monotonic` (a named measure that must not decrease vs the baseline), `snapshot`
 (output diffed against a checked-in golden), `mutation` (a `test`/`budget`/
-`threshold` mutation-testing invariant — the standalone seed/oracle/classify/revert
-harness now exists at [`docs/eval-mutation-harness.md`](docs/eval-mutation-harness.md),
-but evaluation into a pass/fail/unevaluable outcome lands in a follow-on change)
+`threshold` mutation-testing invariant — the seed/oracle/classify/revert harness
+at [`docs/eval-mutation-harness.md`](docs/eval-mutation-harness.md) is wired into
+evaluation: a survived mutant is a hard fail, and too little evaluated evidence
+(fewer than `threshold` mutants reaching a verdict) is unevaluable)
 — and each carrying an `active` flag so an invariant can be
 scaffolded inert before it is turned on. On every `eval
 run` the contributor evaluates the manifest's **active** invariants run-level and

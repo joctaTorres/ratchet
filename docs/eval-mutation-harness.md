@@ -13,13 +13,13 @@ passes) — no external mutation-testing framework. It is the single place a
 mutation invariant's seed/detect/classify/revert sequence is implemented;
 nothing else in the codebase seeds or reverts a mutant.
 
-**Not yet wired into `evaluateInvariant`.** `evaluateMutation`
-(`src/core/eval/invariant-evaluator.ts`) still resolves every `kind: mutation`
-entry to a fail-closed `unevaluable` placeholder. Folding this harness's
-per-mutant outcomes into an `InvariantOutcome` with budget/threshold semantics
-is a follow-on change (`mutation-evaluator-fold`), mirroring how
-`runWebLifecycle` shipped standalone before `web-deterministic-fold` wired it
-into `judgeCase` — see [eval invariant manifest](eval-invariants.md).
+**Wired into `evaluateInvariant`.** `evaluateMutation`
+(`src/core/eval/invariant-evaluator.ts`) runs this harness and folds its
+per-mutant outcomes into an `InvariantOutcome` with budget/threshold semantics:
+any survived mutant is a hard `fail`, and fewer than `threshold` evaluated
+mutants is `unevaluable` — mirroring how `runWebLifecycle` shipped standalone
+before `web-deterministic-fold` wired it into `judgeCase` — see
+[eval invariant manifest](eval-invariants.md).
 
 ## Overview
 

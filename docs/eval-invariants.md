@@ -22,9 +22,8 @@ Key terms used throughout this document:
   **`snapshot`** invariant diffs current output against a checked-in golden file.
   A **`mutation`** invariant carries a `test`/`budget`/`threshold` triple that
   types a mutation-testing invariant (seed a small fault, run the user's own
-  `test` command as the oracle, hard-fail a survived mutant); it is schema-typed
-  as of this document, with evaluation landing in a follow-on change (see
-  [`kind: mutation`](#kind-mutation)).
+  `test` command as the oracle, hard-fail a survived mutant); evaluation is
+  wired (see [`kind: mutation`](#kind-mutation)).
 - **`active` flag** — a per-invariant boolean, required on every entry and never
   active-by-default. Only `active: true` invariants are enforced; **inert**
   (`active: false`) ones are declared but skipped, so activating one is always a
@@ -77,13 +76,11 @@ flowchart TD
     class FAIL err
 ```
 
-Each typed invariant is then evaluated against the run to one outcome. Each kind
-is checked its own way: `deterministic`/`monotonic`/`snapshot` resolve dynamically
-into the same three-valued outcome, while `mutation` — schema-only as of this
-document — resolves straight to `unevaluable`. Anything that cannot be checked
-fails closed to a violation rather than a pass. The diagram funnels the first
-three kinds through a single outcome node and routes the `mutation` placeholder
-directly to `unevaluable`, rather than fanning every kind to every result:
+Each typed invariant is then evaluated against the run to one outcome. All four
+kinds — `deterministic`/`monotonic`/`snapshot`/`mutation` — resolve dynamically
+into the same three-valued outcome. Anything that cannot be checked fails closed
+to a violation rather than a pass. The diagram funnels every kind through a
+single outcome node rather than fanning each to its own result:
 
 ```mermaid
 flowchart TD
@@ -95,12 +92,12 @@ flowchart TD
     EVAL -->|deterministic| DET[🧪 check.run<br/>evaluatePassCondition]
     EVAL -->|monotonic| MON[📈 measure vs<br/>baseline value]
     EVAL -->|snapshot| SNAP[📷 produce.run<br/>vs golden]
-    EVAL -->|mutation| MUT[🧬 not implemented yet<br/>schema-only placeholder]
+    EVAL -->|mutation| MUT[🧬 seed · run test oracle<br/>kill/survive per mutant]
 
     DET --> OUTCOME
     MON --> OUTCOME
     SNAP --> OUTCOME
-    MUT --> UNEV
+    MUT --> OUTCOME
 
     OUTCOME{{🔀 three-valued outcome}}
     OUTCOME -->|✓ checked · holds| PASS[✅ pass]
@@ -255,16 +252,16 @@ invariants:
     threshold: 3
 ```
 
-The seed/run-oracle/classify/revert harness now exists standalone at
+The seed/run-oracle/classify/revert harness exists standalone at
 `src/core/eval/mutation-harness.ts` — see [Mutation harness](eval-mutation-harness.md).
 It drives the configured coding agent through the same spawn seam the
 `llm-judge` binding uses to seed one fault at a time, runs `test` as the
-deterministic oracle, and classifies each fault killed or survived. It is
-**not yet wired into evaluation**: nothing can construct an *active* mutation
-invariant yet (the `ratchet init` scaffold is a follow-on change), and
-`evaluateInvariant` resolves every `kind: mutation` entry to a fail-closed
-`unevaluable` placeholder — see
-[How each kind is evaluated](#how-each-kind-is-evaluated).
+deterministic oracle, and classifies each fault killed or survived.
+`evaluateInvariant` runs this harness and reduces its per-mutant results to a
+real `pass`/`fail`/`unevaluable` outcome — see
+[How each kind is evaluated](#how-each-kind-is-evaluated). Persisting each
+mutant's diff and test output as replayable run evidence, and scaffolding a
+`kind: mutation` entry from `ratchet init`, remain follow-on changes.
 
 ## Loader contract
 
@@ -329,12 +326,16 @@ spawn or filesystem.
   root) via the injected `readFile`, runs `produce.run`, and diffs the produced
   stdout (trimmed) against the golden (trimmed): equal is pass, differing is fail.
   An **absent golden**, or a `produce` command that **throws**, is `unevaluable`.
-- **mutation** — always resolves to `unevaluable` today: seeding mutants via the
-  agent spawn seam and running `test` as the kill/survive oracle is not
-  implemented yet, so every `kind: mutation` entry fails closed with an explicit
-  "not implemented yet" evidence string rather than a silent pass. Real
-  evaluation (seed, apply, run `test`, kill/survive, budget/threshold) lands in
-  a follow-on change.
+- **mutation** — runs the mutation harness (seeds up to `budget` mutants via the
+  agent spawn seam, gates each on `test` as the kill/survive oracle) and reduces
+  the per-mutant results: any **survived** mutant is a hard `fail`, regardless of
+  how many others were killed. Short of that, **fewer than `threshold`** evaluated
+  mutants is `unevaluable` — not enough evidence to trust a "no survivors" claim.
+  A harness call that **throws**, or an **unusable working tree**, is also
+  `unevaluable`. Otherwise (at least `threshold` mutants evaluated, none
+  survived): pass. Persisting each mutant's diff/test output as replayable run
+  evidence remains a follow-on change; this evaluation's evidence is a
+  human-readable summary string, matching every other kind.
 
 ## Gate contributor
 

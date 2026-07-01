@@ -467,14 +467,18 @@ run --json`/`eval report --json`'s `cases[]`.
 **Hold-out scenarios.** A Scenario tagged `@holdout` is an anti-overfitting
 visibility split, not a skip: `ratchet instructions apply` hands the building
 agent a materialized copy of each `.feature` artifact with `@holdout`-tagged
-content stripped out, so the agent implementing a change never sees a
-held-out case, while `eval run`/`ratchet verify` keep reading the real source
-file and gate it exactly like any other case. `ratchet eval set` reports each
-case's hold-out status alongside its binding kind — `holdout: true`/`false`
-in JSON, a `[holdout]` tag in text — reporting only, with no effect on
-gating. `--holdout`/`--no-holdout` on `eval set`/`eval run` restrict the
-in-scope set to just the held-out or just the non-held-out cases, composing
-with the existing `--changes`/`--change`/`--path` scope flags.
+content stripped out, so the agent implementing a change never sees a held-out
+case. `ratchet verify` reads the same filtered view (by design — it shares the
+same `ratchet instructions apply` builder; re-using it prevents the verify loop
+from leaking held-out content back to apply). Enforcement is `eval run`:
+`enumerateEvalSet()` reads the untouched source file directly and gates
+`@holdout`-tagged Scenarios exactly like any other case. `ratchet eval set`
+reports each case's hold-out status alongside its binding kind —
+`holdout: true`/`false` in JSON, a `[holdout]` tag in text — reporting only,
+with no effect on gating. `--holdout`/`--no-holdout` on `eval set`/`eval run`
+restrict the in-scope set to just the held-out or just the non-held-out cases,
+composing with the existing `--changes`/`--change`/`--path` scope flags.
+Filtering is only active when the project has a `.ratchet/evals/` directory.
 
 **One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
 place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a

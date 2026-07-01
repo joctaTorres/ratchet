@@ -111,12 +111,29 @@ fully regenerated (overwritten) on every `ratchet instructions apply` call.
 Non-`.feature` outputs (e.g. `plan.md`) are returned as their original path,
 unaffected.
 
-The source `.feature` file itself is never modified. `eval run`, `ratchet
-verify`, and `enumerateEvalSet()` read the untouched source file directly —
-not through `contextFiles` — so a `@holdout`-tagged Scenario keeps being
-enumerated and gated exactly like any other case, with no change to verdict
-or aggregation behavior. Filtering only changes what the building agent reads
-during `apply`; it changes nothing about how a case is judged.
+The source `.feature` file itself is never modified. `enumerateEvalSet()` and
+`eval run` read the untouched source file directly — not through `contextFiles`
+— so a `@holdout`-tagged Scenario keeps being enumerated and gated exactly like
+any other case, with no change to verdict or aggregation behavior. Filtering
+changes what the building agent reads during `apply` and `verify`; it changes
+nothing about how a case is judged. `ratchet verify` reads the same filtered
+`contextFiles` as `apply` (by design: re-using the same instruction builder
+prevents a feedback loop that would expose held-out content at verify time).
+Enforcement is `eval run`, not verify.
+
+`@holdout` filtering is only active in projects that have a `.ratchet/evals/`
+directory (`hasEvalIntent`). In a project without an eval store, source paths
+are returned unchanged and no `.apply-context/` directory is written — stripping
+content without an enforcement gate would only hide scenarios with no way to
+catch violations.
+
+The `ApplyInstructions` JSON object carries `heldOutCount` (total blocks
+stripped) and `heldOutCounts` (per-artifact breakdown). When `heldOutCount > 0`,
+the text output prints one non-blocking warning:
+
+```
+⚠️ N @holdout scenario(s) are excluded from this view — run `ratchet eval run` to enforce them.
+```
 
 This is tag-based *content* filtering: an `@holdout` Scenario's tag line and
 name are removed from the materialized copy, but the building agent can still
@@ -183,9 +200,11 @@ configuration or standards library.
   "changeDir": "/path/to/.ratchet/changes/my-change",
   "schemaName": "spec-driven",
   "contextFiles": {
-    "proposal": ["/path/to/.ratchet/changes/my-change/proposal.md"],
+    "features": ["/path/to/.ratchet/changes/my-change/.apply-context/features/cap/foo.feature"],
     "plan": ["/path/to/.ratchet/changes/my-change/plan.md"]
   },
+  "heldOutCounts": { "features": 1 },
+  "heldOutCount": 1,
   "progress": { "total": 5, "complete": 2, "remaining": 3 },
   "tasks": [
     { "id": "1", "description": "Implement auth module", "done": true },
@@ -197,8 +216,7 @@ configuration or standards library.
 }
 ```
 
-`missingArtifacts` is omitted when empty. `progress` and `tasks` are empty
-when the schema defines no `tracks` file.
+`heldOutCounts` and `heldOutCount` are 0 / empty when no `@holdout` Scenarios are present, or when the project has no `.ratchet/evals/` directory. `missingArtifacts` is omitted when empty. `progress` and `tasks` are empty when the schema defines no `tracks` file.
 
 ## Related commands
 

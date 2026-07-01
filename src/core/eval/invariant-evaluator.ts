@@ -26,7 +26,12 @@
  *     mutant is a hard `fail` regardless of how many others were killed; fewer
  *     than `threshold` evaluated mutants (with none surviving) is `unevaluable`
  *     — not enough evidence to trust a "no survivors" claim. A harness call that
- *     throws, or an unusable working tree, is also `unevaluable`.
+ *     throws, or an unusable working tree, is also `unevaluable`. Every mutant
+ *     the harness actually runs — its diff and oracle output — is persisted as
+ *     durable run evidence (`InvariantOutcome.artifacts`) keyed by
+ *     `(run.runId, invariant.id)`, and the reduced outcome is memoized there
+ *     too: a later evaluation of the same run reads the persisted outcome back
+ *     verbatim instead of re-running the harness or re-spawning the agent.
  *
  * The governing rule for every kind is **fail-closed**: any invariant that
  * cannot be evaluated is recorded `unevaluable`, which `isInvariantViolation`
@@ -52,7 +57,8 @@ import type {
 } from './invariants.js';
 import type { EvalRun } from './run.js';
 import { evaluatePassCondition, realBashRunner, type BashRunner, type Spawner } from '../batch/engine/index.js';
-import { runMutationHarness, type MutationHarnessOutcome } from './mutation-harness.js';
+import { runMutationHarness, type MutationHarnessOutcome, type MutantEvidence } from './mutation-harness.js';
+import { persistMutationEvidence, persistMutationOutcome, loadPersistedMutationOutcome } from './run.js';
 
 /** Three-valued status. `unevaluable` is *not pass*: it is a fail-closed violation. */
 export type InvariantStatus = 'pass' | 'fail' | 'unevaluable';
@@ -66,6 +72,10 @@ export interface InvariantOutcome {
   /** Evidence behind the status: the pass condition met, the predicate output, a
    *  match/mismatch, or why the invariant could not be evaluated. */
   evidence: string;
+  /** Durable evidence for every mutant the mutation harness ran (diff + oracle output
+   *  paths), killed or survived alike. Present only for a `mutation` outcome whose
+   *  harness run actually seeded at least one mutant. */
+  artifacts?: MutantEvidence[];
 }
 
 /** Reads a file's UTF-8 contents; rejects when the file is absent (⇒ unevaluable). */
@@ -225,13 +235,23 @@ async function evaluateSnapshot(
  * few mutants the budget allowed); short of that, fewer evaluated mutants
  * than `threshold` is `unevaluable` (too little evidence to trust "no
  * survivors"); a harness call that throws, or an `unusable-working-tree`
- * result, is also `unevaluable` — fail-closed, never a silent pass.
+ * result, is also `unevaluable` — fail-closed, never a silent pass. A prior
+ * evaluation of this exact `(run.runId, invariant.id)` is read back verbatim
+ * rather than re-running the harness; every mutant actually run is persisted
+ * as durable evidence, killed or survived alike.
  */
 async function evaluateMutation(
   inv: MutationInvariant,
   ctx: InvariantEvalContext
 ): Promise<InvariantOutcome> {
   const measureBase = `mutation: ${inv.test} (budget ${inv.budget}, threshold ${inv.threshold})`;
+
+  // Reproducible from the run record alone: once this run+invariant has been
+  // evaluated, the persisted outcome IS the answer — no agent is re-spawned to
+  // re-derive it, e.g. on a second `ratchet eval report --run <id>`.
+  const cached = loadPersistedMutationOutcome(ctx.projectRoot, ctx.run.runId, inv.id);
+  if (cached) return cached;
+
   let harnessOutcome: MutationHarnessOutcome;
   try {
     harnessOutcome = await runMutationHarness(inv, ctx.projectRoot, {
@@ -257,22 +277,38 @@ async function evaluateMutation(
   const survived = mutants.filter((m) => m.outcome === 'survived');
   const measure = `${measureBase} — ${mutants.length} evaluated, ${survived.length} survived`;
 
+  let outcome: InvariantOutcome;
   if (survived.length > 0) {
     const first = survived[0]!;
-    return fail(
+    outcome = fail(
       inv,
       measure,
       `${survived.length} of ${mutants.length} evaluated mutant(s) survived (e.g. attempt #${first.index}): ${first.diff.slice(0, 500)}`
     );
-  }
-  if (mutants.length < inv.threshold) {
-    return unevaluable(
+  } else if (mutants.length < inv.threshold) {
+    outcome = unevaluable(
       inv,
       measure,
       `only ${mutants.length} of ${inv.threshold} required mutants reached a kill/survive verdict (budget ${inv.budget}); too few to trust the invariant`
     );
+  } else {
+    outcome = pass(inv, measure, `all ${mutants.length} evaluated mutant(s) were killed`);
   }
-  return pass(inv, measure, `all ${mutants.length} evaluated mutant(s) were killed`);
+
+  // Every mutant the harness actually ran gets its evidence persisted,
+  // regardless of the final status — a threshold-driven `unevaluable` still ran
+  // real mutants worth keeping. No mutant ran ⇒ nothing to persist, and nothing
+  // cached, so a later evaluation is free to retry the harness (the working
+  // tree, e.g., may be clean by then).
+  if (mutants.length > 0) {
+    outcome = {
+      ...outcome,
+      artifacts: persistMutationEvidence(ctx.projectRoot, ctx.run.runId, inv.id, mutants),
+    };
+    persistMutationOutcome(ctx.projectRoot, ctx.run.runId, inv.id, outcome);
+  }
+
+  return outcome;
 }
 
 /**

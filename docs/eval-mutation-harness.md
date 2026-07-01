@@ -21,6 +21,12 @@ mutants is `unevaluable` — mirroring how `runWebLifecycle` shipped standalone
 before `web-deterministic-fold` wired it into `judgeCase` — see
 [eval invariant manifest](eval-invariants.md).
 
+`evaluateMutation` persists every mutant's diff and oracle output under
+`.ratchet/evals/runs/<runId>/artifacts/invariants/<id>/` and memoizes the
+reduced outcome alongside it, keyed by `(run.runId, invariant.id)`, so a
+survived mutant is replayable from disk and a repeated evaluation of the same
+run never spawns the agent a second time.
+
 ## Overview
 
 ```mermaid

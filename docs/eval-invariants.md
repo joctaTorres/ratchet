@@ -92,12 +92,17 @@ flowchart TD
     EVAL -->|deterministic| DET[🧪 check.run<br/>evaluatePassCondition]
     EVAL -->|monotonic| MON[📈 measure vs<br/>baseline value]
     EVAL -->|snapshot| SNAP[📷 produce.run<br/>vs golden]
-    EVAL -->|mutation| MUT[🧬 seed · run test oracle<br/>kill/survive per mutant]
+    EVAL -->|mutation| MUTCACHE{{💾 persisted outcome<br/>for this run?}}
+
+    MUTCACHE -->|✓ hit| MUTHIT[📂 read outcome.json<br/>no agent spawn]
+    MUTCACHE -->|✗ miss| MUT[🧬 seed · run test oracle<br/>kill/survive per mutant]
+    MUT --> MUTSAVE[💾 persist diff/output<br/>+ outcome.json]
 
     DET --> OUTCOME
     MON --> OUTCOME
     SNAP --> OUTCOME
-    MUT --> OUTCOME
+    MUTHIT --> OUTCOME
+    MUTSAVE --> OUTCOME
 
     OUTCOME{{🔀 three-valued outcome}}
     OUTCOME -->|✓ checked · holds| PASS[✅ pass]
@@ -109,12 +114,14 @@ flowchart TD
     classDef kind     fill:#FFE4B5,stroke:#333,stroke-width:2px,color:black
     classDef ok       fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
     classDef err      fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+    classDef cache    fill:#ADD8E6,stroke:#333,stroke-width:2px,color:black
 
     class INV source
     class EVAL,OUTCOME core
     class DET,MON,SNAP,MUT kind
     class PASS ok
     class FAILV,UNEV err
+    class MUTCACHE,MUTHIT,MUTSAVE cache
 ```
 
 Run-level, the gate reduces the manifest's active invariants to the `invariants`
@@ -258,10 +265,10 @@ It drives the configured coding agent through the same spawn seam the
 `llm-judge` binding uses to seed one fault at a time, runs `test` as the
 deterministic oracle, and classifies each fault killed or survived.
 `evaluateInvariant` runs this harness and reduces its per-mutant results to a
-real `pass`/`fail`/`unevaluable` outcome — see
-[How each kind is evaluated](#how-each-kind-is-evaluated). Persisting each
-mutant's diff and test output as replayable run evidence, and scaffolding a
-`kind: mutation` entry from `ratchet init`, remain follow-on changes.
+real `pass`/`fail`/`unevaluable` outcome, persisting each mutant's diff and test
+output as replayable run evidence — see
+[How each kind is evaluated](#how-each-kind-is-evaluated). Scaffolding a `kind:
+mutation` entry from `ratchet init` remains a follow-on change.
 
 ## Loader contract
 
@@ -326,16 +333,22 @@ spawn or filesystem.
   root) via the injected `readFile`, runs `produce.run`, and diffs the produced
   stdout (trimmed) against the golden (trimmed): equal is pass, differing is fail.
   An **absent golden**, or a `produce` command that **throws**, is `unevaluable`.
-- **mutation** — runs the mutation harness (seeds up to `budget` mutants via the
-  agent spawn seam, gates each on `test` as the kill/survive oracle) and reduces
-  the per-mutant results: any **survived** mutant is a hard `fail`, regardless of
-  how many others were killed. Short of that, **fewer than `threshold`** evaluated
-  mutants is `unevaluable` — not enough evidence to trust a "no survivors" claim.
-  A harness call that **throws**, or an **unusable working tree**, is also
-  `unevaluable`. Otherwise (at least `threshold` mutants evaluated, none
-  survived): pass. Persisting each mutant's diff/test output as replayable run
-  evidence remains a follow-on change; this evaluation's evidence is a
-  human-readable summary string, matching every other kind.
+- **mutation** — checks for a persisted outcome for this `(run.runId,
+  invariant.id)` first; a hit is returned verbatim, with no harness call and no
+  agent spawn. A miss runs the mutation harness (seeds up to `budget` mutants
+  via the agent spawn seam, gates each on `test` as the kill/survive oracle) and
+  reduces the per-mutant results: any **survived** mutant is a hard `fail`,
+  regardless of how many others were killed. Short of that, **fewer than
+  `threshold`** evaluated mutants is `unevaluable` — not enough evidence to trust
+  a "no survivors" claim. A harness call that **throws**, or an **unusable
+  working tree**, is also `unevaluable` (neither persisted nor cached, since no
+  mutant was seeded). Otherwise (at least `threshold` mutants evaluated, none
+  survived): pass. Whenever at least one mutant ran, every mutant's diff and
+  oracle stdout/stderr — killed or survived alike — is persisted as durable run
+  evidence on `InvariantOutcome.artifacts`, and the reduced outcome itself is
+  persisted alongside it, so a survived mutant's exact fault and test output is
+  reproducible from the run record alone and a repeated evaluation of the same
+  run never re-spawns the agent.
 
 ## Gate contributor
 

@@ -494,7 +494,9 @@ of invariants, each one of four kinds — `deterministic` (an absolute predicate
 `threshold` mutation-testing invariant — the seed/oracle/classify/revert harness
 at [`docs/eval-mutation-harness.md`](docs/eval-mutation-harness.md) is wired into
 evaluation: a survived mutant is a hard fail, and too little evaluated evidence
-(fewer than `threshold` mutants reaching a verdict) is unevaluable)
+(fewer than `threshold` mutants reaching a verdict) is unevaluable; each
+mutant's diff/test output is persisted as run evidence, reproducible from the
+run record without re-invoking the agent)
 — and each carrying an `active` flag so an invariant can be
 scaffolded inert before it is turned on. On every `eval
 run` the contributor evaluates the manifest's **active** invariants run-level and

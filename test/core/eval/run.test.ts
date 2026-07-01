@@ -12,9 +12,15 @@ import {
   loadBaselineRunId,
   runArtifactsDir,
   persistCaseArtifacts,
+  invariantArtifactsDir,
+  persistMutationEvidence,
+  persistMutationOutcome,
+  loadPersistedMutationOutcome,
   type EvalRun,
 } from '../../../src/core/eval/run.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
+import type { MutantOutcome } from '../../../src/core/eval/mutation-harness.js';
+import type { InvariantOutcome } from '../../../src/core/eval/invariant-evaluator.js';
 
 const roots: string[] = [];
 
@@ -142,6 +148,71 @@ describe('persistCaseArtifacts / runArtifactsDir', () => {
 
     expect(persisted).toBeUndefined();
     expect(existsSync(runArtifactsDir(root, runId, caseId))).toBe(false);
+  });
+});
+
+// features/mutation-evidence-recording/replayable-evidence.feature — every
+// mutant the harness runs (killed or survived alike) gets its diff and oracle
+// output persisted as durable, project-relative run evidence, and the reduced
+// invariant outcome round-trips through the same directory.
+describe('persistMutationEvidence / persistMutationOutcome / invariantArtifactsDir', () => {
+  const KILLED: MutantOutcome = {
+    index: 0,
+    diff: 'diff --git a/src/x.ts b/src/x.ts\n-a\n+b\n',
+    outcome: 'killed',
+    testResult: { exitCode: 1, stdout: '', stderr: '1 test failed' },
+  };
+  const SURVIVED: MutantOutcome = {
+    index: 1,
+    diff: 'diff --git a/src/y.ts b/src/y.ts\n-c\n+d\n',
+    outcome: 'survived',
+    testResult: { exitCode: 0, stdout: 'PASS', stderr: '' },
+  };
+
+  it('writes one .diff and one .log file per mutant and returns project-relative paths that round-trip the diff/oracle output', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-mut';
+    const invariantId = 'mutants-are-killed';
+
+    const evidence = persistMutationEvidence(root, runId, invariantId, [KILLED, SURVIVED]);
+
+    const dir = invariantArtifactsDir(root, runId, invariantId);
+    expect(dir).toBe(path.join(root, '.ratchet', 'evals', 'runs', runId, 'artifacts', 'invariants', invariantId));
+    expect(evidence).toHaveLength(2);
+
+    expect(evidence[0]!.index).toBe(0);
+    expect(evidence[0]!.outcome).toBe('killed');
+    expect(readFileSync(path.join(root, evidence[0]!.diffPath), 'utf-8')).toBe(KILLED.diff);
+    expect(readFileSync(path.join(root, evidence[0]!.testOutputPath), 'utf-8')).toContain('1 test failed');
+
+    expect(evidence[1]!.index).toBe(1);
+    expect(evidence[1]!.outcome).toBe('survived');
+    expect(readFileSync(path.join(root, evidence[1]!.diffPath), 'utf-8')).toBe(SURVIVED.diff);
+    expect(readFileSync(path.join(root, evidence[1]!.testOutputPath), 'utf-8')).toContain('PASS');
+  });
+
+  it('round-trips a full InvariantOutcome, including artifacts, through persistMutationOutcome/loadPersistedMutationOutcome unchanged', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-outcome';
+    const invariantId = 'mutants-are-killed';
+    const evidence = persistMutationEvidence(root, runId, invariantId, [SURVIVED]);
+    const outcome: InvariantOutcome = {
+      id: invariantId,
+      kind: 'mutation',
+      status: 'fail',
+      measure: 'mutation: pnpm test (budget 3, threshold 3) — 1 evaluated, 1 survived',
+      evidence: '1 of 1 evaluated mutant(s) survived',
+      artifacts: evidence,
+    };
+
+    persistMutationOutcome(root, runId, invariantId, outcome);
+
+    expect(loadPersistedMutationOutcome(root, runId, invariantId)).toEqual(outcome);
+  });
+
+  it('returns undefined when nothing has been persisted yet', () => {
+    const root = makeProject();
+    expect(loadPersistedMutationOutcome(root, '20260101T000000000Z-none', 'mutants-are-killed')).toBeUndefined();
   });
 });
 

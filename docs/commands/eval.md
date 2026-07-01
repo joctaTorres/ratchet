@@ -460,6 +460,17 @@ alphabetical sort order wins and a warning is emitted.
 | `readiness.timeoutMs` | number | Positive integer milliseconds to wait for readiness. Required; the fail-closed boundary — readiness not reached within it is a failure, never an assumed-ready pass. |
 | `spec` | string | Repo-relative path to the Playwright spec that drives the case's Given/When/Then. Required. |
 
+`start`/`readiness`/`spec` are run by the web binding lifecycle harness
+(`runWebLifecycle`): `start` is launched as a background process, `readiness`
+is polled check-then-sleep until it succeeds or `readiness.timeoutMs` elapses
+(a fail-closed timeout, never an assumed-ready pass), `spec` then runs via a
+plain `npx playwright test <spec>` bash invocation, and the started process is
+torn down in a `finally` on every path. See
+[Web binding lifecycle harness](../eval-web-lifecycle.md) for the full
+start/poll/run/teardown contract and its injectable seams. The harness is not
+yet wired into `ratchet eval run` — `judgeCase` still throws for `web`
+bindings until that wiring lands.
+
 ---
 
 ## Fixtures

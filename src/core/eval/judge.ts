@@ -389,5 +389,11 @@ export async function judgeCase(
   if (binding.kind === 'deterministic') {
     return judgeCheck(binding, cwd, deps);
   }
-  return judgeAgent(c, binding, cwd, deps);
+  if (binding.kind === 'llm-judge') {
+    return judgeAgent(c, binding, cwd, deps);
+  }
+  // The `web` binding lifecycle harness (boot/readiness/Playwright run) is wired
+  // in a later change of the `playwright-web-tier` phase; this change only makes
+  // the binding representable.
+  throw new Error(`Web binding execution is not yet implemented for case '${c.id}'.`);
 }

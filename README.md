@@ -415,6 +415,11 @@ features/cli/status#status-as-text:
     - "Output is readable prose, not raw JSON"
 ```
 
+A third kind, `web`, declares a browser-scenario lifecycle instead of a check or
+a judge — `start` (boot command), `readiness` (a `url`-or-`command` probe with a
+required `timeoutMs`), and `spec` (the Playwright test that drives the case). See
+[`ratchet eval`](docs/commands/eval.md#bindings) for its full field shape.
+
 **Fixtures run isolated.** Before judging, the fixture is materialized into a
 throwaway temp working copy that becomes the judging cwd, so a check or agent may
 build/run/mutate freely without touching the checked-in fixture or the host repo.

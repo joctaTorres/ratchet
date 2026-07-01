@@ -26,7 +26,7 @@ interface SetCaseView {
   scenario: string;
   source: string;
   steps: { keyword: string; text: string }[];
-  binding: 'deterministic' | 'llm-judge' | 'unbound';
+  binding: 'deterministic' | 'llm-judge' | 'web' | 'unbound';
   holdout: boolean;
 }
 

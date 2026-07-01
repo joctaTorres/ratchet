@@ -90,3 +90,5 @@ skill/workflow rather than re-author the lifecycle inline.
 - proof-of-work-gate/hard-gate-blocks-on-recorded-proof.feature
 - proof-of-work-gate/status-and-selection-agree.feature
 - proof-of-work-gate/warn-advances-surfacing-failure.feature
+- rerun-recorded-proof/cli-surface.feature
+- rerun-recorded-proof/invalidation-folding.feature

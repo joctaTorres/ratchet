@@ -1,0 +1,9 @@
+features:
+  cli-surface.feature:
+    - delegated-lifecycle
+    - documentation
+    - generalizable-defaults
+  invalidation-folding.feature:
+    - delegated-lifecycle
+    - documentation
+    - generalizable-defaults

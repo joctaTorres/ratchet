@@ -92,6 +92,7 @@ export {
 export {
   aggregateRun,
   isRunComplete,
+  contributorForBindingKind,
   DEFAULT_CONTRIBUTORS,
   deterministicContributor,
   llmJudgeContributor,

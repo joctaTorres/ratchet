@@ -417,7 +417,9 @@ features/cli/status#status-as-text:
 
 A third kind, `web`, declares a browser-scenario lifecycle instead of a check or
 a judge — `start` (boot command), `readiness` (a `url`-or-`command` probe with a
-required `timeoutMs`), and `spec` (the Playwright test that drives the case). See
+required `timeoutMs`), and `spec` (the Playwright test that drives the case). It
+gates as a `deterministic` contributor case (exit-zero Playwright run = pass; a
+non-zero exit or a readiness timeout = fail). See
 [`ratchet eval`](docs/commands/eval.md#bindings) for its full field shape.
 
 **Fixtures run isolated.** Before judging, the fixture is materialized into a

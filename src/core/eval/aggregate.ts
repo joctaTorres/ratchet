@@ -20,8 +20,25 @@ import type { EvalRun } from './run.js';
 import type { BaselineDiff } from './report.js';
 import type { Verdict } from './judge.js';
 import type { InvariantGateResult } from './invariant-gate.js';
+import type { BindingKind } from './spec.js';
 
 export type ContributorId = 'deterministic' | 'llm-judge' | 'invariants' | 'regression';
+
+/**
+ * The single place a binding kind maps to the contributor that gates it.
+ * `web` folds into `deterministic` rather than introducing a new contributor
+ * id — an exhaustive switch so a future `BindingKind` fails to compile here
+ * instead of silently defaulting.
+ */
+export function contributorForBindingKind(kind: BindingKind): ContributorId {
+  switch (kind) {
+    case 'llm-judge':
+      return 'llm-judge';
+    case 'deterministic':
+    case 'web':
+      return 'deterministic';
+  }
+}
 
 /** In-memory inputs a contributor evaluates — no fs, no spawn. */
 export interface ContributorContext {
@@ -67,10 +84,10 @@ function verdictOf(run: EvalRun, caseId: string): Verdict {
   return run.verdicts[caseId]?.verdict ?? 'unjudged';
 }
 
-/** Case ids of `kind`-bound cases whose verdict is `fail`. */
-function failingOfKind(run: EvalRun, kind: 'deterministic' | 'llm-judge'): string[] {
+/** Case ids of `kinds`-bound cases whose verdict is `fail`. */
+function failingOfKind(run: EvalRun, kinds: BindingKind[]): string[] {
   return run.cases
-    .filter((c) => c.bindingKind === kind && verdictOf(run, c.id) === 'fail')
+    .filter((c) => c.bindingKind != null && kinds.includes(c.bindingKind) && verdictOf(run, c.id) === 'fail')
     .map((c) => c.id);
 }
 
@@ -78,16 +95,16 @@ function outcome(id: ContributorId, failing: string[]): ContributorOutcome {
   return { id, status: failing.length > 0 ? 'fail' : 'pass', failing };
 }
 
-/** Fails on any `deterministic`-bound case judged `fail`. */
+/** Fails on any `deterministic`- or `web`-bound case judged `fail`. */
 export const deterministicContributor: Contributor = {
   id: 'deterministic',
-  evaluate: (ctx) => outcome('deterministic', failingOfKind(ctx.run, 'deterministic')),
+  evaluate: (ctx) => outcome('deterministic', failingOfKind(ctx.run, ['deterministic', 'web'])),
 };
 
 /** Fails on any `llm-judge`-bound case judged `fail`. */
 export const llmJudgeContributor: Contributor = {
   id: 'llm-judge',
-  evaluate: (ctx) => outcome('llm-judge', failingOfKind(ctx.run, 'llm-judge')),
+  evaluate: (ctx) => outcome('llm-judge', failingOfKind(ctx.run, ['llm-judge'])),
 };
 
 /** Fails on any baseline regression (passed in baseline, fails now). */

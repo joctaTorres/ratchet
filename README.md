@@ -193,6 +193,8 @@ ratchet archive add-login -y                      # sync features → store, arc
 ├── standards/                # project guidelines, loaded by propose + verify (starts empty)
 ├── changes/
 │   └── archive/              # completed changes land here, date-prefixed
+├── evals/
+│   └── invariants.yaml       # anti-gaming invariant manifest (spec-not-weakened active, rest scaffolded inert)
 └── config.yaml               # schema + project context/rules
 
 .claude/                      # (per selected tool)
@@ -229,7 +231,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
 | `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
-| `eval run` | Judge every bound case through the engine and persist a scored run (`--judge auto\|check\|agent`, `--json`) |
+| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
 | `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
@@ -396,7 +398,7 @@ eval-spec says how to judge it. Each binding maps a case id to a **fixture**
 # .ratchet/evals/specs/status.yaml
 features/cli/status#status-as-json:
   fixture: status-ok          # .ratchet/evals/fixtures/status-ok/
-  kind: check                 # deterministic — preferred
+  kind: deterministic         # preferred
   setup: pnpm install         # optional: runs ONCE into a cached working copy
   check:
     run: ratchet status --json
@@ -404,7 +406,7 @@ features/cli/status#status-as-json:
 
 features/cli/status#status-as-text:
   fixture: verify-sample
-  kind: agent                 # spawned-judge fallback for prose-y scenarios
+  kind: llm-judge             # spawned-judge fallback for prose-y scenarios
   success: the status output is human-readable text
   agentVotes: 3               # N-of-M repeat votes; majority wins
 ```
@@ -418,14 +420,48 @@ fixture+setup and reused across every case bound to it.
 **The agent judge is guarded.** It **fails closed on uncertainty** (no concrete
 evidence ⇒ not a pass) and may cast **N-of-M votes** (`agentVotes`, default 1).
 When votes disagree, the case is recorded `unjudged` — never silently `fail` — so
-judge noise can't manufacture a regression. Prefer a deterministic `check`.
+judge noise can't manufacture a regression. Prefer a `deterministic` binding.
 
 **Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
 is a case that **passed in the baseline and fails now**; new/retired cases are
 diffed, not failed. `unjudged` keeps a run incomplete and never counts as a pass.
-The overall verdict fails while any regression or fail exists — so never promote a
-run to baseline while a regression exists. Unbound cases (no fixture) can take a
-manual verdict via `ratchet eval record` (a `fail` requires `--evidence`).
+Unbound cases (no fixture) can take a manual verdict via `ratchet eval record`
+(a `fail` requires `--evidence`).
+
+**One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
+place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a
+logical **AND over named contributors** (`deterministic`, `llm-judge`,
+`invariants`, `regression`): the run passes only when every contributor passes,
+and `eval run` reports the verdict with its per-contributor breakdown.
+Contributors are the extension point for future gate capabilities. An
+**incomplete** run (any case `unjudged`) **cannot be promoted to baseline** — so
+an unfinished run can never become the regression baseline future runs are judged
+against.
+
+**Invariants (`.ratchet/evals/invariants.yaml`).** The `invariants` contributor
+draws its run-level, anti-gaming checks from a checked-in manifest: a YAML list
+of invariants, each one of three kinds — `deterministic` (an absolute predicate),
+`monotonic` (a named measure that must not decrease vs the baseline), `snapshot`
+(output diffed against a checked-in golden) — and each carrying an `active` flag
+so an invariant can be scaffolded inert before it is turned on. On every `eval
+run` the contributor evaluates the manifest's **active** invariants run-level and
+**hard-fails the run — surfaced first, as a sibling to a regression** — when any
+is violated, unevaluable, or the manifest can't be loaded; inert invariants are
+skipped, never counted as vacuous passes. It is **fail-closed** at both layers: an
+absent manifest is the only path to an empty (passing) set, while a malformed
+manifest or an uncheckable active invariant fails the run rather than degrading to
+a vacuous pass. `--no-invariants` (or `eval.gate.invariants: false`) disables the
+gate for a run. See the [eval invariant manifest](docs/eval-invariants.md)
+Reference doc for the schema, the gate contributor, and the loader contract.
+
+**The gate is configurable.** Which contributors execute and gate a run is
+selectable, generalizing the old `--judge` flag: set `eval.gate` in
+`.ratchet/config.yaml` (a `contributor → boolean` map; unset ⇒ all enabled) and
+override per run with `--gate <ids>`, `--only <ids>`, `--no-llm-judge`, or
+`--no-invariants`. A disabled contributor records its cases `unjudged` — leaving
+the run incomplete and unpromotable — and takes no part in the AND (a disabled
+`invariants` contributor simply isn't evaluated). `--judge` remains as a
+deprecated alias mapped onto the gate.
 
 ## Agent workflows (skills / `/rct:` commands)
 

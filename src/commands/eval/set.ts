@@ -20,7 +20,7 @@ interface SetCaseView {
   scenario: string;
   source: string;
   steps: { keyword: string; text: string }[];
-  binding: 'check' | 'agent' | 'unbound';
+  binding: 'deterministic' | 'llm-judge' | 'unbound';
 }
 
 export async function evalSetCommand(options: EvalSetOptions = {}): Promise<void> {

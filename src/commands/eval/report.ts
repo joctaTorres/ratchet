@@ -18,7 +18,7 @@ export interface EvalReportOptions {
 export async function evalReportCommand(options: EvalReportOptions = {}): Promise<void> {
   if (!options.run) throw new Error('Missing required --run <id>.');
   const root = projectRoot();
-  const report = buildReport(root, options.run);
+  const report = await buildReport(root, options.run);
 
   if (options.json) {
     console.log(JSON.stringify(report, null, 2));

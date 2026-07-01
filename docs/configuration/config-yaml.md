@@ -129,7 +129,21 @@ Project-level defaults for `ratchet eval` orchestration.
 
 | Key | Type | Default | Accepted values | Description |
 |---|---|---|---|---|
-| `judge` | string | — | `auto` `check` `agent` | Default judge mode for `ratchet eval run` when no `--judge` flag is given. |
+| `gate` | object | every contributor enabled | keys `deterministic` `llm-judge` `invariants` `regression` → boolean | Enables or disables each verdict contributor for `ratchet eval run`. An omitted contributor stays enabled; an unset `gate` ⇒ every contributor enabled. Overridable per run by `--gate`/`--only`/`--no-llm-judge`/`--no-invariants`. |
+| `judge` | string | — | `auto` `deterministic` `llm-judge` | **Deprecated** default judge mode, mapped onto the gate (`deterministic` disables `llm-judge`, `llm-judge` disables `deterministic`, `auto` enables both). Prefer `gate`. |
+
+The `gate` map selects which contributors execute and gate a run, generalizing
+the legacy `judge` mode. A contributor disabled here records its cases
+`unjudged` (leaving the run incomplete, so it cannot be promoted to baseline) and
+takes no part in the overall AND verdict. Setting `invariants: false` disables the
+run-level [invariant gate](../eval-invariants.md#gate-contributor) — the
+`.ratchet/evals/invariants.yaml` manifest is not loaded and no invariant command
+runs for the run (equivalent to `--no-invariants`). See
+[Eval verdict aggregation](../eval-verdict-aggregation.md#contributor-selection-the-gate).
+
+An unknown contributor id under `gate` (or a non-boolean value) is rejected: the
+whole `eval` section is dropped with a warning, and `eval run` falls back to
+every contributor enabled.
 
 ---
 
@@ -160,5 +174,9 @@ batch:
       - "Bash(curl*)"
 
 eval:
-  judge: auto
+  gate:
+    deterministic: true
+    llm-judge: true
+    invariants: true
+    regression: true
 ```

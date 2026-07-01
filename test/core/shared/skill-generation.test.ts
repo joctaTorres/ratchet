@@ -53,6 +53,14 @@ describe('skill-generation', () => {
         expect(content).toContain('name: ratchet-eval');
         expect(content).toContain('ratchet eval run');
         expect(content).toContain('ratchet eval report');
+        // Tier vocabulary: bindings are described as deterministic / llm-judge,
+        // never the retired check / agent kind names.
+        expect(content).toContain('deterministic');
+        expect(content).toContain('llm-judge');
+        expect(content).not.toContain('kind: check');
+        expect(content).not.toContain('kind: agent');
+        expect(content).not.toContain('--judge check');
+        expect(content).not.toContain('--judge agent');
         // Tool-agnostic: never names a single agent's tooling unconditionally.
         expect(content.toLowerCase()).toContain('your agent');
         // The target path is derived from the tool's skillsDir.

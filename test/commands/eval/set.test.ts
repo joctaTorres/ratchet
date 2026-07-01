@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   makeEvalFixture,
   TWO_CASE_FEATURE,
-  CHECK_SPEC,
+  DETERMINISTIC_SPEC,
   CASE_JSON,
   CASE_TEXT,
   type EvalFixture,
@@ -39,7 +39,7 @@ describe('evalSetCommand', () => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     resolvePlanningHomeMock.mockReturnValue({ root: fixture.root });
     await fixture.writeFeature('cli/status.feature', TWO_CASE_FEATURE);
-    await fixture.writeSpec('cli.yaml', CHECK_SPEC);
+    await fixture.writeSpec('cli.yaml', DETERMINISTIC_SPEC);
   });
 
   afterEach(async () => {
@@ -64,7 +64,7 @@ describe('evalSetCommand', () => {
     expect(bound.feature).toBe('Status');
     expect(bound.scenario).toBe('Status as JSON');
     expect(bound.source).toBe('features/cli/status.feature');
-    expect(bound.binding).toBe('check');
+    expect(bound.binding).toBe('deterministic');
     expect(bound.steps).toEqual([
       { keyword: 'Given', text: 'a project' },
       { keyword: 'When', text: 'I run status' },
@@ -79,8 +79,10 @@ describe('evalSetCommand', () => {
     const text = output();
 
     expect(text).toContain('Eval set (store): 2 case(s)');
-    expect(text).toContain(`[check] ${CASE_JSON}`);
+    expect(text).toContain(`[deterministic] ${CASE_JSON}`);
     expect(text).toContain(`[unbound] ${CASE_TEXT}`);
+    expect(text).not.toContain('[check]');
+    expect(text).not.toContain('[agent]');
     expect(text).toContain('Status › Status as JSON');
     expect(text).toContain('Status › Status as text');
   });

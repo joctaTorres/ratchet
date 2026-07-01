@@ -2,10 +2,13 @@ import { afterEach, describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { buildReport, diffAgainstBaseline } from '../../../src/core/eval/report.js';
 import { persistRun, promoteBaseline, toSnapshot, type EvalRun } from '../../../src/core/eval/run.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
 import type { Verdict } from '../../../src/core/eval/judge.js';
+import type { BindingKind } from '../../../src/core/eval/spec.js';
+import type { ContributorId } from '../../../src/core/eval/aggregate.js';
 
 const roots: string[] = [];
 
@@ -25,14 +28,23 @@ function mkCase(id: string): EvalCase {
   };
 }
 
-function mkRun(runId: string, verdicts: Record<string, { verdict: Verdict; reason?: string }>): EvalRun {
+function mkRun(
+  runId: string,
+  verdicts: Record<string, { verdict: Verdict; reason?: string; kind?: BindingKind | null }>,
+  gate?: ContributorId[]
+): EvalRun {
   const ids = Object.keys(verdicts);
+  // A judged case is a bound case: pass/fail default to a deterministic binding
+  // kind so the aggregation core attributes them to a contributor; unjudged
+  // cases default to unbound (null), as in a real run.
+  const kindFor = (v: { verdict: Verdict; kind?: BindingKind | null }): BindingKind | null =>
+    v.kind !== undefined ? v.kind : v.verdict === 'unjudged' ? null : 'deterministic';
   return {
     runId,
     createdAt: new Date().toISOString(),
-    judgeMode: 'auto',
     scope: { kind: 'store' },
-    cases: ids.map((id) => toSnapshot(mkCase(id), null)),
+    ...(gate ? { gate } : {}),
+    cases: ids.map((id) => toSnapshot(mkCase(id), kindFor(verdicts[id]))),
     verdicts: Object.fromEntries(
       ids.map((id) => [
         id,
@@ -46,8 +58,15 @@ afterEach(() => {
   for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
 });
 
+/** Write `.ratchet/evals/invariants.yaml` under a project root. */
+function writeManifest(root: string, yaml: string): void {
+  const dir = path.join(root, '.ratchet', 'evals');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'invariants.yaml'), yaml, 'utf-8');
+}
+
 describe('scorecard', () => {
-  it('counts pass, fail and unjudged and lists failing evidence', () => {
+  it('counts pass, fail and unjudged and lists failing evidence', async () => {
     const root = makeProject();
     persistRun(
       root,
@@ -57,28 +76,109 @@ describe('scorecard', () => {
         'a#unj': { verdict: 'unjudged' },
       })
     );
-    const report = buildReport(root, 'r1');
+    const report = await buildReport(root, 'r1');
     expect(report.scorecard).toMatchObject({ total: 3, pass: 1, fail: 1, unjudged: 1, complete: false });
     expect(report.failing).toHaveLength(1);
     expect(report.failing[0].evidence).toBe('boom');
     expect(report.overall).toBe('fail');
   });
 
-  it('marks a run complete only when nothing is unjudged', () => {
+  it('marks a run complete only when nothing is unjudged', async () => {
     const root = makeProject();
     persistRun(root, mkRun('r1', { 'a#p': { verdict: 'pass' } }));
-    expect(buildReport(root, 'r1').scorecard.complete).toBe(true);
-    expect(buildReport(root, 'r1').overall).toBe('pass');
+    expect((await buildReport(root, 'r1')).scorecard.complete).toBe(true);
+    expect((await buildReport(root, 'r1')).overall).toBe('pass');
+  });
+});
+
+// features/eval-verdict-aggregation/aggregation-core.feature
+describe('overall verdict routed through the aggregation core', () => {
+  it('exposes a per-contributor breakdown and fails via the failing contributor', async () => {
+    const root = makeProject();
+    persistRun(
+      root,
+      mkRun('r1', {
+        'a#det': { verdict: 'fail', reason: 'boom', kind: 'deterministic' },
+        'a#llm': { verdict: 'pass', kind: 'llm-judge' },
+      })
+    );
+    const report = await buildReport(root, 'r1');
+    expect(report.overall).toBe('fail');
+    // Every contributor is reported; the deterministic one fails and names the case.
+    const ids = report.contributors.map((c) => c.id);
+    expect(ids).toEqual(['deterministic', 'llm-judge', 'invariants', 'regression']);
+    const det = report.contributors.find((c) => c.id === 'deterministic');
+    expect(det).toMatchObject({ status: 'fail', failing: ['a#det'] });
+    expect(report.contributors.find((c) => c.id === 'llm-judge')?.status).toBe('pass');
+  });
+
+  it('reports the regression contributor as the failing one on a baseline regression', async () => {
+    const root = makeProject();
+    persistRun(root, mkRun('base', { 'a#x': { verdict: 'pass' } }));
+    promoteBaseline(root, 'base');
+    persistRun(root, mkRun('cur', { 'a#x': { verdict: 'fail', reason: 'broke' } }));
+    const report = await buildReport(root, 'cur');
+    expect(report.overall).toBe('fail');
+    const failing = report.contributors.filter((c) => c.status === 'fail').map((c) => c.id);
+    // Both the deterministic check and the regression fire on this case.
+    expect(failing).toContain('regression');
+    expect(report.contributors.find((c) => c.id === 'regression')?.failing).toEqual(['a#x']);
+  });
+});
+
+// features/eval-contributor-gate/gate-selection.feature — the report ANDs only
+// over the contributors recorded on `run.gate`; a disabled one takes no part.
+describe('AND over the enabled contributor set (run.gate)', () => {
+  it('excludes a disabled contributor from the AND so the run can still pass', async () => {
+    const root = makeProject();
+    // An llm-judge case fails, but the llm-judge contributor is NOT in run.gate.
+    persistRun(
+      root,
+      mkRun(
+        'gated',
+        {
+          'a#det': { verdict: 'pass', kind: 'deterministic' },
+          'a#llm': { verdict: 'fail', reason: 'would fail', kind: 'llm-judge' },
+        },
+        ['deterministic', 'invariants', 'regression']
+      )
+    );
+    const report = await buildReport(root, 'gated');
+    // The disabled llm-judge contributor is absent from the breakdown and the AND.
+    expect(report.contributors.map((c) => c.id)).toEqual([
+      'deterministic',
+      'invariants',
+      'regression',
+    ]);
+    expect(report.overall).toBe('pass');
+  });
+
+  it('includes the contributor in the AND when it is enabled (control)', async () => {
+    const root = makeProject();
+    persistRun(
+      root,
+      mkRun(
+        'enabled',
+        {
+          'a#det': { verdict: 'pass', kind: 'deterministic' },
+          'a#llm': { verdict: 'fail', reason: 'would fail', kind: 'llm-judge' },
+        },
+        ['deterministic', 'llm-judge', 'invariants', 'regression']
+      )
+    );
+    const report = await buildReport(root, 'enabled');
+    expect(report.contributors.find((c) => c.id === 'llm-judge')?.status).toBe('fail');
+    expect(report.overall).toBe('fail');
   });
 });
 
 describe('baseline diff', () => {
-  it('flags a regression: passed in baseline, fails now', () => {
+  it('flags a regression: passed in baseline, fails now', async () => {
     const root = makeProject();
     persistRun(root, mkRun('base', { 'status-as-json': { verdict: 'pass' } }));
     promoteBaseline(root, 'base');
     persistRun(root, mkRun('cur', { 'status-as-json': { verdict: 'fail', reason: 'broke' } }));
-    const report = buildReport(root, 'cur');
+    const report = await buildReport(root, 'cur');
     expect(report.diff.regressions).toEqual(['status-as-json']);
     expect(report.overall).toBe('fail');
   });
@@ -97,5 +197,100 @@ describe('baseline diff', () => {
     const current = mkRun('cur', { 'a#x': { verdict: 'fail', reason: 'r' } });
     const diff = diffAgainstBaseline(current, baseline);
     expect(diff.regressions).toEqual([]);
+  });
+});
+
+// features/eval-invariants/contributor.feature — the run-level invariant gate is
+// evaluated inside buildReport, run-level, over the manifest's ACTIVE invariants.
+describe('invariants gate run-level through buildReport', () => {
+  // A monotonic `scenario-count` invariant compares the current run's case count
+  // against the promoted baseline's — no command, so the gate runs without bash.
+  const MONOTONIC = 'invariants:\n  - id: spec-not-weakened\n    kind: monotonic\n    active: true\n    measure: scenario-count\n';
+
+  it('passes the run when an active invariant is satisfied, exposing the breakdown', async () => {
+    const root = makeProject();
+    // Baseline has 1 case; current has 2 ⇒ scenario-count did not decrease.
+    persistRun(root, mkRun('base', { 'a#x': { verdict: 'pass' } }));
+    promoteBaseline(root, 'base');
+    persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' }, 'a#y': { verdict: 'pass' } }));
+    writeManifest(root, MONOTONIC);
+    const report = await buildReport(root, 'cur');
+    expect(report.overall).toBe('pass');
+    expect(report.contributors.find((c) => c.id === 'invariants')?.status).toBe('pass');
+    // The per-invariant breakdown is present on the report.
+    expect(report.invariants.map((o) => o.id)).toEqual(['spec-not-weakened']);
+    expect(report.invariants[0].status).toBe('pass');
+  });
+
+  it('hard-fails the run run-level when an active invariant is violated', async () => {
+    const root = makeProject();
+    // Baseline has 2 cases; current has 1 ⇒ scenario-count decreased ⇒ violation.
+    persistRun(root, mkRun('base', { 'a#x': { verdict: 'pass' }, 'a#y': { verdict: 'pass' } }));
+    promoteBaseline(root, 'base');
+    persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' } }));
+    writeManifest(root, MONOTONIC);
+    const report = await buildReport(root, 'cur');
+    expect(report.overall).toBe('fail');
+    const inv = report.contributors.find((c) => c.id === 'invariants');
+    expect(inv?.status).toBe('fail');
+    expect(inv?.failing).toEqual(['spec-not-weakened']);
+  });
+
+  it('skips an inert invariant: not evaluated, never a vacuous pass', async () => {
+    const root = makeProject();
+    // The invariant WOULD fail (count decreased) but it is inert.
+    persistRun(root, mkRun('base', { 'a#x': { verdict: 'pass' }, 'a#y': { verdict: 'pass' } }));
+    promoteBaseline(root, 'base');
+    persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' } }));
+    writeManifest(
+      root,
+      'invariants:\n  - id: spec-not-weakened\n    kind: monotonic\n    active: false\n    measure: scenario-count\n'
+    );
+    const report = await buildReport(root, 'cur');
+    expect(report.overall).toBe('pass');
+    expect(report.contributors.find((c) => c.id === 'invariants')?.status).toBe('pass');
+    // The inert invariant is not recorded as a passing invariant.
+    expect(report.invariants).toEqual([]);
+  });
+
+  it('fails the run closed when an active invariant is unevaluable', async () => {
+    const root = makeProject();
+    // Monotonic with no promoted baseline ⇒ unevaluable ⇒ violation.
+    persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' } }));
+    writeManifest(root, MONOTONIC);
+    const report = await buildReport(root, 'cur');
+    expect(report.overall).toBe('fail');
+    expect(report.contributors.find((c) => c.id === 'invariants')?.failing).toEqual([
+      'spec-not-weakened',
+    ]);
+    expect(report.invariants[0].status).toBe('unevaluable');
+  });
+
+  it('fails the run closed when the manifest is present but unloadable', async () => {
+    const root = makeProject();
+    persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' } }));
+    writeManifest(root, 'invariants:\n  - id: bogus\n    kind: not-a-kind\n    active: true\n');
+    const report = await buildReport(root, 'cur');
+    expect(report.overall).toBe('fail');
+    const inv = report.contributors.find((c) => c.id === 'invariants');
+    expect(inv?.status).toBe('fail');
+    expect(inv?.failing).toEqual(['invariants.yaml']);
+    expect(report.loadError).toBeTruthy();
+  });
+
+  it('does not evaluate the gate when the invariants contributor is disabled', async () => {
+    const root = makeProject();
+    // A malformed manifest WOULD fail the gate, but the contributor is disabled
+    // via run.gate, so the gate is never evaluated and the run still passes.
+    persistRun(
+      root,
+      mkRun('cur', { 'a#x': { verdict: 'pass' } }, ['deterministic', 'llm-judge', 'regression'])
+    );
+    writeManifest(root, 'invariants:\n  - id: bogus\n    kind: not-a-kind\n    active: true\n');
+    const report = await buildReport(root, 'cur');
+    expect(report.overall).toBe('pass');
+    expect(report.contributors.map((c) => c.id)).not.toContain('invariants');
+    expect(report.invariants).toEqual([]);
+    expect(report.loadError).toBeUndefined();
   });
 });

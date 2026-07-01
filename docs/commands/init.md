@@ -48,9 +48,11 @@ ratchet init [path] [options]
 
 8. **`config.yaml` creation.** `.ratchet/config.yaml` is created with the default schema on first init. In non-interactive mode without `--force`, config creation is skipped if the file does not already exist. An existing config file is never overwritten.
 
-9. **Sandbox permission setup.** In interactive mode, when no project-level permission policy exists in `.ratchet/config.yaml`, `init` offers to configure an agent sandbox permission posture. This governs what spawned coding agents may do without approval. The offer is skipped in non-interactive mode and when a project-level policy already exists.
+9. **Default invariant manifest.** `.ratchet/evals/invariants.yaml` is written (`created`) when no manifest exists yet, with `spec-not-weakened` active and the stack-specific `tests-still-exist` / `public-api-unchanged` invariants scaffolded inert (`tests-still-exist` live-but-inert when a conventional test directory is detected, commented otherwise; `public-api-unchanged` always a commented placeholder). Unlike `config.yaml`, this write is never skipped in non-interactive mode — the manifest is deterministic scaffolding, not a user choice, and the anti-gaming gate it feeds must be real on every `ratchet init`, including unattended/CI runs. An existing manifest is never overwritten (`exists`), so user edits (e.g. flipping an invariant active) survive re-init. See the [eval invariant manifest](../eval-invariants.md) reference for the schema.
 
-10. **Doctor check.** On a first init (not extend mode), `init` runs a non-blocking dependency check (`ratchet doctor`) and reports any missing external dependencies as warnings. A failing doctor check never aborts initialization.
+10. **Sandbox permission setup.** In interactive mode, when no project-level permission policy exists in `.ratchet/config.yaml`, `init` offers to configure an agent sandbox permission posture. This governs what spawned coding agents may do without approval. The offer is skipped in non-interactive mode and when a project-level policy already exists.
+
+11. **Doctor check.** On a first init (not extend mode), `init` runs a non-blocking dependency check (`ratchet doctor`) and reports any missing external dependencies as warnings. A failing doctor check never aborts initialization.
 
 ## Directory layout created
 
@@ -60,6 +62,8 @@ ratchet init [path] [options]
     ├── config.yaml
     ├── changes/
     │   └── archive/
+    ├── evals/
+    │   └── invariants.yaml
     ├── features/
     └── standards/
 ```

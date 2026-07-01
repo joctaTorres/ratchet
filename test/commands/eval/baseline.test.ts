@@ -32,7 +32,6 @@ function seedRun(): EvalRun {
   return {
     runId: RUN_ID,
     createdAt: '2026-01-01T00:00:00.000Z',
-    judgeMode: 'auto',
     scope: { kind: 'store' },
     cases: [
       {

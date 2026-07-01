@@ -1,17 +1,18 @@
 /**
  * Integration tests for the `ratchet eval` shared helpers.
  *
- * Implements features/eval-command-tests/shared.feature: `resolveScope`
- * (store default, --change, --path, --changes, and the mutually-exclusive
- * error) and `resolveJudgeMode` (explicit valid flag wins, invalid flag
- * rejected, the `eval.judge` config default over a fixture config, and the
- * `auto` fallback). The helpers are exercised directly — no command
- * entrypoint — with judge-default cases reading a real `config.yaml` from an
- * isolated tmpdir fixture removed in afterEach.
+ * Implements features/eval-command-tests/shared.feature and
+ * features/eval-contributor-gate/gate-selection.feature: `resolveScope` (store
+ * default, --change, --path, --changes, and the mutually-exclusive error) and
+ * `resolveContributorGate` (all-enabled default, the `eval.gate` config default
+ * over a fixture config, a CLI flag overriding that config, and unknown-id
+ * rejection). The helpers are exercised directly — no command entrypoint — with
+ * gate cases reading a real `config.yaml` from an isolated tmpdir fixture
+ * removed in afterEach.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { resolveScope, resolveJudgeMode } from '../../../src/commands/eval/shared.js';
+import { resolveScope, resolveContributorGate } from '../../../src/commands/eval/shared.js';
 import { makeEvalFixture, type EvalFixture } from './eval-fixture.js';
 
 describe('resolveScope', () => {
@@ -45,7 +46,7 @@ describe('resolveScope', () => {
   });
 });
 
-describe('resolveJudgeMode', () => {
+describe('resolveContributorGate', () => {
   let fixture: EvalFixture;
 
   beforeEach(async () => {
@@ -56,25 +57,43 @@ describe('resolveJudgeMode', () => {
     await fixture.cleanup();
   });
 
-  it('uses an explicit valid --judge flag without reading project config', () => {
-    // No config.yaml is written, so a config read would surface as `auto`;
-    // the explicit flag must win regardless.
-    expect(resolveJudgeMode(fixture.root, 'check')).toBe('check');
-  });
-
-  it('rejects an invalid --judge flag listing the valid modes', () => {
-    expect(() => resolveJudgeMode(fixture.root, 'nonsense')).toThrow(
-      /auto \| check \| agent/
-    );
-  });
-
-  it('uses the configured eval.judge default when no flag is given', async () => {
-    await fixture.writeConfig('schema: ratchet\neval:\n  judge: agent\n');
-    expect(resolveJudgeMode(fixture.root, undefined)).toBe('agent');
-  });
-
-  it('falls back to auto when unflagged and the config does not set eval.judge', async () => {
+  it('enables every contributor when neither config nor flags select a gate', async () => {
     await fixture.writeConfig('schema: ratchet\n');
-    expect(resolveJudgeMode(fixture.root, undefined)).toBe('auto');
+    const gate = resolveContributorGate(fixture.root, {});
+    expect([...gate]).toEqual(['deterministic', 'llm-judge', 'invariants', 'regression']);
+  });
+
+  it('disables a contributor from the eval.gate config default', async () => {
+    await fixture.writeConfig('schema: ratchet\neval:\n  gate:\n    llm-judge: false\n');
+    const gate = resolveContributorGate(fixture.root, {});
+    expect(gate.has('llm-judge')).toBe(false);
+    expect(gate.has('deterministic')).toBe(true);
+  });
+
+  it('lets a CLI flag override the config default', async () => {
+    // Config leaves every contributor enabled; --no-llm-judge wins for the run.
+    await fixture.writeConfig('schema: ratchet\n');
+    const gate = resolveContributorGate(fixture.root, { llmJudge: false });
+    expect(gate.has('llm-judge')).toBe(false);
+  });
+
+  it('disables invariants from the eval.gate config default', async () => {
+    await fixture.writeConfig('schema: ratchet\neval:\n  gate:\n    invariants: false\n');
+    const gate = resolveContributorGate(fixture.root, {});
+    expect(gate.has('invariants')).toBe(false);
+    expect(gate.has('deterministic')).toBe(true);
+  });
+
+  it('lets --no-invariants override the config default', async () => {
+    await fixture.writeConfig('schema: ratchet\n');
+    const gate = resolveContributorGate(fixture.root, { invariants: false });
+    expect(gate.has('invariants')).toBe(false);
+  });
+
+  it('rejects an unknown --only id listing the valid ids', async () => {
+    await fixture.writeConfig('schema: ratchet\n');
+    expect(() => resolveContributorGate(fixture.root, { only: 'not-a-contributor' })).toThrow(
+      /Unknown contributor id 'not-a-contributor'.*deterministic, llm-judge, invariants, regression/
+    );
   });
 });

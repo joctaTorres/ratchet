@@ -34,11 +34,18 @@ function sampleRun(runId: string): EvalRun {
   return {
     runId,
     createdAt: new Date().toISOString(),
-    judgeMode: 'auto',
     scope: { kind: 'store' },
     cases: [toSnapshot(CASE, null)],
     verdicts: { 'f/x#one': { verdict: 'unjudged', reason: 'unbound', source: 'judged' } },
   };
+}
+
+/** A run whose single case is judged — i.e. a complete run. */
+function completeRun(runId: string): EvalRun {
+  const run = sampleRun(runId);
+  run.cases = [toSnapshot(CASE, 'deterministic')];
+  run.verdicts = { 'f/x#one': { verdict: 'pass', reason: '', source: 'judged' } };
+  return run;
 }
 
 afterEach(() => {
@@ -107,9 +114,9 @@ describe('recordVerdict', () => {
 });
 
 describe('baseline', () => {
-  it('promotes a run and reads it back', () => {
+  it('promotes a complete run and reads it back', () => {
     const root = makeProject();
-    persistRun(root, sampleRun('r1'));
+    persistRun(root, completeRun('r1'));
     promoteBaseline(root, 'r1');
     expect(loadBaselineRunId(root)).toBe('r1');
   });
@@ -117,5 +124,54 @@ describe('baseline', () => {
   it('refuses to promote a missing run', () => {
     const root = makeProject();
     expect(() => promoteBaseline(root, 'ghost')).toThrow(/not found/i);
+  });
+
+  // features/eval-verdict-aggregation/baseline-promotion-guard.feature
+  it('rejects an incomplete run and leaves the baseline unchanged', () => {
+    const root = makeProject();
+    // Seed an existing baseline, then attempt to promote an incomplete run.
+    persistRun(root, completeRun('good'));
+    promoteBaseline(root, 'good');
+    persistRun(root, sampleRun('incomplete')); // single case is unjudged
+
+    expect(() => promoteBaseline(root, 'incomplete')).toThrow(/incomplete/i);
+    // The baseline still points at the previously-promoted complete run.
+    expect(loadBaselineRunId(root)).toBe('good');
+  });
+
+  it('leaves no baseline behind when an incomplete run is the first promotion', () => {
+    const root = makeProject();
+    persistRun(root, sampleRun('incomplete'));
+    expect(() => promoteBaseline(root, 'incomplete')).toThrow(/incomplete/i);
+    expect(loadBaselineRunId(root)).toBeNull();
+  });
+
+  // features/eval-contributor-gate/disabled-contributor-incompleteness.feature:
+  // a run left incomplete by a disabled contributor (its case unjudged) cannot
+  // be promoted, leaving any existing baseline untouched.
+  it('refuses to promote a run made incomplete by a disabled contributor', () => {
+    const root = makeProject();
+    persistRun(root, completeRun('good'));
+    promoteBaseline(root, 'good');
+
+    // A run whose only llm-judge case is unjudged because llm-judge is disabled.
+    const gated: EvalRun = {
+      runId: 'gated',
+      createdAt: new Date().toISOString(),
+      scope: { kind: 'store' },
+      gate: ['deterministic', 'invariants', 'regression'],
+      cases: [toSnapshot(CASE, 'llm-judge')],
+      verdicts: {
+        'f/x#one': {
+          verdict: 'unjudged',
+          reason: "Contributor 'llm-judge' is disabled for this run; case recorded unjudged (never executed).",
+          source: 'judged',
+        },
+      },
+    };
+    persistRun(root, gated);
+
+    expect(() => promoteBaseline(root, 'gated')).toThrow(/incomplete/i);
+    expect(loadBaselineRunId(root)).toBe('good');
   });
 });

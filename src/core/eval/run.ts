@@ -15,6 +15,7 @@ import { RATCHET_DIR_NAME } from '../config.js';
 import type { EvalCase } from './set.js';
 import type { Verdict } from './judge.js';
 import type { BindingKind } from './spec.js';
+import { isRunComplete, type ContributorId } from './aggregate.js';
 
 export type VerdictSource = 'judged' | 'manual';
 
@@ -38,8 +39,14 @@ export interface CaseRecord {
 export interface EvalRun {
   runId: string;
   createdAt: string;
-  judgeMode: string;
   scope: { kind: string; target?: string };
+  /**
+   * The enabled contributor ids that gated this run, in display order. A case
+   * bound to a contributor absent here was recorded `unjudged` rather than
+   * executed, and `buildReport` ANDs only over these contributors. Absent on
+   * legacy runs persisted before the gate existed ⇒ treated as all-enabled.
+   */
+  gate?: ContributorId[];
   cases: CaseSnapshot[];
   verdicts: Record<string, CaseRecord>;
 }
@@ -150,10 +157,22 @@ export function loadBaselineRunId(projectRoot: string): string | null {
   }
 }
 
-/** Promote a run to baseline (`baseline.json = { runId }`). */
+/**
+ * Promote a run to baseline (`baseline.json = { runId }`).
+ *
+ * An incomplete run (any case still `unjudged`) is rejected through the
+ * aggregation core's completeness signal, leaving `baseline.json` unchanged, so
+ * an incomplete run can never become the regression baseline future runs are
+ * judged against.
+ */
 export function promoteBaseline(projectRoot: string, runId: string): void {
   // Validate the run exists before promoting.
-  loadRun(projectRoot, runId);
+  const run = loadRun(projectRoot, runId);
+  if (!isRunComplete(run)) {
+    throw new Error(
+      `Run '${runId}' is incomplete (some cases are unjudged) and cannot be promoted to baseline.`
+    );
+  }
   const file = baselinePath(projectRoot);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify({ runId }, null, 2), 'utf-8');

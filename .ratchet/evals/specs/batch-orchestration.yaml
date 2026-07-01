@@ -1,6 +1,6 @@
 # Eval-spec bindings for the batch-orchestration change.
 #
-# Every bound case is a deterministic `check`: the `run` script performs the
+# Every bound case is a `deterministic` binding: the `run` script performs the
 # real `ratchet` invocation(s) inside a fresh throwaway copy of the named
 # fixture and then asserts the scenario's Then post-condition, exiting non-zero
 # on any mismatch (`set -e`, `test`, `grep -q`, `|| exit 1`). `pass: exit-zero`
@@ -45,7 +45,7 @@
 
 changes/batch-orchestration/features/batch-template/batch-template#print-the-canonical-batch-template:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -60,7 +60,7 @@ changes/batch-orchestration/features/batch-template/batch-template#print-the-can
 
 changes/batch-orchestration/features/batch-template/batch-template#scaffolded-batches-start-from-the-template:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -77,7 +77,7 @@ changes/batch-orchestration/features/batch-template/batch-template#scaffolded-ba
 
 changes/batch-orchestration/features/batch-template/batch-template#validating-a-batch-manifest:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -109,7 +109,7 @@ changes/batch-orchestration/features/batch-template/batch-template#validating-a-
 
 changes/batch-orchestration/features/batch-template/batch-template#a-hand-edited-manifest-is-a-first-class-manifest:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -138,7 +138,7 @@ changes/batch-orchestration/features/batch-template/batch-template#a-hand-edited
 
 changes/batch-orchestration/features/batch-manifest/create-batch#scaffold-a-new-batch-from-the-template:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -150,7 +150,7 @@ changes/batch-orchestration/features/batch-manifest/create-batch#scaffold-a-new-
 
 changes/batch-orchestration/features/batch-manifest/create-batch#creating-a-batch-that-already-exists-fails-safely:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -168,7 +168,7 @@ changes/batch-orchestration/features/batch-manifest/create-batch#creating-a-batc
 
 changes/batch-orchestration/features/batch-manifest/create-batch#batch-names-are-validated-like-change-names:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -182,7 +182,7 @@ changes/batch-orchestration/features/batch-manifest/create-batch#batch-names-are
 
 changes/batch-orchestration/features/batch-manifest/create-batch#a-batch-references-changes-by-name-without-owning-them:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -200,7 +200,7 @@ changes/batch-orchestration/features/batch-manifest/create-batch#a-batch-referen
 
 changes/batch-orchestration/features/batch-manifest/dag-edges#a-cycle-in-after-edges-is-rejected:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -230,7 +230,7 @@ changes/batch-orchestration/features/batch-manifest/dag-edges#a-cycle-in-after-e
 
 changes/batch-orchestration/features/batch-manifest/dag-edges#an-after-edge-referencing-a-change-outside-the-batch-is-rejected:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -257,7 +257,7 @@ changes/batch-orchestration/features/batch-manifest/dag-edges#an-after-edge-refe
 
 changes/batch-orchestration/features/batch-manifest/dag-edges#serial-execution-is-a-chain-of-after-edges:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -288,7 +288,7 @@ changes/batch-orchestration/features/batch-manifest/dag-edges#serial-execution-i
 
 changes/batch-orchestration/features/batch-manifest/dag-edges#parallel-execution-is-the-absence-of-edges:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -318,7 +318,7 @@ changes/batch-orchestration/features/batch-manifest/dag-edges#parallel-execution
 
 changes/batch-orchestration/features/batch-config/config#sensible-defaults-when-no-batch-section-is-present:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -334,7 +334,7 @@ changes/batch-orchestration/features/batch-config/config#sensible-defaults-when-
 
 changes/batch-orchestration/features/batch-config/config#defaults-are-loaded-from-the-project-config:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -349,7 +349,7 @@ changes/batch-orchestration/features/batch-config/config#defaults-are-loaded-fro
 
 changes/batch-orchestration/features/batch-config/config#a-batch-manifest-overrides-project-defaults:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -375,7 +375,7 @@ changes/batch-orchestration/features/batch-config/config#a-batch-manifest-overri
 
 changes/batch-orchestration/features/batch-config/config#reading-effective-settings-for-a-specific-batch:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -402,7 +402,7 @@ changes/batch-orchestration/features/batch-config/config#reading-effective-setti
 
 changes/batch-orchestration/features/batch-config/config#the-gate-policy-is-a-dial:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -417,7 +417,7 @@ changes/batch-orchestration/features/batch-config/config#the-gate-policy-is-a-di
 
 changes/batch-orchestration/features/batch-config/config#invalid-setting-values-are-rejected:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -437,7 +437,7 @@ changes/batch-orchestration/features/batch-config/config#invalid-setting-values-
 
 changes/batch-orchestration/features/batch-status/derived-status#a-change-with-all-plan-tasks-checked-counts-as-done:
   fixture: batch-states
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -450,7 +450,7 @@ changes/batch-orchestration/features/batch-status/derived-status#a-change-with-a
 
 changes/batch-orchestration/features/batch-status/derived-status#a-change-with-partial-task-progress-is-in-progress:
   fixture: batch-states
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -463,7 +463,7 @@ changes/batch-orchestration/features/batch-status/derived-status#a-change-with-p
 
 changes/batch-orchestration/features/batch-status/derived-status#a-manifest-intent-with-no-change-directory-yet-is-pending:
   fixture: batch-states
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -479,7 +479,7 @@ changes/batch-orchestration/features/batch-status/derived-status#a-manifest-inte
 
 changes/batch-orchestration/features/batch-status/derived-status#an-archived-change-counts-as-done:
   fixture: batch-states
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -492,7 +492,7 @@ changes/batch-orchestration/features/batch-status/derived-status#an-archived-cha
 
 changes/batch-orchestration/features/batch-status/derived-status#machine-readable-status-for-agents-and-the-engine:
   fixture: batch-states
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -512,7 +512,7 @@ changes/batch-orchestration/features/batch-status/derived-status#machine-readabl
 
 changes/batch-orchestration/features/batch-view/rich-view#list-all-batches:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -531,7 +531,7 @@ changes/batch-orchestration/features/batch-view/rich-view#list-all-batches:
 
 changes/batch-orchestration/features/batch-view/rich-view#view-a-single-batch-in-detail:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -545,7 +545,7 @@ changes/batch-orchestration/features/batch-view/rich-view#view-a-single-batch-in
 
 changes/batch-orchestration/features/batch-view/rich-view#viewing-a-batch-with-no-changes-yet:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -568,7 +568,7 @@ changes/batch-orchestration/features/batch-view/rich-view#viewing-a-batch-with-n
 
 changes/batch-orchestration/features/batch-view/rich-view#view-respects-no-color:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -589,7 +589,7 @@ changes/batch-orchestration/features/batch-view/rich-view#view-respects-no-color
 
 changes/batch-orchestration/features/batch-report/report#a-propose-agent-voluntarily-halts-for-alignment:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -614,7 +614,7 @@ changes/batch-orchestration/features/batch-report/report#a-propose-agent-volunta
 
 changes/batch-orchestration/features/batch-report/report#an-agent-signals-it-produced-a-proposal-awaiting-approval:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -642,7 +642,7 @@ changes/batch-orchestration/features/batch-report/report#an-agent-signals-it-pro
 
 changes/batch-orchestration/features/batch-report/report#the-report-channel-works-for-any-agent-that-can-run-a-shell-command:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -667,7 +667,7 @@ changes/batch-orchestration/features/batch-report/report#the-report-channel-work
 
 changes/batch-orchestration/features/batch-phases/phases#a-phase-declares-a-goal-success-criteria-and-a-proof-of-work:
   fixture: batch-states
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -687,7 +687,7 @@ changes/batch-orchestration/features/batch-phases/phases#a-phase-declares-a-goal
 
 changes/batch-orchestration/features/batch-phases/phases#proof-of-work-kinds-are-constrained-to-executable-checks:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -708,7 +708,7 @@ changes/batch-orchestration/features/batch-phases/phases#proof-of-work-kinds-are
 
 changes/batch-orchestration/features/batch-phases/phases#vertical-slice-is-the-default-phase-strategy:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -719,7 +719,7 @@ changes/batch-orchestration/features/batch-phases/phases#vertical-slice-is-the-d
 
 changes/batch-orchestration/features/batch-phases/phases#the-strategy-can-be-changed-to-feature-mode:
   fixture: batch-base
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -738,7 +738,7 @@ changes/batch-orchestration/features/batch-phases/phases#the-strategy-can-be-cha
 
 changes/batch-orchestration/features/batch-apply/apply-handoff#apply-advances-one-step-and-returns:
   fixture: batch-apply
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -758,7 +758,7 @@ changes/batch-orchestration/features/batch-apply/apply-handoff#apply-advances-on
 
 changes/batch-orchestration/features/batch-apply/apply-handoff#apply-respects-gates-and-does-not-cross-a-halt:
   fixture: batch-apply
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -784,7 +784,7 @@ changes/batch-orchestration/features/batch-apply/apply-handoff#apply-respects-ga
 
 changes/batch-orchestration/features/batch-apply/apply-handoff#apply-renders-a-rich-view-of-the-step-it-ran:
   fixture: batch-apply
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -802,7 +802,7 @@ changes/batch-orchestration/features/batch-apply/apply-handoff#apply-renders-a-r
 
 changes/batch-orchestration/features/batch-manifest/create-batch#changes-are-created-lazily-as-the-batch-progresses:
   fixture: batch-apply
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |

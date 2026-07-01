@@ -364,6 +364,53 @@ context: |
       });
     });
 
+    // Implements features/eval-contributor-gate/gate-selection.feature — the
+    // `eval.gate` contributor record is parsed field-by-field via the resilient
+    // `eval` branch: a valid map is kept, an invalid map is warned-and-dropped.
+    describe('eval.gate contributor record', () => {
+      it('keeps a valid eval.gate map of contributor id → boolean', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\neval:\n  gate:\n    llm-judge: false\n    deterministic: true\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.eval?.gate).toEqual({ 'llm-judge': false, deterministic: true });
+        expect(consoleWarnSpy).not.toHaveBeenCalled();
+      });
+
+      it('warns and drops the eval section when a gate key is not a contributor id', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\neval:\n  gate:\n    not-a-contributor: false\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.eval).toBeUndefined();
+        expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid 'eval' field"));
+      });
+
+      it('warns and drops the eval section when a gate value is not a boolean', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\neval:\n  gate:\n    deterministic: maybe\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.eval).toBeUndefined();
+        expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid 'eval' field"));
+      });
+    });
+
     describe('.yml/.yaml precedence', () => {
       it('should prefer .yaml when both exist', () => {
         const configDir = path.join(tempDir, '.ratchet');

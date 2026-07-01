@@ -4,8 +4,8 @@
 
 import { resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
 import { readProjectConfig } from '../../core/project-config.js';
-import type { EvalScope } from '../../core/eval/index.js';
-import type { JudgeMode } from '../../core/eval/index.js';
+import { resolveGate } from '../../core/eval/index.js';
+import type { EvalScope, GateFlags, ContributorId } from '../../core/eval/index.js';
 
 export function projectRoot(): string {
   return resolveCurrentPlanningHomeSync().root;
@@ -31,18 +31,13 @@ export function resolveScope(flags: ScopeFlags): EvalScope {
   return { kind: 'store' };
 }
 
-const VALID_MODES: JudgeMode[] = ['auto', 'check', 'agent'];
-
-/** Resolve the judge mode: explicit flag wins, else the project config default,
- * else `auto`. */
-export function resolveJudgeMode(root: string, flag: string | undefined): JudgeMode {
-  if (flag) {
-    if (!VALID_MODES.includes(flag as JudgeMode)) {
-      throw new Error(`Invalid --judge '${flag}'. Use auto | check | agent.`);
-    }
-    return flag as JudgeMode;
-  }
+/**
+ * Resolve the enabled contributor set for a run: the project's `eval.gate`
+ * config overlaid by the CLI selectors (`--gate`/`--only`/`--no-llm-judge` and
+ * the legacy `--judge`). The pure precedence/validation logic lives in the core
+ * `resolveGate`; this wrapper only supplies the config layer from disk.
+ */
+export function resolveContributorGate(root: string, flags: GateFlags): Set<ContributorId> {
   const config = readProjectConfig(root);
-  const configured = config?.eval?.judge;
-  return configured ?? 'auto';
+  return resolveGate({ config: config?.eval?.gate, flags });
 }

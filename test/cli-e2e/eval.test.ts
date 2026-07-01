@@ -50,19 +50,19 @@ async function prepareProject(): Promise<string> {
     'a codebase\n'
   );
 
-  // The check case passes when the fixture file contains "applyRequires".
-  // The agent case is bound; its verdict comes from the stub agent at run time.
+  // The deterministic case passes when the fixture file contains "applyRequires".
+  // The llm-judge case is bound; its verdict comes from the stub agent at run time.
   await write(
     path.join(root, '.ratchet', 'evals', 'specs', 'cli.yaml'),
     `features/cli/status#status-as-json:
   fixture: status-ok
-  kind: check
+  kind: deterministic
   check:
     run: cat output.txt
     pass: "contains:applyRequires"
 features/cli/status#status-as-text:
   fixture: agent-fx
-  kind: agent
+  kind: llm-judge
   success: the status output is human readable text
 `
   );
@@ -92,36 +92,158 @@ describe('ratchet eval CLI e2e', () => {
     const parsed = JSON.parse(res.stdout);
     expect(parsed.count).toBe(2);
     const bindings = Object.fromEntries(parsed.cases.map((c: any) => [c.id, c.binding]));
-    expect(bindings['features/cli/status#status-as-json']).toBe('check');
-    expect(bindings['features/cli/status#status-as-text']).toBe('agent');
+    expect(bindings['features/cli/status#status-as-json']).toBe('deterministic');
+    expect(bindings['features/cli/status#status-as-text']).toBe('llm-judge');
     expect(JSON.stringify(parsed)).not.toContain('archive');
   });
 
-  it('runs --judge check: only the deterministic check is judged, agent unjudged', async () => {
+  it('runs --judge deterministic: only the deterministic check is judged, llm-judge unjudged', async () => {
     const cwd = await prepareProject();
-    const res = await runCLI(['eval', 'run', '--judge', 'check', '--json'], { cwd });
+    const res = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
     expect(res.exitCode).toBe(0);
     const parsed = JSON.parse(res.stdout);
     expect(parsed.scorecard.pass).toBe(1);
     expect(parsed.scorecard.unjudged).toBe(1);
   });
 
+  it('surfaces the aggregated overall verdict and contributor breakdown', async () => {
+    const cwd = await prepareProject();
+    // Break the deterministic fixture so its contributor fails the run.
+    await write(
+      path.join(cwd, '.ratchet', 'evals', 'fixtures', 'status-ok', 'output.txt'),
+      'nothing useful here\n'
+    );
+    const json = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
+    expect(json.exitCode).toBe(0);
+    const parsed = JSON.parse(json.stdout);
+    expect(parsed.overall).toBe('fail');
+    const det = parsed.contributors.find((c: { id: string }) => c.id === 'deterministic');
+    expect(det.status).toBe('fail');
+    expect(det.failing).toContain('features/cli/status#status-as-json');
+
+    // The text rendering reports the verdict and breaks it down by contributor.
+    const text = await runCLI(['eval', 'run', '--judge', 'deterministic'], { cwd });
+    expect(text.stdout).toContain('[FAIL]');
+    expect(text.stdout).toContain('Contributors:');
+    expect(text.stdout).toContain('deterministic:');
+  });
+
+  // features/eval-contributor-gate/* — the contributor gate is driven from the
+  // CLI on the built binary: --no-llm-judge / --only disable a contributor so its
+  // cases go unjudged and the run is incomplete; an unknown id is rejected.
+  it('runs --no-llm-judge: the llm-judge case is unjudged and the run incomplete', async () => {
+    const cwd = await prepareProject();
+    const res = await runCLI(['eval', 'run', '--no-llm-judge', '--json'], { cwd });
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    // deterministic check passes; the llm-judge case is left unjudged (disabled).
+    expect(parsed.scorecard.pass).toBe(1);
+    expect(parsed.scorecard.unjudged).toBe(1);
+    expect(parsed.scorecard.complete).toBe(false);
+    // The persisted run records the enabled set without llm-judge.
+    const run = JSON.parse(
+      await fs.readFile(
+        path.join(cwd, '.ratchet', 'evals', 'runs', `${parsed.runId}.json`),
+        'utf-8'
+      )
+    );
+    expect(run.gate).toEqual(['deterministic', 'invariants', 'regression']);
+    expect(run.verdicts['features/cli/status#status-as-text'].verdict).toBe('unjudged');
+    expect(run.verdicts['features/cli/status#status-as-text'].reason.toLowerCase()).toContain(
+      'llm-judge'
+    );
+  });
+
+  it('runs --only deterministic: only the deterministic contributor executes', async () => {
+    const cwd = await prepareProject();
+    const res = await runCLI(['eval', 'run', '--only', 'deterministic', '--json'], { cwd });
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.scorecard.pass).toBe(1);
+    expect(parsed.scorecard.unjudged).toBe(1);
+    expect(parsed.contributors.map((c: { id: string }) => c.id)).toEqual(['deterministic']);
+  });
+
+  it('rejects --only with an unknown contributor id, listing the valid ids', async () => {
+    const cwd = await prepareProject();
+    const res = await runCLI(['eval', 'run', '--only', 'not-a-contributor', '--json'], { cwd });
+    expect(res.exitCode).not.toBe(0);
+    const out = `${res.stdout}${res.stderr}`;
+    expect(out).toContain('not-a-contributor');
+    expect(out).toContain('deterministic, llm-judge, invariants, regression');
+  });
+
+  // features/eval-invariants/contributor.feature — the invariant gate runs on the
+  // built CLI: an active violated invariant fails the run and is surfaced first
+  // as a sibling to regression; --no-invariants disables the contributor.
+  it('fails the run on an active violated invariant, surfacing it first', async () => {
+    const cwd = await prepareProject();
+    // An active deterministic invariant whose predicate fails (non-zero exit).
+    await write(
+      path.join(cwd, '.ratchet', 'evals', 'invariants.yaml'),
+      'invariants:\n  - id: tests-still-exist\n    kind: deterministic\n    active: true\n    check:\n      run: "exit 1"\n      pass: exit-zero\n'
+    );
+    const json = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
+    expect(json.exitCode).toBe(0);
+    const parsed = JSON.parse(json.stdout);
+    expect(parsed.overall).toBe('fail');
+    const inv = parsed.contributors.find((c: { id: string }) => c.id === 'invariants');
+    expect(inv.status).toBe('fail');
+    expect(inv.failing).toContain('tests-still-exist');
+    expect(parsed.invariants.map((o: { id: string }) => o.id)).toContain('tests-still-exist');
+
+    // The text rendering surfaces the invariant violation ahead of the breakdown.
+    const text = await runCLI(['eval', 'run', '--judge', 'deterministic'], { cwd });
+    expect(text.stdout).toContain('[FAIL]');
+    expect(text.stdout).toContain('INVARIANT VIOLATIONS');
+    expect(text.stdout).toContain('tests-still-exist');
+    expect(text.stdout.indexOf('INVARIANT VIOLATIONS')).toBeLessThan(
+      text.stdout.indexOf('Contributors:')
+    );
+  });
+
+  it('disables the invariant gate under --no-invariants', async () => {
+    const cwd = await prepareProject();
+    await write(
+      path.join(cwd, '.ratchet', 'evals', 'invariants.yaml'),
+      'invariants:\n  - id: tests-still-exist\n    kind: deterministic\n    active: true\n    check:\n      run: "exit 1"\n      pass: exit-zero\n'
+    );
+    const res = await runCLI(
+      ['eval', 'run', '--judge', 'deterministic', '--no-invariants', '--json'],
+      { cwd }
+    );
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    // The invariants contributor is dropped, so the violated invariant is never
+    // evaluated and the deterministic-only run passes.
+    expect(parsed.contributors.map((c: { id: string }) => c.id)).not.toContain('invariants');
+    expect(parsed.invariants).toEqual([]);
+    expect(parsed.overall).toBe('pass');
+    const run = JSON.parse(
+      await fs.readFile(
+        path.join(cwd, '.ratchet', 'evals', 'runs', `${parsed.runId}.json`),
+        'utf-8'
+      )
+    );
+    expect(run.gate).not.toContain('invariants');
+  });
+
   it('runs the agent judge through the stub and passes on evidence', async () => {
     const cwd = await prepareProject();
-    const res = await runCLI(['eval', 'run', '--judge', 'agent', '--json'], {
+    const res = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: agentEnv(true, 'the output is readable text'),
     });
     expect(res.exitCode).toBe(0);
     const parsed = JSON.parse(res.stdout);
-    // check case is skipped under agent mode; agent case passes.
+    // deterministic case is skipped under llm-judge mode; llm-judge case passes.
     expect(parsed.scorecard.pass).toBe(1);
     expect(parsed.scorecard.unjudged).toBe(1);
   });
 
   it('agent judge fails closed when the verdict carries no evidence', async () => {
     const cwd = await prepareProject();
-    const run = await runCLI(['eval', 'run', '--judge', 'agent', '--json'], {
+    const run = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: { RATCHET_EVAL_AGENT_CMD: `cat >/dev/null; echo 'I am not sure either way.'` },
     });
@@ -149,12 +271,12 @@ describe('ratchet eval CLI e2e', () => {
       path.join(cwd, '.ratchet', 'evals', 'specs', 'multi.yaml'),
       `features/multi/m#one:
   fixture: boot
-  kind: agent
+  kind: llm-judge
   success: ok
   setup: echo x >> ${counter}
 features/multi/m#two:
   fixture: boot
-  kind: agent
+  kind: llm-judge
   success: ok
   setup: echo x >> ${counter}
 `
@@ -179,19 +301,19 @@ features/multi/m#two:
       path.join(cwd, '.ratchet', 'evals', 'specs', 'cli.yaml'),
       `features/cli/status#status-as-json:
   fixture: status-ok
-  kind: check
+  kind: deterministic
   check:
     run: cat output.txt
     pass: "contains:applyRequires"
 features/cli/status#status-as-text:
   fixture: agent-fx
-  kind: agent
+  kind: llm-judge
   success: readable text
   agentVotes: 2
 `
     );
     const stub = `cat >/dev/null; n=$(cat ${counter} 2>/dev/null || echo 0); echo $((n+1)) > ${counter}; if [ "$n" = "0" ]; then echo '{"pass": true, "reason": "looks good"}'; else echo '{"pass": false, "reason": "actually broken"}'; fi`;
-    const run = await runCLI(['eval', 'run', '--judge', 'agent', '--json'], {
+    const run = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: { RATCHET_EVAL_AGENT_CMD: stub },
     });
@@ -204,7 +326,7 @@ features/cli/status#status-as-text:
 
   it('records a manual override and rejects a fail without evidence', async () => {
     const cwd = await prepareProject();
-    const run = await runCLI(['eval', 'run', '--judge', 'check', '--json'], { cwd });
+    const run = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
     const runId = JSON.parse(run.stdout).runId;
     const caseId = 'features/cli/status#status-as-text'; // the unjudged agent case
 
@@ -229,23 +351,49 @@ features/cli/status#status-as-text:
 
   it('promotes a baseline and flags a regression on a later run', async () => {
     const cwd = await prepareProject();
-    // First run: check passes. Promote it as baseline.
-    const first = await runCLI(['eval', 'run', '--judge', 'check', '--json'], { cwd });
+    // First run in auto mode so BOTH cases are judged — a complete run. Only a
+    // complete run can be promoted (the aggregation completeness guard).
+    const first = await runCLI(['eval', 'run', '--json'], {
+      cwd,
+      env: agentEnv(true, 'the output is readable text'),
+    });
     const baseId = JSON.parse(first.stdout).runId;
     const promote = await runCLI(['eval', 'baseline', baseId], { cwd });
     expect(promote.exitCode).toBe(0);
 
-    // Break the fixture so the check now fails, then run again.
+    // Break the fixture so the check now fails, then run again (still complete).
     await write(
       path.join(cwd, '.ratchet', 'evals', 'fixtures', 'status-ok', 'output.txt'),
       'nothing useful here\n'
     );
-    const second = await runCLI(['eval', 'run', '--judge', 'check', '--json'], { cwd });
+    const second = await runCLI(['eval', 'run', '--json'], {
+      cwd,
+      env: agentEnv(true, 'the output is readable text'),
+    });
     const curId = JSON.parse(second.stdout).runId;
 
     const report = await runCLI(['eval', 'report', '--run', curId, '--json'], { cwd });
     const parsed = JSON.parse(report.stdout);
     expect(parsed.diff.regressions).toContain('features/cli/status#status-as-json');
     expect(parsed.overall).toBe('fail');
+  });
+
+  it('rejects promoting an incomplete run and leaves the baseline unchanged', async () => {
+    const cwd = await prepareProject();
+    // --judge deterministic leaves the llm-judge case unjudged → incomplete run.
+    const run = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
+    const runId = JSON.parse(run.stdout).runId;
+    expect(JSON.parse(run.stdout).scorecard.unjudged).toBe(1);
+
+    const promote = await runCLI(['eval', 'baseline', runId], { cwd });
+    expect(promote.exitCode).not.toBe(0);
+    expect(`${promote.stdout}${promote.stderr}`.toLowerCase()).toContain('incomplete');
+
+    // No baseline file was written.
+    const baselineExists = await fs
+      .access(path.join(cwd, '.ratchet', 'evals', 'baseline.json'))
+      .then(() => true)
+      .catch(() => false);
+    expect(baselineExists).toBe(false);
   });
 });

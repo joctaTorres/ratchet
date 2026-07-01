@@ -3,10 +3,10 @@
  *
  * Authored YAML under `.ratchet/evals/specs/` maps a case id to how it should be
  * judged: which fixture codebase it runs against, the judge `kind`, and the
- * judging detail (`check` pass condition for deterministic checks, `success`
- * criteria for the spawned-agent judge). A binding may declare an optional
- * one-time `setup` to bootstrap the fixture and, for `agent`, how many repeat
- * votes the judge casts.
+ * judging detail (`check` pass condition for `deterministic` bindings, `success`
+ * criteria for the `llm-judge` binding). A binding may declare an optional
+ * one-time `setup` to bootstrap the fixture and, for `llm-judge`, how many
+ * repeat votes the judge casts.
  *
  * Multiple bindings may live in one file (keyed by case id). A case with no
  * binding in any spec is unbound — it is recorded as `unjudged`, never passed.
@@ -19,11 +19,11 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { RATCHET_DIR_NAME } from '../config.js';
 
-export type BindingKind = 'check' | 'agent';
+export type BindingKind = 'deterministic' | 'llm-judge';
 
-const CheckBindingSchema = z.object({
+const DeterministicBindingSchema = z.object({
   fixture: z.string().min(1),
-  kind: z.literal('check'),
+  kind: z.literal('deterministic'),
   /** Bash command run against the fixture working copy. */
   check: z.object({
     run: z.string().min(1),
@@ -33,9 +33,9 @@ const CheckBindingSchema = z.object({
   setup: z.string().optional(),
 });
 
-const AgentBindingSchema = z.object({
+const LlmJudgeBindingSchema = z.object({
   fixture: z.string().min(1),
-  kind: z.literal('agent'),
+  kind: z.literal('llm-judge'),
   /** Success criteria the spawned judge must satisfy. */
   success: z.string().min(1),
   setup: z.string().optional(),
@@ -44,12 +44,12 @@ const AgentBindingSchema = z.object({
 });
 
 export const BindingSchema = z.discriminatedUnion('kind', [
-  CheckBindingSchema,
-  AgentBindingSchema,
+  DeterministicBindingSchema,
+  LlmJudgeBindingSchema,
 ]);
 
-export type CheckBinding = z.infer<typeof CheckBindingSchema>;
-export type AgentBinding = z.infer<typeof AgentBindingSchema>;
+export type DeterministicBinding = z.infer<typeof DeterministicBindingSchema>;
+export type LlmJudgeBinding = z.infer<typeof LlmJudgeBindingSchema>;
 export type Binding = z.infer<typeof BindingSchema>;
 
 /** A binding paired with the case id it targets and its source spec file. */

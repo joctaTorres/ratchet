@@ -9,12 +9,17 @@
  *   - retired    = present only in the baseline (neither is a regression)
  *
  * `unjudged` keeps a run incomplete and never counts as a pass. The overall
- * verdict fails while any regression or fail exists.
+ * verdict is decided in exactly one place — the verdict-aggregation core
+ * (`aggregate.ts`) — as a logical AND over named contributors; `buildReport`
+ * routes `overall` through it and exposes the per-contributor breakdown.
  */
 
-import type { EvalRun, CaseRecord } from './run.js';
+import type { EvalRun } from './run.js';
 import { loadRun, loadBaselineRunId } from './run.js';
 import type { Verdict } from './judge.js';
+import { aggregateRun, DEFAULT_CONTRIBUTORS, type ContributorOutcome } from './aggregate.js';
+import { evaluateInvariantGate } from './invariant-gate.js';
+import type { InvariantOutcome } from './invariant-evaluator.js';
 
 export interface Scorecard {
   total: number;
@@ -45,8 +50,15 @@ export interface EvalReport {
   failing: FailingCase[];
   unjudgedCases: string[];
   diff: BaselineDiff;
-  /** Overall verdict: fails while any regression or fail exists. */
+  /** Overall verdict, decided by the aggregation core as an AND over contributors. */
   overall: 'pass' | 'fail';
+  /** Per-contributor breakdown from the aggregation core. */
+  contributors: ContributorOutcome[];
+  /** Per-invariant breakdown for the active invariants the gate evaluated (empty
+   *  when the `invariants` contributor is disabled or nothing is declared). */
+  invariants: InvariantOutcome[];
+  /** Set when the invariant manifest was present but could not be loaded (fail-closed). */
+  loadError?: string;
 }
 
 function verdictOf(run: EvalRun, caseId: string): Verdict {
@@ -105,21 +117,39 @@ export function diffAgainstBaseline(
 }
 
 /** Build the full report for a run, loading the baseline if one is promoted. */
-export function buildReport(projectRoot: string, runId: string): EvalReport {
+export async function buildReport(projectRoot: string, runId: string): Promise<EvalReport> {
   const run = loadRun(projectRoot, runId);
   const baselineId = loadBaselineRunId(projectRoot);
   const baseline = baselineId ? safeLoad(projectRoot, baselineId) : null;
   const diff = diffAgainstBaseline(run, baseline);
   const scorecard = scoreRun(run);
-  const overall: 'pass' | 'fail' =
-    scorecard.fail > 0 || diff.regressions.length > 0 ? 'fail' : 'pass';
+  // The aggregation core is the single decider of the overall verdict: a logical
+  // AND over named contributors. No inline pass/fail expression lives here. The
+  // AND runs over exactly the contributors that gated the run — `run.gate` — so a
+  // disabled contributor takes no part in the verdict. A legacy run with no gate
+  // recorded ANDs over the full built-in set.
+  const contributors = run.gate
+    ? DEFAULT_CONTRIBUTORS.filter((c) => run.gate!.includes(c.id))
+    : DEFAULT_CONTRIBUTORS;
+  // The run-level invariant gate is evaluated only when the `invariants`
+  // contributor is in the enabled set — a disabled contributor runs no manifest
+  // command. The async load/evaluation happens here, once, and feeds the pure
+  // aggregation core through the precomputed `invariants` field.
+  const invariantsEnabled = contributors.some((c) => c.id === 'invariants');
+  const gate = invariantsEnabled
+    ? await evaluateInvariantGate({ projectRoot, run, baseline })
+    : undefined;
+  const aggregate = aggregateRun({ run, diff, invariants: gate }, contributors);
   return {
     runId,
     scorecard,
     failing: failingCases(run),
     unjudgedCases: unjudgedIds(run),
     diff,
-    overall,
+    overall: aggregate.overall,
+    contributors: aggregate.contributors,
+    invariants: gate?.outcomes ?? [],
+    ...(gate?.loadError ? { loadError: gate.loadError } : {}),
   };
 }
 

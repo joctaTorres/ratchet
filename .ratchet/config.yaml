@@ -2,3 +2,4 @@ schema: ratchet
 batch:
   permissions:
     posture: repo-sandboxed-permissive
+  agentTimeoutMs: 1800000

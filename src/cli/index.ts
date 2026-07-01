@@ -663,7 +663,14 @@ withScopeFlags(
   evalCmd
     .command('run')
     .description('Judge every bound in-scope case through the engine and persist a run')
-    .option('--judge <mode>', 'Judge mode: auto | check | agent')
+    .option(
+      '--gate <ids>',
+      'Enabled contributor ids (comma-separated): deterministic,llm-judge,invariants,regression'
+    )
+    .option('--only <ids>', 'Restrict the run to the listed contributor ids (comma-separated)')
+    .option('--no-llm-judge', 'Disable the llm-judge contributor for this run')
+    .option('--no-invariants', 'Disable the invariants contributor for this run')
+    .option('--judge <mode>', '[deprecated] Legacy judge-mode alias: auto | deterministic | llm-judge')
     .option('--json', 'Output as JSON')
 ).action(async (options: EvalRunOptions) => {
   try {

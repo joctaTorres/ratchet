@@ -4,6 +4,8 @@ import path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { PermissionsPolicySchema } from './batch/permissions-policy.js';
+import { ALL_CONTRIBUTOR_IDS } from './eval/gate.js';
+import type { ContributorId } from './eval/aggregate.js';
 
 /**
  * Zod schema for project configuration.
@@ -68,11 +70,27 @@ export const ProjectConfigSchema = z.object({
     .optional()
     .describe('Project-level defaults for batch orchestration'),
 
-  // Optional: project-level defaults for eval orchestration. The `judge`
-  // default mode is used by `ratchet eval run` when no `--judge` flag is given.
+  // Optional: project-level defaults for eval orchestration. `gate` enables or
+  // disables each built-in verdict contributor for `ratchet eval run` (any
+  // omitted contributor stays enabled; an unset `gate` ⇒ every contributor
+  // enabled), overridable per run by `--gate`/`--only`/`--no-llm-judge`. The
+  // legacy `judge` mode is kept as a deprecated alias mapped onto the gate.
   eval: z
     .object({
-      judge: z.enum(['auto', 'check', 'agent']).optional(),
+      judge: z.enum(['auto', 'deterministic', 'llm-judge']).optional(),
+      // Each contributor key is an optional boolean, derived from the single
+      // contributor-id source so the vocabulary is never duplicated. `.strict()`
+      // rejects unknown contributor ids (the whole `eval` section is then
+      // warned-and-dropped), and a non-boolean value fails the same way; an
+      // omitted contributor simply stays enabled.
+      gate: z
+        .object(
+          Object.fromEntries(
+            ALL_CONTRIBUTOR_IDS.map((id) => [id, z.boolean().optional()])
+          ) as Record<ContributorId, z.ZodOptional<z.ZodBoolean>>
+        )
+        .strict()
+        .optional(),
     })
     .partial()
     .optional()
@@ -215,7 +233,10 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
           config.eval = evalResult.data;
         }
       } else {
-        console.warn(`Invalid 'eval' field in config (check judge value: auto|check|agent)`);
+        console.warn(
+          `Invalid 'eval' field in config (check judge value: auto|deterministic|llm-judge, ` +
+            `and gate keys: ${ALL_CONTRIBUTOR_IDS.join('|')} mapped to booleans)`
+        );
       }
     }
 

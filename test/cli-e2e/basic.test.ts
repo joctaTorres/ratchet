@@ -206,5 +206,29 @@ describe('ratchet CLI e2e basics', () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('Cannot combine reserved values "all" or "none" with specific tool IDs');
     });
+
+    // features/eval-invariants/default-manifest.feature — a fresh init scaffolds
+    // a default invariant manifest that the existing loader (exercised here via
+    // `eval run` on the built CLI) loads with no manifest error.
+    it('scaffolds a default invariant manifest that ratchet eval run loads without a manifest error', async () => {
+      const projectDir = await prepareFixture('tmp-init');
+      const emptyProjectDir = path.join(projectDir, '..', 'empty-project');
+      await fs.mkdir(emptyProjectDir, { recursive: true });
+
+      const initResult = await runCLI(['init', '--tools', 'claude'], { cwd: emptyProjectDir });
+      expect(initResult.exitCode).toBe(0);
+
+      const manifestPath = path.join(emptyProjectDir, '.ratchet', 'evals', 'invariants.yaml');
+      expect(await fileExists(manifestPath)).toBe(true);
+
+      const runResult = await runCLI(['eval', 'run', '--json'], { cwd: emptyProjectDir });
+      expect(runResult.exitCode).toBe(0);
+      const parsed = JSON.parse(runResult.stdout);
+      // No manifest load error, and the active invariant was actually evaluated
+      // (proving the generated manifest parsed cleanly), regardless of overall
+      // verdict (a first run has no baseline yet for the monotonic measure).
+      expect(parsed.invariantLoadError).toBeUndefined();
+      expect(parsed.invariants.some((o: { id: string }) => o.id === 'spec-not-weakened')).toBe(true);
+    });
   });
 });

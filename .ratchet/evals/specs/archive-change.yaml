@@ -1,6 +1,6 @@
 # Eval-spec bindings for the archive-change feature.
 #
-# Every case is a deterministic `check`: the `run` script performs the real
+# Every case is a `deterministic` binding: the `run` script performs the real
 # `ratchet archive` invocation inside the fixture working copy and then asserts
 # the scenario's Then post-condition, exiting non-zero on any mismatch. Because
 # the archive command exits 0 even when it blocks (it prints an error and
@@ -16,7 +16,7 @@
 
 features/archive-change/archive#archiving-a-complete-change-syncs-features-and-moves-the-directory:
   fixture: archive-ready
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -31,7 +31,7 @@ features/archive-change/archive#archiving-a-complete-change-syncs-features-and-m
 
 features/archive-change/archive#skipping-the-feature-store-leaves-it-untouched:
   fixture: archive-ready
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -46,7 +46,7 @@ features/archive-change/archive#skipping-the-feature-store-leaves-it-untouched:
 
 features/archive-change/archive#feature-errors-block-the-archive:
   fixture: archive-feature-error
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -62,7 +62,7 @@ features/archive-change/archive#feature-errors-block-the-archive:
 
 features/archive-change/archive#plan-warnings-do-not-block-the-archive:
   fixture: archive-plan-warning
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -77,7 +77,7 @@ features/archive-change/archive#plan-warnings-do-not-block-the-archive:
 
 features/archive-change/archive#incomplete-tasks-require-confirmation:
   fixture: archive-incomplete
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |
@@ -96,7 +96,7 @@ features/archive-change/archive#incomplete-tasks-require-confirmation:
 
 features/archive-change/archive#archiving-twice-on-the-same-day-fails:
   fixture: archive-ready
-  kind: check
+  kind: deterministic
   check:
     pass: exit-zero
     run: |

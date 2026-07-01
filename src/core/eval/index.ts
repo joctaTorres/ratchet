@@ -19,8 +19,8 @@ export {
   fixturePath,
   BindingSchema,
   type Binding,
-  type CheckBinding,
-  type AgentBinding,
+  type DeterministicBinding,
+  type LlmJudgeBinding,
   type BindingKind,
   type ResolvedBinding,
   type EvalSpecLoadResult,
@@ -32,7 +32,6 @@ export {
   parseAgentVote,
   resolveVotes,
   type Verdict,
-  type JudgeMode,
   type CaseVerdict,
   type JudgeDeps,
 } from './judge.js';
@@ -62,4 +61,45 @@ export {
   type FailingCase,
   type BaselineDiff,
 } from './report.js';
+export {
+  evaluateInvariantGate,
+  type InvariantGateResult,
+  type InvariantGateInput,
+} from './invariant-gate.js';
+export {
+  aggregateRun,
+  isRunComplete,
+  DEFAULT_CONTRIBUTORS,
+  deterministicContributor,
+  llmJudgeContributor,
+  regressionContributor,
+  invariantsContributor,
+  type Contributor,
+  type ContributorId,
+  type ContributorContext,
+  type ContributorOutcome,
+  type RunAggregate,
+} from './aggregate.js';
 export { executeRun, type RunOptions, type RunOutcome } from './execute.js';
+export {
+  resolveGate,
+  ALL_CONTRIBUTOR_IDS,
+  type GateConfig,
+  type GateFlags,
+  type ResolveGateInput,
+} from './gate.js';
+export {
+  evaluateInvariant,
+  isInvariantViolation,
+  MEASURE_RESOLVERS,
+  realFileReader,
+  type InvariantOutcome,
+  type InvariantStatus,
+  type InvariantEvalContext,
+  type MeasureResolver,
+  type FileReader,
+} from './invariant-evaluator.js';
+export {
+  detectTestDirectory,
+  buildDefaultInvariantManifestYaml,
+} from './default-manifest.js';

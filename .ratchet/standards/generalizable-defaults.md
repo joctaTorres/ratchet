@@ -61,3 +61,9 @@ Every change that introduces or modifies a default — a value or behavior — t
 ships to, or runs in, a consuming project: proof-of-work defaults, generated
 commands, scripts, templates, config-key defaults, and any literal embedded in
 change artifacts or agent instructions.
+
+## Implemented by
+
+<!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
+
+- proof-of-work-gate/e2e-gate.feature

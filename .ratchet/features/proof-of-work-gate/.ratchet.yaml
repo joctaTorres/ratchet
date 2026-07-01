@@ -1,0 +1,4 @@
+features:
+  e2e-gate.feature:
+    - documentation
+    - generalizable-defaults

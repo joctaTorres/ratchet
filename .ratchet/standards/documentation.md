@@ -124,3 +124,9 @@ change adds or modifies a core, central, large, or otherwise important component
 or behavior, that documentation task additionally owns the overview Mermaid diagram for
 it — created or updated, vertically oriented, high-contrast, and accurate — and the
 change is not done until that diagram exists and matches the code.
+
+## Implemented by
+
+<!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
+
+- proof-of-work-gate/e2e-gate.feature

@@ -14,12 +14,21 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   runWebLifecycle,
   defaultReadinessChecker,
+  PLAYWRIGHT_NPX_PACKAGE,
   type ProcessHandle,
   type ProcessStarter,
   type ReadinessChecker,
 } from '../../../src/core/eval/web-lifecycle.js';
 import type { WebBinding } from '../../../src/core/eval/spec.js';
 import type { BashRunner, BashResult } from '../../../src/core/batch/engine/index.js';
+
+/**
+ * Expected Playwright bash invocation built from the shared constant, mirroring
+ * what `runWebLifecycle` produces — so that if `PLAYWRIGHT_NPX_PACKAGE` changes,
+ * these expectations fail rather than silently drifting.
+ */
+const playwrightCmd = (spec: string) =>
+  `PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx ${PLAYWRIGHT_NPX_PACKAGE} test ${spec} --trace=retain-on-failure --reporter=list,json`;
 
 const webBinding = (overrides: Partial<WebBinding> = {}): WebBinding => ({
   fixture: 'storefront-app',
@@ -93,7 +102,7 @@ describe('runWebLifecycle readiness', () => {
       return checkCalls >= 2; // reachable on the second poll
     };
     const { bash, calls: bashCalls } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json': OK_RESULT,
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: OK_RESULT,
     });
     const clock = fakeClock();
 
@@ -107,7 +116,7 @@ describe('runWebLifecycle readiness', () => {
 
     expect(starter.calls).toEqual([{ command: 'pnpm dev', cwd: '/work' }]);
     expect(checkCalls).toBe(2);
-    expect(bashCalls).toEqual([{ command: 'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json', cwd: '/work' }]);
+    expect(bashCalls).toEqual([{ command: playwrightCmd('e2e/add-to-cart.spec.ts'), cwd: '/work' }]);
     expect(outcome).toEqual({ kind: 'completed', passed: true, result: OK_RESULT });
   });
 
@@ -120,7 +129,7 @@ describe('runWebLifecycle readiness', () => {
       return checkCalls >= 3;
     };
     const { bash } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json': OK_RESULT,
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: OK_RESULT,
     });
     const clock = fakeClock();
     const binding = webBinding({
@@ -165,7 +174,7 @@ describe('runWebLifecycle spec execution and teardown', () => {
   it('invokes the spec via a plain bash command and reports passing on exit zero, tearing the process down afterward', async () => {
     const starter = fakeStarter();
     const { bash, calls: bashCalls } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json': OK_RESULT,
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: OK_RESULT,
     });
 
     const outcome = await runWebLifecycle(webBinding(), '/work', {
@@ -174,7 +183,7 @@ describe('runWebLifecycle spec execution and teardown', () => {
       bash,
     });
 
-    expect(bashCalls).toEqual([{ command: 'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json', cwd: '/work' }]);
+    expect(bashCalls).toEqual([{ command: playwrightCmd('e2e/add-to-cart.spec.ts'), cwd: '/work' }]);
     expect(outcome).toEqual({ kind: 'completed', passed: true, result: OK_RESULT });
     expect(starter.killed).toBe(true);
   });
@@ -183,7 +192,7 @@ describe('runWebLifecycle spec execution and teardown', () => {
     const starter = fakeStarter();
     const failResult: BashResult = { exitCode: 1, stdout: '', stderr: '1 test failed' };
     const { bash } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json': failResult,
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: failResult,
     });
 
     const outcome = await runWebLifecycle(webBinding(), '/work', {
@@ -200,7 +209,7 @@ describe('runWebLifecycle spec execution and teardown', () => {
     const starter = fakeStarter();
     const boom = new Error('bash exploded');
     const { bash } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json': boom,
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: boom,
     });
 
     await expect(
@@ -235,7 +244,7 @@ describe('runWebLifecycle spec execution and teardown', () => {
   it('invokes the Playwright spec through the injected bash function directly — agent-neutral, no spawner involved', async () => {
     const starter = fakeStarter();
     const { bash, calls: bashCalls } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json': OK_RESULT,
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: OK_RESULT,
     });
 
     await runWebLifecycle(webBinding(), '/work', {
@@ -248,7 +257,7 @@ describe('runWebLifecycle spec execution and teardown', () => {
     // object, adapter, or spawner is part of the call.
     expect(bashCalls).toHaveLength(1);
     expect(typeof bashCalls[0]?.command).toBe('string');
-    expect(bashCalls[0]?.command).toBe('PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json');
+    expect(bashCalls[0]?.command).toBe(playwrightCmd('e2e/add-to-cart.spec.ts'));
   });
 });
 
@@ -261,7 +270,7 @@ describe('runWebLifecycle artifact capture', () => {
   it('does not throw and reports no artifacts when no readReport is injected and the report file was never written', async () => {
     const starter = fakeStarter();
     const { bash } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json':
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]:
         OK_RESULT,
     });
 
@@ -277,7 +286,7 @@ describe('runWebLifecycle artifact capture', () => {
   it("extracts a trace-only artifact from the JSON report's attachments", async () => {
     const starter = fakeStarter();
     const { bash } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json':
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]:
         OK_RESULT,
     });
     const readReport = async () => playwrightReport([{ name: 'trace', path: '/work/trace.zip' }]);
@@ -295,7 +304,7 @@ describe('runWebLifecycle artifact capture', () => {
   it('extracts both trace and screenshot artifacts when both attachments are present', async () => {
     const starter = fakeStarter();
     const { bash } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json':
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]:
         OK_RESULT,
     });
     const readReport = async () =>
@@ -320,7 +329,7 @@ describe('runWebLifecycle artifact capture', () => {
   it('reports no artifacts for a passing run whose report has an empty attachments list', async () => {
     const starter = fakeStarter();
     const { bash } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json':
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]:
         OK_RESULT,
     });
     const readReport = async () => playwrightReport([]);
@@ -339,7 +348,7 @@ describe('runWebLifecycle artifact capture', () => {
     const starter = fakeStarter();
     const failResult: BashResult = { exitCode: 1, stdout: '', stderr: '1 test failed' };
     const { bash } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json':
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]:
         failResult,
     });
     const readReport = async (): Promise<string> => {
@@ -446,7 +455,7 @@ describe('runWebLifecycle URL readiness — fetch-rejection resilience', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     const { bash } = fakeBash({
-      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json': OK_RESULT,
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: OK_RESULT,
     });
     const clock = fakeClock();
 

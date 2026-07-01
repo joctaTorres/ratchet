@@ -84,6 +84,15 @@ export const defaultReadinessChecker: ReadinessChecker = async (readiness, cwd, 
 const DEFAULT_POLL_INTERVAL_MS = 250;
 const REPORT_FILE_NAME = '.ratchet-web-report.json';
 
+/**
+ * The npx package identifier Playwright registers under — exported so the
+ * doctor readiness check (`src/core/doctor/checks/playwright.ts`) can import it
+ * rather than hard-coding the same string independently. Both sites must stay in
+ * lockstep: if the invocation ever moves to a different package name, changing
+ * this single constant is sufficient.
+ */
+export const PLAYWRIGHT_NPX_PACKAGE = 'playwright' as const;
+
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Reads a file's contents as a string, mirroring `invariant-evaluator.ts`'s `FileReader` seam. */
@@ -214,7 +223,7 @@ export async function runWebLifecycle(
       return { kind: 'readiness-timeout' };
     }
     const result = await bash(
-      `PLAYWRIGHT_JSON_OUTPUT_NAME=${REPORT_FILE_NAME} npx playwright test ${binding.spec} --trace=retain-on-failure --reporter=list,json`,
+      `PLAYWRIGHT_JSON_OUTPUT_NAME=${REPORT_FILE_NAME} npx ${PLAYWRIGHT_NPX_PACKAGE} test ${binding.spec} --trace=retain-on-failure --reporter=list,json`,
       cwd
     );
     const artifacts = await extractArtifacts(path.join(cwd, REPORT_FILE_NAME), readReport);

@@ -9,6 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { checkPlaywright } from '../../../src/core/doctor/checks/playwright.js';
+import { PLAYWRIGHT_NPX_PACKAGE } from '../../../src/core/eval/web-lifecycle.js';
 import { isReportOk } from '../../../src/core/doctor/types.js';
 import { serializeReport, exitCodeFor } from '../../../src/core/doctor/render.js';
 import type {
@@ -55,9 +56,11 @@ describe('checkPlaywright', () => {
     expect(check.status).toBe('pass');
     expect(check.detail).toContain('1.47.2');
     // Probes via --no-install so a missing Playwright never triggers npx's implicit install.
+    // Uses the shared PLAYWRIGHT_NPX_PACKAGE constant — same identifier the web lifecycle
+    // harness references — so the two can't drift to different package names.
     expect(deps.calls[0]).toEqual({
       command: 'npx',
-      args: ['--no-install', 'playwright', '--version'],
+      args: ['--no-install', PLAYWRIGHT_NPX_PACKAGE, '--version'],
     });
   });
 
@@ -80,6 +83,24 @@ describe('checkPlaywright', () => {
     const checks = [check];
     expect(isReportOk(checks)).toBe(true);
     expect(exitCodeFor({ checks, ok: isReportOk(checks) })).toBe(0);
+  });
+
+  // Deduplication guard: both the doctor probe and the lifecycle harness must use
+  // the exact same npx package identifier. If PLAYWRIGHT_NPX_PACKAGE ever changes,
+  // this assertion fails on both sides simultaneously rather than silently drifting.
+  it('probes via the same npx package identifier that the web lifecycle harness uses to run tests', () => {
+    const deps = new FakeDeps((command, args) => {
+      if (command === 'npx' && args.includes(PLAYWRIGHT_NPX_PACKAGE)) return ok('Version 1.47.2');
+      return fail('unexpected command');
+    });
+
+    const check = checkPlaywright(deps);
+
+    expect(check.status).toBe('pass');
+    expect(deps.calls[0]).toEqual({
+      command: 'npx',
+      args: ['--no-install', PLAYWRIGHT_NPX_PACKAGE, '--version'],
+    });
   });
 
   it('JSON output includes the playwright check with the same shape as any other check', () => {

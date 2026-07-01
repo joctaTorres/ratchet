@@ -17,6 +17,7 @@
 
 import type { BootstrapDeps } from '../../batch/engine/runtime/rex-bootstrap.js';
 import type { DoctorCheck } from '../types.js';
+import { PLAYWRIGHT_NPX_PACKAGE } from '../../eval/web-lifecycle.js';
 
 const ID = 'playwright';
 const LABEL = 'Playwright CLI';
@@ -27,7 +28,7 @@ const INSTALL_REMEDY =
 
 /** Run the Playwright check, returning one `DoctorCheck`. Pure (deps injected). */
 export function checkPlaywright(deps: BootstrapDeps): DoctorCheck {
-  const res = deps.run('npx', ['--no-install', 'playwright', '--version']);
+  const res = deps.run('npx', ['--no-install', PLAYWRIGHT_NPX_PACKAGE, '--version']);
   if (res.status === 0) {
     const version = (res.stdout || res.stderr).trim();
     return {

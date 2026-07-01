@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import fg from 'fast-glob';
 import { FileSystemUtils } from '../../utils/file-system.js';
-import { filterHoldoutContent } from '../eval/holdout.js';
+import { filterHoldoutContent } from '../parsers/holdout-filter.js';
 
 /**
  * Checks if a path contains glob pattern characters.

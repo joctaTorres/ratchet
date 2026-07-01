@@ -216,6 +216,22 @@ describe('persistMutationEvidence / persistMutationOutcome / invariantArtifactsD
     const root = makeProject();
     expect(loadPersistedMutationOutcome(root, '20260101T000000000Z-none', 'mutants-are-killed')).toBeUndefined();
   });
+
+  // Regression for: a corrupt or truncated outcome.json must fail closed to
+  // re-evaluation (return undefined) rather than hard-crashing the caller.
+  it('returns undefined (does not throw) when outcome.json exists but contains corrupt/truncated JSON', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-corrupt';
+    const invariantId = 'mutants-are-killed';
+    const dir = invariantArtifactsDir(root, runId, invariantId);
+    mkdirSync(dir, { recursive: true });
+    // Write truncated JSON that JSON.parse will reject.
+    writeFileSync(path.join(dir, 'outcome.json'), '{"id":"mutants-are-killed","kind":"mutation","sta', 'utf-8');
+
+    const result = loadPersistedMutationOutcome(root, runId, invariantId);
+
+    expect(result).toBeUndefined();
+  });
 });
 
 describe('recordVerdict', () => {

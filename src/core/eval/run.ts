@@ -212,7 +212,10 @@ export function persistMutationOutcome(
   writeFileSync(outcomePath(projectRoot, runId, invariantId), JSON.stringify(outcome, null, 2), 'utf-8');
 }
 
-/** Read back a persisted mutation outcome, or `undefined` when none has been persisted yet. */
+/** Read back a persisted mutation outcome, or `undefined` when none has been persisted yet.
+ *  A missing file is the normal "not yet evaluated" case and returns `undefined`.
+ *  A corrupt or truncated `outcome.json` is treated as a cache miss (fail-closed to
+ *  re-evaluation) — it also returns `undefined` rather than hard-crashing. */
 export function loadPersistedMutationOutcome(
   projectRoot: string,
   runId: string,
@@ -220,7 +223,12 @@ export function loadPersistedMutationOutcome(
 ): InvariantOutcome | undefined {
   const file = outcomePath(projectRoot, runId, invariantId);
   if (!existsSync(file)) return undefined;
-  return JSON.parse(readFileSync(file, 'utf-8')) as InvariantOutcome;
+  try {
+    return JSON.parse(readFileSync(file, 'utf-8')) as InvariantOutcome;
+  } catch {
+    // Corrupt or truncated outcome.json → treat as cache miss, caller will re-evaluate.
+    return undefined;
+  }
 }
 
 /** Generate a sortable run id: `YYYYMMDDTHHMMSSmmmZ-<suffix>`. */

@@ -2,3 +2,15 @@ features:
   e2e-gate.feature:
     - documentation
     - generalizable-defaults
+  hard-gate-blocks-on-recorded-proof.feature:
+    - delegated-lifecycle
+    - documentation
+    - generalizable-defaults
+  status-and-selection-agree.feature:
+    - delegated-lifecycle
+    - documentation
+    - generalizable-defaults
+  warn-advances-surfacing-failure.feature:
+    - delegated-lifecycle
+    - documentation
+    - generalizable-defaults

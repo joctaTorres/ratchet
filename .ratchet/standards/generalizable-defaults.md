@@ -70,3 +70,6 @@ change artifacts or agent instructions.
 - proof-of-work-boundary/execute-and-record.feature
 - proof-of-work-boundary/recorded-proof-reader.feature
 - proof-of-work-gate/e2e-gate.feature
+- proof-of-work-gate/hard-gate-blocks-on-recorded-proof.feature
+- proof-of-work-gate/status-and-selection-agree.feature
+- proof-of-work-gate/warn-advances-surfacing-failure.feature

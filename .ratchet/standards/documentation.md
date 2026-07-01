@@ -154,3 +154,5 @@ change is not done until that diagram exists and matches the code.
 - proof-of-work/exit-zero-prefix.feature
 - rerun-recorded-proof/cli-surface.feature
 - rerun-recorded-proof/invalidation-folding.feature
+- testing-standard/reference-docs.feature
+- testing-standard/standard-library.feature

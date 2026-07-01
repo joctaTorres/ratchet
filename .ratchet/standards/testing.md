@@ -105,3 +105,5 @@ the enforced `COVERAGE_THRESHOLD`.
 - eval-command-tests/run.feature
 - eval-command-tests/set.feature
 - eval-command-tests/shared.feature
+- testing-standard/reference-docs.feature
+- testing-standard/standard-library.feature

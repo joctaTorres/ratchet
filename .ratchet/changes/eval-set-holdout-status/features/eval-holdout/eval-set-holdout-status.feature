@@ -3,15 +3,6 @@ Feature: Hold-out status in `eval set`
   I want `ratchet eval set` to report each case's hold-out status
   So that I can see which cases are held out without inspecting `.feature` files directly, the same way I already see each case's binding status
 
-  # Third of four changes in the holdout-scenarios phase, building on the pure
-  # resolveHoldout() resolver from holdout-tag-resolution. This slice only wires
-  # that resolver's output into `ratchet eval set`'s existing JSON/text report —
-  # it does not add a `--holdout`/`--no-holdout` CLI scope filter (that is the
-  # phase's next, sibling change, holdout-scope-filter) and it does not touch
-  # `enumerateEvalSet()`, binding resolution, `eval run`, aggregation, or the
-  # persisted run JSON shape, which already gate a held-out case normally per
-  # apply-spec-holdout-filter.
-
   Background:
     Given a feature store with one case tagged "@holdout" and one case with no tags
 

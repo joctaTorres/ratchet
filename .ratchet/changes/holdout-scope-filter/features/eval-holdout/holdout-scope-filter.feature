@@ -5,14 +5,6 @@ Feature: Hold-out scope filter
     set, composing with the existing scope flags, without altering gate or
     aggregation logic
 
-  # Fourth and last of four changes in the holdout-scenarios phase, building on
-  # the pure resolveHoldout() resolver from holdout-tag-resolution (already
-  # reported per-case by eval-set-holdout-status). This slice adds the CLI
-  # scope filter only: it does not change resolveHoldout(), filterHoldoutContent(),
-  # apply-time spec filtering, binding resolution, judging, aggregation, or the
-  # persisted run JSON shape (EvalRun.scope / CaseSnapshot are untouched) — a
-  # held-out case that is in scope is judged and gated exactly as it is today.
-
   Background:
     Given a feature store with one case tagged "@holdout" and one case with no tags
 

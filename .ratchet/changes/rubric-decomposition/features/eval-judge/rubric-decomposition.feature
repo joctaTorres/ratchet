@@ -3,13 +3,6 @@ Feature: Per-Then-clause rubric decomposition for the llm-judge contributor
   I want the llm-judge contributor to judge a case clause by clause against its Gherkin Then-steps, with each vote reasoning before it states a verdict and judging the evidence on its own merits
   So that a judge agent cannot rubber-stamp a vague overall impression — every asserted outcome is independently proven, and one unproven clause fails the case
 
-  # This is the rubric-decomposition slice of judge hardening: deriving the
-  # per-clause rubric, building the CoT/anti-sycophancy prompt around it, and
-  # parsing+gating a single vote on all-yes. Multi-vote jury/quorum resolution,
-  # skip filters, and structured run-JSON persistence are downstream changes;
-  # this slice keeps the existing N-votes-majority-of-pass/fail flow intact,
-  # only changing how each vote's own pass/fail is computed.
-
   Background:
     Given an llm-judge-bound eval case
 

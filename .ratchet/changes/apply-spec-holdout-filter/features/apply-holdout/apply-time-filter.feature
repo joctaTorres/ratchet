@@ -4,17 +4,6 @@ Feature: Apply-time hold-out filtering
   So that a held-out scenario stays an unseen, anti-overfitting check the agent cannot special-case, while
     `eval run` and batch `verify` still gate on it like any other case
 
-  # Second of four changes in the holdout-scenarios phase, building on the pure
-  # resolveHoldout() resolver from holdout-tag-resolution. This slice wires that
-  # resolver into generateApplyInstructions() (src/commands/workflow/instructions.ts)
-  # and artifact-output resolution (src/core/artifact-graph/outputs.ts): the
-  # building agent reads a materialized, filtered COPY of each .feature artifact,
-  # never the raw source file. eval run / batch verify are untouched — they keep
-  # reading the real source file, so a held-out case is enumerated and gated
-  # exactly like any other case, with no change to verdict or aggregation.
-  # `eval set` status reporting and the `--holdout` scope filter are separate,
-  # sibling changes in this phase (eval-set-holdout-status, holdout-scope-filter).
-
   Scenario: A held-out scenario is stripped from the building agent's materialized spec
     Given a change with a .feature artifact containing one @holdout-tagged Scenario and one untagged Scenario
     When apply instructions are generated for that change

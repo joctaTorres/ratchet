@@ -3,20 +3,6 @@ Feature: Structured evidence persistence for judged and skipped eval cases
   I want the run JSON to persist each judged case's resolved rubric, per-clause pass/fail evidence, and every juror's individual vote — and a skipped case's skip reason and source — surfaced through report.ts and the eval run/report output
   So that a judge verdict or a skip decision is auditable from the run JSON and CLI output instead of a single flattened sentence, without changing how a case's verdict decides the AND-over-contributors gate
 
-  # This is the structured-evidence-persistence slice of judge hardening,
-  # downstream of rubric-decomposition (per-clause AgentVote.clauses already
-  # exist in memory during judging), jury-quorum-resolution (N votes are
-  # already cast and resolved, but only the deciding vote's clauses survive
-  # past resolveVotes — every other juror's vote is discarded today), and
-  # skip-filters (the skip source/detail is already computed by resolveSkip
-  # but flattened into CaseRecord.reason as a sentence, never kept structured).
-  # This slice widens CaseVerdict/CaseRecord to carry the data that already
-  # exists in memory but is discarded before persistRun writes the run JSON,
-  # and threads it through report.ts/eval run/eval report. It does not touch
-  # aggregate.ts, resolveVotes's pass/fail/quorum decision, or resolveSkip's
-  # matching logic — only what survives into the persisted and displayed
-  # record of a decision already made.
-
   Background:
     Given an eval run being executed and persisted
 

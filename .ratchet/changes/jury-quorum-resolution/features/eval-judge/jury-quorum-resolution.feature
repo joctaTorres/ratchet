@@ -3,17 +3,6 @@ Feature: Jury quorum resolution for the llm-judge contributor
   I want N independent rubric votes resolved into one case verdict by a configurable jury quorum (majority or unanimous), layered project default over per-binding override
   So that the llm-judge contributor only manufactures a definitive pass or fail when its votes genuinely agree, and abstains (unjudged) rather than guess when they don't
 
-  # This is the jury-quorum-resolution slice of judge hardening, downstream of
-  # rubric-decomposition (per-clause all-yes vote gating already lands a
-  # structured AgentVote.pass per vote). This slice replaces the old fixed
-  # N-of-M-majority-only resolution with a configurable `jury` block (`votes`,
-  # `quorum: majority|unanimous`), layered from project-level `eval.jury` and
-  # overridable per binding, plus an inert `panel:` slot reserved for a future
-  # cross-family panel. Skip filters and structured run-JSON persistence of
-  # per-juror votes are downstream changes; this slice only changes how votes
-  # already cast resolve into one verdict, and does not touch where the
-  # llm-judge contributor plugs into the gate.
-
   Background:
     Given an llm-judge-bound eval case
 

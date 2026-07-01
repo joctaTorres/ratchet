@@ -3,20 +3,6 @@ Feature: Skip filters for the eval gate
   I want a case matching a project skip rule or an in-file @skip tag excluded from judging by default, recorded "skipped" and counted, never silently dropped
   So that intentionally-excluded cases are transparent in the run instead of disappearing or pretending to pass
 
-  # This is the skip-filters slice of judge hardening, independent of (not
-  # downstream of) rubric-decomposition and jury-quorum-resolution: it changes
-  # WHICH cases reach judging, not how a judged case's votes resolve. Two skip
-  # sources are supported: a project-level `eval.skip` config (a list of glob
-  # patterns matched against the case id) and an in-file `@skip` Gherkin tag on
-  # the Scenario, captured by gherkin-parser.ts (today all tags are discarded).
-  # A skipped case is recorded with a new `skipped` status distinct from
-  # `unjudged` — `skipped` is an intentional, counted exclusion, never an
-  # incompleteness that blocks baseline promotion. `--include-skipped` on
-  # `eval run` overrides both sources for that run. Structured persistence of
-  # the skip reason/source in the run JSON is the downstream
-  # structured-evidence-persistence change's concern; this slice only changes
-  # which cases are judged and that the skip is visible.
-
   Background:
     Given an eval case enumerated from a .feature file
 

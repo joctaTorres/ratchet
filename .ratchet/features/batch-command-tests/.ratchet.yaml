@@ -1,0 +1,13 @@
+features:
+  apply.feature:
+    - testing
+  config.feature:
+    - testing
+  new-batch.feature:
+    - testing
+  report.feature:
+    - testing
+  status.feature:
+    - testing
+  view.feature:
+    - testing

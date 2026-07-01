@@ -22,7 +22,7 @@ import { judgeCase, type CaseVerdict, type JudgeDeps } from './judge.js';
 import { ALL_CONTRIBUTOR_IDS } from './gate.js';
 import { resolveSkip, type SkipReason } from './skip.js';
 import { filterCasesByHoldout } from './holdout.js';
-import type { ContributorId } from './aggregate.js';
+import { contributorForBindingKind, type ContributorId } from './aggregate.js';
 import {
   generateRunId,
   persistRun,
@@ -149,8 +149,8 @@ export async function executeRun(projectRoot: string, options: RunOptions): Prom
       run.verdicts[c.id] = { ...UNBOUND };
       continue;
     }
-    // A bound case's contributor is its binding kind (deterministic | llm-judge).
-    const contributor = bound.binding.kind as ContributorId;
+    // A bound case's contributor is its binding kind, folded through the shared mapping.
+    const contributor = contributorForBindingKind(bound.binding.kind);
     run.verdicts[c.id] = options.gate.has(contributor)
       ? await judgeBound(c, bound, fixtures, options.judge ?? {})
       : disabledContributor(contributor);

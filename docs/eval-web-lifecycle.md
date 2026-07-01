@@ -11,11 +11,13 @@ binding's Playwright spec, and always tears the started process down. It is
 the single place a `web` binding's start/poll/run/teardown sequence is
 implemented; nothing else in the codebase spawns or polls a web binding's app.
 
-**Not yet wired into `judgeCase`.** `judgeCase` (`src/core/eval/judge.ts`)
-still throws for `web` bindings — reducing `WebLifecycleOutcome` into a
-`CaseVerdict` and folding it into the `deterministic` contributor is a later
-change in the `playwright-web-tier` phase. This page documents the harness's
-own contract, independent of that wiring.
+**Wired into `judgeCase`.** `judgeCase` (`src/core/eval/judge.ts`) dispatches
+`web` bindings through `runWebLifecycle` and reduces its
+`WebLifecycleOutcome` into a `CaseVerdict` (`judgeWeb`), which folds into the
+`deterministic` contributor alongside `deterministic`-bound cases — see
+[Verdict aggregation](eval-verdict-aggregation.md). This page documents the
+harness's own start/poll/run/teardown contract; the verdict-reduction step
+lives in `judge.ts`.
 
 ## Overview
 
@@ -147,8 +149,9 @@ export type WebLifecycleOutcome =
   and `result` is the full `BashResult` (`exitCode`/`stdout`/`stderr`) from
   the Playwright invocation.
 
-`WebLifecycleOutcome` is intentionally not a `CaseVerdict` — reducing it into
-that shape is out of scope for this harness (see the note above).
+`WebLifecycleOutcome` is intentionally not a `CaseVerdict` itself — reducing
+it into that shape (`judgeWeb`, in `judge.ts`) stays outside this harness so
+`runWebLifecycle` remains independently testable in isolation from judging.
 
 ## Agent-neutrality
 

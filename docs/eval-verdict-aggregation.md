@@ -43,7 +43,7 @@ flowchart TD
 
     CTX[📦 ContributorContext<br/>run + baseline diff + invariant gate]
 
-    CTX --> DET[⚙️ deterministic<br/>fails of deterministic-kind cases]
+    CTX --> DET[⚙️ deterministic<br/>fails of deterministic/web-kind cases]
     CTX --> LLM[⚙️ llm-judge<br/>fails of llm-judge-kind cases]
     CTX --> INV[🛡️ invariants<br/>active invariant violations]
     CTX --> REG[🔁 regression<br/>baseline regressions]
@@ -115,14 +115,21 @@ filesystem or process I/O.
 
 | Contributor | Fails when | Failing ids |
 |---|---|---|
-| `deterministic` | any `deterministic`-bound case is judged `fail` | those case ids |
+| `deterministic` | any `deterministic`- or `web`-bound case is judged `fail` | those case ids |
 | `llm-judge` | any `llm-judge`-bound case is judged `fail` | those case ids |
 | `invariants` | any **active** manifest invariant is violated or unevaluable, or the manifest is unloadable | the violating invariant ids (or the manifest filename) |
 | `regression` | the baseline diff reports a regression (passed in baseline, fails now) | the regressed case ids |
 
 The `deterministic` and `llm-judge` contributors partition the run's cases by each
-case snapshot's `bindingKind`. The `invariants` and `regression` contributors are
-the two **run-level** gates (their failing ids are invariant/case names, not
+case snapshot's `bindingKind`, via `contributorForBindingKind(kind): ContributorId`
+(`src/core/eval/aggregate.ts`) — the single place a binding kind maps to the
+contributor that gates it: `deterministic` and `web` both fold to
+`'deterministic'` (a `web`-bound case gates exactly like a `deterministic`-bound
+one, with no separate `'web'` contributor id), and `llm-judge` maps to itself.
+`execute.ts` calls the same function to decide whether a bound case's contributor
+is enabled, so the binding-kind-to-contributor mapping has one source of truth
+across execution and aggregation. The `invariants` and `regression` contributors
+are the two **run-level** gates (their failing ids are invariant/case names, not
 per-case verdicts). Like `regression`, which reads the precomputed
 `diff.regressions`, the pure `invariants` contributor reads a precomputed
 `invariants.failing`: the async manifest load and per-invariant evaluation happen

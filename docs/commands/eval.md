@@ -467,9 +467,16 @@ is polled check-then-sleep until it succeeds or `readiness.timeoutMs` elapses
 plain `npx playwright test <spec>` bash invocation, and the started process is
 torn down in a `finally` on every path. See
 [Web binding lifecycle harness](../eval-web-lifecycle.md) for the full
-start/poll/run/teardown contract and its injectable seams. The harness is not
-yet wired into `ratchet eval run` — `judgeCase` still throws for `web`
-bindings until that wiring lands.
+start/poll/run/teardown contract and its injectable seams. A `web` binding
+runs through `ratchet eval run` like any other binding kind: `judgeCase`
+dispatches it through the harness and reduces the result to a `pass`/`fail`
+verdict (exit-zero Playwright run = `pass`; a non-zero exit or a readiness
+timeout = `fail`), which gates through the `deterministic` contributor — see
+[Verdict aggregation](../eval-verdict-aggregation.md) — so
+`eval.gate.deterministic`/`--only`/`--gate` control a `web`-bound case exactly
+like a `deterministic`-bound one. Trace/screenshot capture on failure and the
+conditional `ratchet doctor` Playwright probe are still deferred to later
+changes in the `playwright-web-tier` phase.
 
 ---
 

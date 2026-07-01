@@ -188,13 +188,18 @@ is persisted on the run as `EvalRun.gate` (display order). Selection effects:
   contributor is disabled as `unjudged` (the reason names the disabled
   contributor) instead of executing it; no fixture is materialized and no judge
   is spawned. A disabled contributor therefore leaves the run **incomplete**.
-- **Aggregation** — `buildReport` filters `DEFAULT_CONTRIBUTORS` by `run.gate`
-  before calling `aggregateRun`, so the AND and the per-contributor breakdown
-  cover exactly the enabled contributors. A disabled contributor takes no part in
-  the verdict. (A legacy run persisted with no `gate` ANDs over the full set.) When
-  the `invariants` contributor survives the filter, `buildReport` evaluates the
-  run-level invariant gate once and feeds the result into the context; when it is
-  disabled, the gate is not evaluated and no manifest command runs.
+- **Aggregation** — both the run path (`evaluateRun`) and the read-only report
+  path (`renderReport`) filter `DEFAULT_CONTRIBUTORS` by `run.gate` before calling
+  `aggregateRun`, so the AND and the per-contributor breakdown cover exactly the
+  enabled contributors. A disabled contributor takes no part in the verdict. (A
+  legacy run persisted with no `gate` ANDs over the full set.) When the
+  `invariants` contributor survives the filter, `evaluateRun` evaluates the
+  run-level invariant gate once **at run time** and **persists the result** onto
+  the run; `renderReport` reads that persisted result rather than re-evaluating —
+  so reporting never re-runs a check command, spawns an agent, or mutates the
+  tree. When `invariants` is disabled (or a run predates gate persistence), no gate
+  is evaluated or persisted and its invariants render **not evaluated**, taking no
+  part in the verdict.
 - **Promotion** — because a disabled contributor leaves cases `unjudged`, the
   run is incomplete and the `promoteBaseline` guard refuses it (below), so a
   partial run can never become the baseline.

@@ -146,11 +146,11 @@ and keep the full suite + coverage gate green at or above the enforced
 
 ## Tasks
 
-- [ ] 1.1 Persist the gate on the run: add optional
+- [x] 1.1 Persist the gate on the run: add optional
   `invariantGate?: InvariantGateResult` to `EvalRun` in `src/core/eval/run.ts`
   (type-only import from `./invariant-gate.js`), documenting it as the run-time
   gate result absent on disabled/legacy runs.
-- [ ] 2.1 In `src/core/eval/report.ts`: add `invariantsEvaluated: boolean` to
+- [x] 2.1 In `src/core/eval/report.ts`: add `invariantsEvaluated: boolean` to
   `EvalReport`; extract a pure `assembleReport(run, runId, diff, gate,
   invariantsEvaluated)` helper; add async `evaluateRun(projectRoot, runId, deps?)`
   (evaluate the gate with injectable `bash`/`readFile`/`spawner`/`agentName` when
@@ -159,27 +159,27 @@ and keep the full suite + coverage gate green at or above the enforced
   `renderReport(projectRoot, runId)` (read `run.invariantGate`, assemble with
   `invariantsEvaluated = gate !== undefined`, no gate/spawner). Remove
   `buildReport`.
-- [ ] 2.2 Update `src/core/eval/index.ts` to export `evaluateRun` / `renderReport`
+- [x] 2.2 Update `src/core/eval/index.ts` to export `evaluateRun` / `renderReport`
   (and the deps type) in place of `buildReport`.
-- [ ] 3.1 Update callers: `src/commands/eval/run.ts` calls `evaluateRun`;
+- [x] 3.1 Update callers: `src/commands/eval/run.ts` calls `evaluateRun`;
   `src/commands/eval/report.ts` calls synchronous `renderReport`, renames its
   local console renderer to avoid the name clash, and prints a neutral
   "Invariants: not evaluated" line (text) with `invariantsEvaluated` surfaced in
   `--json` when the run carries no persisted gate.
-- [ ] 4.1 Integration tests in `test/core/eval/report.test.ts`: repoint existing
+- [x] 4.1 Integration tests in `test/core/eval/report.test.ts`: repoint existing
   assertions to `evaluateRun`; add the no-spawn/no-mutate `renderReport` test
   (counting fake spawner asserted zero, untracked sentinel intact), the
   run-then-report parity + zero-re-spawn test, the disabled-invariants
   "not evaluated" test, and the legacy-run (no persisted gate, malformed manifest
   never loaded) "not evaluated" test.
-- [ ] 4.2 Command test in `test/commands/eval/report.test.ts`: `eval report`
+- [x] 4.2 Command test in `test/commands/eval/report.test.ts`: `eval report`
   renders a run with no persisted gate as "not evaluated" (text + JSON) and does
   not throw.
-- [ ] 4.3 E2E in `test/cli-e2e/eval.test.ts`: an active deterministic invariant
+- [x] 4.3 E2E in `test/cli-e2e/eval.test.ts`: an active deterministic invariant
   whose `check.run` increments an on-disk counter runs once under `eval run`; a
   subsequent `eval report` leaves the counter unchanged (report re-runs no check
   command).
-- [ ] 5.1 **[documentation standard — mandatory, blocking]** Update
+- [x] 5.1 **[documentation standard — mandatory, blocking]** Update
   `docs/commands/eval.md` (`eval report` is read-only — renders from persisted
   state, no re-eval/spawn/mutate; `eval run` persists the gate; "not evaluated"
   state; update the `eval report` vertical `flowchart TD` Overview diagram,
@@ -188,6 +188,6 @@ and keep the full suite + coverage gate green at or above the enforced
   at run time and persisted; report reads the persisted result; "not evaluated"),
   and `README.md` (`eval report` is read-only). Cross-check no toolchain literal
   leaks (`generalizable-defaults`).
-- [ ] 6.1 Run `pnpm build`, `pnpm vitest run` (full suite), `pnpm lint`, and the
+- [x] 6.1 Run `pnpm build`, `pnpm vitest run` (full suite), `pnpm lint`, and the
   coverage gate; confirm green at or above the enforced `COVERAGE_THRESHOLD`
   (95% floor).

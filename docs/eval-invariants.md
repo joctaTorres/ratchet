@@ -353,10 +353,18 @@ spawn or filesystem.
 
 ## Gate contributor
 
-`evaluateInvariantGate({ projectRoot, run, baseline, bash?, readFile? })` is the
-run-level seam that wires the manifest into the verdict. It runs **once per run**,
-inside `buildReport` — the single place a run's verdict is aggregated, shared by
-`eval run`, `eval report`, and any batch `verify` that surfaces an eval verdict.
+`evaluateInvariantGate({ projectRoot, run, baseline, bash?, readFile?, spawner? })`
+is the run-level seam that wires the manifest into the verdict. It runs **once per
+run, at run time**, inside `evaluateRun` (the `eval run` path) — the one command
+that evaluates the gate, running the invariant check/produce commands and, for an
+active `mutation` invariant, spawning the seeding agent. `evaluateRun` **persists
+the reduced result onto the run** (`run.invariantGate`). The read-only report path
+(`renderReport`, the `eval report` command) reads that persisted result instead of
+re-evaluating — so reporting a run never re-runs a check command, spawns an agent,
+or mutates the working tree. A run with no persisted gate (the `invariants`
+contributor was disabled, or a legacy run predating gate persistence) renders its
+invariants **not evaluated** (`EvalReport.invariantsEvaluated: false`) — a neutral
+state that takes no part in the verdict.
 
 1. **Load fail-closed.** A present-but-broken manifest (`InvariantManifestError`)
    returns a non-empty `failing` (the manifest filename) plus a `loadError`, so the
@@ -377,7 +385,7 @@ precomputed upstream and fed into the pure, synchronous aggregation core through
 reads `diff.regressions`. The async command-running stays out of the aggregation
 core, which remains I/O-free.
 
-`buildReport` evaluates the gate **only when the `invariants` contributor is in
+`evaluateRun` evaluates the gate **only when the `invariants` contributor is in
 the run's enabled set** (`run.gate`). A disabled contributor runs no manifest
 command and takes no part in the AND. The per-invariant breakdown is exposed on
 `EvalReport.invariants` (and `EvalReport.loadError`), and `ratchet eval run`

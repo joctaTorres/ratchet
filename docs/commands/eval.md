@@ -33,9 +33,9 @@ flowchart TD
     FIXTURES[💾 fixtures<br/>.ratchet/evals/fixtures]
 
     SET{{⚙️ eval set<br/>enumerate cases · binding status}}
-    RUN{{⚙️ eval run<br/>judge bound cases · run-level gates}}
+    RUN{{⚙️ eval run<br/>judge cases · evaluate + persist invariant gate}}
     RECORD{{✏️ eval record<br/>manual verdict override}}
-    REPORT{{📊 eval report<br/>scorecard · baseline diff}}
+    REPORT{{📊 eval report<br/>read-only · reads persisted gate}}
     BASELINE{{🏁 eval baseline<br/>promote a complete run}}
 
     RUNSTORE[💾 runs<br/>.ratchet/evals/runs]
@@ -52,7 +52,7 @@ flowchart TD
     RUNSTORE --> RECORD
     RECORD --> RUNSTORE
 
-    RUNSTORE --> REPORT
+    RUNSTORE -. persisted gate .-> REPORT
     BASESTORE -. baseline .-> REPORT
 
     RUNSTORE --> BASELINE
@@ -208,6 +208,11 @@ fails the command with the valid ids listed. See
      run-level gate loads `.ratchet/evals/invariants.yaml` **fail-closed** and checks
      only its **active** invariants; any violated, unevaluable, or unloadable
      invariant fails the run, while inert (`active: false`) invariants are skipped.
+     `eval run` is the **only** command that evaluates this gate — it runs the
+     invariant check/produce commands and, for an active `mutation` invariant,
+     spawns the seeding agent — and it **persists the full gate result** (the
+     per-invariant outcomes and the gate pass/fail) onto the run so `eval report`
+     can render the same verdict without re-evaluating.
      See [Eval invariant manifest](../eval-invariants.md#gate-contributor).
 7. **Unbound cases.** A non-skipped case with no binding in any spec is recorded `unjudged`
    with reason `"No eval-spec binding for this case"` and is never passed.
@@ -286,27 +291,42 @@ ratchet eval report --run <id> [--json]
 | Option | Argument | Description |
 |---|---|---|
 | `--run` | `<id>` | Run id to report. Required. |
-| `--json` | | Output the full `EvalReport` object as JSON, including `cases[]` (see below). |
+| `--json` | | Output the full `EvalReport` object as JSON, including `cases[]` (see below) and `invariantsEvaluated` (`false` for a run with no persisted gate). |
 
 ### Behavior
+
+`eval report` is **read-only**: it renders purely from the run's persisted
+state. It never re-evaluates the invariant gate — no invariant check command is
+re-run, no mutation-seeding agent is spawned, and the working tree is never
+mutated (`git reset --hard` / `git clean -fd` are never invoked). The gate is
+evaluated only by `eval run`, whose result is persisted on the run and read back
+here.
 
 1. The run is loaded. The promoted baseline run (if any) is loaded from the
    path recorded in `.ratchet/evals/baseline.json`.
 2. **Scorecard.** Pass/fail/unjudged counts are derived from the run's verdict
    map; a missing verdict entry is treated as `unjudged`. A run is `complete`
    when no case is unjudged.
-3. **Baseline diff.** The current run's case ids are compared against the
+3. **Invariants.** The per-invariant breakdown and the invariant contribution to
+   the verdict come from the gate result persisted by `eval run` — the report
+   reads it, never re-evaluates it. A run that carries no persisted gate — because
+   the `invariants` contributor was disabled for the run, or because the run
+   predates gate persistence — reports its invariants as **not evaluated**
+   (`invariantsEvaluated: false` in `--json`, an `Invariants: not evaluated` line
+   in text): a neutral state that is never re-evaluated and never affects the
+   pass/fail verdict.
+4. **Baseline diff.** The current run's case ids are compared against the
    baseline run's case ids:
    - **Regression** — present in both, verdict was `pass` in baseline and is
      `fail` now. Regressions are surfaced first in text output.
    - **New** — present in the current run but not in the baseline.
    - **Retired** — present in the baseline but not in the current run.
    - When no baseline is promoted, the diff is empty (no regressions).
-4. **Overall verdict.** The run-level verdict is decided by the
+5. **Overall verdict.** The run-level verdict is decided by the
    [verdict-aggregation core](../eval-verdict-aggregation.md) as a logical AND
    over named contributors: it is `pass` only when every contributor passes. The
    `EvalReport` carries the per-contributor breakdown under `contributors`.
-5. **Structured per-case detail.** `EvalReport.cases[]` holds one entry per run
+6. **Structured per-case detail.** `EvalReport.cases[]` holds one entry per run
    case — `{ id, scenario, verdict, source, rubric, clauses, votes, skip?,
    artifacts? }` — surfacing every judged case's resolved rubric, per-clause
    pass/fail evidence, and per-juror votes, a skipped case's skip

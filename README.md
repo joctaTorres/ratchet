@@ -234,7 +234,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--holdout`/`--no-holdout`, `--json`) |
 | `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--include-skipped`, `--holdout`/`--no-holdout`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
-| `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
+| `eval report --run <id>` | **Read-only** scorecard, failing cases with evidence, and the baseline regression diff, rendered from the run's persisted state — never re-evaluates the invariant gate (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
 
 In `ratchet --help`, the workflow commands `propose`, `apply`, `verify`, `batch`, and `eval` are gathered (in that order) under a single **`Workflow:`** heading; every other command keeps its default placement.
@@ -510,8 +510,13 @@ skipped, never counted as vacuous passes. It is **fail-closed** at both layers: 
 absent manifest is the only path to an empty (passing) set, while a malformed
 manifest or an uncheckable active invariant fails the run rather than degrading to
 a vacuous pass. `--no-invariants` (or `eval.gate.invariants: false`) disables the
-gate for a run. See the [eval invariant manifest](docs/eval-invariants.md)
-Reference doc for the schema, the gate contributor, and the loader contract.
+gate for a run. The gate is evaluated **only by `eval run`** (which runs the
+invariant commands, spawns the mutation seeder, and persists the result onto the
+run); the read-only `eval report` reads that persisted result and never
+re-evaluates, spawns, or mutates the tree — a run with no persisted gate reports
+its invariants as _not evaluated_. See the
+[eval invariant manifest](docs/eval-invariants.md) Reference doc for the schema,
+the gate contributor, and the loader contract.
 
 **The gate is configurable.** Which contributors execute and gate a run is
 selectable, generalizing the old `--judge` flag: set `eval.gate` in

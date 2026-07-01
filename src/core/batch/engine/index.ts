@@ -69,6 +69,7 @@ export {
   type ProofOfWorkResult,
   type RunProofOfWorkDeps,
   type BashRunner,
+  type BashResult,
   type LlmJudge,
   type JudgeVerdict,
 } from './proof-of-work.js';

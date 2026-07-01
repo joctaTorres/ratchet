@@ -21,10 +21,22 @@ export {
   type Binding,
   type DeterministicBinding,
   type LlmJudgeBinding,
+  type WebBinding,
+  type WebReadiness,
   type BindingKind,
   type ResolvedBinding,
   type EvalSpecLoadResult,
 } from './spec.js';
+export {
+  runWebLifecycle,
+  realProcessStarter,
+  defaultReadinessChecker,
+  type ProcessHandle,
+  type ProcessStarter,
+  type ReadinessChecker,
+  type WebLifecycleDeps,
+  type WebLifecycleOutcome,
+} from './web-lifecycle.js';
 export { FixtureManager, type MaterializeResult, type FixtureManagerDeps } from './fixture.js';
 export {
   judgeCase,

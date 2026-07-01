@@ -98,6 +98,20 @@ function resolveEntry(
   source: string,
   warnings: string[]
 ): ResolvedBinding | null {
+  // Fail loud on the pre-`jury` schema: `agentVotes` was renamed to
+  // `jury.votes`. Zod strips unknown keys, so a stale spec would otherwise be
+  // silently downgraded to the default single vote. Reject it explicitly.
+  if (
+    raw &&
+    typeof raw === 'object' &&
+    (raw as Record<string, unknown>).kind === 'llm-judge' &&
+    'agentVotes' in (raw as Record<string, unknown>)
+  ) {
+    warnings.push(
+      `Invalid binding for '${caseId}' in ${path.basename(source)}: 'agentVotes' is no longer supported; use 'jury.votes' instead.`
+    );
+    return null;
+  }
   const parsed = BindingSchema.safeParse(raw);
   if (!parsed.success) {
     warnings.push(

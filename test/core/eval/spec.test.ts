@@ -123,6 +123,27 @@ describe('loadEvalSpecs', () => {
     expect(specs.warnings.some((w) => w.includes('a#legacy'))).toBe(true);
   });
 
+  it('rejects a legacy "agentVotes" key on an llm-judge binding and names jury.votes', () => {
+    const root = makeProject();
+    writeSpec(
+      root,
+      'stale.yaml',
+      `a#stale:
+  fixture: fx
+  kind: llm-judge
+  success: works
+  agentVotes: 3
+`
+    );
+    const specs = loadEvalSpecs(root);
+    // Fail loud rather than silently dropping to the default single vote.
+    expect(resolveBinding(specs, 'a#stale')).toBeUndefined();
+    const warning = specs.warnings.find((w) => w.includes('a#stale'));
+    expect(warning).toBeDefined();
+    expect(warning).toContain('agentVotes');
+    expect(warning).toContain('jury.votes');
+  });
+
   it('returns undefined for a case with no binding (unbound)', () => {
     const root = makeProject();
     const specs = loadEvalSpecs(root);

@@ -21,6 +21,7 @@ import {
   filterCasesByHoldout,
 } from '../../../src/core/eval/holdout.js';
 import { SKIP_TAG } from '../../../src/core/eval/skip.js';
+import { parseFeatureFile } from '../../../src/core/parsers/gherkin-parser.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
 
 function mkCase(overrides: Partial<EvalCase> = {}): EvalCase {
@@ -144,6 +145,34 @@ describe('filterHoldoutContent', () => {
     expect(filtered).toContain('Scenario: Kept');
   });
 
+  it('treats docstring content as opaque, not as tags or Scenario headers', () => {
+    const content = [
+      'Feature: Sample',
+      '  Scenario: Kept',
+      '    Given a request body:',
+      '      """',
+      '      @holdout',
+      '      Scenario: not a real scenario',
+      '      """',
+      '    Then b',
+      '',
+      '  @holdout',
+      '  Scenario: Held',
+      '    Given c',
+      '    Then d',
+      '',
+    ].join('\n');
+
+    const filtered = filterHoldoutContent(content);
+
+    // The @holdout / Scenario: lines inside the docstring are inert; only the
+    // genuinely tagged Scenario is dropped.
+    expect(filtered).toContain('Scenario: Kept');
+    expect(filtered).toContain('not a real scenario');
+    expect(filtered).not.toContain('Scenario: Held');
+    expect(filtered).not.toContain('Given c');
+  });
+
   it('detects @holdout combined with another tag on the same line', () => {
     const content = [
       'Feature: Sample',
@@ -162,6 +191,69 @@ describe('filterHoldoutContent', () => {
 
     expect(filtered).not.toContain('Held out');
     expect(filtered).toContain('Scenario: Kept');
+  });
+});
+
+// `filterHoldoutContent` re-implements the gherkin parser's tag
+// accumulate/reset rules on raw lines. Nothing at the type level keeps the two
+// in lockstep, so this cross-fixture test feeds one `.feature` through both and
+// asserts they agree on which scenarios are @holdout — catching silent drift if
+// a future parser change is not mirrored into the filter (or vice versa).
+describe('filterHoldoutContent / parser tag agreement', () => {
+  const FIXTURE = [
+    '@featureLevel',
+    'Feature: Mixed',
+    '  A description.',
+    '',
+    '  Background:',
+    '    Given the app is running',
+    '',
+    '  @holdout',
+    '  Scenario: HeldPlain',
+    '    Given a',
+    '    Then b',
+    '',
+    '  @smoke',
+    '  Scenario: KeptTagged',
+    '    Given c',
+    '    Then d',
+    '',
+    '  @holdout @smoke',
+    '  Scenario Outline: HeldOutline',
+    '    Given e <v>',
+    '    Then f',
+    '    @holdout',
+    '    Examples:',
+    '      | v |',
+    '      | 1 |',
+    '',
+    '  Scenario: KeptAfterExamples',
+    '    Given g',
+    '    Then h',
+    '',
+  ].join('\n');
+
+  it('agrees on which scenarios are @holdout', () => {
+    const feature = parseFeatureFile(FIXTURE);
+    const parserHeldout = new Set(
+      feature.scenarios.filter((s) => s.tags.includes(HOLDOUT_TAG)).map((s) => s.name)
+    );
+
+    const filtered = filterHoldoutContent(FIXTURE);
+    const keptByFilter = new Set(
+      parseFeatureFile(filtered).scenarios.map((s) => s.name)
+    );
+
+    for (const s of feature.scenarios) {
+      const heldByParser = parserHeldout.has(s.name);
+      // A scenario is dropped by the filter exactly when the parser tags it
+      // @holdout; kept exactly when it does not.
+      expect(keptByFilter.has(s.name)).toBe(!heldByParser);
+    }
+
+    // Sanity: the fixture actually exercises both branches.
+    expect(parserHeldout).toEqual(new Set(['HeldPlain', 'HeldOutline']));
+    expect(keptByFilter).toEqual(new Set(['KeptTagged', 'KeptAfterExamples']));
   });
 });
 

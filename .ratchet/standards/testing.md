@@ -107,3 +107,6 @@ the enforced `COVERAGE_THRESHOLD`.
 - eval-command-tests/shared.feature
 - testing-standard/reference-docs.feature
 - testing-standard/standard-library.feature
+- utils-helper-tests/item-discovery.feature
+- utils-helper-tests/match.feature
+- utils-helper-tests/task-progress.feature

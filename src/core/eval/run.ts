@@ -16,6 +16,7 @@ import type { EvalCase } from './set.js';
 import type { ClauseResult, JurorVote, Verdict } from './judge.js';
 import type { BindingKind } from './spec.js';
 import { isRunComplete, type ContributorId } from './aggregate.js';
+import type { SkipReason } from './skip.js';
 
 export type VerdictSource = 'judged' | 'manual';
 
@@ -41,7 +42,7 @@ export interface CaseRecord {
   /** Every juror's individual vote, in cast order. Present only on a judged case. */
   votes?: JurorVote[];
   /** The skip source/detail this case matched. Present only on a `skipped` record. */
-  skip?: { source: 'tag' | 'config'; detail: string };
+  skip?: SkipReason;
 }
 
 export interface EvalRun {

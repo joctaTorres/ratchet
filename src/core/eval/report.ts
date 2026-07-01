@@ -22,6 +22,7 @@ import type { ClauseResult, JurorVote, Verdict } from './judge.js';
 import { aggregateRun, DEFAULT_CONTRIBUTORS, type ContributorOutcome } from './aggregate.js';
 import { evaluateInvariantGate } from './invariant-gate.js';
 import type { InvariantOutcome } from './invariant-evaluator.js';
+import type { SkipReason } from './skip.js';
 
 export interface Scorecard {
   total: number;
@@ -50,7 +51,7 @@ export interface CaseDetail {
   rubric: string[];
   clauses: ClauseResult[];
   votes: JurorVote[];
-  skip?: { source: 'tag' | 'config'; detail: string };
+  skip?: SkipReason;
 }
 
 export interface BaselineDiff {

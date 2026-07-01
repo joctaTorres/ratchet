@@ -139,4 +139,6 @@ change is not done until that diagram exists and matches the code.
 - docs-website/markdown-link-strictness.feature
 - docs-website/site-structure.feature
 - docs-website/workers-assets-deploy.feature
+- proof-of-work-boundary/execute-and-record.feature
+- proof-of-work-boundary/recorded-proof-reader.feature
 - proof-of-work-gate/e2e-gate.feature

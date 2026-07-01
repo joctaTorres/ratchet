@@ -80,3 +80,10 @@ verbs, the agent-instruction builders, the step-selection / status / transition
 logic, or the shared workflow/skill templates that define the change lifecycle.
 Any path that spawns an agent to advance a change must delegate to the canonical
 skill/workflow rather than re-author the lifecycle inline.
+
+## Implemented by
+
+<!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
+
+- proof-of-work-boundary/execute-and-record.feature
+- proof-of-work-boundary/recorded-proof-reader.feature

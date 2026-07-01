@@ -110,3 +110,7 @@ the enforced `COVERAGE_THRESHOLD`.
 - utils-helper-tests/item-discovery.feature
 - utils-helper-tests/match.feature
 - utils-helper-tests/task-progress.feature
+- workflow-command-tests/instructions.feature
+- workflow-command-tests/new-change.feature
+- workflow-command-tests/shared.feature
+- workflow-command-tests/status.feature

@@ -1,0 +1,9 @@
+features:
+  instructions.feature:
+    - testing
+  new-change.feature:
+    - testing
+  shared.feature:
+    - testing
+  status.feature:
+    - testing

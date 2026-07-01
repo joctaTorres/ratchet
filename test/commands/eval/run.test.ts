@@ -143,6 +143,21 @@ describe('evalRunCommand', () => {
     expect(text.indexOf('INVARIANT VIOLATIONS')).toBeLessThan(text.indexOf('Contributors:'));
   });
 
+  it('counts an unloadable manifest as one violation in the run-level header', async () => {
+    // A malformed manifest yields a loadError with zero per-invariant violations.
+    // The header must count the load error explicitly (1), not fall back to a
+    // hard-coded 1, and must name the unloadable manifest.
+    await fixture.write(
+      '.ratchet/evals/invariants.yaml',
+      'invariants:\n  - id: bogus\n    kind: not-a-kind\n    active: true\n'
+    );
+    await evalRunCommand({});
+    const text = output();
+    expect(text).toContain('[FAIL]');
+    expect(text).toContain('INVARIANT VIOLATIONS (1)');
+    expect(text).toContain('manifest could not be loaded');
+  });
+
   it('emits the invariant breakdown in --json and fails the run', async () => {
     await fixture.write(
       '.ratchet/evals/invariants.yaml',

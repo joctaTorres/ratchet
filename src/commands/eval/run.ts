@@ -71,8 +71,11 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
  */
 function renderRunLevelViolations(report: EvalReport): void {
   const violations = report.invariants.filter((o) => o.status !== 'pass');
-  if (violations.length > 0 || report.loadError) {
-    console.log(chalk.red.bold(`  INVARIANT VIOLATIONS (${violations.length || 1}):`));
+  // Count the per-invariant violations plus, distinctly, an unloadable manifest
+  // (a load error is itself one violation even with zero per-invariant entries).
+  const count = violations.length + (report.loadError ? 1 : 0);
+  if (count > 0) {
+    console.log(chalk.red.bold(`  INVARIANT VIOLATIONS (${count}):`));
     if (report.loadError) {
       console.log(chalk.red(`    - manifest could not be loaded`));
       console.log(chalk.dim(`        ${report.loadError}`));

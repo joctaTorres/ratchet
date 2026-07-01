@@ -1,5 +1,5 @@
 /**
- * `ratchet eval set [scope] [--json]`
+ * `ratchet eval set [scope] [--holdout | --no-holdout] [--json]`
  *
  * Enumerate eval cases (one per Scenario) from `.feature` files. Default scope
  * is the permanent feature store; `--changes` / `--change <name>` / `--path`
@@ -12,6 +12,7 @@ import {
   loadEvalSpecs,
   resolveBinding,
   resolveHoldout,
+  filterCasesByHoldout,
 } from '../../core/eval/index.js';
 import { projectRoot, resolveScope, type ScopeFlags } from './shared.js';
 
@@ -32,7 +33,7 @@ interface SetCaseView {
 export async function evalSetCommand(options: EvalSetOptions = {}): Promise<void> {
   const root = projectRoot();
   const scope = resolveScope(options);
-  const cases = enumerateEvalSet(root, scope);
+  const cases = filterCasesByHoldout(enumerateEvalSet(root, scope), options.holdout);
   const specs = loadEvalSpecs(root);
 
   const views: SetCaseView[] = cases.map((c) => {

@@ -1,5 +1,5 @@
 /**
- * Unit tests for the hold-out tag resolver and content filter.
+ * Unit tests for the hold-out tag resolver, content filter, and scope filter.
  *
  * Implements features/eval-holdout/holdout-tag-resolution.feature: a case
  * tagged `@holdout` resolves true; a case with no tags, or other tags but not
@@ -8,11 +8,18 @@
  * inputs — no filesystem, no spawn.
  *
  * Also implements features/apply-holdout/apply-time-filter.feature's
- * text-filtering cases for `filterHoldoutContent`.
+ * text-filtering cases for `filterHoldoutContent`, and
+ * features/eval-holdout/holdout-scope-filter.feature's pure-filter cases for
+ * `filterCasesByHoldout`.
  */
 
 import { describe, it, expect } from 'vitest';
-import { resolveHoldout, HOLDOUT_TAG, filterHoldoutContent } from '../../../src/core/eval/holdout.js';
+import {
+  resolveHoldout,
+  HOLDOUT_TAG,
+  filterHoldoutContent,
+  filterCasesByHoldout,
+} from '../../../src/core/eval/holdout.js';
 import { SKIP_TAG } from '../../../src/core/eval/skip.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
 
@@ -155,5 +162,29 @@ describe('filterHoldoutContent', () => {
 
     expect(filtered).not.toContain('Held out');
     expect(filtered).toContain('Scenario: Kept');
+  });
+});
+
+describe('filterCasesByHoldout', () => {
+  const held = mkCase({ id: 'features/cli/held#held', tags: [HOLDOUT_TAG] });
+  const kept = mkCase({ id: 'features/cli/kept#kept', tags: [] });
+  const cases = [held, kept];
+
+  it('keeps only @holdout-tagged cases when holdout is true', () => {
+    expect(filterCasesByHoldout(cases, true)).toEqual([held]);
+  });
+
+  it('keeps only untagged cases when holdout is false', () => {
+    expect(filterCasesByHoldout(cases, false)).toEqual([kept]);
+  });
+
+  it('returns the input array unchanged, in order, when holdout is undefined', () => {
+    expect(filterCasesByHoldout(cases, undefined)).toEqual(cases);
+  });
+
+  it('returns an empty array for empty input regardless of the flag', () => {
+    expect(filterCasesByHoldout([], true)).toEqual([]);
+    expect(filterCasesByHoldout([], false)).toEqual([]);
+    expect(filterCasesByHoldout([], undefined)).toEqual([]);
   });
 });

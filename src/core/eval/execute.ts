@@ -21,6 +21,7 @@ import { FixtureManager, type FixtureManagerDeps } from './fixture.js';
 import { judgeCase, type CaseVerdict, type JudgeDeps } from './judge.js';
 import { ALL_CONTRIBUTOR_IDS } from './gate.js';
 import { resolveSkip, type SkipReason } from './skip.js';
+import { filterCasesByHoldout } from './holdout.js';
 import type { ContributorId } from './aggregate.js';
 import {
   generateRunId,
@@ -44,6 +45,12 @@ export interface RunOptions {
   skip?: string[];
   /** Override both skip sources (config patterns and the in-file `@skip` tag) for this run. */
   includeSkipped?: boolean;
+  /**
+   * Restrict the enumerated case set to only held-out (`true`) or only
+   * non-held-out (`false`) cases via `filterCasesByHoldout`; `undefined`
+   * (no flag) leaves the set unchanged.
+   */
+  holdout?: boolean;
   /** Override the run id / clock (tests). */
   runId?: string;
   now?: Date;
@@ -114,7 +121,7 @@ function summarizeEvidence(evidence: CaseVerdict['evidence']): string {
 
 /** Run the eval over the in-scope set and persist the result. */
 export async function executeRun(projectRoot: string, options: RunOptions): Promise<RunOutcome> {
-  const cases = enumerateEvalSet(projectRoot, options.scope);
+  const cases = filterCasesByHoldout(enumerateEvalSet(projectRoot, options.scope), options.holdout);
   const specs = loadEvalSpecs(projectRoot);
   const fixtures = new FixtureManager(projectRoot, options.fixtures);
 

@@ -16,6 +16,16 @@ export function resolveHoldout(c: EvalCase): boolean {
   return c.tags.includes(HOLDOUT_TAG);
 }
 
+/**
+ * Narrow `cases` to only those matching a hold-out scope filter: `undefined`
+ * (no `--holdout`/`--no-holdout` flag) returns `cases` unchanged; otherwise
+ * keeps only cases where `resolveHoldout(c) === holdout`.
+ */
+export function filterCasesByHoldout(cases: EvalCase[], holdout: boolean | undefined): EvalCase[] {
+  if (holdout === undefined) return cases;
+  return cases.filter((c) => resolveHoldout(c) === holdout);
+}
+
 const SCENARIO_HEADER = /^(Scenario Outline|Scenario Template|Scenario|Example):/i;
 const BACKGROUND_HEADER = /^Background:/i;
 const FEATURE_HEADER = /^Feature:/i;

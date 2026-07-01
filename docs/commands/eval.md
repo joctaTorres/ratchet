@@ -79,7 +79,7 @@ case's binding status.
 ### Synopsis
 
 ```bash
-ratchet eval set [--changes | --change <name> | --path <dir-or-file>] [--json]
+ratchet eval set [--changes | --change <name> | --path <dir-or-file>] [--holdout | --no-holdout] [--json]
 ```
 
 ### Options
@@ -89,6 +89,8 @@ ratchet eval set [--changes | --change <name> | --path <dir-or-file>] [--json]
 | `--changes` | | Include active changes alongside the feature store. |
 | `--change` | `<name>` | Scope to a single active change. |
 | `--path` | `<dir-or-file>` | Narrow to a capability directory or `.feature` file within the feature store. |
+| `--holdout` | | Restrict to only held-out (`@holdout`-tagged) cases. |
+| `--no-holdout` | | Exclude held-out (`@holdout`-tagged) cases. |
 | `--json` | | Output as JSON: `{ scope, count, cases[] }`. |
 
 The three scope flags are mutually exclusive; supplying more than one is an
@@ -111,7 +113,12 @@ error.
    text appends a `[holdout]` tag after the case id when true. This is
    reporting only — it has no effect on gating, and is independent of (shown
    alongside, not instead of) the binding tag.
-5. **Archive exclusion.** The archive (`changes/archive/`) is never a scope
+5. **Hold-out filter.** `--holdout`/`--no-holdout` narrow the in-scope case
+   set to only held-out or only non-held-out cases, composing with (not
+   replacing) the `--changes`/`--change`/`--path` scope flags. Omitting both
+   flags lists every in-scope case, exactly as before. Filtering has no
+   effect on binding, judging, the gate, or aggregation.
+6. **Archive exclusion.** The archive (`changes/archive/`) is never a scope
    root regardless of flags.
 
 ---
@@ -124,7 +131,7 @@ working copy and persist the run.
 ### Synopsis
 
 ```bash
-ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--gate <ids> | --only <ids> | --no-llm-judge | --no-invariants] [--judge <mode>] [--include-skipped] [--json]
+ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--holdout | --no-holdout] [--gate <ids> | --only <ids> | --no-llm-judge | --no-invariants] [--judge <mode>] [--include-skipped] [--json]
 ```
 
 ### Options
@@ -134,6 +141,8 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--gate <i
 | `--changes` | | Include active changes alongside the feature store. |
 | `--change` | `<name>` | Scope to a single active change. |
 | `--path` | `<dir-or-file>` | Narrow to a capability directory or `.feature` file within the feature store. |
+| `--holdout` | | Restrict to only held-out (`@holdout`-tagged) cases. |
+| `--no-holdout` | | Exclude held-out (`@holdout`-tagged) cases. |
 | `--gate` | `<ids>` | Set the enabled contributor set outright (comma-separated ids from `deterministic`, `llm-judge`, `invariants`, `regression`). |
 | `--only` | `<ids>` | Restrict the enabled set to the listed contributor ids (intersection with the config default). |
 | `--no-llm-judge` | | Disable the `llm-judge` contributor for this run. |
@@ -151,7 +160,14 @@ fails the command with the valid ids listed. See
 ### Behavior
 
 1. **Scope and enumeration.** Same as `eval set`.
-2. **Skip filters.** Before binding resolution, each case is checked against
+2. **Hold-out filter.** `--holdout`/`--no-holdout` narrow the in-scope case
+   set to only held-out or only non-held-out cases, composing with (not
+   replacing) the `--changes`/`--change`/`--path` scope flags, applied
+   immediately after enumeration and before the skip/binding/judging loop.
+   Filtering has no effect on binding, judging, the gate, or aggregation — a
+   held-out case that is in scope is judged and gated exactly like any other
+   case.
+3. **Skip filters.** Before binding resolution, each case is checked against
    the skip sources: an in-file `@skip` Gherkin tag on its Scenario, then (if
    untagged) the project's `eval.skip` glob patterns (matched against the full
    case id) from `.ratchet/config.yaml`. A match records the case `skipped`
@@ -162,16 +178,16 @@ fails the command with the valid ids listed. See
    blocks run completeness and is counted in the scorecard, never silently
    dropped. If a case being skipped was `pass` in the promoted baseline, a
    warning naming the case is printed (see Output below).
-3. **Spec loading.** All YAML files under `.ratchet/evals/specs/` are loaded.
+4. **Spec loading.** All YAML files under `.ratchet/evals/specs/` are loaded.
    Invalid bindings and duplicate case ids are collected as warnings and
    surfaced in output.
-4. **Fixture materialization.** For each bound, non-skipped case, the named
+5. **Fixture materialization.** For each bound, non-skipped case, the named
    fixture is copied into a throwaway temp working copy. When the binding
    declares a `setup` command, setup runs once into a cached copy for that
    fixture+setup pair; subsequent cases bound to the same fixture+setup reuse
    the cached copy. Each case judges in an isolated working copy; the
    checked-in fixture and host repository are never modified.
-5. **Contributor gating.** The enabled contributor set (resolved from config and
+6. **Contributor gating.** The enabled contributor set (resolved from config and
    CLI flags, persisted on the run as `gate`) decides what runs. It has two
    distinct effects:
    - *Per-case judging.* A bound case is judged by its binding kind — a
@@ -187,20 +203,20 @@ fails the command with the valid ids listed. See
      only its **active** invariants; any violated, unevaluable, or unloadable
      invariant fails the run, while inert (`active: false`) invariants are skipped.
      See [Eval invariant manifest](../eval-invariants.md#gate-contributor).
-6. **Unbound cases.** A non-skipped case with no binding in any spec is recorded `unjudged`
+7. **Unbound cases.** A non-skipped case with no binding in any spec is recorded `unjudged`
    with reason `"No eval-spec binding for this case"` and is never passed.
-7. **Persistence.** The completed run is persisted atomically to
+8. **Persistence.** The completed run is persisted atomically to
    `.ratchet/evals/runs/<run-id>.json`. The run id is a UTC timestamp plus a
    3-byte hex suffix (`YYYYMMDDTHHMMSSmmmZ-<hex>`), ensuring chronological
    sort order and no collisions.
-8. **Structured per-case detail.** Alongside the flattened `reason` sentence,
+9. **Structured per-case detail.** Alongside the flattened `reason` sentence,
    the run JSON persists each judged case's resolved rubric, every clause's
    boolean pass/fail with its cited evidence, and each juror's individual vote
    (a deterministic check carries the same shape as a one-clause/one-vote
    `llm-judge` case); a skipped case persists its skip source (`tag` or
    `config`) and matched detail. `eval run --json` surfaces this under
    `cases[]`.
-9. **Output.** The run id, the aggregated overall verdict, the
+10. **Output.** The run id, the aggregated overall verdict, the
    pass/fail/unjudged/skipped scorecard, and a per-contributor breakdown are
    printed (`deterministic`, `llm-judge`, `invariants`, `regression`).
    Run-level gate violations — a violated/unevaluable invariant (or an

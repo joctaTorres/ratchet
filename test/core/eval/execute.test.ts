@@ -6,6 +6,13 @@
  * case's persisted record carries its skip source/detail, and a record with
  * no judging detail (unbound, or whose contributor is disabled) carries no
  * rubric/clauses/votes.
+ *
+ * Also implements the executeRun-facing scenarios of
+ * features/eval-holdout/holdout-scope-filter.feature: `holdout: true`/`false`
+ * restricts the persisted run's cases/verdicts to only the held-out or only
+ * the non-held-out case(s), and a held-out, deterministic-bound case run
+ * under `holdout: true` is judged and gated exactly like any other bound
+ * case.
  */
 import { afterEach, describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -120,6 +127,63 @@ describe('executeRun: absence of judging detail where there is none', () => {
     );
     const { run } = await executeRun(root, { scope: { kind: 'store' }, gate: ALL_GATE });
     const record = run.verdicts['features/cli/status#status-as-json'];
+    expect(record.verdict).toBe('pass');
+    expect(record.rubric).toEqual(['contains:applyRequires']);
+    expect(record.clauses).toHaveLength(1);
+    expect(record.votes).toEqual([{ pass: true, clauses: record.clauses }]);
+  });
+});
+
+describe('executeRun: holdout scope filter', () => {
+  const HELD_OUT_CASE = 'features/eval-holdout/sample#held-out-scenario';
+  const KEPT_CASE = 'features/eval-holdout/sample#kept-scenario';
+
+  function writeHoldoutFeature(root: string): void {
+    writeFile(
+      root,
+      '.ratchet/features/eval-holdout/sample.feature',
+      [
+        'Feature: Sample',
+        '  @holdout',
+        '  Scenario: Held out scenario',
+        '    Given a precondition',
+        '    Then an outcome',
+        '',
+        '  Scenario: Kept scenario',
+        '    Given a precondition',
+        '    Then an outcome',
+        '',
+      ].join('\n')
+    );
+  }
+
+  it('persists a run whose cases/verdicts include only the held-out case(s) when holdout is true', async () => {
+    const root = makeProject();
+    writeHoldoutFeature(root);
+    const { run } = await executeRun(root, { scope: { kind: 'store' }, gate: ALL_GATE, holdout: true });
+    expect(run.cases.map((c) => c.id)).toEqual([HELD_OUT_CASE]);
+    expect(Object.keys(run.verdicts)).toEqual([HELD_OUT_CASE]);
+  });
+
+  it('persists a run whose cases/verdicts include only the non-held-out case(s) when holdout is false', async () => {
+    const root = makeProject();
+    writeHoldoutFeature(root);
+    const { run } = await executeRun(root, { scope: { kind: 'store' }, gate: ALL_GATE, holdout: false });
+    expect(run.cases.map((c) => c.id)).toEqual([KEPT_CASE]);
+    expect(Object.keys(run.verdicts)).toEqual([KEPT_CASE]);
+  });
+
+  it('judges and gates a held-out, deterministic-bound case exactly like any other bound case', async () => {
+    const root = makeProject();
+    writeHoldoutFeature(root);
+    writeFile(root, '.ratchet/evals/fixtures/status-ok/output.txt', 'applyRequires: plan\n');
+    writeFile(
+      root,
+      '.ratchet/evals/specs/eval-holdout.yaml',
+      `${HELD_OUT_CASE}:\n  fixture: status-ok\n  kind: deterministic\n  check:\n    run: cat output.txt\n    pass: "contains:applyRequires"\n`
+    );
+    const { run } = await executeRun(root, { scope: { kind: 'store' }, gate: ALL_GATE, holdout: true });
+    const record = run.verdicts[HELD_OUT_CASE];
     expect(record.verdict).toBe('pass');
     expect(record.rubric).toEqual(['contains:applyRequires']);
     expect(record.clauses).toHaveLength(1);

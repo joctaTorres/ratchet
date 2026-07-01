@@ -15,6 +15,13 @@ export interface ScopeFlags {
   changes?: boolean;
   change?: string;
   path?: string;
+  /**
+   * `--holdout`/`--no-holdout`: an orthogonal per-case filter, not a
+   * scope-kind flag. Narrows the enumerated case set to only held-out
+   * (`true`) or only non-held-out (`false`) cases via `filterCasesByHoldout`;
+   * `resolveScope()` does not read it.
+   */
+  holdout?: boolean;
 }
 
 /** Resolve scope flags into a single scope; flags are mutually exclusive. */

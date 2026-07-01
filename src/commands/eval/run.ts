@@ -1,5 +1,5 @@
 /**
- * `ratchet eval run [scope] [--gate <ids>] [--only <ids>] [--no-llm-judge] [--judge <mode>] [--include-skipped] [--json]`
+ * `ratchet eval run [scope] [--gate <ids>] [--only <ids>] [--no-llm-judge] [--judge <mode>] [--include-skipped] [--holdout | --no-holdout] [--json]`
  *
  * Snapshot the in-scope set, judge every bound case whose contributor is enabled
  * through the engine seams against its fixture working copy, persist the run
@@ -65,6 +65,7 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
     judge: { jury },
     skip,
     includeSkipped: options.includeSkipped,
+    holdout: options.holdout,
   });
   const report = await buildReport(root, run.runId);
   const warnings = [...specWarnings, ...baselineSkipWarnings(report.diff)];

@@ -642,7 +642,9 @@ const withScopeFlags = (cmd: Command): Command =>
   cmd
     .option('--changes', 'Include active changes alongside the feature store')
     .option('--change <name>', 'Scope to a single active change')
-    .option('--path <dir-or-file>', 'Narrow to a capability directory or file');
+    .option('--path <dir-or-file>', 'Narrow to a capability directory or file')
+    .option('--holdout', 'Restrict to only held-out (@holdout-tagged) cases')
+    .option('--no-holdout', 'Exclude held-out (@holdout-tagged) cases');
 
 withScopeFlags(
   evalCmd

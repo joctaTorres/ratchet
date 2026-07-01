@@ -57,6 +57,10 @@ drive ratchet. All changes in this repo must assume ratchet is tool-agnostic.
 
 <!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
 
+- batch-archive/archive-command.feature
+- batch-archive/done-gate.feature
+- batch-archive/listing-excludes-archive.feature
+- batch-archive/workflow-surface.feature
 - propose-batch/gated-chain-in.feature
 - propose-batch/multi-agent-surface.feature
 - propose-batch/phase-elicitation.feature

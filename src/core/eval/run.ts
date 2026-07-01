@@ -16,6 +16,7 @@ import {
   writeFileSync,
   renameSync,
   copyFileSync,
+  statSync,
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
@@ -75,6 +76,28 @@ export interface EvalRun {
 
 export function runsDir(projectRoot: string): string {
   return path.join(projectRoot, RATCHET_DIR_NAME, 'evals', 'runs');
+}
+
+/**
+ * Returns the absolute path of the project's `.ratchet/evals/` directory,
+ * whether or not it exists.
+ */
+export function evalsDir(projectRoot: string): string {
+  return path.join(projectRoot, RATCHET_DIR_NAME, 'evals');
+}
+
+/**
+ * Returns `true` when the project has an eval store (`.ratchet/evals/`
+ * directory present), `false` otherwise. Used to gate apply-time
+ * `@holdout` filtering — filtering only makes sense when `eval run` exists
+ * to enforce the held-out scenarios.
+ */
+export function hasEvalIntent(projectRoot: string): boolean {
+  try {
+    return statSync(evalsDir(projectRoot)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 export function runPath(projectRoot: string, runId: string): string {

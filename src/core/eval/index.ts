@@ -79,6 +79,8 @@ export {
   baselinePath,
   runArtifactsDir,
   persistCaseArtifacts,
+  evalsDir,
+  hasEvalIntent,
   type EvalRun,
   type CaseRecord,
   type CaseSnapshot,

@@ -49,6 +49,17 @@ function makeDocStringSkipper(): (trimmed: string) => boolean {
 }
 
 /**
+ * The result of {@link filterHoldoutContent}: the filtered text plus a count
+ * of how many `@holdout`-tagged Scenario blocks were stripped. The count is an
+ * integer only — names and steps of held-out scenarios are never included, by
+ * design (they remain invisible to the building agent).
+ */
+export interface HoldoutFilterResult {
+  content: string;
+  heldOutCount: number;
+}
+
+/**
  * Strip every `@holdout`-tagged Scenario/Scenario Outline block out of raw
  * `.feature` text, leaving every other line — Feature header/description,
  * Background, non-held-out Scenarios, comments — untouched byte-for-byte.
@@ -62,14 +73,21 @@ function makeDocStringSkipper(): (trimmed: string) => boolean {
  * through the line before the next tag run, header, or EOF — sweeps in a
  * held-out Outline's `Examples:` table while a tag on that `Examples:` line
  * cannot leak onto the following Scenario.
+ *
+ * Returns both the filtered content and the count of held-out blocks stripped
+ * (`heldOutCount`). `heldOutCount` is incremented once per Scenario header
+ * that opens a new drop run — never in the `Examples:` branch — so a
+ * `Scenario Outline` with an `Examples:` table counts as one held-out block,
+ * not two.
  */
-export function filterHoldoutContent(content: string): string {
+export function filterHoldoutContent(content: string): HoldoutFilterResult {
   const lines = content.split('\n');
   const drop = new Array<boolean>(lines.length).fill(false);
 
   let pendingTags: string[] = [];
   let tagRunStart: number | null = null;
   let dropRunStart: number | null = null;
+  let heldOutCount = 0;
   const inDocString = makeDocStringSkipper();
 
   const closeDropRun = (endExclusive: number) => {
@@ -112,6 +130,7 @@ export function filterHoldoutContent(content: string): string {
       closeDropRun(i);
       if (pendingTags.includes(HOLDOUT_TAG)) {
         dropRunStart = tagRunStart ?? i;
+        heldOutCount++;
       }
       pendingTags = [];
       tagRunStart = null;
@@ -129,5 +148,5 @@ export function filterHoldoutContent(content: string): string {
   }
   closeDropRun(lines.length);
 
-  return lines.filter((_, i) => !drop[i]).join('\n');
+  return { content: lines.filter((_, i) => !drop[i]).join('\n'), heldOutCount };
 }

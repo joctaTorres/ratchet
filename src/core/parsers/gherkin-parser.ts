@@ -128,6 +128,10 @@ export class GherkinParser {
       const examplesMatch = trimmed.match(/^(Examples|Scenarios):/i);
       if (examplesMatch) {
         inExamples = true;
+        // Tags accumulated before an Examples block belong to that block's
+        // parent Scenario Outline, not to the next Scenario. Clear them so they
+        // do not leak onto a following block (mirrors other block starts).
+        pendingTags = [];
         continue;
       }
 

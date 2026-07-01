@@ -189,6 +189,28 @@ describe('GherkinParser', () => {
       expect(feature.scenarios[1].tags).toEqual([]);
     });
 
+    it('does not leak a tag on an Examples block onto a following Scenario', () => {
+      const feature = parseFeatureFile(
+        `Feature: F
+  Scenario Outline: outline
+    Given <a>
+    Then <b>
+    @holdout
+    Examples:
+      | a | b |
+      | 1 | 2 |
+
+  Scenario: next
+    Given a
+    Then b
+`
+      );
+      expect(feature.scenarios.map(s => s.name)).toEqual(['outline', 'next']);
+      // The @holdout tag sits above the Examples block; it must not carry over
+      // to the following Scenario.
+      expect(feature.scenarios[1].tags).toEqual([]);
+    });
+
     it('does not leak a feature-level tag onto the first scenario', () => {
       const feature = parseFeatureFile(
         `@featureTag

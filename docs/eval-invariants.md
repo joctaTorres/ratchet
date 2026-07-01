@@ -267,8 +267,9 @@ deterministic oracle, and classifies each fault killed or survived.
 `evaluateInvariant` runs this harness and reduces its per-mutant results to a
 real `pass`/`fail`/`unevaluable` outcome, persisting each mutant's diff and test
 output as replayable run evidence — see
-[How each kind is evaluated](#how-each-kind-is-evaluated). Scaffolding a `kind:
-mutation` entry from `ratchet init` remains a follow-on change.
+[How each kind is evaluated](#how-each-kind-is-evaluated). `ratchet init`
+scaffolds a `kind: mutation` entry into the default manifest — see
+[Default manifest](#default-manifest).
 
 ## Loader contract
 
@@ -436,6 +437,12 @@ real from the first run rather than opt-in by omission:
   `check.run: test -d <detected-dir>`, ready to flip to `active: true`. When
   none is found, it is emitted as a commented-out placeholder instead of a
   guessed path — never parsed by the loader.
+- **`mutants-are-killed`** (`mutation`) is always **inert** (`active: false`),
+  gated on the same `detectTestDirectory` signal as `tests-still-exist`. When
+  a conventional test directory is found, the entry is emitted as live,
+  uncommented YAML with placeholder `test`/`budget`/`threshold` values ready
+  to fill in and flip to `active: true`. When none is found, it is emitted as
+  a commented-out placeholder instead — never parsed by the loader.
 - **`public-api-unchanged`** (`snapshot`) is always **inert** and always a
   commented-out placeholder. A real `produce.run` needs a toolchain-specific
   command (a TypeScript declaration diff, `cargo public-api`, etc.); ratchet

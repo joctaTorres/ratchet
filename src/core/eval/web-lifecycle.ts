@@ -61,14 +61,24 @@ export const realProcessStarter: ProcessStarter = (command, cwd) => {
 export type ReadinessChecker = (readiness: WebReadiness, cwd: string, bash: BashRunner) => Promise<boolean>;
 
 /** Command probe: exit zero. URL probe: `fetch(url).ok`. Exactly one of `command`/`url` is
- *  present per `WebReadinessSchema`'s refinement. */
+ *  present per `WebReadinessSchema`'s refinement.
+ *
+ *  A URL probe catches fetch rejections (e.g. `ECONNREFUSED` during normal server
+ *  boot) and returns `false` — not-ready — so the poll loop keeps going until the
+ *  readiness `timeoutMs` deadline. The command-probe path is already guarded by
+ *  exit code; the URL path must be symmetrically tolerant. */
 export const defaultReadinessChecker: ReadinessChecker = async (readiness, cwd, bash) => {
   if (readiness.command) {
     const result = await bash(readiness.command, cwd);
     return result.exitCode === 0;
   }
-  const response = await fetch(readiness.url as string);
-  return response.ok;
+  try {
+    const response = await fetch(readiness.url as string);
+    return response.ok;
+  } catch {
+    // Connection refused or any network error during server boot → not yet ready.
+    return false;
+  }
 };
 
 const DEFAULT_POLL_INTERVAL_MS = 250;

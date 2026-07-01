@@ -415,4 +415,73 @@ describe('defaultReadinessChecker', () => {
     const ready = await defaultReadinessChecker({ url: 'http://localhost:3000', timeoutMs: 1000 }, '/work', bash);
     expect(ready).toBe(false);
   });
+
+  // Regression for: fetch rejects (ECONNREFUSED) during normal server boot must
+  // return false (not-ready) rather than propagating the rejection — the poll loop
+  // is the owner of the fail-closed timeout boundary, not the per-poll probe.
+  it('returns false (not-ready) when fetch rejects with a network error such as ECONNREFUSED', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED 127.0.0.1:3000'));
+    vi.stubGlobal('fetch', fetchMock);
+    const { bash } = fakeBash({});
+    const ready = await defaultReadinessChecker({ url: 'http://localhost:3000', timeoutMs: 1000 }, '/work', bash);
+    expect(ready).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000');
+  });
+});
+
+// Lifecycle-level regression tests: URL probe that rejects during boot must not
+// abort the lifecycle — rejections must be tolerated until timeoutMs elapses.
+describe('runWebLifecycle URL readiness — fetch-rejection resilience', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('polls through ECONNREFUSED rejections until the server comes up, then resolves the lifecycle', async () => {
+    const starter = fakeStarter();
+    let fetchCalls = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      fetchCalls++;
+      if (fetchCalls < 3) throw new Error('connect ECONNREFUSED 127.0.0.1:3000');
+      return { ok: true };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { bash } = fakeBash({
+      'PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx playwright test e2e/add-to-cart.spec.ts --trace=retain-on-failure --reporter=list,json': OK_RESULT,
+    });
+    const clock = fakeClock();
+
+    const outcome = await runWebLifecycle(webBinding(), '/work', {
+      start: starter.start,
+      checkReadiness: defaultReadinessChecker,
+      bash,
+      sleep: clock.sleep,
+      now: clock.now,
+      pollIntervalMs: 250,
+    });
+
+    expect(fetchCalls).toBe(3); // 2 rejections then 1 success
+    expect(outcome).toMatchObject({ kind: 'completed', passed: true });
+    expect(starter.killed).toBe(true);
+  });
+
+  it('times out (fail-closed) when fetch rejects for the entire readiness window', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED 127.0.0.1:3000'));
+    vi.stubGlobal('fetch', fetchMock);
+    const { bash } = fakeBash({});
+    const clock = fakeClock();
+    const binding = webBinding({ readiness: { url: 'http://localhost:3000', timeoutMs: 1000 } });
+    const starter = fakeStarter();
+
+    const outcome = await runWebLifecycle(binding, '/work', {
+      start: starter.start,
+      checkReadiness: defaultReadinessChecker,
+      bash,
+      sleep: clock.sleep,
+      now: clock.now,
+      pollIntervalMs: 250,
+    });
+
+    expect(outcome).toEqual({ kind: 'readiness-timeout' });
+    expect(starter.killed).toBe(true); // process torn down even on timeout
+  });
 });

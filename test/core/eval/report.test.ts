@@ -42,7 +42,6 @@ function mkRun(
   return {
     runId,
     createdAt: new Date().toISOString(),
-    judgeMode: 'auto',
     scope: { kind: 'store' },
     ...(gate ? { gate } : {}),
     cases: ids.map((id) => toSnapshot(mkCase(id), kindFor(verdicts[id]))),

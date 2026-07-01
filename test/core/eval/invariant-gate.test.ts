@@ -42,7 +42,7 @@ function runWith(caseCount: number): EvalRun {
     steps: [],
     bindingKind: null,
   }));
-  return { runId: 'r', createdAt: 't', judgeMode: 'auto', scope: { kind: 'store' }, cases, verdicts: {} };
+  return { runId: 'r', createdAt: 't', scope: { kind: 'store' }, cases, verdicts: {} };
 }
 
 const bashReturning =

@@ -40,7 +40,6 @@ function makeRun(runId: string, entries: Entry[]): EvalRun {
   return {
     runId,
     createdAt: '2026-01-01T00:00:00.000Z',
-    judgeMode: 'auto',
     scope: { kind: 'store' },
     cases: entries.map((e) => ({
       id: e.id,

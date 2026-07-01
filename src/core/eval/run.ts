@@ -39,7 +39,6 @@ export interface CaseRecord {
 export interface EvalRun {
   runId: string;
   createdAt: string;
-  judgeMode: string;
   scope: { kind: string; target?: string };
   /**
    * The enabled contributor ids that gated this run, in display order. A case

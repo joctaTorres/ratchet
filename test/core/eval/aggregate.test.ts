@@ -42,7 +42,6 @@ function mkRun(cases: Record<string, CaseSpec>): EvalRun {
   return {
     runId: 'r1',
     createdAt: '2026-01-01T00:00:00.000Z',
-    judgeMode: 'auto',
     scope: { kind: 'store' },
     cases: ids.map((id) => toSnapshot(mkCase(id), cases[id].kind)),
     verdicts: Object.fromEntries(

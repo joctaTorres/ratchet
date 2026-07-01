@@ -34,7 +34,6 @@ function sampleRun(runId: string): EvalRun {
   return {
     runId,
     createdAt: new Date().toISOString(),
-    judgeMode: 'auto',
     scope: { kind: 'store' },
     cases: [toSnapshot(CASE, null)],
     verdicts: { 'f/x#one': { verdict: 'unjudged', reason: 'unbound', source: 'judged' } },
@@ -159,7 +158,6 @@ describe('baseline', () => {
     const gated: EvalRun = {
       runId: 'gated',
       createdAt: new Date().toISOString(),
-      judgeMode: 'auto',
       scope: { kind: 'store' },
       gate: ['deterministic', 'invariants', 'regression'],
       cases: [toSnapshot(CASE, 'llm-judge')],

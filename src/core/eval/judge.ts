@@ -32,7 +32,6 @@ import {
 } from '../batch/engine/index.js';
 
 export type Verdict = 'pass' | 'fail' | 'unjudged';
-export type JudgeMode = 'auto' | 'deterministic' | 'llm-judge';
 
 export interface CaseVerdict {
   verdict: Verdict;
@@ -254,27 +253,19 @@ async function judgeCheck(
 }
 
 /**
- * Judge a single bound case against its materialized fixture working copy.
- * `mode` honours `--judge`: `deterministic` skips llm-judge cases (→ unjudged),
- * `llm-judge` forces the spawned-judge path where success criteria exist, `auto`
- * follows the bound kind.
+ * Judge a single bound case against its materialized fixture working copy,
+ * dispatching on the bound kind. Which contributors run is decided upstream by
+ * the gate (see `execute.ts`); a case only reaches here once its contributor is
+ * enabled, so judging always follows the binding kind.
  */
 export async function judgeCase(
   c: EvalCase,
   binding: Binding,
   cwd: string,
-  mode: JudgeMode,
   deps: JudgeDeps = {}
 ): Promise<CaseVerdict> {
   if (binding.kind === 'deterministic') {
-    if (mode === 'llm-judge') {
-      return { verdict: 'unjudged', reason: 'Judge mode "llm-judge" but case is bound as a deterministic check.' };
-    }
     return judgeCheck(binding, cwd, deps);
-  }
-  // llm-judge binding
-  if (mode === 'deterministic') {
-    return { verdict: 'unjudged', reason: 'Judge mode "deterministic" skips llm-judge-only cases.' };
   }
   return judgeAgent(c, binding, cwd, deps);
 }

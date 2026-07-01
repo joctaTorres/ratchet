@@ -71,7 +71,7 @@ async function judgeBound(
 ): Promise<CaseRecord> {
   const { cwd } = await fixtures.materialize(bound.binding.fixture, bound.binding.setup);
   // The gate already decided this case runs; judge it by its bound kind.
-  const verdict = await judgeCase(c, bound.binding, cwd, 'auto', judge);
+  const verdict = await judgeCase(c, bound.binding, cwd, judge);
   return { verdict: verdict.verdict, reason: verdict.reason, source: 'judged' };
 }
 
@@ -84,7 +84,6 @@ export async function executeRun(projectRoot: string, options: RunOptions): Prom
   const run: EvalRun = {
     runId: options.runId ?? generateRunId(options.now),
     createdAt: (options.now ?? new Date()).toISOString(),
-    judgeMode: 'auto',
     scope: { kind: options.scope.kind, target: options.scope.target },
     gate: ALL_CONTRIBUTOR_IDS.filter((id) => options.gate.has(id)),
     cases: [],

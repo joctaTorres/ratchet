@@ -32,7 +32,6 @@ export {
   parseAgentVote,
   resolveVotes,
   type Verdict,
-  type JudgeMode,
   type CaseVerdict,
   type JudgeDeps,
 } from './judge.js';

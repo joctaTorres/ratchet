@@ -118,21 +118,15 @@ describe('judgeCase: deterministic', () => {
       usedCwd = cwd;
       return { exitCode: 0, stdout: 'has applyRequires here', stderr: '' };
     };
-    const r = await judgeCase(CASE, deterministicBinding, '/fixture/copy', 'auto', { bash });
+    const r = await judgeCase(CASE, deterministicBinding, '/fixture/copy', { bash });
     expect(usedCwd).toBe('/fixture/copy');
     expect(r.verdict).toBe('pass');
   });
 
   it('fails when the condition is not met', async () => {
     const bash: BashRunner = async () => ({ exitCode: 0, stdout: 'nope', stderr: '' });
-    const r = await judgeCase(CASE, deterministicBinding, '/c', 'auto', { bash });
+    const r = await judgeCase(CASE, deterministicBinding, '/c', { bash });
     expect(r.verdict).toBe('fail');
-  });
-
-  it('is left unjudged under --judge llm-judge', async () => {
-    const bash: BashRunner = async () => ({ exitCode: 0, stdout: 'applyRequires', stderr: '' });
-    const r = await judgeCase(CASE, deterministicBinding, '/c', 'llm-judge', { bash });
-    expect(r.verdict).toBe('unjudged');
   });
 
   // The judge shares evaluatePassCondition with the batch proof-of-work gate, so a
@@ -145,7 +139,7 @@ describe('judgeCase: deterministic', () => {
       check: { run: 'run-suite', pass: 'exit code 0 — new tests assert the slice works' },
     };
     const bash: BashRunner = async () => ({ exitCode: 0, stdout: 'totally unrelated output', stderr: '' });
-    const r = await judgeCase(CASE, prose, '/c', 'auto', { bash });
+    const r = await judgeCase(CASE, prose, '/c', { bash });
     expect(r.verdict).toBe('pass');
   });
 
@@ -156,7 +150,7 @@ describe('judgeCase: deterministic', () => {
       check: { run: 'run-suite', pass: 'exit code 0 — new tests assert the slice works' },
     };
     const bash: BashRunner = async () => ({ exitCode: 1, stdout: '', stderr: 'boom' });
-    const r = await judgeCase(CASE, prose, '/c', 'auto', { bash });
+    const r = await judgeCase(CASE, prose, '/c', { bash });
     expect(r.verdict).toBe('fail');
   });
 });
@@ -166,7 +160,7 @@ describe('judgeCase: llm-judge', () => {
 
   it('spawns in the fixture cwd and captures the verdict', async () => {
     const { spawner, cwds } = spawnerReturning('{"pass": true, "reason": "printed JSON"}');
-    const r = await judgeCase(CASE, llmJudgeBinding, '/fixture/copy', 'auto', { spawner });
+    const r = await judgeCase(CASE, llmJudgeBinding, '/fixture/copy', { spawner });
     expect(cwds).toEqual(['/fixture/copy']);
     expect(r.verdict).toBe('pass');
     expect(r.reason).toContain('printed JSON');
@@ -174,7 +168,7 @@ describe('judgeCase: llm-judge', () => {
 
   it('fails closed when the judge finds no concrete evidence', async () => {
     const { spawner } = spawnerReturning('I could not find anything conclusive.');
-    const r = await judgeCase(CASE, llmJudgeBinding, '/c', 'auto', { spawner });
+    const r = await judgeCase(CASE, llmJudgeBinding, '/c', { spawner });
     expect(r.verdict).toBe('fail');
     expect(r.reason).toMatch(/evidence/i);
   });
@@ -186,7 +180,7 @@ describe('judgeCase: llm-judge', () => {
       '{"pass": true, "reason": "b"}',
       '{"pass": false, "reason": "c"}'
     );
-    const r = await judgeCase(CASE, binding, '/c', 'auto', { spawner });
+    const r = await judgeCase(CASE, binding, '/c', { spawner });
     expect(cwds).toHaveLength(3);
     expect(r.verdict).toBe('pass');
   });
@@ -197,13 +191,7 @@ describe('judgeCase: llm-judge', () => {
       '{"pass": true, "reason": "yes"}',
       '{"pass": false, "reason": "no"}'
     );
-    const r = await judgeCase(CASE, binding, '/c', 'auto', { spawner });
-    expect(r.verdict).toBe('unjudged');
-  });
-
-  it('is left unjudged under --judge deterministic', async () => {
-    const { spawner } = spawnerReturning('{"pass": true, "reason": "x"}');
-    const r = await judgeCase(CASE, llmJudgeBinding, '/c', 'deterministic', { spawner });
+    const r = await judgeCase(CASE, binding, '/c', { spawner });
     expect(r.verdict).toBe('unjudged');
   });
 });

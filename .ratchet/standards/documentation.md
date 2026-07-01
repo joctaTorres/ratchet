@@ -134,7 +134,9 @@ change is not done until that diagram exists and matches the code.
 - docs-website/docs-seed.feature
 - docs-website/i18n.feature
 - docs-website/isolation.feature
+- docs-website/landing-install-command.feature
 - docs-website/landing-page.feature
+- docs-website/markdown-link-strictness.feature
 - docs-website/site-structure.feature
 - docs-website/workers-assets-deploy.feature
 - proof-of-work-gate/e2e-gate.feature

@@ -7,7 +7,11 @@ features:
     - documentation
   isolation.feature:
     - documentation
+  landing-install-command.feature:
+    - documentation
   landing-page.feature:
+    - documentation
+  markdown-link-strictness.feature:
     - documentation
   site-structure.feature:
     - documentation

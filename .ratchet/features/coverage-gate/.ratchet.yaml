@@ -2,10 +2,16 @@ features:
   documented-floor-80.feature:
     - documentation
     - testing
+  documented-floor-95.feature:
+    - documentation
+    - testing
   documented-knob.feature:
     - documentation
     - testing
   floor-to-80.feature:
+    - documentation
+    - testing
+  floor-to-95.feature:
     - documentation
     - testing
   ratchetable-threshold.feature:

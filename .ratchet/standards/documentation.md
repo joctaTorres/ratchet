@@ -131,8 +131,10 @@ change is not done until that diagram exists and matches the code.
 
 - agent-timeout/configurable-timeout.feature
 - coverage-gate/documented-floor-80.feature
+- coverage-gate/documented-floor-95.feature
 - coverage-gate/documented-knob.feature
 - coverage-gate/floor-to-80.feature
+- coverage-gate/floor-to-95.feature
 - coverage-gate/ratchetable-threshold.feature
 - docs-website/build-and-deploy.feature
 - docs-website/docs-seed.feature

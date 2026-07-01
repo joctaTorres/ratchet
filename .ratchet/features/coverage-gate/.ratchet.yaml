@@ -1,0 +1,7 @@
+features:
+  documented-knob.feature:
+    - documentation
+    - testing
+  ratchetable-threshold.feature:
+    - documentation
+    - testing

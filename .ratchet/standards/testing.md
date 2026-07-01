@@ -81,3 +81,12 @@ the enforced `COVERAGE_THRESHOLD`.
 - commands-core-verbs/propose.feature
 - commands-core-verbs/validate.feature
 - commands-core-verbs/verify.feature
+- core-remainder-tests/archive.feature
+- core-remainder-tests/features-apply.feature
+- core-remainder-tests/file-system.feature
+- core-remainder-tests/init-update-remainders.feature
+- core-remainder-tests/list.feature
+- core-remainder-tests/markdown-parser.feature
+- core-remainder-tests/move-directory.feature
+- core-remainder-tests/proof-of-work.feature
+- core-remainder-tests/version-guard.feature

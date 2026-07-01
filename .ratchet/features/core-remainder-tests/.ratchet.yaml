@@ -1,0 +1,19 @@
+features:
+  archive.feature:
+    - testing
+  features-apply.feature:
+    - testing
+  file-system.feature:
+    - testing
+  init-update-remainders.feature:
+    - testing
+  list.feature:
+    - testing
+  markdown-parser.feature:
+    - testing
+  move-directory.feature:
+    - testing
+  proof-of-work.feature:
+    - testing
+  version-guard.feature:
+    - testing

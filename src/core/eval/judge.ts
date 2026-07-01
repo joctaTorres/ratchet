@@ -27,7 +27,7 @@
 import type { EvalCase } from './set.js';
 import type { Binding, LlmJudgeBinding, DeterministicBinding, WebBinding } from './spec.js';
 import { resolveJury, type Jury, type Quorum } from './jury.js';
-import { runWebLifecycle, type WebLifecycleDeps } from './web-lifecycle.js';
+import { runWebLifecycle, type WebLifecycleDeps, type WebArtifacts } from './web-lifecycle.js';
 import {
   evaluatePassCondition,
   realBashRunner,
@@ -59,6 +59,8 @@ export interface CaseVerdict extends VoteResolution {
   rubric: string[];
   /** Every juror's individual vote, in cast order. */
   votes: JurorVote[];
+  /** Playwright trace/screenshot captured by a `web` binding's lifecycle harness. `web`-only; ephemeral, cwd-scoped paths. */
+  artifacts?: WebArtifacts;
 }
 
 export interface JudgeDeps {
@@ -396,7 +398,7 @@ async function judgeWeb(binding: WebBinding, cwd: string, deps: JudgeDeps): Prom
     ];
     return { verdict: 'fail', evidence: clauses, rubric, votes: [{ pass: false, clauses }] };
   }
-  const { passed, result } = outcome;
+  const { passed, result, artifacts } = outcome;
   const detail = result.stderr.trim() || result.stdout.trim();
   const clauses: ClauseResult[] = [
     {
@@ -407,7 +409,13 @@ async function judgeWeb(binding: WebBinding, cwd: string, deps: JudgeDeps): Prom
         : `Playwright spec '${binding.spec}' failed (exit ${result.exitCode})${detail ? `: ${detail.slice(0, 500)}` : ''}`,
     },
   ];
-  return { verdict: passed ? 'pass' : 'fail', evidence: clauses, rubric, votes: [{ pass: passed, clauses }] };
+  return {
+    verdict: passed ? 'pass' : 'fail',
+    evidence: clauses,
+    rubric,
+    votes: [{ pass: passed, clauses }],
+    ...(artifacts ? { artifacts } : {}),
+  };
 }
 
 /**

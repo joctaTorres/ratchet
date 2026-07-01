@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -10,6 +10,8 @@ import {
   toSnapshot,
   promoteBaseline,
   loadBaselineRunId,
+  runArtifactsDir,
+  persistCaseArtifacts,
   type EvalRun,
 } from '../../../src/core/eval/run.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
@@ -73,7 +75,7 @@ describe('eval run persistence', () => {
   // features/eval-judge/structured-evidence-persistence.feature — the structured
   // judging detail (rubric, per-clause evidence, per-juror votes) and a skipped
   // case's skip source/detail round-trip through persistRun/loadRun unchanged.
-  it('round-trips rubric/clauses/votes/skip on a CaseRecord unchanged', () => {
+  it('round-trips rubric/clauses/votes/skip/artifacts on a CaseRecord unchanged', () => {
     const root = makeProject();
     const run = sampleRun('20260101T000000000Z-roundtrip');
     run.verdicts['f/x#one'] = {
@@ -83,6 +85,7 @@ describe('eval run persistence', () => {
       rubric: ['it works'],
       clauses: [{ clause: 'it works', pass: true, evidence: 'saw it' }],
       votes: [{ pass: true, clauses: [{ clause: 'it works', pass: true, evidence: 'saw it' }] }],
+      artifacts: { trace: '.ratchet/evals/runs/20260101T000000000Z-roundtrip/artifacts/f/x#one/trace.zip' },
     };
     persistRun(root, run);
     expect(loadRun(root, run.runId).verdicts['f/x#one']).toEqual(run.verdicts['f/x#one']);
@@ -96,6 +99,49 @@ describe('eval run persistence', () => {
     };
     persistRun(root, skipRun);
     expect(loadRun(root, skipRun.runId).verdicts['f/x#one']).toEqual(skipRun.verdicts['f/x#one']);
+  });
+});
+
+// features/web-failure-evidence/failure-artifacts.feature — ephemeral,
+// fixture-cwd-scoped trace/screenshot files become durable run evidence.
+describe('persistCaseArtifacts / runArtifactsDir', () => {
+  it('copies a real trace and screenshot file into the run\'s artifacts directory and returns project-relative paths to the copies', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-artifacts';
+    const caseId = 'f/x#one';
+    const srcDir = mkdtempSync(path.join(tmpdir(), 'eval-web-fixture-'));
+    roots.push(srcDir);
+    const tracePath = path.join(srcDir, 'trace.zip');
+    const screenshotPath = path.join(srcDir, 'test-failed-1.png');
+    writeFileSync(tracePath, 'trace-bytes');
+    writeFileSync(screenshotPath, 'screenshot-bytes');
+
+    const persisted = persistCaseArtifacts(root, runId, caseId, {
+      trace: tracePath,
+      screenshot: screenshotPath,
+    });
+
+    const dir = runArtifactsDir(root, runId, caseId);
+    expect(dir).toBe(path.join(root, '.ratchet', 'evals', 'runs', runId, 'artifacts', caseId));
+    expect(persisted).toEqual({
+      trace: path.relative(root, path.join(dir, 'trace.zip')),
+      screenshot: path.relative(root, path.join(dir, 'test-failed-1.png')),
+    });
+    expect(persisted?.trace).not.toBe(tracePath);
+    expect(existsSync(path.join(root, persisted!.trace!))).toBe(true);
+    expect(existsSync(path.join(root, persisted!.screenshot!))).toBe(true);
+    expect(readFileSync(path.join(root, persisted!.trace!), 'utf-8')).toBe('trace-bytes');
+  });
+
+  it('returns undefined and creates no directory when neither trace nor screenshot is present', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-empty';
+    const caseId = 'f/x#one';
+
+    const persisted = persistCaseArtifacts(root, runId, caseId, {});
+
+    expect(persisted).toBeUndefined();
+    expect(existsSync(runArtifactsDir(root, runId, caseId))).toBe(false);
   });
 });
 

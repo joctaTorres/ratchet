@@ -22,7 +22,7 @@
  * `llm-judge`-bound case is recorded unjudged.
  */
 import { afterEach, describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { executeRun } from '../../../src/core/eval/execute.js';
@@ -281,5 +281,78 @@ describe('executeRun: web-bound cases gate through the deterministic contributor
     expect(startCalls).toHaveLength(1);
     expect(run.verdicts[LLM_CASE].verdict).toBe('unjudged');
     expect(run.verdicts[LLM_CASE].reason).toContain("'llm-judge'");
+  });
+
+  // features/web-failure-evidence/failure-artifacts.feature
+  it("persists a failing web-bound case's trace and screenshot as durable, project-relative run evidence", async () => {
+    const root = makeProject();
+    writeWebFixtures(root);
+    const startCalls: Array<{ command: string; cwd: string }> = [];
+    const artifactsSrcDir = mkdtempSync(path.join(tmpdir(), 'eval-web-artifacts-'));
+    roots.push(artifactsSrcDir);
+    const tracePath = path.join(artifactsSrcDir, 'trace.zip');
+    const screenshotPath = path.join(artifactsSrcDir, 'test-failed-1.png');
+    writeFileSync(tracePath, 'trace-bytes');
+    writeFileSync(screenshotPath, 'screenshot-bytes');
+    const readReport = async (): Promise<string> =>
+      JSON.stringify({
+        suites: [
+          {
+            specs: [
+              {
+                tests: [
+                  {
+                    results: [
+                      {
+                        attachments: [
+                          { name: 'trace', path: tracePath },
+                          { name: 'screenshot', path: screenshotPath },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+    const { run } = await executeRun(root, {
+      scope: { kind: 'store' },
+      gate: ALL_GATE,
+      judge: {
+        web: {
+          start: fakeStart(startCalls),
+          checkReadiness: async () => true,
+          bash: async () => ({ exitCode: 1, stdout: '', stderr: '1 failed' }),
+          readReport,
+        },
+      },
+    });
+    const record = run.verdicts[WEB_CASE];
+    expect(record.verdict).toBe('fail');
+    expect(record.artifacts?.trace).toContain(path.join('.ratchet', 'evals', 'runs', run.runId, 'artifacts', WEB_CASE));
+    expect(existsSync(path.join(root, record.artifacts!.trace!))).toBe(true);
+    expect(existsSync(path.join(root, record.artifacts!.screenshot!))).toBe(true);
+  });
+
+  it("leaves a passing web-bound case's CaseRecord.artifacts undefined", async () => {
+    const root = makeProject();
+    writeWebFixtures(root);
+    const startCalls: Array<{ command: string; cwd: string }> = [];
+    const { run } = await executeRun(root, {
+      scope: { kind: 'store' },
+      gate: ALL_GATE,
+      judge: {
+        web: {
+          start: fakeStart(startCalls),
+          checkReadiness: async () => true,
+          bash: async () => ({ exitCode: 0, stdout: '1 passed', stderr: '' }),
+        },
+      },
+    });
+    const record = run.verdicts[WEB_CASE];
+    expect(record.verdict).toBe('pass');
+    expect(record.artifacts).toBeUndefined();
   });
 });

@@ -19,6 +19,7 @@
 import type { EvalRun } from './run.js';
 import { loadRun, loadBaselineRunId } from './run.js';
 import type { ClauseResult, JurorVote, Verdict } from './judge.js';
+import type { WebArtifacts } from './web-lifecycle.js';
 import { aggregateRun, DEFAULT_CONTRIBUTORS, type ContributorOutcome } from './aggregate.js';
 import { evaluateInvariantGate } from './invariant-gate.js';
 import type { InvariantOutcome } from './invariant-evaluator.js';
@@ -52,6 +53,7 @@ export interface CaseDetail {
   clauses: ClauseResult[];
   votes: JurorVote[];
   skip?: SkipReason;
+  artifacts?: WebArtifacts;
 }
 
 export interface BaselineDiff {
@@ -129,6 +131,7 @@ function caseDetails(run: EvalRun): CaseDetail[] {
       clauses: record?.clauses ?? [],
       votes: record?.votes ?? [],
       ...(record?.skip ? { skip: record.skip } : {}),
+      ...(record?.artifacts ? { artifacts: record.artifacts } : {}),
     };
   });
 }

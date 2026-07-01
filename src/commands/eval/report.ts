@@ -77,4 +77,6 @@ function printCaseDetail(report: EvalReport, caseId: string): void {
     const passed = detail.votes.filter((v) => v.pass).length;
     console.log(chalk.dim(`        Jury: ${passed}/${detail.votes.length} passed`));
   }
+  if (detail.artifacts?.trace) console.log(chalk.dim(`        Trace: ${detail.artifacts.trace}`));
+  if (detail.artifacts?.screenshot) console.log(chalk.dim(`        Screenshot: ${detail.artifacts.screenshot}`));
 }

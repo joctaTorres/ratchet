@@ -93,3 +93,9 @@ the enforced `COVERAGE_THRESHOLD`.
 - core-util-tests/change-status-policy.feature
 - core-util-tests/config-schema.feature
 - core-util-tests/migration.feature
+- eval-command-tests/baseline.feature
+- eval-command-tests/record.feature
+- eval-command-tests/report.feature
+- eval-command-tests/run.feature
+- eval-command-tests/set.feature
+- eval-command-tests/shared.feature

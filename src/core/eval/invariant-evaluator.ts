@@ -41,6 +41,7 @@ import type {
   DeterministicInvariant,
   MonotonicInvariant,
   SnapshotInvariant,
+  MutationInvariant,
 } from './invariants.js';
 import type { EvalRun } from './run.js';
 import { evaluatePassCondition, realBashRunner, type BashRunner } from '../batch/engine/index.js';
@@ -206,6 +207,21 @@ async function evaluateSnapshot(
 }
 
 /**
+ * `mutation` is schema-only as of this slice: nothing can construct an
+ * *active* mutation invariant yet (that lands with the `ratchet init`
+ * scaffold), and seeding mutants / running them against `test` is the
+ * downstream `mutation-oracle-harness` change. Fail closed rather than
+ * silently passing until that evaluation exists.
+ */
+function evaluateMutation(inv: MutationInvariant): InvariantOutcome {
+  return unevaluable(
+    inv,
+    `mutation: ${inv.test}`,
+    'mutation evaluation is not implemented yet (schema-only kind)'
+  );
+}
+
+/**
  * Compute the single outcome for one loaded invariant against the run state.
  * Dispatches on the invariant kind; every kind fails closed to `unevaluable`
  * rather than `pass` when it cannot be checked.
@@ -221,5 +237,7 @@ export async function evaluateInvariant(
       return evaluateMonotonic(invariant, context);
     case 'snapshot':
       return evaluateSnapshot(invariant, context);
+    case 'mutation':
+      return evaluateMutation(invariant);
   }
 }

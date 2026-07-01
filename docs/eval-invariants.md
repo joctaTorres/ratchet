@@ -15,11 +15,16 @@ invariants; the eval gate's `invariants` contributor enforces them.
 
 Key terms used throughout this document:
 
-- **invariant kinds** — the three shapes an invariant can take. A
+- **invariant kinds** — the four shapes an invariant can take. A
   **`deterministic`** invariant is an absolute predicate (a command that must
   pass). A **`monotonic`** invariant is a named measure that must never decrease
   versus the baseline (e.g. `scenario-count` — the anti-spec-weakening check). A
   **`snapshot`** invariant diffs current output against a checked-in golden file.
+  A **`mutation`** invariant carries a `test`/`budget`/`threshold` triple that
+  types a mutation-testing invariant (seed a small fault, run the user's own
+  `test` command as the oracle, hard-fail a survived mutant); it is schema-typed
+  as of this document, with evaluation landing in a follow-on change (see
+  [`kind: mutation`](#kind-mutation)).
 - **`active` flag** — a per-invariant boolean, required on every entry and never
   active-by-default. Only `active: true` invariants are enforced; **inert**
   (`active: false`) ones are declared but skipped, so activating one is always a
@@ -33,7 +38,7 @@ Key terms used throughout this document:
 Three components implement this, each with a single job:
 
 - The typed **loader** (`src/core/eval/invariants.ts`) parses the manifest into
-  the three invariant kinds and decides exactly one thing — whether the manifest
+  the four invariant kinds and decides exactly one thing — whether the manifest
   is well-formed — fail-closed.
 - The per-invariant **evaluator** (`src/core/eval/invariant-evaluator.ts`) takes
   one typed invariant at a time and computes a `pass` / `fail` / `unevaluable`
@@ -58,7 +63,7 @@ flowchart TD
     MANIFEST --> LOADER
 
     LOADER -->|🚫 file absent| EMPTY[✅ empty set<br/>no error]
-    LOADER -->|✓ well-formed| TYPED[📦 typed set<br/>deterministic · monotonic · snapshot]
+    LOADER -->|✓ well-formed| TYPED[📦 typed set<br/>deterministic · monotonic · snapshot · mutation]
     LOADER -->|❌ malformed YAML<br/>❌ invalid invariant<br/>❌ duplicate id| FAIL[🔐 InvariantManifestError<br/>fail closed]
 
     classDef source   fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
@@ -73,10 +78,12 @@ flowchart TD
 ```
 
 Each typed invariant is then evaluated against the run to one outcome. Each kind
-is checked its own way, but all three resolve into the same three-valued outcome,
-and anything that cannot be checked fails closed to a violation rather than a
-pass. The diagram funnels the three kinds through a single outcome node rather
-than fanning every kind to every result:
+is checked its own way: `deterministic`/`monotonic`/`snapshot` resolve dynamically
+into the same three-valued outcome, while `mutation` — schema-only as of this
+document — resolves straight to `unevaluable`. Anything that cannot be checked
+fails closed to a violation rather than a pass. The diagram funnels the first
+three kinds through a single outcome node and routes the `mutation` placeholder
+directly to `unevaluable`, rather than fanning every kind to every result:
 
 ```mermaid
 flowchart TD
@@ -88,10 +95,12 @@ flowchart TD
     EVAL -->|deterministic| DET[🧪 check.run<br/>evaluatePassCondition]
     EVAL -->|monotonic| MON[📈 measure vs<br/>baseline value]
     EVAL -->|snapshot| SNAP[📷 produce.run<br/>vs golden]
+    EVAL -->|mutation| MUT[🧬 not implemented yet<br/>schema-only placeholder]
 
     DET --> OUTCOME
     MON --> OUTCOME
     SNAP --> OUTCOME
+    MUT --> UNEV
 
     OUTCOME{{🔀 three-valued outcome}}
     OUTCOME -->|✓ checked · holds| PASS[✅ pass]
@@ -106,7 +115,7 @@ flowchart TD
 
     class INV source
     class EVAL,OUTCOME core
-    class DET,MON,SNAP kind
+    class DET,MON,SNAP,MUT kind
     class PASS ok
     class FAILV,UNEV err
 ```
@@ -161,7 +170,7 @@ Every invariant carries the shared fields:
 | Field         | Type      | Required | Description                                              |
 | ------------- | --------- | -------- | -------------------------------------------------------- |
 | `id`          | string    | yes      | Unique identifier (min length 1); duplicates are rejected. |
-| `kind`        | string    | yes      | `deterministic`, `monotonic`, or `snapshot`.             |
+| `kind`        | string    | yes      | `deterministic`, `monotonic`, `snapshot`, or `mutation`. |
 | `active`      | boolean   | yes      | Whether the invariant is enforced; never active-by-default. |
 | `description` | string    | no       | Free-form note.                                          |
 
@@ -221,6 +230,36 @@ invariants:
     produce:
       run: ratchet api --json
 ```
+
+### `kind: mutation`
+
+A mutation-testing invariant: seed a small fault (a mutant), run the user's own
+test suite as the oracle, and hard-fail if a mutant survives. `test` is a bare
+command string, not a `check`-style pass condition — a mutation invariant's
+pass/fail is decided per-mutant (kill vs survive) by the downstream harness, not
+by the test command's own exit code in isolation.
+
+| Field       | Type   | Required | Description                                                          |
+| ----------- | ------ | -------- | --------------------------------------------------------------------- |
+| `test`      | string | yes      | The user's test command (min length 1) — the oracle every seeded mutant is run against. No auto-detection, author-supplied, mirroring `check.run`. |
+| `budget`    | number | yes      | Positive integer ceiling: at most this many mutants are seeded per run. |
+| `threshold` | number | yes      | Positive integer floor: at least this many mutants must reach a kill/survive verdict for the invariant to be evaluable. |
+
+```yaml
+invariants:
+  - id: mutants-are-killed
+    kind: mutation
+    active: false
+    test: pnpm test
+    budget: 5
+    threshold: 3
+```
+
+This kind is schema-typed only as of this document: nothing can construct an
+*active* mutation invariant yet (the `ratchet init` scaffold and the agent-driven
+seeding harness are follow-on changes), and `evaluateInvariant` resolves every
+`kind: mutation` entry to a fail-closed `unevaluable` placeholder — see
+[How each kind is evaluated](#how-each-kind-is-evaluated).
 
 ## Loader contract
 
@@ -285,6 +324,12 @@ spawn or filesystem.
   root) via the injected `readFile`, runs `produce.run`, and diffs the produced
   stdout (trimmed) against the golden (trimmed): equal is pass, differing is fail.
   An **absent golden**, or a `produce` command that **throws**, is `unevaluable`.
+- **mutation** — always resolves to `unevaluable` today: seeding mutants via the
+  agent spawn seam and running `test` as the kill/survive oracle is not
+  implemented yet, so every `kind: mutation` entry fails closed with an explicit
+  "not implemented yet" evidence string rather than a silent pass. Real
+  evaluation (seed, apply, run `test`, kill/survive, budget/threshold) lands in
+  a follow-on change.
 
 ## Gate contributor
 
@@ -342,8 +387,8 @@ contributor is absent from the verdict — the same generic mechanism as
 | `loadInvariantManifest(root)`     | Loads and validates the manifest; fail-closed.                      |
 | `invariantsManifestPath(root)`    | Resolves the manifest path under `.ratchet/evals/`.                 |
 | `InvariantManifestError`          | Error raised for any present-but-broken manifest.                   |
-| `Invariant`                       | Discriminated union of the three invariant kinds.                   |
-| `DeterministicInvariant` / `MonotonicInvariant` / `SnapshotInvariant` | Per-kind types.                 |
+| `Invariant`                       | Discriminated union of the four invariant kinds.                    |
+| `DeterministicInvariant` / `MonotonicInvariant` / `SnapshotInvariant` / `MutationInvariant` | Per-kind types.  |
 | `InvariantManifest`               | Load result: `{ invariants: Invariant[] }`.                         |
 | `InvariantSchema`                 | The zod discriminated union backing validation.                     |
 | `evaluateInvariant(inv, ctx)`     | Computes one `pass` / `fail` / `unevaluable` outcome for an invariant; fail-closed. |

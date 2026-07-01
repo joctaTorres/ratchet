@@ -395,3 +395,57 @@ phases:
         seam, gates on the user's test oracle (survived = hard fail, no-tests =
         skipped/unjudged), records each mutant outcome as replayable evidence, and
         scaffolds inert from init
+    changes:
+      - name: mutation-invariant-schema
+        after: []
+        done: >-
+          `src/core/eval/invariants.ts`'s invariant-kind discriminated union gains a
+          `MutationInvariantSchema` (`kind: 'mutation'`) alongside the existing
+          `deterministic`/`monotonic`/`snapshot` kinds, with required `test` (the
+          user's test command — the oracle, no auto-detection, mirroring `check.run`
+          on the deterministic kind), `budget` (bounds how many mutants are seeded
+          per run), and `threshold` fields, each validated and typed by the loader
+          without breaking the existing three kinds
+      - name: mutation-oracle-harness
+        after: [mutation-invariant-schema]
+        done: >-
+          a harness drives the configured agent through the existing spawn seam
+          (`src/core/batch/engine/agent.ts`'s `Spawner` / `resolveAdapter` /
+          `AgentAdapter.buildRequest`, mirroring `judge.ts`'s
+          `buildVoteRequest`/`castVote` call pattern) to seed up to `budget` small,
+          discrete faults one at a time, applies each fault, runs the invariant's
+          `test` command as the deterministic oracle, classifies kill (the test run
+          fails = killed) vs survive (the test run still passes = survived), and
+          reverts the fault before the next mutant — agent-neutral, no external
+          mutation framework, no agent-specific spawn path
+      - name: mutation-evaluator-fold
+        after: [mutation-oracle-harness]
+        done: >-
+          `src/core/eval/invariant-evaluator.ts`'s `evaluateInvariant` switch gains
+          an `evaluateMutation` case that runs the harness and reduces its
+          per-mutant kill/survive results to an `InvariantOutcome` — any survived
+          mutant is a hard `fail`, a `test` command that can't run (no runnable
+          suite) is `unevaluable` (never a silent `pass`) — in the same shape the
+          `deterministic`/`monotonic`/`snapshot` cases already return, so the
+          existing `invariants` contributor (from the `invariant-set` phase) gates
+          on it unchanged with no new `ContributorId`
+      - name: mutation-evidence-recording
+        after: [mutation-evaluator-fold]
+        done: >-
+          each mutant the harness runs — its seeded fault (patch/diff) and its
+          kill/survive outcome — is persisted as run evidence on the
+          `InvariantOutcome` (extending `evidence`/`measure`, following the
+          `artifacts?`/`persistCaseArtifacts` convention in `src/core/eval/run.ts`),
+          so a survived mutant's exact fault and failing/passing test output is
+          reproducible from the run record alone without re-invoking the agent
+      - name: init-mutation-scaffold
+        after: [mutation-invariant-schema]
+        done: >-
+          `src/core/eval/default-manifest.ts`'s `buildDefaultInvariantManifestYaml()`
+          scaffolds the `kind: mutation` invariant alongside `tests-still-exist` as
+          `active: false` (scaffolded-but-inert) with placeholder
+          `test`/`budget`/`threshold` values the user fills in, following the
+          `testsStillExistBlock` detect-and-still-inert pattern, with no
+          ratchet-specific toolchain literal (per
+          `.ratchet/standards/generalizable-defaults.md`) and no new external
+          dependency

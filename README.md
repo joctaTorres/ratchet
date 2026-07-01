@@ -488,10 +488,12 @@ against.
 
 **Invariants (`.ratchet/evals/invariants.yaml`).** The `invariants` contributor
 draws its run-level, anti-gaming checks from a checked-in manifest: a YAML list
-of invariants, each one of three kinds — `deterministic` (an absolute predicate),
+of invariants, each one of four kinds — `deterministic` (an absolute predicate),
 `monotonic` (a named measure that must not decrease vs the baseline), `snapshot`
-(output diffed against a checked-in golden) — and each carrying an `active` flag
-so an invariant can be scaffolded inert before it is turned on. On every `eval
+(output diffed against a checked-in golden), `mutation` (a `test`/`budget`/
+`threshold` mutation-testing invariant, schema-typed so far — evaluation lands in
+a follow-on change) — and each carrying an `active` flag so an invariant can be
+scaffolded inert before it is turned on. On every `eval
 run` the contributor evaluates the manifest's **active** invariants run-level and
 **hard-fails the run — surfaced first, as a sibling to a regression** — when any
 is violated, unevaluable, or the manifest can't be loaded; inert invariants are

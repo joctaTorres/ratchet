@@ -3,10 +3,12 @@
  *
  * Authored YAML at `.ratchet/evals/invariants.yaml` declares a list of run-level
  * invariants the eval gate's `invariants` contributor enforces. Each invariant
- * is one of three kinds — `deterministic` (an absolute predicate that must hold),
- * `monotonic` (a named measure that must not decrease vs the baseline run), and
- * `snapshot` (current output diffed against a checked-in golden) — and carries an
- * `active` flag so an invariant can be scaffolded inert before it is turned on.
+ * is one of four kinds — `deterministic` (an absolute predicate that must hold),
+ * `monotonic` (a named measure that must not decrease vs the baseline run),
+ * `snapshot` (current output diffed against a checked-in golden), and `mutation`
+ * (a seeded-fault survives/killed verdict against the user's own test suite) —
+ * and carries an `active` flag so an invariant can be scaffolded inert before it
+ * is turned on.
  *
  * Unlike the eval-spec binding loader (`spec.ts`), which collects warnings and
  * degrades an invalid binding to `unjudged`, this loader **fails closed**: an
@@ -22,7 +24,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { RATCHET_DIR_NAME } from '../config.js';
 
-export type InvariantKind = 'deterministic' | 'monotonic' | 'snapshot';
+export type InvariantKind = 'deterministic' | 'monotonic' | 'snapshot' | 'mutation';
 
 const DeterministicInvariantSchema = z.object({
   id: z.string().min(1),
@@ -59,15 +61,30 @@ const SnapshotInvariantSchema = z.object({
   }),
 });
 
+const MutationInvariantSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal('mutation'),
+  active: z.boolean(),
+  description: z.string().optional(),
+  /** The user's own test command — the oracle every seeded mutant is run against. */
+  test: z.string().min(1),
+  /** Ceiling: at most this many mutants are seeded per run. */
+  budget: z.number().int().positive(),
+  /** Floor: at least this many mutants must reach a kill/survive verdict to be evaluable. */
+  threshold: z.number().int().positive(),
+});
+
 export const InvariantSchema = z.discriminatedUnion('kind', [
   DeterministicInvariantSchema,
   MonotonicInvariantSchema,
   SnapshotInvariantSchema,
+  MutationInvariantSchema,
 ]);
 
 export type DeterministicInvariant = z.infer<typeof DeterministicInvariantSchema>;
 export type MonotonicInvariant = z.infer<typeof MonotonicInvariantSchema>;
 export type SnapshotInvariant = z.infer<typeof SnapshotInvariantSchema>;
+export type MutationInvariant = z.infer<typeof MutationInvariantSchema>;
 export type Invariant = z.infer<typeof InvariantSchema>;
 
 /** The result of loading `.ratchet/evals/invariants.yaml`. */

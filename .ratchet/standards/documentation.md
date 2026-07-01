@@ -151,3 +151,4 @@ change is not done until that diagram exists and matches the code.
 - proof-of-work-gate/hard-gate-blocks-on-recorded-proof.feature
 - proof-of-work-gate/status-and-selection-agree.feature
 - proof-of-work-gate/warn-advances-surfacing-failure.feature
+- proof-of-work/exit-zero-prefix.feature

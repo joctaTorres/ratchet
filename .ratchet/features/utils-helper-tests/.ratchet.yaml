@@ -1,0 +1,7 @@
+features:
+  item-discovery.feature:
+    - testing
+  match.feature:
+    - testing
+  task-progress.feature:
+    - testing

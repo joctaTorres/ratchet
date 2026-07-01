@@ -1,0 +1,7 @@
+features:
+  change-status-policy.feature:
+    - testing
+  config-schema.feature:
+    - testing
+  migration.feature:
+    - testing

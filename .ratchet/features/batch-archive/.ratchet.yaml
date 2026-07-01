@@ -1,0 +1,9 @@
+features:
+  archive-command.feature:
+    - multi-agent-support
+  done-gate.feature:
+    - multi-agent-support
+  listing-excludes-archive.feature:
+    - multi-agent-support
+  workflow-surface.feature:
+    - multi-agent-support

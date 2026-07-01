@@ -124,3 +124,35 @@ change adds or modifies a core, central, large, or otherwise important component
 or behavior, that documentation task additionally owns the overview Mermaid diagram for
 it — created or updated, vertically oriented, high-contrast, and accurate — and the
 change is not done until that diagram exists and matches the code.
+
+## Implemented by
+
+<!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
+
+- agent-timeout/configurable-timeout.feature
+- coverage-gate/documented-floor-80.feature
+- coverage-gate/documented-floor-95.feature
+- coverage-gate/documented-knob.feature
+- coverage-gate/floor-to-80.feature
+- coverage-gate/floor-to-95.feature
+- coverage-gate/ratchetable-threshold.feature
+- docs-website/build-and-deploy.feature
+- docs-website/docs-seed.feature
+- docs-website/i18n.feature
+- docs-website/isolation.feature
+- docs-website/landing-install-command.feature
+- docs-website/landing-page.feature
+- docs-website/markdown-link-strictness.feature
+- docs-website/site-structure.feature
+- docs-website/workers-assets-deploy.feature
+- proof-of-work-boundary/execute-and-record.feature
+- proof-of-work-boundary/recorded-proof-reader.feature
+- proof-of-work-gate/e2e-gate.feature
+- proof-of-work-gate/hard-gate-blocks-on-recorded-proof.feature
+- proof-of-work-gate/status-and-selection-agree.feature
+- proof-of-work-gate/warn-advances-surfacing-failure.feature
+- proof-of-work/exit-zero-prefix.feature
+- rerun-recorded-proof/cli-surface.feature
+- rerun-recorded-proof/invalidation-folding.feature
+- testing-standard/reference-docs.feature
+- testing-standard/standard-library.feature

@@ -1,6 +1,7 @@
-// Implements features/eval-invariants/kinds-evaluator.feature — the per-invariant
+// Implements features/eval-invariants/kinds-evaluator.feature and
+// features/mutation-evaluator-fold/mutation-outcome.feature — the per-invariant
 // evaluator that computes one pass / fail / unevaluable outcome for each of the
-// three invariant kinds, fail-closed on anything it cannot evaluate.
+// four invariant kinds, fail-closed on anything it cannot evaluate.
 import { afterEach, describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -17,7 +18,7 @@ import type {
   MutationInvariant,
 } from '../../../src/core/eval/invariants.js';
 import type { EvalRun, CaseSnapshot } from '../../../src/core/eval/run.js';
-import type { BashRunner } from '../../../src/core/batch/engine/index.js';
+import type { BashRunner, BashResult, Spawner } from '../../../src/core/batch/engine/index.js';
 
 const roots: string[] = [];
 
@@ -224,20 +225,138 @@ describe('evaluateInvariant: snapshot', () => {
   });
 });
 
-describe('evaluateInvariant: mutation (schema-only placeholder)', () => {
-  const inv: MutationInvariant = {
+describe('evaluateInvariant: mutation', () => {
+  const REVERT = 'git reset --hard HEAD && git clean -fd';
+  const CLEAN: BashResult = { exitCode: 0, stdout: '', stderr: '' };
+  const DIRTY: BashResult = { exitCode: 0, stdout: ' M src/x.ts\n', stderr: '' };
+  const A_DIFF: BashResult = { exitCode: 0, stdout: 'diff --git a/src/x.ts b/src/x.ts\n-a\n+b\n', stderr: '' };
+  const NO_DIFF: BashResult = { exitCode: 0, stdout: '', stderr: '' };
+  const TEST_PASS: BashResult = { exitCode: 0, stdout: 'PASS', stderr: '' };
+  const TEST_FAIL: BashResult = { exitCode: 1, stdout: '', stderr: '1 test failed' };
+
+  const inv = (overrides: Partial<MutationInvariant> = {}): MutationInvariant => ({
     id: 'mutants-are-killed',
     kind: 'mutation',
     active: true,
     test: 'pnpm test',
-    budget: 5,
+    budget: 3,
     threshold: 3,
-  };
+    ...overrides,
+  });
 
-  it('fails closed to unevaluable, since seeding/oracle evaluation is not implemented yet', async () => {
-    const o = await evaluateInvariant(inv, { projectRoot: '/p', run: runWith(1), baseline: null });
+  const noopSpawner: Spawner = async () => ({ exitCode: 0, signal: null, stdout: '', stderr: '' });
+
+  /** Fake `bash` seam: a clean tree, a spawn-seeded diff/oracle-result sequence
+   *  consumed one entry per budget-loop attempt (repeating the last entry once
+   *  exhausted), and a successful revert — mirrors mutation-harness.test.ts's
+   *  `makeSeams` pattern, scoped to just what evaluateMutation's reduction needs. */
+  function makeMutationBash(
+    testCommand: string,
+    diffs: BashResult[],
+    tests: Array<BashResult | Error>
+  ): BashRunner {
+    let diffIdx = 0;
+    let testIdx = 0;
+    return async (command) => {
+      if (command === 'git status --porcelain') return CLEAN;
+      if (command === 'git add -A') return CLEAN;
+      if (command === 'git diff --cached') return diffs[Math.min(diffIdx++, diffs.length - 1)]!;
+      if (command === testCommand) {
+        const result = tests[Math.min(testIdx++, tests.length - 1)]!;
+        if (result instanceof Error) throw result;
+        return result;
+      }
+      if (command === REVERT) return CLEAN;
+      throw new Error(`fake bash: no response configured for command '${command}'`);
+    };
+  }
+
+  it('passes and records the evaluated/killed count when every evaluated mutant is killed', async () => {
+    const invariant = inv({ budget: 3, threshold: 3 });
+    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_FAIL]);
+    const o = await evaluateInvariant(invariant, {
+      projectRoot: '/p',
+      run: runWith(1),
+      baseline: null,
+      bash,
+      spawner: noopSpawner,
+    });
+    expect(o.status).toBe('pass');
+    expect(isInvariantViolation(o)).toBe(false);
+    expect(o.evidence).toMatch(/all 3 evaluated mutant\(s\) were killed/i);
+    expect(o.measure).toContain('3 evaluated, 0 survived');
+  });
+
+  it('is a hard failure naming the survived mutant when even one survives, regardless of threshold', async () => {
+    const invariant = inv({ budget: 3, threshold: 2 });
+    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_PASS, TEST_FAIL, TEST_FAIL]);
+    const o = await evaluateInvariant(invariant, {
+      projectRoot: '/p',
+      run: runWith(1),
+      baseline: null,
+      bash,
+      spawner: noopSpawner,
+    });
+    expect(o.status).toBe('fail');
+    expect(isInvariantViolation(o)).toBe(true);
+    expect(o.evidence).toMatch(/1 of 3 evaluated mutant\(s\) survived/i);
+    expect(o.evidence).toContain('attempt #0');
+    expect(o.evidence).toContain('diff --git a/src/x.ts');
+  });
+
+  it('fails closed to unevaluable when fewer mutants are evaluated than the threshold, citing the threshold', async () => {
+    const invariant = inv({ budget: 3, threshold: 3 });
+    // Middle attempt seeds no diff (skipped, not a mutant): only 2 of 3 reach a verdict.
+    const bash = makeMutationBash('pnpm test', [A_DIFF, NO_DIFF, A_DIFF], [TEST_FAIL, TEST_FAIL]);
+    const o = await evaluateInvariant(invariant, {
+      projectRoot: '/p',
+      run: runWith(1),
+      baseline: null,
+      bash,
+      spawner: noopSpawner,
+    });
     expect(o.status).toBe('unevaluable');
     expect(isInvariantViolation(o)).toBe(true);
-    expect(o.evidence).toMatch(/not implemented/i);
+    expect(o.evidence).toMatch(/only 2 of 3 required mutants/i);
+  });
+
+  it('fails closed to unevaluable citing the reason when the working tree is unusable before seeding anything', async () => {
+    const invariant = inv();
+    const bash: BashRunner = async (command) => {
+      if (command === 'git status --porcelain') return DIRTY;
+      throw new Error(`fake bash: unexpected command '${command}'`);
+    };
+    const o = await evaluateInvariant(invariant, {
+      projectRoot: '/p',
+      run: runWith(1),
+      baseline: null,
+      bash,
+      spawner: noopSpawner,
+    });
+    expect(o.status).toBe('unevaluable');
+    expect(isInvariantViolation(o)).toBe(true);
+    expect(o.evidence).toMatch(/working tree was not usable/i);
+    expect(o.evidence).toContain('uncommitted changes');
+  });
+
+  it('fails closed to unevaluable with no mutant recorded when the test command throws instead of producing a result', async () => {
+    const invariant = inv();
+    const bash = makeMutationBash(
+      'pnpm test',
+      [A_DIFF],
+      [new Error('pnpm test: command not found')]
+    );
+    const o = await evaluateInvariant(invariant, {
+      projectRoot: '/p',
+      run: runWith(1),
+      baseline: null,
+      bash,
+      spawner: noopSpawner,
+    });
+    expect(o.status).toBe('unevaluable');
+    expect(isInvariantViolation(o)).toBe(true);
+    expect(o.evidence).toMatch(/mutation harness could not run/i);
+    expect(o.evidence).toContain('pnpm test: command not found');
+    expect(o.evidence).not.toMatch(/survived|killed/i);
   });
 });

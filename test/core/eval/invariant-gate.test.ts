@@ -11,7 +11,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { evaluateInvariantGate } from '../../../src/core/eval/invariant-gate.js';
 import type { EvalRun, CaseSnapshot } from '../../../src/core/eval/run.js';
-import type { BashRunner } from '../../../src/core/batch/engine/index.js';
+import type { BashRunner, BashResult, Spawner } from '../../../src/core/batch/engine/index.js';
 
 const roots: string[] = [];
 
@@ -129,6 +129,38 @@ describe('evaluateInvariantGate', () => {
     });
     expect(result.failing).toEqual([]);
     expect(result.outcomes[0].status).toBe('pass');
+  });
+
+  it('threads spawner from InvariantGateInput through to a mutation invariant, failing the gate on a survived mutant', async () => {
+    const root = makeProject();
+    writeManifest(
+      root,
+      'invariants:\n  - id: mutants-are-killed\n    kind: mutation\n    active: true\n    test: "pnpm test"\n    budget: 1\n    threshold: 1\n'
+    );
+    const CLEAN: BashResult = { exitCode: 0, stdout: '', stderr: '' };
+    const A_DIFF: BashResult = { exitCode: 0, stdout: 'diff --git a/src/x.ts b/src/x.ts\n-a\n+b\n', stderr: '' };
+    const TEST_PASS: BashResult = { exitCode: 0, stdout: 'PASS', stderr: '' };
+    const REVERT = 'git reset --hard HEAD && git clean -fd';
+    const bash: BashRunner = async (command) => {
+      if (command === 'git status --porcelain') return CLEAN;
+      if (command === 'git add -A') return CLEAN;
+      if (command === 'git diff --cached') return A_DIFF;
+      if (command === 'pnpm test') return TEST_PASS;
+      if (command === REVERT) return CLEAN;
+      throw new Error(`fake bash: unexpected command '${command}'`);
+    };
+    const spawner: Spawner = async () => ({ exitCode: 0, signal: null, stdout: '', stderr: '' });
+
+    const result = await evaluateInvariantGate({
+      projectRoot: root,
+      run: runWith(1),
+      baseline: null,
+      bash,
+      spawner,
+    });
+
+    expect(result.failing).toEqual(['mutants-are-killed']);
+    expect(result.outcomes[0].status).toBe('fail');
   });
 
   it('fails closed with a loadError when the manifest cannot be loaded', async () => {

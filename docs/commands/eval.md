@@ -121,6 +121,12 @@ error.
 6. **Archive exclusion.** The archive (`changes/archive/`) is never a scope
    root regardless of flags.
 
+`eval run` is the **only** surface that enforces held-out scenarios against
+the implementation — it reads the real source `.feature` file directly (never
+through the filtered `contextFiles` used by `ratchet apply`/`ratchet verify`),
+so every `@holdout`-tagged Scenario is judged and gated exactly like any other
+case.
+
 ---
 
 ## `eval run`

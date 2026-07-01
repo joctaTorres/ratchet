@@ -9,9 +9,11 @@ Feature: Apply-time hold-out filtering
   # resolver into generateApplyInstructions() (src/commands/workflow/instructions.ts)
   # and artifact-output resolution (src/core/artifact-graph/outputs.ts): the
   # building agent reads a materialized, filtered COPY of each .feature artifact,
-  # never the raw source file. eval run / batch verify are untouched — they keep
-  # reading the real source file, so a held-out case is enumerated and gated
-  # exactly like any other case, with no change to verdict or aggregation.
+  # never the raw source file. ratchet verify reads the same filtered view (by
+  # design — it shares the generateApplyInstructions builder; prevents a feedback
+  # loop). eval run / enumerateEvalSet() are untouched — they read the real source
+  # file directly, so a held-out case is enumerated and gated exactly like any
+  # other case, with no change to verdict or aggregation. Enforcement is eval run.
   # `eval set` status reporting and the `--holdout` scope filter are separate,
   # sibling changes in this phase (eval-set-holdout-status, holdout-scope-filter).
 

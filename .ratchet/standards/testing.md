@@ -76,3 +76,8 @@ the enforced `COVERAGE_THRESHOLD`.
 - batch-command-tests/report.feature
 - batch-command-tests/status.feature
 - batch-command-tests/view.feature
+- commands-core-verbs/apply.feature
+- commands-core-verbs/coverage-floor.feature
+- commands-core-verbs/propose.feature
+- commands-core-verbs/validate.feature
+- commands-core-verbs/verify.feature

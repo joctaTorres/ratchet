@@ -1,0 +1,11 @@
+features:
+  apply.feature:
+    - testing
+  coverage-floor.feature:
+    - testing
+  propose.feature:
+    - testing
+  validate.feature:
+    - testing
+  verify.feature:
+    - testing

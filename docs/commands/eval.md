@@ -485,8 +485,10 @@ like a `deterministic`-bound one. A failed case's captured Playwright trace
 `use.screenshot`) is persisted as durable run evidence under
 `.ratchet/evals/runs/<run-id>/artifacts/<case-id>/` and referenced by path
 from the run JSON — see the "Structured per-case detail" steps of `eval run`
-and `eval report` above. The conditional `ratchet doctor` Playwright probe is
-still deferred to a later change in the `playwright-web-tier` phase.
+and `eval report` above. `ratchet doctor` probes for the Playwright CLI whenever a
+`kind: web` binding is present among the eval bindings resolved from
+`.ratchet/evals/specs/` — the same resolver used above — and is otherwise absent from
+its report; see the Playwright check under [`ratchet doctor`](doctor.md#checks).
 
 ---
 

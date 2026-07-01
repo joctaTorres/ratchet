@@ -93,7 +93,9 @@ the enforced `COVERAGE_THRESHOLD`.
 - core-util-tests/change-status-policy.feature
 - core-util-tests/config-schema.feature
 - core-util-tests/migration.feature
+- coverage-gate/documented-floor-80.feature
 - coverage-gate/documented-knob.feature
+- coverage-gate/floor-to-80.feature
 - coverage-gate/ratchetable-threshold.feature
 - eval-command-tests/baseline.feature
 - eval-command-tests/record.feature

@@ -130,7 +130,9 @@ change is not done until that diagram exists and matches the code.
 <!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
 
 - agent-timeout/configurable-timeout.feature
+- coverage-gate/documented-floor-80.feature
 - coverage-gate/documented-knob.feature
+- coverage-gate/floor-to-80.feature
 - coverage-gate/ratchetable-threshold.feature
 - docs-website/build-and-deploy.feature
 - docs-website/docs-seed.feature

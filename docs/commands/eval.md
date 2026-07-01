@@ -107,7 +107,7 @@ error.
    produced per Scenario, assigned its stable case id, and sorted by id for
    deterministic output.
 3. **Binding status.** Each case id is looked up in the loaded eval specs. The
-   reported binding is `deterministic`, `llm-judge`, or `unbound`.
+   reported binding is `deterministic`, `llm-judge`, `web`, or `unbound`.
 4. **Hold-out status.** Each case is checked for the `@holdout` Gherkin tag via
    `resolveHoldout()`. JSON reports a `holdout: true`/`false` field per case;
    text appends a `[holdout]` tag after the case id when true. This is
@@ -434,6 +434,31 @@ alphabetical sort order wins and a warning is emitted.
 | `success` | string | Success criteria passed to the spawned judge agent. Required. |
 | `jury` | object | Per-binding jury override (`votes`, `quorum`), layered over the project-level `eval.jury` default. See [`eval:` settings](../configuration/config-yaml.md#eval-settings). Optional. |
 | `rubric` | string[] | Explicit binary rubric, used verbatim instead of auto-deriving one item per Gherkin `Then`-clause. Optional. |
+
+### Web binding
+
+```yaml
+"features/checkout#add-to-cart":
+  fixture: storefront-app
+  kind: web
+  setup: "pnpm install"       # optional; runs once per fixture+setup pair
+  start: "pnpm dev"
+  readiness:
+    url: "http://localhost:3000"   # or `command`; exactly one is required
+    timeoutMs: 15000
+  spec: e2e/add-to-cart.spec.ts
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `fixture` | string | Name of the fixture directory under `.ratchet/evals/fixtures/`. Required. |
+| `kind` | `"web"` | Discriminant. Required. |
+| `setup` | string | Shell command run once to bootstrap the fixture working copy. Optional. |
+| `start` | string | Shell command that boots the app under test. Required. |
+| `readiness.url` | string | URL polled to determine the app is ready. Exactly one of `readiness.url` / `readiness.command` is required. |
+| `readiness.command` | string | Command run to determine the app is ready. Exactly one of `readiness.url` / `readiness.command` is required. |
+| `readiness.timeoutMs` | number | Positive integer milliseconds to wait for readiness. Required; the fail-closed boundary — readiness not reached within it is a failure, never an assumed-ready pass. |
+| `spec` | string | Repo-relative path to the Playwright spec that drives the case's Given/When/Then. Required. |
 
 ---
 

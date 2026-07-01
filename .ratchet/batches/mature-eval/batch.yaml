@@ -313,6 +313,63 @@ phases:
         timeout/run/teardown) gates on Playwright exit through the deterministic
         contributor with failure artifacts captured, and that the doctor probe is
         conditional on a web binding being in scope
+    changes:
+      - name: web-binding-schema
+        after: []
+        done: >-
+          `src/core/eval/spec.ts`'s `BindingKind` gains `'web'` alongside
+          `deterministic`/`llm-judge`; a `WebBindingSchema` joins `BindingSchema`'s
+          discriminated union with `fixture`, `kind: 'web'`, a `start` boot command,
+          a `readiness` probe (URL or command) paired with a `timeout` (the
+          fail-closed boundary — readiness not reached within it is a failure, never
+          an assumed-ready pass), a `spec` path to the Playwright test driving
+          Given/When/Then, and an optional `setup`; `ratchet eval set` reports
+          `web`-bound cases with the new kind label alongside the existing two; the
+          `## Bindings` section of `docs/commands/eval.md` documents the new binding
+          shape per `.ratchet/standards/documentation.md`
+      - name: web-lifecycle-harness
+        after: [web-binding-schema]
+        done: >-
+          a lifecycle harness starts the binding's `start` command as a background
+          process via the existing bash spawn seam, polls the `readiness` probe
+          until it succeeds or the binding's `timeout` elapses (timeout exceeded
+          fails the case rather than hanging or assuming readiness), runs the
+          Playwright spec at `spec` via a plain bash invocation (agent-neutral — no
+          agent-specific runner, per `.ratchet/standards/multi-agent-support.md`),
+          and tears down the started process in a `finally` on every path (pass,
+          fail, or readiness timeout)
+      - name: web-deterministic-fold
+        after: [web-lifecycle-harness]
+        done: >-
+          `judgeCase()` in `src/core/eval/judge.ts` dispatches `kind: 'web'`
+          bindings through the lifecycle harness and reduces the harness's
+          Playwright exit code to a `CaseVerdict` (exit-zero = pass) in the same
+          shape `judgeCheck` returns for `deterministic` bindings; `aggregate.ts`'s
+          `deterministicContributor` treats `web`-bound case failures the same as
+          `deterministic`-bound ones (no new `ContributorId` is introduced), so the
+          existing `eval.gate.deterministic` / `--only` / `--gate` selectors
+          continue to control it unchanged
+      - name: web-failure-evidence
+        after: [web-deterministic-fold]
+        done: >-
+          on a failed `web`-bound case, the harness captures the Playwright trace
+          and a screenshot and persists them as run evidence referenced by path from
+          the case's `ClauseResult`/`CaseRecord` (reusing the structured-evidence
+          shape from the `structured-evidence-persistence` change) so the failure is
+          reproducible from the run record alone; a passing case captures no
+          artifact
+      - name: doctor-conditional-playwright-probe
+        after: [web-binding-schema]
+        done: >-
+          `ratchet doctor` (`src/core/doctor/`) adds a Playwright check that is
+          included in the report ONLY when a `kind: web` binding is present among
+          the resolved eval bindings in scope (absent from the report entirely
+          otherwise — never an unconditional probe); when included, it detects
+          whether the Playwright CLI is installed and surfaces install guidance
+          when it is not, in the existing `DoctorCheck` shape (`checkAgents`/
+          `checkDocker`'s pattern); `docs/commands/doctor.md` and
+          `docs/commands/eval.md` document the conditional check per
+          `.ratchet/standards/documentation.md`
 
   # ---------------------------------------------------------------------------
   - name: mutation-invariant

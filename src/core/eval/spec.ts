@@ -4,9 +4,10 @@
  * Authored YAML under `.ratchet/evals/specs/` maps a case id to how it should be
  * judged: which fixture codebase it runs against, the judge `kind`, and the
  * judging detail (`check` pass condition for `deterministic` bindings, `success`
- * criteria for the `llm-judge` binding). A binding may declare an optional
- * one-time `setup` to bootstrap the fixture and, for `llm-judge`, how many
- * repeat votes the judge casts.
+ * criteria for the `llm-judge` binding, or the boot/readiness/spec lifecycle for
+ * the `web` binding). A binding may declare an optional one-time `setup` to
+ * bootstrap the fixture and, for `llm-judge`, how many repeat votes the judge
+ * casts.
  *
  * Multiple bindings may live in one file (keyed by case id). A case with no
  * binding in any spec is unbound — it is recorded as `unjudged`, never passed.
@@ -20,7 +21,7 @@ import { z } from 'zod';
 import { RATCHET_DIR_NAME } from '../config.js';
 import { JurySchema } from './jury.js';
 
-export type BindingKind = 'deterministic' | 'llm-judge';
+export type BindingKind = 'deterministic' | 'llm-judge' | 'web';
 
 const DeterministicBindingSchema = z.object({
   fixture: z.string().min(1),
@@ -49,13 +50,39 @@ const LlmJudgeBindingSchema = z.object({
   rubric: z.array(z.string().min(1)).optional(),
 });
 
+/** A readiness probe: exactly one of `url` or `command`, paired with a required timeout. */
+const WebReadinessSchema = z
+  .object({
+    url: z.string().min(1).optional(),
+    command: z.string().min(1).optional(),
+    /** Fail-closed boundary: readiness not reached within this many ms is a failure. */
+    timeoutMs: z.number().int().positive(),
+  })
+  .refine((r) => (r.url ? 1 : 0) + (r.command ? 1 : 0) === 1, {
+    message: 'readiness requires exactly one of "url" or "command"',
+  });
+
+const WebBindingSchema = z.object({
+  fixture: z.string().min(1),
+  kind: z.literal('web'),
+  /** Bash command that boots the app under test. */
+  start: z.string().min(1),
+  readiness: WebReadinessSchema,
+  /** Repo-relative path to the Playwright spec driving the case's Given/When/Then. */
+  spec: z.string().min(1),
+  setup: z.string().optional(),
+});
+
 export const BindingSchema = z.discriminatedUnion('kind', [
   DeterministicBindingSchema,
   LlmJudgeBindingSchema,
+  WebBindingSchema,
 ]);
 
 export type DeterministicBinding = z.infer<typeof DeterministicBindingSchema>;
 export type LlmJudgeBinding = z.infer<typeof LlmJudgeBindingSchema>;
+export type WebBinding = z.infer<typeof WebBindingSchema>;
+export type WebReadiness = z.infer<typeof WebReadinessSchema>;
 export type Binding = z.infer<typeof BindingSchema>;
 
 /** A binding paired with the case id it targets and its source spec file. */

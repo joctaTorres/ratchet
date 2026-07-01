@@ -129,4 +129,5 @@ change is not done until that diagram exists and matches the code.
 
 <!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
 
+- agent-timeout/configurable-timeout.feature
 - proof-of-work-gate/e2e-gate.feature

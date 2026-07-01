@@ -172,4 +172,22 @@ describe('evalReportCommand', () => {
   it('rejects a missing --run', async () => {
     await expect(evalReportCommand({})).rejects.toThrow(/--run/);
   });
+
+  // features/eval-report/read-only-report.feature — a run with no persisted
+  // invariant gate is rendered "not evaluated": the read-only report never
+  // re-evaluates the gate, and the state never crashes or affects the verdict.
+  it('renders a run with no persisted invariant gate as "not evaluated" (text and JSON)', async () => {
+    // `makeRun` persists no `invariantGate` — the not-evaluated case.
+    persistRun(fixture.root, makeRun('run-noeval', [{ id: 'a', verdict: 'pass' }]));
+
+    await evalReportCommand({ run: 'run-noeval' });
+    expect(output()).toContain('Invariants: not evaluated');
+
+    logSpy.mockClear();
+    await evalReportCommand({ run: 'run-noeval', json: true });
+    const parsed = JSON.parse(output());
+    expect(parsed.invariantsEvaluated).toBe(false);
+    expect(parsed.invariants).toEqual([]);
+    expect(parsed.overall).toBe('pass');
+  });
 });

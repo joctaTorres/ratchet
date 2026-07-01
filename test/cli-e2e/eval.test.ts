@@ -569,4 +569,40 @@ features/cli/status#status-as-text:
     );
     expect(skippedFromReport.skip).toEqual({ source: 'tag', detail: 'features/skip/s.feature' });
   });
+
+  // features/eval-report/read-only-report.feature — `eval report` renders purely
+  // from persisted state: the invariant gate is evaluated once by `eval run`, and
+  // a subsequent `eval report` re-runs no invariant check command.
+  it('eval report re-runs no invariant check command (read-only)', async () => {
+    const cwd = await prepareProject();
+    // An active deterministic invariant whose check increments an on-disk counter.
+    // Running the check advances the counter; a read-only report must not run it.
+    await write(
+      path.join(cwd, '.ratchet', 'evals', 'invariants.yaml'),
+      'invariants:\n' +
+        '  - id: counting-check\n' +
+        '    kind: deterministic\n' +
+        '    active: true\n' +
+        '    check:\n' +
+        '      run: "sh -c \'n=$(cat inv-counter.txt 2>/dev/null || echo 0); echo $((n+1)) > inv-counter.txt\'"\n' +
+        '      pass: exit-zero\n'
+    );
+
+    const run = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
+    expect(run.exitCode).toBe(0);
+    const runId = JSON.parse(run.stdout).runId;
+    const afterRun = (await fs.readFile(path.join(cwd, 'inv-counter.txt'), 'utf-8')).trim();
+    expect(afterRun).toBe('1'); // the gate ran the check exactly once
+
+    // The read-only report path must NOT re-run the check: the counter is unchanged.
+    const report = await runCLI(['eval', 'report', '--run', runId, '--json'], { cwd });
+    expect(report.exitCode).toBe(0);
+    const afterReport = (await fs.readFile(path.join(cwd, 'inv-counter.txt'), 'utf-8')).trim();
+    expect(afterReport).toBe('1'); // still 1: report re-ran no invariant check
+
+    // The persisted gate verdict still surfaces through the read-only report.
+    const parsed = JSON.parse(report.stdout);
+    expect(parsed.invariantsEvaluated).toBe(true);
+    expect(parsed.invariants.map((o: { id: string }) => o.id)).toContain('counting-check');
+  });
 });

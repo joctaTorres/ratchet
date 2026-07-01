@@ -1,14 +1,16 @@
 /**
  * Eval scorecard and baseline regression diff.
  *
- * The scorecard counts pass/fail/unjudged and lists failing cases with their
- * evidence. The baseline diff classifies each case against the promoted
+ * The scorecard counts pass/fail/unjudged/skipped and lists failing cases with
+ * their evidence. The baseline diff classifies each case against the promoted
  * baseline run:
  *   - regression = pass in baseline AND fail now (the thing we guard against)
  *   - new        = present only in the current run
  *   - retired    = present only in the baseline (neither is a regression)
+ *   - skippedRegressions = pass in baseline AND skipped now (visible, not failed)
  *
- * `unjudged` keeps a run incomplete and never counts as a pass. The overall
+ * `unjudged` keeps a run incomplete and never counts as a pass; `skipped` is an
+ * intentional, counted exclusion and never blocks completeness. The overall
  * verdict is decided in exactly one place — the verdict-aggregation core
  * (`aggregate.ts`) — as a logical AND over named contributors; `buildReport`
  * routes `overall` through it and exposes the per-contributor breakdown.
@@ -16,16 +18,19 @@
 
 import type { EvalRun } from './run.js';
 import { loadRun, loadBaselineRunId } from './run.js';
-import type { Verdict } from './judge.js';
+import type { ClauseResult, JurorVote, Verdict } from './judge.js';
 import { aggregateRun, DEFAULT_CONTRIBUTORS, type ContributorOutcome } from './aggregate.js';
 import { evaluateInvariantGate } from './invariant-gate.js';
 import type { InvariantOutcome } from './invariant-evaluator.js';
+import type { SkipReason } from './skip.js';
 
 export interface Scorecard {
   total: number;
   pass: number;
   fail: number;
   unjudged: number;
+  /** Cases intentionally excluded by a skip filter; counted in `total`, never unjudged. */
+  skipped: number;
   /** A run is complete when no case is unjudged. */
   complete: boolean;
 }
@@ -37,11 +42,25 @@ export interface FailingCase {
   source: string;
 }
 
+/** The complete structured detail of one run case: judging detail when judged, skip detail when skipped. */
+export interface CaseDetail {
+  id: string;
+  scenario: string;
+  verdict: Verdict;
+  source: string;
+  rubric: string[];
+  clauses: ClauseResult[];
+  votes: JurorVote[];
+  skip?: SkipReason;
+}
+
 export interface BaselineDiff {
   baselineRunId: string | null;
   regressions: string[];
   newCases: string[];
   retiredCases: string[];
+  /** Case ids whose baseline verdict was `pass` and are now `skipped`. */
+  skippedRegressions: string[];
 }
 
 export interface EvalReport {
@@ -49,6 +68,8 @@ export interface EvalReport {
   scorecard: Scorecard;
   failing: FailingCase[];
   unjudgedCases: string[];
+  /** The complete structured per-case view: rubric, per-clause evidence, per-juror votes, and skip detail. */
+  cases: CaseDetail[];
   diff: BaselineDiff;
   /** Overall verdict, decided by the aggregation core as an AND over contributors. */
   overall: 'pass' | 'fail';
@@ -69,13 +90,15 @@ function scoreRun(run: EvalRun): Scorecard {
   let pass = 0;
   let fail = 0;
   let unjudged = 0;
+  let skipped = 0;
   for (const c of run.cases) {
     const v = verdictOf(run, c.id);
     if (v === 'pass') pass++;
     else if (v === 'fail') fail++;
+    else if (v === 'skipped') skipped++;
     else unjudged++;
   }
-  return { total: run.cases.length, pass, fail, unjudged, complete: unjudged === 0 };
+  return { total: run.cases.length, pass, fail, unjudged, skipped, complete: unjudged === 0 };
 }
 
 function failingCases(run: EvalRun): FailingCase[] {
@@ -93,27 +116,52 @@ function unjudgedIds(run: EvalRun): string[] {
   return run.cases.filter((c) => verdictOf(run, c.id) === 'unjudged').map((c) => c.id);
 }
 
+/** Build the complete per-case structured view: one `CaseDetail` per case in `run.cases`. */
+function caseDetails(run: EvalRun): CaseDetail[] {
+  return run.cases.map((c) => {
+    const record = run.verdicts[c.id];
+    return {
+      id: c.id,
+      scenario: c.scenario,
+      verdict: record?.verdict ?? 'unjudged',
+      source: c.source,
+      rubric: record?.rubric ?? [],
+      clauses: record?.clauses ?? [],
+      votes: record?.votes ?? [],
+      ...(record?.skip ? { skip: record.skip } : {}),
+    };
+  });
+}
+
 /** Diff a run against the baseline, classifying regressions/new/retired. */
 export function diffAgainstBaseline(
   run: EvalRun,
   baseline: EvalRun | null
 ): BaselineDiff {
   if (!baseline) {
-    return { baselineRunId: null, regressions: [], newCases: [], retiredCases: [] };
+    return { baselineRunId: null, regressions: [], newCases: [], retiredCases: [], skippedRegressions: [] };
   }
   const currentIds = new Set(run.cases.map((c) => c.id));
   const baselineIds = new Set(baseline.cases.map((c) => c.id));
 
   const regressions: string[] = [];
+  const skippedRegressions: string[] = [];
   for (const c of run.cases) {
     if (!baselineIds.has(c.id)) continue;
     const wasPass = (baseline.verdicts[c.id]?.verdict ?? 'unjudged') === 'pass';
-    const nowFail = verdictOf(run, c.id) === 'fail';
-    if (wasPass && nowFail) regressions.push(c.id);
+    const now = verdictOf(run, c.id);
+    if (wasPass && now === 'fail') regressions.push(c.id);
+    if (wasPass && now === 'skipped') skippedRegressions.push(c.id);
   }
   const newCases = [...currentIds].filter((id) => !baselineIds.has(id)).sort();
   const retiredCases = [...baselineIds].filter((id) => !currentIds.has(id)).sort();
-  return { baselineRunId: baseline.runId, regressions: regressions.sort(), newCases, retiredCases };
+  return {
+    baselineRunId: baseline.runId,
+    regressions: regressions.sort(),
+    newCases,
+    retiredCases,
+    skippedRegressions: skippedRegressions.sort(),
+  };
 }
 
 /** Build the full report for a run, loading the baseline if one is promoted. */
@@ -145,6 +193,7 @@ export async function buildReport(projectRoot: string, runId: string): Promise<E
     scorecard,
     failing: failingCases(run),
     unjudgedCases: unjudgedIds(run),
+    cases: caseDetails(run),
     diff,
     overall: aggregate.overall,
     contributors: aggregate.contributors,

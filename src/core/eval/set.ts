@@ -24,6 +24,8 @@ export interface EvalCase {
   source: string;
   /** Ordered Given/When/Then steps. */
   steps: Step[];
+  /** Gherkin tags on the Scenario (e.g. `@skip`), in source order. */
+  tags: string[];
 }
 
 export type EvalScopeKind = 'store' | 'changes' | 'change' | 'path';
@@ -124,6 +126,7 @@ function casesFromFile(projectRoot: string, file: string): EvalCase[] {
     scenario: scenario.name,
     source: rel,
     steps: scenario.steps,
+    tags: scenario.tags,
   }));
 }
 

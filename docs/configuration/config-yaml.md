@@ -131,6 +131,8 @@ Project-level defaults for `ratchet eval` orchestration.
 |---|---|---|---|---|
 | `gate` | object | every contributor enabled | keys `deterministic` `llm-judge` `invariants` `regression` → boolean | Enables or disables each verdict contributor for `ratchet eval run`. An omitted contributor stays enabled; an unset `gate` ⇒ every contributor enabled. Overridable per run by `--gate`/`--only`/`--no-llm-judge`/`--no-invariants`. |
 | `judge` | string | — | `auto` `deterministic` `llm-judge` | **Deprecated** default judge mode, mapped onto the gate (`deterministic` disables `llm-judge`, `llm-judge` disables `deterministic`, `auto` enables both). Prefer `gate`. |
+| `jury` | object | `{ votes: 1, quorum: majority }` | `votes` (integer ≥ 1), `quorum` (`majority` \| `unanimous`), `panel` (reserved, see below) | Project-level default jury for the `llm-judge` contributor. A binding's own `jury:` block (see [LLM-judge binding](../commands/eval.md#llm-judge-binding)) overrides this default field-by-field. |
+| `skip` | string[] | — (no patterns) | non-empty glob strings | Glob patterns matched against the full case id (`*` wildcard, anchored to the whole string). A matching case is excluded from judging and recorded `skipped`, alongside any case carrying an in-file `@skip` Gherkin tag. Overridable per run by `--include-skipped` (disables both sources together). See [Skip filters](../commands/eval.md#skip-filters). |
 
 The `gate` map selects which contributors execute and gate a run, generalizing
 the legacy `judge` mode. A contributor disabled here records its cases
@@ -144,6 +146,25 @@ runs for the run (equivalent to `--no-invariants`). See
 An unknown contributor id under `gate` (or a non-boolean value) is rejected: the
 whole `eval` section is dropped with a warning, and `eval run` falls back to
 every contributor enabled.
+
+The `jury` block sets the default number of repeat votes (`votes`) the
+`llm-judge` contributor casts per case and the agreement required to land a
+definitive verdict (`quorum`): `majority` decides on a strict majority either
+way (a tie does not reach quorum), `unanimous` requires every vote to agree
+(any split does not reach quorum). A jury that does not reach its quorum
+records the case `unjudged` rather than guessing. `panel` is a reserved,
+validated-but-inert slot (`{ families: string[] }`, min one family) for a
+future cross-family panel; it is parsed and retained but not yet read by vote
+resolution. An invalid `jury` value (e.g. an unrecognized `quorum`) is
+rejected the same way an invalid `gate` value is: the whole `eval` section is
+dropped with a warning.
+
+`skip` excludes matching cases from judging by default, the project-config
+half of [skip filters](../commands/eval.md#skip-filters) — the other half is
+an in-file `@skip` Gherkin tag, checked first and independent of this config.
+A skipped case is recorded `skipped` (never silently dropped) and is counted
+in the `eval run` scorecard. `--include-skipped` on `eval run` overrides both
+the `skip` patterns and the `@skip` tag together for that run.
 
 ---
 
@@ -179,4 +200,9 @@ eval:
     llm-judge: true
     invariants: true
     regression: true
+  jury:
+    votes: 3
+    quorum: unanimous
+  skip:
+    - "features/legacy/*"
 ```

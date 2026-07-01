@@ -46,7 +46,7 @@ describe('loadEvalSpecs', () => {
     expect(specs.warnings).toHaveLength(0);
   });
 
-  it('loads an llm-judge binding with success criteria and votes', () => {
+  it('loads an llm-judge binding with success criteria and a jury override', () => {
     const root = makeProject();
     writeSpec(
       root,
@@ -55,7 +55,9 @@ describe('loadEvalSpecs', () => {
   fixture: fx
   kind: llm-judge
   success: it prints a JSON object
-  agentVotes: 3
+  jury:
+    votes: 3
+    quorum: unanimous
 `
     );
     const specs = loadEvalSpecs(root);
@@ -63,7 +65,7 @@ describe('loadEvalSpecs', () => {
     expect(b?.binding.kind).toBe('llm-judge');
     if (b?.binding.kind === 'llm-judge') {
       expect(b.binding.success).toContain('JSON');
-      expect(b.binding.agentVotes).toBe(3);
+      expect(b.binding.jury).toEqual({ votes: 3, quorum: 'unanimous' });
     }
   });
 
@@ -119,6 +121,27 @@ describe('loadEvalSpecs', () => {
     const specs = loadEvalSpecs(root);
     expect(resolveBinding(specs, 'a#legacy')).toBeUndefined();
     expect(specs.warnings.some((w) => w.includes('a#legacy'))).toBe(true);
+  });
+
+  it('rejects a legacy "agentVotes" key on an llm-judge binding and names jury.votes', () => {
+    const root = makeProject();
+    writeSpec(
+      root,
+      'stale.yaml',
+      `a#stale:
+  fixture: fx
+  kind: llm-judge
+  success: works
+  agentVotes: 3
+`
+    );
+    const specs = loadEvalSpecs(root);
+    // Fail loud rather than silently dropping to the default single vote.
+    expect(resolveBinding(specs, 'a#stale')).toBeUndefined();
+    const warning = specs.warnings.find((w) => w.includes('a#stale'));
+    expect(warning).toBeDefined();
+    expect(warning).toContain('agentVotes');
+    expect(warning).toContain('jury.votes');
   });
 
   it('returns undefined for a case with no binding (unbound)', () => {

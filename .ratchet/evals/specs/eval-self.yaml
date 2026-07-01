@@ -22,4 +22,3 @@ changes/eval-system/features/eval-runs/run-and-score#a-run-judges-in-scope-cases
     output reports a run id and a scorecard with pass/fail/unjudged counts. Cite
     the concrete run id, the scorecard counts, and the persisted file path as
     evidence. If any of the three is missing, fail closed.
-  agentVotes: 1

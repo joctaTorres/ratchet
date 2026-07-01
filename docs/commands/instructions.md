@@ -98,6 +98,39 @@ Markdown file that contains checkbox tasks (lines of the form `- [ ] ...` or
 the `tasks` list. A custom instruction for the apply phase may be set in
 `schema.apply.instruction`; when absent, a default instruction is used.
 
+#### Hold-out filtering
+
+Every `.feature` artifact path returned in `contextFiles` points to a
+materialized copy under `<changeDir>/.apply-context/<artifactId>/...`, never
+the source file. The copy is produced by stripping every `@holdout`-tagged
+Scenario/Scenario Outline block (its tag line(s), header, steps, and — for an
+Outline — its `Examples:` table) out of the source `.feature` text; every
+other line, including the `Feature:` header/description, `Background:`, and
+non-held-out Scenarios, is passed through unchanged. The materialized copy is
+fully regenerated (overwritten) on every `ratchet instructions apply` call.
+Non-`.feature` outputs (e.g. `plan.md`) are returned as their original path,
+unaffected.
+
+The source `.feature` file itself is never modified. `eval run`, `ratchet
+verify`, and `enumerateEvalSet()` read the untouched source file directly —
+not through `contextFiles` — so a `@holdout`-tagged Scenario keeps being
+enumerated and gated exactly like any other case, with no change to verdict
+or aggregation behavior. Filtering only changes what the building agent reads
+during `apply`; it changes nothing about how a case is judged.
+
+This is tag-based *content* filtering: an `@holdout` Scenario's tag line and
+name are removed from the materialized copy, but the building agent can still
+see that its enclosing `.feature` file exists and, from context, may be able
+to infer that a case was elided. A stronger alternative — not implemented
+here — is sibling-location isolation: excluding `@holdout`-tagged `.feature`
+files from the apply-time artifact glob entirely, e.g. keeping held-out
+Scenarios in a sibling directory such as `features.holdout/**/*.feature`
+outside `features/**/*.feature`, so the building agent never sees that a
+held-out Scenario exists at all. That approach requires a second
+artifact-glob pattern, changes to where `eval set`/`eval run` look for the
+full case set, and a decision about how `ratchet propose` splits new
+Scenarios between the two locations.
+
 #### Apply text output
 
 The text output is formatted as Markdown sections:

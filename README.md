@@ -230,8 +230,8 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step) |
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
 | `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
-| `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
-| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--json`) |
+| `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--holdout`/`--no-holdout`, `--json`) |
+| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--include-skipped`, `--holdout`/`--no-holdout`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
 | `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
@@ -379,7 +379,7 @@ delegated to the bundled batch engine, run against fixtures** — never the live
 working tree — so a scenario that passes today can't silently regress tomorrow.
 
 ```bash
-ratchet eval set --json                 # one case per Scenario, with binding status
+ratchet eval set --json                 # one case per Scenario, with binding + hold-out status
 ratchet eval run --json                 # judge bound cases through the engine, persist a run
 ratchet eval report --run <run-id> --json   # scorecard + baseline regression diff
 ratchet eval baseline <run-id>          # promote a clean run as the baseline
@@ -408,7 +408,11 @@ features/cli/status#status-as-text:
   fixture: verify-sample
   kind: llm-judge             # spawned-judge fallback for prose-y scenarios
   success: the status output is human-readable text
-  agentVotes: 3               # N-of-M repeat votes; majority wins
+  jury:                       # optional: overrides the project's eval.jury default
+    votes: 3
+    quorum: unanimous         # majority (default) | unanimous
+  rubric:                     # optional: overrides the auto-derived Then-clause rubric
+    - "Output is readable prose, not raw JSON"
 ```
 
 **Fixtures run isolated.** Before judging, the fixture is materialized into a
@@ -417,16 +421,50 @@ build/run/mutate freely without touching the checked-in fixture or the host repo
 An optional `setup` bootstraps a fixture **once** into a copy cached by
 fixture+setup and reused across every case bound to it.
 
-**The agent judge is guarded.** It **fails closed on uncertainty** (no concrete
-evidence ⇒ not a pass) and may cast **N-of-M votes** (`agentVotes`, default 1).
-When votes disagree, the case is recorded `unjudged` — never silently `fail` — so
-judge noise can't manufacture a regression. Prefer a `deterministic` binding.
+**The agent judge is rubric-driven and guarded.** Each case is judged against a
+binary rubric — one item per Gherkin `Then`-clause by default, or an explicit
+`rubric:` list. The judge reasons step by step about each clause before stating
+its verdict (CoT-before-verdict) and judges the evidence on its own merits
+instead of trusting the scenario's framing (anti-sycophancy). A vote **fails
+closed on uncertainty**: a clause judged `"no"`/`"can't-tell"`, left
+unaddressed, or claimed `"yes"` with no concrete evidence, does not pass, and a
+vote passes only when every clause does (all-yes). A configurable **jury**
+(`votes`, default 1; `quorum`, `majority` (default) or `unanimous`) resolves
+the cast votes into one verdict — layered from a project-level `eval.jury`
+default down to a per-binding `jury:` override; when the votes do not reach
+the configured quorum, the case is recorded `unjudged` — never silently `fail`
+— so judge noise can't manufacture a regression. Prefer a `deterministic`
+binding. The run JSON persists this structured detail per judged case — the
+resolved rubric, each clause's boolean pass/fail with its cited evidence, and
+every juror's individual vote — surfaced via `eval run --json`/`eval report
+--json`'s `cases[]`.
 
-**Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
-is a case that **passed in the baseline and fails now**; new/retired cases are
-diffed, not failed. `unjudged` keeps a run incomplete and never counts as a pass.
-Unbound cases (no fixture) can take a manual verdict via `ratchet eval record`
-(a `fail` requires `--evidence`).
+**Verdicts & baseline.** Each case is `pass`, `fail`, `unjudged`, or `skipped`. A
+regression is a case that **passed in the baseline and fails now**; new/retired
+cases are diffed, not failed. `unjudged` keeps a run incomplete and never counts
+as a pass. Unbound cases (no fixture) can take a manual verdict via `ratchet
+eval record` (a `fail` requires `--evidence`).
+
+**Skip filters.** A case tagged `@skip` in its `.feature` file, or whose id
+matches a project `eval.skip` glob pattern, is excluded from judging by
+default and recorded `skipped` — counted in the scorecard, never silently
+dropped, and never blocking baseline promotion. `--include-skipped` overrides
+both sources for a run. Skipping a case that was `pass` in the promoted
+baseline prints a visible warning naming it. The run JSON persists a skipped
+case's skip source (`tag` or `config`) and matched detail, surfaced via `eval
+run --json`/`eval report --json`'s `cases[]`.
+
+**Hold-out scenarios.** A Scenario tagged `@holdout` is an anti-overfitting
+visibility split, not a skip: `ratchet instructions apply` hands the building
+agent a materialized copy of each `.feature` artifact with `@holdout`-tagged
+content stripped out, so the agent implementing a change never sees a
+held-out case, while `eval run`/`ratchet verify` keep reading the real source
+file and gate it exactly like any other case. `ratchet eval set` reports each
+case's hold-out status alongside its binding kind — `holdout: true`/`false`
+in JSON, a `[holdout]` tag in text — reporting only, with no effect on
+gating. `--holdout`/`--no-holdout` on `eval set`/`eval run` restrict the
+in-scope set to just the held-out or just the non-held-out cases, composing
+with the existing `--changes`/`--change`/`--path` scope flags.
 
 **One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
 place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a

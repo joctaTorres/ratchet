@@ -179,6 +179,53 @@ phases:
         gating, jury quorum resolution with project/per-binding layering and
         sub-quorum abstention, skip filters recording counted `skipped` with the
         baseline-skip warning, and structured evidence persisted in the run JSON
+    changes:
+      - name: rubric-decomposition
+        after: []
+        done: >-
+          judge.ts decomposes each `llm-judge` case's Gherkin Then-clauses into a
+          rubric (one item auto-derived per Then/And/But-under-Then step, with an
+          optional explicit `rubric:` override on the binding taking precedence),
+          the per-vote agent prompt requires step-by-step reasoning before stating
+          a verdict (CoT-before-verdict) and instructs the agent to judge evidence
+          independently rather than defer to the scenario's framing
+          (anti-sycophancy), and `judgeCase()`/`parseAgentVote()` return a
+          structured `[{clause, pass, evidence}]` per vote that passes only when
+          every clause is `pass` (fail-closed: any `no` or `can't-tell` clause
+          fails the vote), replacing today's flat `CaseVerdict.reason` string
+      - name: jury-quorum-resolution
+        after: [rubric-decomposition]
+        done: >-
+          a `jury` block (`votes`, `quorum: majority|unanimous`) is read from
+          project-level `eval.jury` with a per-binding override on the
+          `llm-judge` case; the judge entry point resolves N structured
+          per-clause votes into one case verdict via the configured quorum
+          (majority or unanimous agreement over each vote's all-yes pass); a
+          sub-quorum result (not enough agreeing votes to reach the threshold)
+          records the case `unjudged` rather than guessing; the jury schema
+          reserves an inert `panel:` slot (parsed and validated, never evaluated)
+          for future cross-family panel use
+      - name: skip-filters
+        after: []
+        done: >-
+          a case matching project `eval.skip` config or an in-file `@skip`
+          Gherkin tag (captured by gherkin-parser.ts, today discarded along with
+          all tags) is excluded from judging by default and recorded with a new
+          `skipped` CaseRecord status (never silently dropped) and counted in
+          the run summary; `--include-skipped` on `eval run` overrides the
+          exclusion and judges the case normally; a case whose most recent
+          baseline status was `pass` and is now skipped emits a visible warning
+          at run time
+      - name: structured-evidence-persistence
+        after: [jury-quorum-resolution, skip-filters]
+        done: >-
+          the run JSON (`EvalRun`/`CaseRecord` in run.ts) persists, per judged
+          `llm-judge` case, the resolved rubric, each clause's boolean pass/fail
+          and cited evidence, and each juror's individual vote (clauses +
+          verdict); a `skipped` case retains its skip reason and source (config,
+          tag, or default); report.ts and `eval set`/run output surface this
+          structured data without changing how the `llm-judge` contributor plugs
+          into aggregate.ts's AND-over-contributors gate
 
   # ---------------------------------------------------------------------------
   - name: holdout-scenarios
@@ -200,6 +247,48 @@ phases:
         exit code 0 — tests assert a `@holdout` scenario is absent from the agent's
         materialized apply spec but present and gating at verify, and that `eval set`
         reports hold-out status with the scope filter working
+    changes:
+      - name: holdout-tag-resolution
+        after: []
+        done: >-
+          a pure resolver (mirroring `resolveSkip()` in `src/core/eval/skip.ts`)
+          derives a `holdout: boolean` status per `EvalCase` from the `@holdout`
+          Gherkin tag already captured verbatim on Scenario/Feature by
+          `gherkin-parser.ts` (no parser change needed) — tag-only, no new
+          `eval.holdout` config key, matching the phase's tag-driven surface
+      - name: apply-spec-holdout-filter
+        after: [holdout-tag-resolution]
+        done: >-
+          the apply-time spec/context assembly (`generateApplyInstructions()` in
+          `src/commands/workflow/instructions.ts`, resolving `.feature` context
+          via `src/core/artifact-graph/outputs.ts`) materializes a filtered copy
+          of each `.feature` artifact with `@holdout`-tagged Scenario/Feature
+          content stripped before the building agent reads it during `apply` —
+          the raw source `.feature` file is never exposed to the agent directly
+          — while `eval run` / batch `verify` continue reading the untouched
+          source file and gate normally, with no change to verdict or
+          aggregation logic; Reference docs record this tag-based filtering
+          approach and document the stronger sibling-location isolation option
+          (excluding holdout scenarios from the apply-time artifact glob
+          entirely) per `.ratchet/standards/documentation.md`
+      - name: eval-set-holdout-status
+        after: [holdout-tag-resolution]
+        done: >-
+          `ratchet eval set` reports each case's hold-out status alongside its
+          existing binding/skip reporting, with no change to verdict,
+          aggregation, or the persisted run JSON shape; `docs/commands/eval.md`
+          and `README.md` are updated to describe the new status per
+          `.ratchet/standards/documentation.md`
+      - name: holdout-scope-filter
+        after: [holdout-tag-resolution]
+        done: >-
+          `ratchet eval run` and `eval set` accept `--holdout` / `--no-holdout`
+          CLI flags, composing with the existing scope-flag pattern
+          (`--changes` / `--change` / `--path`), that restrict execution or
+          listing to only held-out or only non-held-out cases respectively
+          without altering gate or aggregation logic; `docs/commands/eval.md`
+          and `README.md` document the new flags per
+          `.ratchet/standards/documentation.md`
 
   # ---------------------------------------------------------------------------
   - name: playwright-web-tier

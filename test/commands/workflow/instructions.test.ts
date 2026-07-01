@@ -14,6 +14,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { makeCommandFixture, type CommandFixture } from '../change-fixture.js';
+import { resolveArtifactOutputs } from '../../../src/core/artifact-graph/outputs.js';
+import { enumerateEvalSet } from '../../../src/core/eval/set.js';
 
 const { resolvePlanningHomeMock } = vi.hoisted(() => ({
   resolvePlanningHomeMock: vi.fn(),
@@ -314,6 +316,104 @@ describe('generateApplyInstructions', () => {
     expect(instructions.state).toBe('ready');
     expect(instructions.progress.total).toBe(0);
     expect(instructions.instruction).toBe('Just build it.');
+  });
+
+  const HELD_OUT_FEATURE = [
+    'Feature: Sample',
+    '  @holdout',
+    '  Scenario: Held out scenario',
+    '    Given a secret precondition',
+    '    Then a secret outcome',
+    '',
+    '  Scenario: Kept scenario',
+    '    Given a precondition',
+    '    Then an outcome',
+    '',
+  ].join('\n');
+
+  it('materializes a filtered .feature context file that strips the @holdout Scenario', async () => {
+    const dir = await fixture.writeChangeWithTasks('holdout-apply', { done: 0, total: 1 });
+    await fs.mkdir(path.join(dir, 'features', 'sample'), { recursive: true });
+    await fs.writeFile(
+      path.join(dir, 'features', 'sample', 'sample.feature'),
+      HELD_OUT_FEATURE,
+      'utf-8'
+    );
+    await fixture.writeMetadata('holdout-apply');
+
+    const instructions = await generateApplyInstructions(
+      fixture.root,
+      'holdout-apply',
+      undefined,
+      planningHomeFor(fixture.root)
+    );
+
+    const rawOutputs = resolveArtifactOutputs(dir, 'features/**/*.feature');
+    const materializedOutputs = instructions.contextFiles.features;
+
+    expect(materializedOutputs).toHaveLength(1);
+    expect(materializedOutputs[0]).not.toBe(rawOutputs[0]);
+
+    const materializedContent = await fs.readFile(materializedOutputs[0], 'utf-8');
+    expect(materializedContent).toContain('Kept scenario');
+    expect(materializedContent).not.toContain('Held out scenario');
+    expect(materializedContent).not.toContain('secret precondition');
+
+    // The plan.md entry is unaffected — no `.apply-context` indirection.
+    expect(instructions.contextFiles.plan[0]).toBe(resolveArtifactOutputs(dir, 'plan.md')[0]);
+
+    // The raw source .feature file itself is untouched on disk.
+    const sourceContent = await fs.readFile(
+      path.join(dir, 'features', 'sample', 'sample.feature'),
+      'utf-8'
+    );
+    expect(sourceContent).toBe(HELD_OUT_FEATURE);
+  });
+
+  it('materializes contextFiles content-equivalent to source when no Scenario is held out', async () => {
+    const dir = await fixture.writeValidChange('no-holdout-apply');
+
+    const instructions = await generateApplyInstructions(
+      fixture.root,
+      'no-holdout-apply',
+      undefined,
+      planningHomeFor(fixture.root)
+    );
+
+    const sourceContent = await fs.readFile(
+      path.join(dir, 'features', 'sample', 'sample.feature'),
+      'utf-8'
+    );
+    const materializedContent = await fs.readFile(instructions.contextFiles.features[0], 'utf-8');
+    expect(materializedContent).toBe(sourceContent);
+  });
+
+  it('still enumerates and gates the held-out case as an ordinary eval case', async () => {
+    const dir = await fixture.writeChangeWithTasks('holdout-eval-set', { done: 0, total: 1 });
+    await fs.mkdir(path.join(dir, 'features', 'sample'), { recursive: true });
+    await fs.writeFile(
+      path.join(dir, 'features', 'sample', 'sample.feature'),
+      HELD_OUT_FEATURE,
+      'utf-8'
+    );
+    await fixture.writeMetadata('holdout-eval-set');
+
+    // Regression: materializing the apply-time context must not affect
+    // enumerateEvalSet, which reads the real source .feature file directly.
+    await generateApplyInstructions(
+      fixture.root,
+      'holdout-eval-set',
+      undefined,
+      planningHomeFor(fixture.root)
+    );
+
+    const cases = enumerateEvalSet(fixture.root, { kind: 'change', target: 'holdout-eval-set' });
+    const heldOut = cases.find((c) => c.scenario === 'Held out scenario');
+    const kept = cases.find((c) => c.scenario === 'Kept scenario');
+
+    expect(cases).toHaveLength(2);
+    expect(heldOut?.tags).toContain('@holdout');
+    expect(kept).toBeDefined();
   });
 });
 

@@ -34,7 +34,17 @@ export {
   type Verdict,
   type CaseVerdict,
   type JudgeDeps,
+  type JurorVote,
 } from './judge.js';
+export {
+  resolveJury,
+  JurySchema,
+  type Jury,
+  type Quorum,
+  type ResolvedJury,
+} from './jury.js';
+export { resolveSkip, SKIP_TAG, type SkipReason } from './skip.js';
+export { resolveHoldout, HOLDOUT_TAG, filterCasesByHoldout } from './holdout.js';
 export {
   generateRunId,
   persistRun,
@@ -60,6 +70,7 @@ export {
   type Scorecard,
   type FailingCase,
   type BaselineDiff,
+  type CaseDetail,
 } from './report.js';
 export {
   evaluateInvariantGate,

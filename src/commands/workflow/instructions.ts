@@ -13,6 +13,7 @@ import {
   generateInstructions,
   resolveSchema,
   resolveArtifactOutputs,
+  materializeApplyContext,
   type ArtifactInstructions,
 } from '../../core/artifact-graph/index.js';
 import { getChangeDir, resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
@@ -299,12 +300,15 @@ export async function generateApplyInstructions(
     }
   }
 
-  // Build context files from all existing artifacts in schema
+  // Build context files from all existing artifacts in schema. Each
+  // `.feature` output is materialized as an `@holdout`-filtered copy so the
+  // building agent never reads a held-out Scenario's content directly; other
+  // outputs (e.g. `plan.md`) pass through unchanged.
   const contextFiles: Record<string, string[]> = {};
   for (const artifact of schema.artifacts) {
     const outputs = resolveArtifactOutputs(changeDir, artifact.generates);
     if (outputs.length > 0) {
-      contextFiles[artifact.id] = outputs;
+      contextFiles[artifact.id] = materializeApplyContext(changeDir, artifact.id, outputs);
     }
   }
 

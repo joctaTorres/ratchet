@@ -3,8 +3,9 @@
  *
  * The agent judge is exercised deterministically via RATCHET_EVAL_AGENT_CMD,
  * which stands in a bash stub for the real coding-agent binary so no agent is
- * ever spawned. The stub emits a strict-JSON verdict on its last line, exactly
- * as a real judge would.
+ * ever spawned. The stub emits a strict-JSON per-clause verdict array on its
+ * last line, exactly as a real judge would. Every llm-judge-bound scenario in
+ * this file has a single `Then` step, so the rubric is always one clause.
  */
 
 import { afterAll, describe, it, expect } from 'vitest';
@@ -69,10 +70,10 @@ features/cli/status#status-as-text:
   return root;
 }
 
-/** Env that makes the agent judge emit a fixed verdict deterministically. */
-function agentEnv(pass: boolean, reason: string): NodeJS.ProcessEnv {
+/** Env that makes the agent judge emit a fixed single-clause verdict deterministically. */
+function agentEnv(pass: boolean, evidence: string): NodeJS.ProcessEnv {
   return {
-    RATCHET_EVAL_AGENT_CMD: `cat >/dev/null; echo '{"pass": ${pass}, "reason": "${reason}"}'`,
+    RATCHET_EVAL_AGENT_CMD: `cat >/dev/null; echo '[{"verdict": "${pass ? 'yes' : 'no'}", "evidence": "${evidence}"}]'`,
   };
 }
 
@@ -309,10 +310,11 @@ features/cli/status#status-as-text:
   fixture: agent-fx
   kind: llm-judge
   success: readable text
-  agentVotes: 2
+  jury:
+    votes: 2
 `
     );
-    const stub = `cat >/dev/null; n=$(cat ${counter} 2>/dev/null || echo 0); echo $((n+1)) > ${counter}; if [ "$n" = "0" ]; then echo '{"pass": true, "reason": "looks good"}'; else echo '{"pass": false, "reason": "actually broken"}'; fi`;
+    const stub = `cat >/dev/null; n=$(cat ${counter} 2>/dev/null || echo 0); echo $((n+1)) > ${counter}; if [ "$n" = "0" ]; then echo '[{"verdict": "yes", "evidence": "looks good"}]'; else echo '[{"verdict": "no", "evidence": "actually broken"}]'; fi`;
     const run = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: { RATCHET_EVAL_AGENT_CMD: stub },
@@ -395,5 +397,176 @@ features/cli/status#status-as-text:
       .then(() => true)
       .catch(() => false);
     expect(baselineExists).toBe(false);
+  });
+
+  // features/eval-judge/skip-filters.feature — skip filters run on the built
+  // CLI: an in-file @skip tag and a project eval.skip pattern both exclude a
+  // case from judging by default, --include-skipped overrides both sources, a
+  // run with only skipped/judged cases still promotes to baseline, and skipping
+  // a previously-passing baseline case prints a visible warning.
+  it('records a @skip-tagged scenario with no binding as skipped, not unjudged, with no fixture/agent', async () => {
+    const cwd = await prepareProject();
+    await write(
+      path.join(cwd, '.ratchet', 'features', 'skip', 's.feature'),
+      'Feature: Skip\n  @skip\n  Scenario: Tag skipped\n    Given a\n    Then b\n'
+    );
+    const res = await runCLI(['eval', 'run', '--path', 'skip', '--json'], { cwd });
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.scorecard).toMatchObject({ total: 1, pass: 0, fail: 0, unjudged: 0, skipped: 1 });
+    const run = JSON.parse(
+      await fs.readFile(path.join(cwd, '.ratchet', 'evals', 'runs', `${parsed.runId}.json`), 'utf-8')
+    );
+    expect(run.verdicts['features/skip/s#tag-skipped'].verdict).toBe('skipped');
+  });
+
+  it('excludes a case matching an eval.skip config pattern without ever materializing its fixture', async () => {
+    const cwd = await prepareProject();
+    await write(
+      path.join(cwd, '.ratchet', 'config.yaml'),
+      'schema: ratchet\neval:\n  skip:\n    - "features/cli/status#status-as-json"\n'
+    );
+    // Rebind the deterministic case to a command that fails if it ever runs —
+    // proving the skip short-circuits before fixture materialization/judging.
+    await write(
+      path.join(cwd, '.ratchet', 'evals', 'specs', 'cli.yaml'),
+      `features/cli/status#status-as-json:
+  fixture: status-ok
+  kind: deterministic
+  check:
+    run: "exit 1"
+    pass: exit-zero
+features/cli/status#status-as-text:
+  fixture: agent-fx
+  kind: llm-judge
+  success: the status output is human readable text
+`
+    );
+    const res = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], { cwd });
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.scorecard.skipped).toBe(1);
+    const det = parsed.contributors.find((c: { id: string }) => c.id === 'deterministic');
+    expect(det.status).toBe('pass');
+  });
+
+  it('--include-skipped judges cases that would otherwise be excluded by either skip source', async () => {
+    const cwd = await prepareProject();
+    await write(
+      path.join(cwd, '.ratchet', 'features', 'skip', 's.feature'),
+      'Feature: Skip\n  @skip\n  Scenario: Tag skipped\n    Given a\n    Then b\n'
+    );
+    await write(
+      path.join(cwd, '.ratchet', 'evals', 'specs', 'skip.yaml'),
+      `features/skip/s#tag-skipped:
+  fixture: status-ok
+  kind: deterministic
+  check:
+    run: cat output.txt
+    pass: "contains:applyRequires"
+`
+    );
+    await write(
+      path.join(cwd, '.ratchet', 'config.yaml'),
+      'schema: ratchet\neval:\n  skip:\n    - "features/cli/status#status-as-json"\n'
+    );
+    const res = await runCLI(
+      ['eval', 'run', '--judge', 'deterministic', '--include-skipped', '--json'],
+      { cwd }
+    );
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.scorecard.skipped).toBe(0);
+    // Both the config-skipped and tag-skipped cases are now judged normally.
+    expect(parsed.scorecard.pass).toBe(2);
+  });
+
+  it('promotes a baseline run whose only non-pass case is skipped (none unjudged)', async () => {
+    const cwd = await prepareProject();
+    await write(
+      path.join(cwd, '.ratchet', 'config.yaml'),
+      'schema: ratchet\neval:\n  skip:\n    - "features/cli/status#status-as-text"\n'
+    );
+    const res = await runCLI(['eval', 'run', '--json'], { cwd });
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.scorecard).toMatchObject({ unjudged: 0, skipped: 1, complete: true });
+    const promote = await runCLI(['eval', 'baseline', parsed.runId], { cwd });
+    expect(promote.exitCode).toBe(0);
+  });
+
+  it('warns when a case that was pass in the baseline is now skipped', async () => {
+    const cwd = await prepareProject();
+    const first = await runCLI(['eval', 'run', '--json'], {
+      cwd,
+      env: agentEnv(true, 'the output is readable text'),
+    });
+    const baseId = JSON.parse(first.stdout).runId;
+    const promote = await runCLI(['eval', 'baseline', baseId], { cwd });
+    expect(promote.exitCode).toBe(0);
+
+    await write(
+      path.join(cwd, '.ratchet', 'config.yaml'),
+      'schema: ratchet\neval:\n  skip:\n    - "features/cli/status#status-as-json"\n'
+    );
+    const json = await runCLI(['eval', 'run', '--json'], {
+      cwd,
+      env: agentEnv(true, 'the output is readable text'),
+    });
+    expect(json.exitCode).toBe(0);
+    const parsedWarnings: string[] = JSON.parse(json.stdout).warnings;
+    expect(
+      parsedWarnings.some(
+        (w) => w.includes('features/cli/status#status-as-json') && w.toLowerCase().includes('skipped')
+      )
+    ).toBe(true);
+
+    const text = await runCLI(['eval', 'run'], { cwd, env: agentEnv(true, 'the output is readable text') });
+    expect(text.stdout).toContain('warn:');
+    expect(text.stdout).toContain('features/cli/status#status-as-json');
+  });
+
+  // features/eval-judge/structured-evidence-persistence.feature — both `eval
+  // run --json` and `eval report --json` surface the run JSON's per-case
+  // structured detail: a judged case's rubric/clauses/votes and a skipped
+  // case's skip source/detail.
+  it('eval run --json and eval report --json both include cases[] with structured per-case detail', async () => {
+    const cwd = await prepareProject();
+    await write(
+      path.join(cwd, '.ratchet', 'features', 'skip', 's.feature'),
+      'Feature: Skip\n  @skip\n  Scenario: Tag skipped\n    Given a\n    Then b\n'
+    );
+    const run = await runCLI(['eval', 'run', '--json'], {
+      cwd,
+      env: agentEnv(true, 'the output is readable text'),
+    });
+    expect(run.exitCode).toBe(0);
+    const runParsed = JSON.parse(run.stdout);
+    expect(Array.isArray(runParsed.cases)).toBe(true);
+
+    const judged = runParsed.cases.find((c: { id: string }) => c.id === 'features/cli/status#status-as-text');
+    expect(judged.verdict).toBe('pass');
+    expect(judged.rubric).toEqual(['it prints text']);
+    expect(judged.clauses).toEqual([
+      { clause: 'it prints text', pass: true, evidence: 'the output is readable text' },
+    ]);
+    expect(judged.votes).toEqual([{ pass: true, clauses: judged.clauses }]);
+
+    const skipped = runParsed.cases.find((c: { id: string }) => c.id === 'features/skip/s#tag-skipped');
+    expect(skipped.verdict).toBe('skipped');
+    expect(skipped.skip).toEqual({ source: 'tag', detail: 'features/skip/s.feature' });
+
+    const report = await runCLI(['eval', 'report', '--run', runParsed.runId, '--json'], { cwd });
+    expect(report.exitCode).toBe(0);
+    const reportParsed = JSON.parse(report.stdout);
+    const judgedFromReport = reportParsed.cases.find(
+      (c: { id: string }) => c.id === 'features/cli/status#status-as-text'
+    );
+    expect(judgedFromReport.rubric).toEqual(['it prints text']);
+    expect(judgedFromReport.votes).toEqual(judged.votes);
+    const skippedFromReport = reportParsed.cases.find(
+      (c: { id: string }) => c.id === 'features/skip/s#tag-skipped'
+    );
+    expect(skippedFromReport.skip).toEqual({ source: 'tag', detail: 'features/skip/s.feature' });
   });
 });

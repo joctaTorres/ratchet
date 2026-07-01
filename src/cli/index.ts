@@ -642,7 +642,9 @@ const withScopeFlags = (cmd: Command): Command =>
   cmd
     .option('--changes', 'Include active changes alongside the feature store')
     .option('--change <name>', 'Scope to a single active change')
-    .option('--path <dir-or-file>', 'Narrow to a capability directory or file');
+    .option('--path <dir-or-file>', 'Narrow to a capability directory or file')
+    .option('--holdout', 'Restrict to only held-out (@holdout-tagged) cases')
+    .option('--no-holdout', 'Exclude held-out (@holdout-tagged) cases');
 
 withScopeFlags(
   evalCmd
@@ -671,6 +673,10 @@ withScopeFlags(
     .option('--no-llm-judge', 'Disable the llm-judge contributor for this run')
     .option('--no-invariants', 'Disable the invariants contributor for this run')
     .option('--judge <mode>', '[deprecated] Legacy judge-mode alias: auto | deterministic | llm-judge')
+    .option(
+      '--include-skipped',
+      'Judge cases that would otherwise be excluded by skip filters (eval.skip config or an in-file @skip tag)'
+    )
     .option('--json', 'Output as JSON')
 ).action(async (options: EvalRunOptions) => {
   try {

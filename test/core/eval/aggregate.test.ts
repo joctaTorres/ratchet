@@ -34,6 +34,7 @@ function mkCase(id: string): EvalCase {
     scenario: id,
     source: 'f/x.feature',
     steps: [{ keyword: 'Given', text: 'a' }, { keyword: 'Then', text: 'b' }],
+    tags: [],
   };
 }
 

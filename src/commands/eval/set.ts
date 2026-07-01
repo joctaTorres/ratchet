@@ -1,5 +1,5 @@
 /**
- * `ratchet eval set [scope] [--json]`
+ * `ratchet eval set [scope] [--holdout | --no-holdout] [--json]`
  *
  * Enumerate eval cases (one per Scenario) from `.feature` files. Default scope
  * is the permanent feature store; `--changes` / `--change <name>` / `--path`
@@ -7,7 +7,13 @@
  */
 
 import chalk from 'chalk';
-import { enumerateEvalSet, loadEvalSpecs, resolveBinding } from '../../core/eval/index.js';
+import {
+  enumerateEvalSet,
+  loadEvalSpecs,
+  resolveBinding,
+  resolveHoldout,
+  filterCasesByHoldout,
+} from '../../core/eval/index.js';
 import { projectRoot, resolveScope, type ScopeFlags } from './shared.js';
 
 export interface EvalSetOptions extends ScopeFlags {
@@ -21,12 +27,13 @@ interface SetCaseView {
   source: string;
   steps: { keyword: string; text: string }[];
   binding: 'deterministic' | 'llm-judge' | 'unbound';
+  holdout: boolean;
 }
 
 export async function evalSetCommand(options: EvalSetOptions = {}): Promise<void> {
   const root = projectRoot();
   const scope = resolveScope(options);
-  const cases = enumerateEvalSet(root, scope);
+  const cases = filterCasesByHoldout(enumerateEvalSet(root, scope), options.holdout);
   const specs = loadEvalSpecs(root);
 
   const views: SetCaseView[] = cases.map((c) => {
@@ -38,6 +45,7 @@ export async function evalSetCommand(options: EvalSetOptions = {}): Promise<void
       source: c.source,
       steps: c.steps.map((s) => ({ keyword: s.keyword, text: s.text })),
       binding: bound ? bound.binding.kind : 'unbound',
+      holdout: resolveHoldout(c),
     };
   });
 
@@ -55,7 +63,8 @@ function renderSet(views: SetCaseView[], scopeKind: string): void {
       v.binding === 'unbound'
         ? chalk.yellow('[unbound]')
         : chalk.green(`[${v.binding}]`);
-    console.log(`  ${tag} ${v.id}`);
+    const holdoutTag = v.holdout ? ` ${chalk.magenta('[holdout]')}` : '';
+    console.log(`  ${tag} ${v.id}${holdoutTag}`);
     console.log(chalk.dim(`         ${v.feature} › ${v.scenario}`));
   }
 }

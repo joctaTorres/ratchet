@@ -13,9 +13,10 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { RATCHET_DIR_NAME } from '../config.js';
 import type { EvalCase } from './set.js';
-import type { Verdict } from './judge.js';
+import type { ClauseResult, JurorVote, Verdict } from './judge.js';
 import type { BindingKind } from './spec.js';
 import { isRunComplete, type ContributorId } from './aggregate.js';
+import type { SkipReason } from './skip.js';
 
 export type VerdictSource = 'judged' | 'manual';
 
@@ -34,6 +35,14 @@ export interface CaseRecord {
   /** Evidence for fail / reason for unjudged / note for pass. */
   reason: string;
   source: VerdictSource;
+  /** The resolved rubric used to judge the case. Present only on a judged case. */
+  rubric?: string[];
+  /** The deciding vote's per-clause result (or `votes[0]` on a clean fail/sub-quorum). Present only on a judged case. */
+  clauses?: ClauseResult[];
+  /** Every juror's individual vote, in cast order. Present only on a judged case. */
+  votes?: JurorVote[];
+  /** The skip source/detail this case matched. Present only on a `skipped` record. */
+  skip?: SkipReason;
 }
 
 export interface EvalRun {

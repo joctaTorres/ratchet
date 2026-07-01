@@ -247,6 +247,48 @@ phases:
         exit code 0 — tests assert a `@holdout` scenario is absent from the agent's
         materialized apply spec but present and gating at verify, and that `eval set`
         reports hold-out status with the scope filter working
+    changes:
+      - name: holdout-tag-resolution
+        after: []
+        done: >-
+          a pure resolver (mirroring `resolveSkip()` in `src/core/eval/skip.ts`)
+          derives a `holdout: boolean` status per `EvalCase` from the `@holdout`
+          Gherkin tag already captured verbatim on Scenario/Feature by
+          `gherkin-parser.ts` (no parser change needed) — tag-only, no new
+          `eval.holdout` config key, matching the phase's tag-driven surface
+      - name: apply-spec-holdout-filter
+        after: [holdout-tag-resolution]
+        done: >-
+          the apply-time spec/context assembly (`generateApplyInstructions()` in
+          `src/commands/workflow/instructions.ts`, resolving `.feature` context
+          via `src/core/artifact-graph/outputs.ts`) materializes a filtered copy
+          of each `.feature` artifact with `@holdout`-tagged Scenario/Feature
+          content stripped before the building agent reads it during `apply` —
+          the raw source `.feature` file is never exposed to the agent directly
+          — while `eval run` / batch `verify` continue reading the untouched
+          source file and gate normally, with no change to verdict or
+          aggregation logic; Reference docs record this tag-based filtering
+          approach and document the stronger sibling-location isolation option
+          (excluding holdout scenarios from the apply-time artifact glob
+          entirely) per `.ratchet/standards/documentation.md`
+      - name: eval-set-holdout-status
+        after: [holdout-tag-resolution]
+        done: >-
+          `ratchet eval set` reports each case's hold-out status alongside its
+          existing binding/skip reporting, with no change to verdict,
+          aggregation, or the persisted run JSON shape; `docs/commands/eval.md`
+          and `README.md` are updated to describe the new status per
+          `.ratchet/standards/documentation.md`
+      - name: holdout-scope-filter
+        after: [holdout-tag-resolution]
+        done: >-
+          `ratchet eval run` and `eval set` accept `--holdout` / `--no-holdout`
+          CLI flags, composing with the existing scope-flag pattern
+          (`--changes` / `--change` / `--path`), that restrict execution or
+          listing to only held-out or only non-held-out cases respectively
+          without altering gate or aggregation logic; `docs/commands/eval.md`
+          and `README.md` document the new flags per
+          `.ratchet/standards/documentation.md`
 
   # ---------------------------------------------------------------------------
   - name: playwright-web-tier

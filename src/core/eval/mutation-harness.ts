@@ -13,9 +13,14 @@
  * `judgeCheck` already shell out with — not a new dependency.
  *
  * Fail-closed precondition: the harness refuses to seed anything unless the
- * project's git working tree is already clean (`git status --porcelain`), so
- * a seeded fault can never be misattributed to — or destroy — a user's
- * pre-existing uncommitted work.
+ * project's git working tree is already clean, so a seeded fault can never be
+ * misattributed to — or destroy — a user's pre-existing uncommitted work. The
+ * cleanliness probe excludes ratchet's own transient run directory
+ * (`.ratchet/evals/runs`), because `eval run` persists the run record there
+ * BEFORE the invariant gate runs — in a repo that tracks `.ratchet/` that
+ * freshly-written record would otherwise count as a dirty tree and the
+ * mutation invariant could never evaluate. Any other uncommitted path still
+ * marks the tree unusable.
  *
  * Deliberately NOT wired into `evaluateInvariant`/`evaluateMutation` yet:
  * reducing this harness's per-mutant outcomes into an `InvariantOutcome` with
@@ -65,6 +70,15 @@ export interface MutationHarnessDeps {
   agentName?: string;
 }
 
+/**
+ * The working-tree cleanliness probe. Excludes ratchet's own transient run
+ * directory (`.ratchet/evals/runs`) via a git exclude pathspec so a persisted
+ * run record does not count as a dirty tree, while any other uncommitted path
+ * still does. Runs through `bash -c`, so the pathspec is single-quoted to keep
+ * `:(exclude)` intact.
+ */
+export const WORKING_TREE_PROBE = "git status --porcelain -- . ':(exclude).ratchet/evals/runs'";
+
 /** Build the seed instructions a spawned agent reads from stdin. */
 export function buildSeedInstructions(invariant: MutationInvariant): string {
   return [
@@ -111,23 +125,23 @@ function buildSeedRequest(invariant: MutationInvariant, cwd: string, agentName?:
 
 /**
  * Fail-closed precondition: the working tree must be a clean git repository
- * before anything is seeded. A non-empty `git status --porcelain` (dirty
- * tree), a non-zero exit (not a git repository, or git unavailable), or a
- * thrown bash call (git binary missing) are all treated as unusable — never
- * distinguished further, since the harness cannot safely proceed on any of
- * them.
+ * before anything is seeded. A non-empty `WORKING_TREE_PROBE` (dirty tree
+ * outside the excluded runs dir), a non-zero exit (not a git repository, or
+ * git unavailable), or a thrown bash call (git binary missing) are all treated
+ * as unusable — never distinguished further, since the harness cannot safely
+ * proceed on any of them.
  */
 async function checkWorkingTree(bash: BashRunner, cwd: string): Promise<{ clean: true } | { clean: false; reason: string }> {
   let result: BashResult;
   try {
-    result = await bash('git status --porcelain', cwd);
+    result = await bash(WORKING_TREE_PROBE, cwd);
   } catch (err) {
-    return { clean: false, reason: `'git status --porcelain' could not run: ${(err as Error).message}` };
+    return { clean: false, reason: `'${WORKING_TREE_PROBE}' could not run: ${(err as Error).message}` };
   }
   if (result.exitCode !== 0) {
     return {
       clean: false,
-      reason: "'git status --porcelain' exited non-zero; not a usable git working tree (not a git repository, or git is unavailable).",
+      reason: `'${WORKING_TREE_PROBE}' exited non-zero; not a usable git working tree (not a git repository, or git is unavailable).`,
     };
   }
   if (result.stdout.trim().length > 0) {
@@ -144,7 +158,9 @@ async function checkWorkingTree(bash: BashRunner, cwd: string): Promise<{ clean:
  * `exitCode === 0` as `survived` and non-zero as `killed`, and unconditionally
  * revert with `git reset --hard HEAD && git clean -fd` before the next
  * attempt — leaving the working tree exactly as it started, whether the
- * mutant was killed or survived.
+ * mutant was killed, survived, seeded no diff, or the attempt threw. The revert
+ * lives in a `finally` so a throw from the spawner or the oracle reverts the
+ * seeded mutant before propagating, never leaving a fault in the user's tree.
  */
 export async function runMutationHarness(
   invariant: MutationInvariant,
@@ -161,21 +177,27 @@ export async function runMutationHarness(
 
   const mutants: MutantOutcome[] = [];
   for (let attempt = 0; attempt < invariant.budget; attempt++) {
-    const request = buildSeedRequest(invariant, cwd, deps.agentName);
-    await spawner(request);
+    try {
+      const request = buildSeedRequest(invariant, cwd, deps.agentName);
+      await spawner(request);
 
-    await bash('git add -A', cwd);
-    const diffResult = await bash('git diff --cached', cwd);
-    if (diffResult.stdout.trim().length === 0) {
-      // No fault was seeded this attempt: not a mutant, oracle never run.
-      continue;
+      await bash('git add -A', cwd);
+      const diffResult = await bash('git diff --cached', cwd);
+      if (diffResult.stdout.trim().length === 0) {
+        // No fault was seeded this attempt: not a mutant, oracle never run.
+        // `finally` still reverts (a harmless no-op).
+        continue;
+      }
+
+      const testResult = await bash(invariant.test, cwd);
+      const outcome: MutantOutcome['outcome'] = testResult.exitCode === 0 ? 'survived' : 'killed';
+      mutants.push({ index: attempt, diff: diffResult.stdout, outcome, testResult });
+    } finally {
+      // Unconditional revert: leaves the working tree exactly as it started,
+      // whether the mutant was killed/survived, no diff was seeded, or the
+      // spawner/oracle threw (in which case the error re-propagates after this).
+      await bash('git reset --hard HEAD && git clean -fd', cwd);
     }
-
-    const testResult = await bash(invariant.test, cwd);
-    const outcome: MutantOutcome['outcome'] = testResult.exitCode === 0 ? 'survived' : 'killed';
-    mutants.push({ index: attempt, diff: diffResult.stdout, outcome, testResult });
-
-    await bash('git reset --hard HEAD && git clean -fd', cwd);
   }
 
   return { kind: 'completed', mutants };

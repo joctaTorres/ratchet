@@ -4,6 +4,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { evaluateRun, renderReport, diffAgainstBaseline } from '../../../src/core/eval/report.js';
+import { WORKING_TREE_PROBE } from '../../../src/core/eval/mutation-harness.js';
 import { persistRun, promoteBaseline, toSnapshot, loadRun, type EvalRun, type CaseRecord } from '../../../src/core/eval/run.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
 import type { Verdict } from '../../../src/core/eval/judge.js';
@@ -487,7 +488,7 @@ describe('read-only eval report (evaluateRun persists, renderReport reads)', () 
   /** A fake git bash that reports a clean tree and a surviving mutant. */
   function fakeGitBash(): BashRunner {
     return async (command) => {
-      if (command === 'git status --porcelain') return CLEAN;
+      if (command === WORKING_TREE_PROBE) return CLEAN;
       if (command === 'git add -A') return CLEAN;
       if (command === 'git diff --cached') return A_DIFF;
       if (command === 'run-oracle') return ORACLE_PASS;

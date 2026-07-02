@@ -9,11 +9,20 @@
  * against a dirty or non-git working tree, and always leave the tree exactly
  * as it found it, including when a mutant survives).
  *
+ * Also implements
+ * features/mutation-invariant-harness/working-tree-precondition.feature (the
+ * cleanliness probe excludes ratchet's own transient `.ratchet/evals/runs`
+ * dir, so a freshly persisted run record does not block seeding, while a
+ * genuine change outside that dir still does) and
+ * features/mutation-invariant-harness/seed-revert-safety.feature (a throw from
+ * the oracle or spawner mid-attempt still reverts the seeded mutant before the
+ * error propagates).
+ *
  * Every seam (`bash`/`spawner`) is injected so no test shells out to a real
  * git command or spawns a real coding agent.
  */
 import { describe, it, expect } from 'vitest';
-import { runMutationHarness, buildSeedInstructions } from '../../../src/core/eval/mutation-harness.js';
+import { runMutationHarness, buildSeedInstructions, WORKING_TREE_PROBE } from '../../../src/core/eval/mutation-harness.js';
 import type { MutationInvariant } from '../../../src/core/eval/invariants.js';
 import {
   resolveAdapter,
@@ -86,7 +95,7 @@ const REVERT = 'git reset --hard HEAD && git clean -fd';
 describe('runMutationHarness seeding, oracle, and classification', () => {
   it('classifies a mutant as survived when the test command still passes, and reverts before returning', async () => {
     const { bash, spawner, bashCalls } = makeSeams({
-      'git status --porcelain': CLEAN,
+      [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': A_DIFF,
       'pnpm test': TEST_PASS,
@@ -103,7 +112,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
 
   it('classifies a mutant as killed when the test command now fails, and reverts before returning', async () => {
     const { bash, spawner, bashCalls } = makeSeams({
-      'git status --porcelain': CLEAN,
+      [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': A_DIFF,
       'pnpm test': TEST_FAIL,
@@ -120,7 +129,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
 
   it('reverts the first mutant before seeding the second, so the second is seeded against the unmutated project', async () => {
     const { bash, spawner, sequence } = makeSeams({
-      'git status --porcelain': CLEAN,
+      [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': A_DIFF,
       'pnpm test': TEST_PASS,
@@ -130,7 +139,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
     await runMutationHarness(invariant({ budget: 2 }), '/work', { bash, spawner });
 
     expect(sequence).toEqual([
-      'bash:git status --porcelain',
+      `bash:${WORKING_TREE_PROBE}`,
       'spawn',
       'bash:git add -A',
       'bash:git diff --cached',
@@ -146,7 +155,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
 
   it('never seeds more mutants than the invariant budget', async () => {
     const { bash, spawner, spawnRequests } = makeSeams({
-      'git status --porcelain': CLEAN,
+      [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': A_DIFF,
       'pnpm test': TEST_PASS,
@@ -163,16 +172,19 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
 
   it('does not count a no-diff attempt as a mutant, and never runs the oracle for it', async () => {
     const { bash, spawner, bashCalls } = makeSeams({
-      'git status --porcelain': CLEAN,
+      [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': NO_DIFF,
+      [REVERT]: CLEAN,
     });
 
     const outcome = await runMutationHarness(invariant({ budget: 1 }), '/work', { bash, spawner });
 
     expect(outcome).toEqual({ kind: 'completed', mutants: [] });
     expect(bashCalls.some((c) => c.command === 'pnpm test')).toBe(false);
-    expect(bashCalls.some((c) => c.command === REVERT)).toBe(false);
+    // The revert lives in `finally`, so a no-diff attempt still reverts (a
+    // harmless no-op) — the tree is guaranteed clean before the next attempt.
+    expect(bashCalls.some((c) => c.command === REVERT)).toBe(true);
   });
 
   it('seeds through the same resolved agent adapter and spawn seam the llm-judge binding uses, for every registered agent', async () => {
@@ -180,7 +192,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
     const instructions = buildSeedInstructions(inv);
     for (const agentName of availableAdapters()) {
       const { bash, spawner, spawnRequests } = makeSeams({
-        'git status --porcelain': CLEAN,
+        [WORKING_TREE_PROBE]: CLEAN,
         'git add -A': CLEAN,
         'git diff --cached': A_DIFF,
         'pnpm test': TEST_PASS,
@@ -196,7 +208,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
 
   it('the working tree matches its starting state after a full multi-mutant run, including when a mutant survives', async () => {
     const { bash, spawner, bashCalls } = makeSeams({
-      'git status --porcelain': CLEAN,
+      [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': A_DIFF,
       'pnpm test': [TEST_PASS, TEST_FAIL], // first mutant survives, second is killed
@@ -215,7 +227,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
 describe('runMutationHarness fail-closed preconditions', () => {
   it('reports the working tree as unusable and seeds nothing when the tree has uncommitted changes', async () => {
     const { bash, spawner, spawnRequests, bashCalls } = makeSeams({
-      'git status --porcelain': DIRTY,
+      [WORKING_TREE_PROBE]: DIRTY,
     });
 
     const outcome = await runMutationHarness(invariant({ budget: 3 }), '/work', { bash, spawner });
@@ -227,12 +239,91 @@ describe('runMutationHarness fail-closed preconditions', () => {
 
   it('reports the working tree as unusable and seeds nothing when the directory is not a git repository', async () => {
     const { bash, spawner, spawnRequests } = makeSeams({
-      'git status --porcelain': NOT_A_REPO,
+      [WORKING_TREE_PROBE]: NOT_A_REPO,
     });
 
     const outcome = await runMutationHarness(invariant({ budget: 3 }), '/work', { bash, spawner });
 
     expect(outcome.kind).toBe('unusable-working-tree');
     expect(spawnRequests).toHaveLength(0);
+  });
+});
+
+// features/mutation-invariant-harness/working-tree-precondition.feature
+describe('runMutationHarness working-tree precondition scopes out ratchet transient runs', () => {
+  it('probes with a command that excludes .ratchet/evals/runs so a persisted run record does not count as dirty', async () => {
+    // The stubbed probe returns CLEAN — modelling git reporting nothing dirty
+    // because the only change (a persisted run record) is excluded by the
+    // pathspec — so the harness proceeds to seed rather than reporting unevaluable.
+    const { bash, spawner, bashCalls } = makeSeams({
+      [WORKING_TREE_PROBE]: CLEAN,
+      'git add -A': CLEAN,
+      'git diff --cached': A_DIFF,
+      'pnpm test': TEST_PASS,
+      [REVERT]: CLEAN,
+    });
+
+    const outcome = await runMutationHarness(invariant({ budget: 1 }), '/work', { bash, spawner });
+
+    expect(outcome.kind).toBe('completed');
+    // The probe used must be the runs-dir-excluding form, not the bare `git status --porcelain`.
+    expect(bashCalls[0]!.command).toBe(WORKING_TREE_PROBE);
+    expect(WORKING_TREE_PROBE).toContain(":(exclude).ratchet/evals/runs");
+  });
+
+  it('still reports the tree unusable when a genuine change outside the runs dir is present', async () => {
+    // The excluding probe still reports the change, since it lives outside .ratchet/evals/runs.
+    const { bash, spawner, spawnRequests } = makeSeams({
+      [WORKING_TREE_PROBE]: DIRTY,
+    });
+
+    const outcome = await runMutationHarness(invariant({ budget: 1 }), '/work', { bash, spawner });
+
+    expect(outcome.kind).toBe('unusable-working-tree');
+    if (outcome.kind !== 'unusable-working-tree') throw new Error('unreachable');
+    expect(outcome.reason).toContain('git working tree has uncommitted changes');
+    expect(spawnRequests).toHaveLength(0);
+  });
+});
+
+// features/mutation-invariant-harness/seed-revert-safety.feature
+describe('runMutationHarness reverts the seeded mutant even when an attempt throws', () => {
+  it('reverts the working tree then re-propagates when the oracle throws mid-attempt', async () => {
+    const oracleError = new Error('oracle exploded mid-attempt');
+    const { bash, spawner, bashCalls } = makeSeams({
+      [WORKING_TREE_PROBE]: CLEAN,
+      'git add -A': CLEAN,
+      'git diff --cached': A_DIFF,
+      'pnpm test': oracleError,
+      [REVERT]: CLEAN,
+    });
+
+    await expect(runMutationHarness(invariant({ budget: 1 }), '/work', { bash, spawner })).rejects.toThrow(
+      'oracle exploded mid-attempt'
+    );
+
+    // The seeded mutant was reverted before the error propagated.
+    expect(bashCalls.at(-1)).toEqual({ command: REVERT, cwd: '/work' });
+  });
+
+  it('reverts the working tree then re-propagates when the spawner throws mid-attempt', async () => {
+    const spawnError = new Error('agent spawn failed');
+    const { bash, bashCalls } = makeSeams({
+      [WORKING_TREE_PROBE]: CLEAN,
+      'git add -A': CLEAN,
+      'git diff --cached': A_DIFF,
+      'pnpm test': TEST_PASS,
+      [REVERT]: CLEAN,
+    });
+    const spawner: Spawner = async () => {
+      throw spawnError;
+    };
+
+    await expect(runMutationHarness(invariant({ budget: 1 }), '/work', { bash, spawner })).rejects.toThrow(
+      'agent spawn failed'
+    );
+
+    // Even though seeding never staged anything, the finally revert still ran.
+    expect(bashCalls.at(-1)).toEqual({ command: REVERT, cwd: '/work' });
   });
 });

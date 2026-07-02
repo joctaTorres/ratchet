@@ -32,7 +32,7 @@ run never spawns the agent a second time.
 ```mermaid
 flowchart TD
     INV[📦 MutationInvariant<br/>test / budget / threshold]
-    PRECHECK{{🔐 git status --porcelain<br/>fail-closed precondition}}
+    PRECHECK{{🔐 git status --porcelain<br/>excl. .ratchet/evals/runs<br/>fail-closed precondition}}
     INV --> PRECHECK
     PRECHECK -->|dirty or not a repo| UNUSABLE[❌ unusable-working-tree]
 
@@ -43,13 +43,13 @@ flowchart TD
     STAGE --> DIFF{{🔍 git diff --cached}}
 
     DIFF -->|empty diff| SKIP[💤 no mutant recorded<br/>oracle never run]
-    SKIP --> LOOP
+    SKIP --> REVERT
 
     DIFF -->|non-empty diff| ORACLE{{🧪 run invariant.test}}
     ORACLE -->|exit 0| SURVIVED[✅ survived]
     ORACLE -->|exit ≠ 0| KILLED[☠️ killed]
 
-    SURVIVED --> REVERT{{♻️ git reset --hard HEAD<br/>&& git clean -fd}}
+    SURVIVED --> REVERT{{♻️ finally: git reset --hard HEAD<br/>&& git clean -fd}}
     KILLED --> REVERT
     REVERT --> LOOP
 
@@ -92,10 +92,18 @@ export async function runMutationHarness(
 ### Sequence
 
 1. **Fail-closed precondition** — `deps.bash` (default `realBashRunner`) runs
-   `git status --porcelain`. A non-zero exit (not a git repository, or git
-   unavailable), a thrown call (git binary missing), or non-empty stdout
-   (uncommitted changes) all return `{ kind: 'unusable-working-tree', reason }`
-   immediately — no agent is spawned and no test command runs.
+   the cleanliness probe
+   `` git status --porcelain -- . ':(exclude).ratchet/evals/runs' ``. A non-zero
+   exit (not a git repository, or git unavailable), a thrown call (git binary
+   missing), or non-empty stdout (uncommitted changes) all return
+   `{ kind: 'unusable-working-tree', reason }` immediately — no agent is spawned
+   and no test command runs. The probe **excludes ratchet's own transient run
+   directory** (`.ratchet/evals/runs`): `eval run` persists the run record there
+   *before* the invariant gate runs, so in a repo that tracks `.ratchet/` that
+   freshly-written record would otherwise count as a dirty tree and the mutation
+   invariant could never evaluate. Any uncommitted path *outside* that directory
+   still marks the tree unusable. (The pathspec is single-quoted because the
+   probe runs through `bash -c`.)
 2. **Seed** — for each of up to `invariant.budget` attempts, the harness
    builds a spawn request the same way `judge.ts`'s `buildVoteRequest` does:
    `RATCHET_EVAL_AGENT_CMD`, when set, stands in for the agent binary
@@ -116,10 +124,15 @@ export async function runMutationHarness(
    already shell out with. `exitCode === 0` classifies the mutant `survived`;
    any non-zero exit classifies it `killed`. The mutant's `index` (the
    0-based attempt number), `diff`, `outcome`, and `testResult` are recorded.
-5. **Revert, unconditionally** — after a mutant is classified (killed or
-   survived), `git reset --hard HEAD && git clean -fd` restores both tracked
-   and untracked state before the next attempt, so every attempt after the
-   first runs against the unmutated project.
+5. **Revert, unconditionally** — the per-attempt body (seed → stage → diff →
+   oracle) runs inside a `try`, with `git reset --hard HEAD && git clean -fd`
+   in the matching `finally`. The revert therefore runs on **every** path —
+   after a mutant is classified (killed or survived), after an empty-diff
+   attempt (a harmless no-op), and even when the spawner or oracle **throws**
+   (the tree is reverted before the error propagates). This restores both
+   tracked and untracked state before the next attempt, so every attempt after
+   the first runs against the unmutated project and a seeded fault can never
+   survive a mid-attempt failure in the user's working tree.
 6. **Return** — once `invariant.budget` attempts have run (or ended early via
    the precondition), the harness returns `{ kind: 'completed', mutants }`.
    `mutants` may be shorter than `budget` when one or more attempts produced
@@ -137,7 +150,7 @@ export interface MutationHarnessDeps {
 
 | Field | Default | Purpose |
 |---|---|---|
-| `bash` | `realBashRunner` (`src/core/batch/engine/proof-of-work.ts`) | Runs `git status --porcelain`, `git add -A`, `git diff --cached`, `invariant.test`, and the revert command. |
+| `bash` | `realBashRunner` (`src/core/batch/engine/proof-of-work.ts`) | Runs the cleanliness probe (`git status --porcelain -- . ':(exclude).ratchet/evals/runs'`), `git add -A`, `git diff --cached`, `invariant.test`, and the revert command. |
 | `spawner` | `realSpawner` (`src/core/batch/engine/agent.ts`) | Spawns the coding-agent subprocess built by the resolved adapter's `buildRequest`. |
 | `agentName` | the engine's default agent | Selects which registered adapter (`resolveAdapter`) builds the seed request; unset resolves the configured default, exactly like `JudgeDeps.agentName`. |
 
@@ -161,8 +174,9 @@ export type MutationHarnessOutcome =
 ```
 
 - **`unusable-working-tree`** — the fail-closed precondition tripped; `reason`
-  names why (dirty tree, not a git repository, or git unavailable). No mutant
-  was seeded.
+  names why (an uncommitted change outside `.ratchet/evals/runs`, not a git
+  repository, or git unavailable). A freshly persisted run record under
+  `.ratchet/evals/runs` does **not** trip it. No mutant was seeded.
 - **`completed`** — the budget-bounded loop ran to completion. `mutants` holds
   one `MutantOutcome` per attempt that actually seeded a fault (a non-empty
   diff), in attempt order; an attempt whose diff was empty contributes no

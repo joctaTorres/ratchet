@@ -21,6 +21,7 @@ import type {
   MutationInvariant,
 } from '../../../src/core/eval/invariants.js';
 import type { EvalRun, CaseSnapshot } from '../../../src/core/eval/run.js';
+import { WORKING_TREE_PROBE } from '../../../src/core/eval/mutation-harness.js';
 import type { BashRunner, BashResult, Spawner } from '../../../src/core/batch/engine/index.js';
 
 const roots: string[] = [];
@@ -261,7 +262,7 @@ describe('evaluateInvariant: mutation', () => {
     let diffIdx = 0;
     let testIdx = 0;
     return async (command) => {
-      if (command === 'git status --porcelain') return CLEAN;
+      if (command === WORKING_TREE_PROBE) return CLEAN;
       if (command === 'git add -A') return CLEAN;
       if (command === 'git diff --cached') return diffs[Math.min(diffIdx++, diffs.length - 1)]!;
       if (command === testCommand) {
@@ -341,7 +342,7 @@ describe('evaluateInvariant: mutation', () => {
   it('fails closed to unevaluable citing the reason when the working tree is unusable before seeding anything', async () => {
     const invariant = inv();
     const bash: BashRunner = async (command) => {
-      if (command === 'git status --porcelain') return DIRTY;
+      if (command === WORKING_TREE_PROBE) return DIRTY;
       throw new Error(`fake bash: unexpected command '${command}'`);
     };
     const o = await evaluateInvariant(invariant, {

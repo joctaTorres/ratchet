@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { evaluateInvariantGate } from '../../../src/core/eval/invariant-gate.js';
+import { WORKING_TREE_PROBE } from '../../../src/core/eval/mutation-harness.js';
 import type { EvalRun, CaseSnapshot } from '../../../src/core/eval/run.js';
 import type { BashRunner, BashResult, Spawner } from '../../../src/core/batch/engine/index.js';
 
@@ -142,7 +143,7 @@ describe('evaluateInvariantGate', () => {
     const TEST_PASS: BashResult = { exitCode: 0, stdout: 'PASS', stderr: '' };
     const REVERT = 'git reset --hard HEAD && git clean -fd';
     const bash: BashRunner = async (command) => {
-      if (command === 'git status --porcelain') return CLEAN;
+      if (command === WORKING_TREE_PROBE) return CLEAN;
       if (command === 'git add -A') return CLEAN;
       if (command === 'git diff --cached') return A_DIFF;
       if (command === 'pnpm test') return TEST_PASS;

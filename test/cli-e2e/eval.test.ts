@@ -10,6 +10,7 @@
 
 import { afterAll, describe, it, expect } from 'vitest';
 import { promises as fs } from 'fs';
+import { execFileSync } from 'child_process';
 import path from 'path';
 import { tmpdir } from 'os';
 import { runCLI } from '../helpers/run-cli.js';
@@ -68,6 +69,11 @@ features/cli/status#status-as-text:
 `
   );
   return root;
+}
+
+/** Run a git command in `cwd`, throwing on failure (used to build a real repo). */
+function git(cwd: string, ...args: string[]): void {
+  execFileSync('git', args, { cwd, stdio: 'pipe' });
 }
 
 /** Env that makes the agent judge emit a fixed single-clause verdict deterministically. */
@@ -201,6 +207,54 @@ describe('ratchet eval CLI e2e', () => {
     expect(text.stdout.indexOf('INVARIANT VIOLATIONS')).toBeLessThan(
       text.stdout.indexOf('Contributors:')
     );
+  });
+
+  // features/mutation-invariant-harness/working-tree-precondition.feature — the
+  // regression proof for fix 1: an active `mutation` invariant must actually
+  // reach a kill/survive verdict inside a real git repo that TRACKS .ratchet/,
+  // even though `eval run` persists the run record under .ratchet/evals/runs/
+  // before the invariant gate runs. The harness's working-tree probe excludes
+  // that transient dir, so the persisted record no longer dirties the tree.
+  it('evaluates an active mutation invariant in a git repo tracking .ratchet/, despite the persisted run record', async () => {
+    const cwd = await prepareProject();
+    // A tracked source file the seeder mutates.
+    await write(path.join(cwd, 'app.txt'), 'ok\n');
+    // Active mutation invariant: budget/threshold 1. The oracle fails when the
+    // seeded fault is present, so the single mutant is killed → the invariant passes.
+    await write(
+      path.join(cwd, '.ratchet', 'evals', 'invariants.yaml'),
+      'invariants:\n' +
+        '  - id: mutants-are-killed\n' +
+        '    kind: mutation\n' +
+        '    active: true\n' +
+        '    test: "! grep -q bug app.txt"\n' +
+        '    budget: 1\n' +
+        '    threshold: 1\n'
+    );
+    // Make it a real git repo that tracks .ratchet/ (runs dir NOT gitignored), so
+    // a persisted run record would dirty a bare `git status --porcelain`.
+    git(cwd, 'init');
+    git(cwd, 'config', 'user.email', 't@example.com');
+    git(cwd, 'config', 'user.name', 'Test');
+    git(cwd, 'add', '-A');
+    git(cwd, 'commit', '-m', 'init');
+
+    // The seeder appends the fault to the tracked source file, producing a diff.
+    const seed = `cat >/dev/null; echo 'bug' >> app.txt`;
+    const res = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], {
+      cwd,
+      env: { RATCHET_EVAL_AGENT_CMD: seed },
+    });
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    const mutation = parsed.invariants.find((o: { id: string }) => o.id === 'mutants-are-killed');
+    expect(mutation).toBeDefined();
+    // The regression proof: the invariant reached a real verdict rather than
+    // collapsing to `unevaluable` because the persisted run record dirtied the tree.
+    expect(mutation.status).not.toBe('unevaluable');
+    expect(['pass', 'fail']).toContain(mutation.status);
+    // The single killed mutant makes the invariant pass.
+    expect(mutation.status).toBe('pass');
   });
 
   it('disables the invariant gate under --no-invariants', async () => {

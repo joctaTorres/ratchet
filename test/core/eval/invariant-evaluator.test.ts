@@ -262,7 +262,14 @@ describe('evaluateInvariant: mutation', () => {
     let diffIdx = 0;
     let testIdx = 0;
     return async (command) => {
-      if (command === WORKING_TREE_PROBE) return CLEAN;
+      // Every harness run begins with the working-tree probe; reset the cursors
+      // there so a bash reused across runs (e.g. two different run.runIds) hands
+      // each run its own fresh diff/oracle sequence — including a green baseline.
+      if (command === WORKING_TREE_PROBE) {
+        diffIdx = 0;
+        testIdx = 0;
+        return CLEAN;
+      }
       if (command === 'git add -A') return CLEAN;
       if (command === 'git diff --cached') return diffs[Math.min(diffIdx++, diffs.length - 1)]!;
       if (command === testCommand) {
@@ -278,7 +285,9 @@ describe('evaluateInvariant: mutation', () => {
   it('passes and records the evaluated/killed count when every evaluated mutant is killed', async () => {
     const root = makeProject();
     const invariant = inv({ budget: 3, threshold: 3 });
-    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_FAIL]);
+    // First oracle run is the green baseline on the clean tree; each mutant's
+    // run then fails, so every mutant is killed.
+    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_PASS, TEST_FAIL]);
     const o = await evaluateInvariant(invariant, {
       projectRoot: root,
       run: runWith(1),
@@ -301,7 +310,9 @@ describe('evaluateInvariant: mutation', () => {
   it('is a hard failure naming the survived mutant when even one survives, regardless of threshold', async () => {
     const root = makeProject();
     const invariant = inv({ budget: 3, threshold: 2 });
-    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_PASS, TEST_FAIL, TEST_FAIL]);
+    // Green baseline, then the first mutant survives (test still passes) and the
+    // rest are killed.
+    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_PASS, TEST_PASS, TEST_FAIL, TEST_FAIL]);
     const o = await evaluateInvariant(invariant, {
       projectRoot: root,
       run: runWith(1),
@@ -324,8 +335,9 @@ describe('evaluateInvariant: mutation', () => {
   it('fails closed to unevaluable when fewer mutants are evaluated than the threshold, citing the threshold', async () => {
     const root = makeProject();
     const invariant = inv({ budget: 3, threshold: 3 });
-    // Middle attempt seeds no diff (skipped, not a mutant): only 2 of 3 reach a verdict.
-    const bash = makeMutationBash('pnpm test', [A_DIFF, NO_DIFF, A_DIFF], [TEST_FAIL, TEST_FAIL]);
+    // Green baseline first; middle attempt seeds no diff (skipped, not a
+    // mutant): only 2 of 3 reach a verdict.
+    const bash = makeMutationBash('pnpm test', [A_DIFF, NO_DIFF, A_DIFF], [TEST_PASS, TEST_FAIL]);
     const o = await evaluateInvariant(invariant, {
       projectRoot: root,
       run: runWith(1),
@@ -359,6 +371,29 @@ describe('evaluateInvariant: mutation', () => {
     expect(o.artifacts).toBeUndefined();
   });
 
+  it('fails closed to unevaluable (never pass) when the suite is already red on the clean baseline tree', async () => {
+    const root = makeProject();
+    const invariant = inv({ budget: 3, threshold: 3 });
+    // The oracle is red on the very first (baseline) run — a suite already
+    // failing on the unmutated tree. Without the green-baseline gate this would
+    // score every mutant 'killed' and vacuously pass.
+    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_FAIL]);
+    const o = await evaluateInvariant(invariant, {
+      projectRoot: root,
+      run: runWith(1),
+      baseline: null,
+      bash,
+      spawner: noopSpawner,
+    });
+    expect(o.status).toBe('unevaluable');
+    expect(o.status).not.toBe('pass');
+    expect(isInvariantViolation(o)).toBe(true);
+    expect(o.evidence).toMatch(/not green on the clean baseline tree/i);
+    expect(o.evidence).toMatch(/vacuous/i);
+    // No mutant ran, so nothing was persisted or cached.
+    expect(o.artifacts).toBeUndefined();
+  });
+
   it('fails closed to unevaluable with no mutant recorded when the test command throws instead of producing a result', async () => {
     const invariant = inv();
     const bash = makeMutationBash(
@@ -385,7 +420,7 @@ describe('evaluateInvariant: mutation', () => {
   it('evaluating the same invariant twice for the same run.runId reads the persisted outcome, calling the harness only once', async () => {
     const root = makeProject();
     const invariant = inv({ budget: 3, threshold: 3 });
-    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_FAIL]);
+    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_PASS, TEST_FAIL]);
     let bashCalls = 0;
     let spawnerCalls = 0;
     const countingBash: BashRunner = async (...args) => {
@@ -427,7 +462,7 @@ describe('evaluateInvariant: mutation', () => {
   it('evaluating the same invariant for a different run.runId re-invokes the harness and persists evidence under the new run id, independent of the first', async () => {
     const root = makeProject();
     const invariant = inv({ budget: 3, threshold: 3 });
-    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_FAIL]);
+    const bash = makeMutationBash('pnpm test', [A_DIFF], [TEST_PASS, TEST_FAIL]);
     let spawnerCalls = 0;
     const countingSpawner: Spawner = async (...args) => {
       spawnerCalls++;

@@ -1,0 +1,6 @@
+schema: ratchet
+created: 2026-07-02
+standards:
+  - testing
+  - documentation
+  - generalizable-defaults

@@ -92,6 +92,35 @@ describe('skill-generation', () => {
       }
     });
 
+    it('renders the propose-standard atemporal rules for every supported agent', () => {
+      const entry = getSkillTemplates(['propose-standard']);
+      expect(entry).toHaveLength(1);
+      expect(entry[0].dirName).toBe('ratchet-propose-standard');
+
+      // Iterate the supported-tools registry rather than hard-coding one agent:
+      // ratchet init writes `<tool.skillsDir>/skills/ratchet-propose-standard/SKILL.md`
+      // for each registered agent, so the atemporal authoring rules must render for
+      // all of them — a standard authored via any agent must be anti-stale.
+      const agents = AI_TOOLS.filter((t) => t.skillsDir);
+      expect(agents.length).toBeGreaterThanOrEqual(5);
+      for (const tool of agents) {
+        const content = generateSkillContent(entry[0].template, '0.0.0-test');
+        expect(content).toContain('name: ratchet-propose-standard');
+        // Atemporal wording: no internal paths, line numbers, symbol names, or a
+        // "current flow" walk-through that goes stale when the implementation moves.
+        expect(content).toMatch(/atemporal/i);
+        expect(content).toContain('line numbers');
+        expect(content).toContain('which part does what today');
+        // Self-containment: no cross-references to other standards.
+        expect(content).toContain('cross-reference other standards');
+        // The rationale: a standard has no lifecycle / is never auto-updated.
+        expect(content).toMatch(/has no lifecycle/i);
+        expect(content).toMatch(/never automatically updated/i);
+        // The target path is derived from the tool's skillsDir.
+        expect(`${tool.skillsDir}/skills/ratchet-propose-standard/SKILL.md`).toContain('ratchet-propose-standard');
+      }
+    });
+
     it('should have valid template structure', () => {
       const templates = getSkillTemplates();
 

@@ -26,7 +26,9 @@
  *     mutant is a hard `fail` regardless of how many others were killed; fewer
  *     than `threshold` evaluated mutants (with none surviving) is `unevaluable`
  *     — not enough evidence to trust a "no survivors" claim. A harness call that
- *     throws, or an unusable working tree, is also `unevaluable`. Every mutant
+ *     throws, an unusable working tree, or a test suite that is not green on the
+ *     clean baseline tree (which would make every mutant score `killed`
+ *     vacuously) is also `unevaluable`. Every mutant
  *     the harness actually runs — its diff and oracle output — is persisted as
  *     durable run evidence (`InvariantOutcome.artifacts`) keyed by
  *     `(run.runId, invariant.id)`, and the reduced outcome is memoized there
@@ -234,8 +236,10 @@ async function evaluateSnapshot(
  * since a survived mutant is real evidence of a test-suite gap no matter how
  * few mutants the budget allowed); short of that, fewer evaluated mutants
  * than `threshold` is `unevaluable` (too little evidence to trust "no
- * survivors"); a harness call that throws, or an `unusable-working-tree`
- * result, is also `unevaluable` — fail-closed, never a silent pass. A prior
+ * survivors"); a harness call that throws, an `unusable-working-tree` result,
+ * or an `oracle-not-green` result (the suite was already red on the clean tree,
+ * so a "no survivors" claim would be vacuous) is also `unevaluable` —
+ * fail-closed, never a silent pass. A prior
  * evaluation of this exact `(run.runId, invariant.id)` is read back verbatim
  * rather than re-running the harness; every mutant actually run is persisted
  * as durable evidence, killed or survived alike.
@@ -270,6 +274,19 @@ async function evaluateMutation(
       inv,
       measureBase,
       `working tree was not usable for mutation seeding: ${harnessOutcome.reason}`
+    );
+  }
+
+  if (harnessOutcome.kind === 'oracle-not-green') {
+    // Fail closed: the oracle was not green on the clean baseline tree, so a
+    // "no survivors" result would be vacuous (every mutant scores `killed`
+    // regardless of the fault). Never a pass — mirrors the unusable-working-tree
+    // guard. No mutant ran, so nothing is persisted or cached and a later
+    // evaluation is free to retry once the suite is green.
+    return unevaluable(
+      inv,
+      measureBase,
+      `test suite was not green on the clean baseline tree, so mutation results would be vacuous: ${harnessOutcome.reason}`
     );
   }
 

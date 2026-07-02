@@ -267,7 +267,12 @@ deterministic oracle, and classifies each fault killed or survived.
 `evaluateInvariant` runs this harness and reduces its per-mutant results to a
 real `pass`/`fail`/`unevaluable` outcome, persisting each mutant's diff and test
 output as replayable run evidence — see
-[How each kind is evaluated](#how-each-kind-is-evaluated). `ratchet init`
+[How each kind is evaluated](#how-each-kind-is-evaluated). Before seeding, the
+harness requires a **green baseline**: it runs `test` once on the clean,
+unmutated tree and, if it does not pass, seeds nothing and the invariant is
+`unevaluable` — never a vacuous `pass`. A suite already red on the clean tree
+would otherwise score every mutant `killed` and report zero survivors, exactly
+the gaming hole this invariant exists to close. `ratchet init`
 scaffolds a `kind: mutation` entry into the default manifest — see
 [Default manifest](#default-manifest).
 

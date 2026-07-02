@@ -36,7 +36,10 @@ flowchart TD
     INV --> PRECHECK
     PRECHECK -->|dirty or not a repo| UNUSABLE[❌ unusable-working-tree]
 
-    PRECHECK -->|clean| LOOP{{🔁 attempt loop<br/>at most budget times}}
+    PRECHECK -->|clean| BASELINE{{🧪 run invariant.test once<br/>on the clean tree<br/>green-baseline gate<br/>reverts itself}}
+    BASELINE -->|exit ≠ 0| NOTGREEN[❌ oracle-not-green]
+
+    BASELINE -->|exit 0| LOOP{{🔁 attempt loop<br/>at most budget times}}
 
     LOOP --> SPAWN{{⚙️ spawn configured agent<br/>seed one fault}}
     SPAWN --> STAGE{{📦 git add -A}}
@@ -63,9 +66,9 @@ flowchart TD
     classDef skip     fill:#D3D3D3,stroke:#333,stroke-width:2px,color:black
 
     class INV input
-    class PRECHECK,LOOP,SPAWN,STAGE,DIFF,ORACLE,REVERT step
+    class PRECHECK,BASELINE,LOOP,SPAWN,STAGE,DIFF,ORACLE,REVERT step
     class SURVIVED,DONE success
-    class KILLED,UNUSABLE error
+    class KILLED,UNUSABLE,NOTGREEN error
     class SKIP skip
 ```
 
@@ -104,7 +107,21 @@ export async function runMutationHarness(
    invariant could never evaluate. Any uncommitted path *outside* that directory
    still marks the tree unusable. (The pathspec is single-quoted because the
    probe runs through `bash -c`.)
-2. **Seed** — for each of up to `invariant.budget` attempts, the harness
+2. **Green-baseline precondition** — `checkOracleBaseline` runs `invariant.test`
+   through `deps.bash` once on the clean, unmutated tree and requires exit 0
+   before any mutant is seeded. This is the load-bearing anti-vacuity check: the
+   oracle scores a mutant `killed` on a non-zero exit, so a suite already red on
+   the clean tree would score *every* seeded mutant `killed` regardless of the
+   fault, yielding zero survivors and a silently vacuous `pass`. A non-zero exit
+   returns `{ kind: 'oracle-not-green', reason }` immediately — no agent is
+   spawned. The baseline run reverts unconditionally in a `finally` (the same
+   scoped `git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs`), so
+   anything the test command writes cannot leak into the first mutant's
+   `git diff --cached` and the tree is left exactly as clean as it was found. A
+   baseline oracle that **throws** (its binary is missing) is deliberately *not*
+   caught: it propagates to the caller as "could not run at all", distinct from
+   "ran and was red".
+3. **Seed** — for each of up to `invariant.budget` attempts, the harness
    builds a spawn request the same way `judge.ts`'s `buildVoteRequest` does:
    `RATCHET_EVAL_AGENT_CMD`, when set, stands in for the agent binary
    (deterministic e2e testing); otherwise `resolveAdapter(deps.agentName)`
@@ -113,18 +130,18 @@ export async function runMutationHarness(
    instructions (`buildSeedInstructions`) ask the agent to make exactly one
    small, discrete edit to a non-test source file and to not run the test
    suite itself.
-3. **Detect** — `git add -A` (stages tracked and untracked changes, so a new
+4. **Detect** — `git add -A` (stages tracked and untracked changes, so a new
    file the agent created is not silently invisible) followed by
    `git diff --cached` captures the fault as a unified diff. An **empty
    diff** means the agent made no change this attempt: nothing is recorded as
    a mutant, the oracle is never run for it, and the loop moves to the next
    attempt.
-4. **Run the oracle, classify** — a non-empty diff runs `invariant.test`
+5. **Run the oracle, classify** — a non-empty diff runs `invariant.test`
    through `deps.bash`, the same seam `judgeCheck` and `evaluateDeterministic`
    already shell out with. `exitCode === 0` classifies the mutant `survived`;
    any non-zero exit classifies it `killed`. The mutant's `index` (the
    0-based attempt number), `diff`, `outcome`, and `testResult` are recorded.
-5. **Revert, unconditionally** — the per-attempt body (seed → stage → diff →
+6. **Revert, unconditionally** — the per-attempt body (seed → stage → diff →
    oracle) runs inside a `try`, with
    `git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs` in the
    matching `finally`. The revert therefore runs on **every** path — after a
@@ -142,8 +159,8 @@ export async function runMutationHarness(
    — the seeded mutant is still fully removed, only ratchet's own transient
    records are kept. The excluded path is derived from the same
    `.ratchet/evals/runs` constant as the probe, so the two cannot drift.
-6. **Return** — once `invariant.budget` attempts have run (or ended early via
-   the precondition), the harness returns `{ kind: 'completed', mutants }`.
+7. **Return** — once `invariant.budget` attempts have run (or ended early via
+   either precondition), the harness returns `{ kind: 'completed', mutants }`.
    `mutants` may be shorter than `budget` when one or more attempts produced
    an empty diff.
 
@@ -179,13 +196,21 @@ export interface MutantOutcome {
 
 export type MutationHarnessOutcome =
   | { kind: 'unusable-working-tree'; reason: string }
+  | { kind: 'oracle-not-green'; reason: string }
   | { kind: 'completed'; mutants: MutantOutcome[] };
 ```
 
-- **`unusable-working-tree`** — the fail-closed precondition tripped; `reason`
-  names why (an uncommitted change outside `.ratchet/evals/runs`, not a git
-  repository, or git unavailable). A freshly persisted run record under
+- **`unusable-working-tree`** — the fail-closed cleanliness precondition tripped;
+  `reason` names why (an uncommitted change outside `.ratchet/evals/runs`, not a
+  git repository, or git unavailable). A freshly persisted run record under
   `.ratchet/evals/runs` does **not** trip it. No mutant was seeded.
+- **`oracle-not-green`** — the green-baseline precondition tripped: `invariant.test`
+  exited non-zero on the clean, unmutated tree, so classifying mutants would be
+  vacuous (every mutant scores `killed` regardless of the fault). `reason` names
+  the test command and its baseline exit. No mutant was seeded; the baseline run
+  reverted itself. `evaluateMutation` maps this to `unevaluable` (never `pass`).
+  A baseline oracle that *throws* is not represented here — it propagates as a
+  thrown call, so the evaluator records "harness could not run" instead.
 - **`completed`** — the budget-bounded loop ran to completion. `mutants` holds
   one `MutantOutcome` per attempt that actually seeded a fault (a non-empty
   diff), in attempt order; an attempt whose diff was empty contributes no

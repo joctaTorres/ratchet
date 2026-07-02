@@ -41,6 +41,53 @@ export const DETERMINISTIC_SPEC = `${CASE_JSON}:
     pass: "contains:applyRequires"
 `;
 
+/** A feature-store file with one case per binding kind and one left unbound. */
+export const FOUR_CASE_FEATURE = `Feature: Status
+  Scenario: Status as JSON
+    Given a project
+    When I run status
+    Then it prints JSON
+
+  Scenario: Status as text
+    Given a project
+    Then it prints text
+
+  Scenario: Status as prose
+    Given a project
+    Then it prints readable prose
+
+  Scenario: Status as web
+    Given a project
+    Then it renders in a browser
+`;
+
+/** Case ids derived from {@link FOUR_CASE_FEATURE} at `features/cli/status.feature`. */
+export const CASE_LLM = 'features/cli/status#status-as-prose';
+export const CASE_WEB = 'features/cli/status#status-as-web';
+
+/** A spec binding one case each to `deterministic`, `llm-judge`, and `web`; the text case stays unbound. */
+export const ALL_BINDINGS_SPEC = `${CASE_JSON}:
+  fixture: status-ok
+  kind: deterministic
+  check:
+    run: cat output.txt
+    pass: "contains:applyRequires"
+
+${CASE_LLM}:
+  fixture: status-ok
+  kind: llm-judge
+  success: the status output is human-readable prose
+
+${CASE_WEB}:
+  fixture: status-ok
+  kind: web
+  start: "pnpm start"
+  readiness:
+    url: "http://localhost:3000"
+    timeoutMs: 5000
+  spec: e2e/status.spec.ts
+`;
+
 export class EvalFixture {
   constructor(readonly root: string) {}
 

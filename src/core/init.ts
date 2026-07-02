@@ -62,6 +62,9 @@ const { version: RATCHET_VERSION } = require('../../package.json');
 
 const DEFAULT_SCHEMA = DEFAULT_SCHEMA_NAME;
 
+/** The `.gitignore` entry that ignores ratchet's transient eval run records. */
+const EVAL_RUNS_GITIGNORE_ENTRY = '.ratchet/evals/runs/';
+
 const PROGRESS_SPINNER = {
   interval: 80,
   frames: ['░░░', '▒░░', '▒▒░', '▒▒▒', '▓▒▒', '▓▓▒', '▓▓▓', '▒▓▓', '░▒▓'],
@@ -178,6 +181,10 @@ export class InitCommand {
     // Scaffold the default anti-gaming invariant manifest so the eval gate is
     // real from the first run; never overwrites an existing manifest.
     await this.createDefaultInvariantManifest(projectPath);
+
+    // Ensure git ignores ratchet's transient eval run records, so a persisted
+    // run record never dirties the working tree or the mutation gate. Idempotent.
+    await this.ensureEvalRunsGitignored(projectPath);
 
     // Display success message
     this.displaySuccessMessage(projectPath, validatedTools, results, configStatus);
@@ -785,6 +792,37 @@ export class InitCommand {
       const yamlContent = buildDefaultInvariantManifestYaml(projectPath);
       await FileSystemUtils.writeFile(manifestPath, yamlContent);
       return 'created';
+    } catch {
+      return 'skipped';
+    }
+  }
+
+  /**
+   * Ensure the project `.gitignore` ignores ratchet's transient eval run
+   * directory (`.ratchet/evals/runs/`). Idempotent: creates the file if absent,
+   * appends the entry only when not already present, and never duplicates it on
+   * re-init. The path is a ratchet-owned artifact (not a toolchain literal), so
+   * this is ecosystem-agnostic and safe in any consuming repo. Best-effort: any
+   * error is swallowed so it can never break init.
+   */
+  private async ensureEvalRunsGitignored(projectPath: string): Promise<'created' | 'appended' | 'present' | 'skipped'> {
+    const gitignorePath = path.join(projectPath, '.gitignore');
+    const entry = EVAL_RUNS_GITIGNORE_ENTRY;
+    try {
+      if (!(await FileSystemUtils.fileExists(gitignorePath))) {
+        await FileSystemUtils.writeFile(gitignorePath, `${entry}\n`);
+        return 'created';
+      }
+      const existing = await FileSystemUtils.readFile(gitignorePath);
+      const alreadyIgnored = existing
+        .split('\n')
+        .some((line) => line.trim() === entry);
+      if (alreadyIgnored) {
+        return 'present';
+      }
+      const separator = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+      await FileSystemUtils.writeFile(gitignorePath, `${existing}${separator}${entry}\n`);
+      return 'appended';
     } catch {
       return 'skipped';
     }

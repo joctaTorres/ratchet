@@ -7,12 +7,17 @@
  * alone fails the run, a neutral contributor is identity to the AND, and the
  * completeness signal mirrors "no case unjudged". Pure in-memory inputs — no
  * filesystem, no spawn.
+ *
+ * Also implements features/web-deterministic-fold/deterministic-contributor-fold.feature's
+ * first two scenarios: a `web`-bound case folds into the `deterministic`
+ * contributor (fail and pass) without introducing a new contributor id.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   aggregateRun,
   isRunComplete,
+  contributorForBindingKind,
   DEFAULT_CONTRIBUTORS,
   invariantsContributor,
   type Contributor,
@@ -108,6 +113,21 @@ describe('aggregateRun', () => {
     expect(agg.contributors.find((c) => c.id === 'llm-judge')?.failing).toEqual(['a#llm']);
   });
 
+  it('fails the deterministic contributor on a failing web-bound case, naming it in the failing ids', () => {
+    const run = mkRun({ 'a#web': { verdict: 'fail', kind: 'web' } });
+    const agg = aggregateRun(ctx(run));
+    const det = agg.contributors.find((c) => c.id === 'deterministic');
+    expect(det?.status).toBe('fail');
+    expect(det?.failing).toEqual(['a#web']);
+  });
+
+  it('passes the deterministic contributor on only-passing web-bound cases, introducing no new contributor id', () => {
+    const run = mkRun({ 'a#web': { verdict: 'pass', kind: 'web' } });
+    const agg = aggregateRun(ctx(run));
+    expect(agg.contributors.find((c) => c.id === 'deterministic')?.status).toBe('pass');
+    expect(agg.contributors.map((c) => c.id)).toEqual(['deterministic', 'llm-judge', 'invariants', 'regression']);
+  });
+
   it('fails on a regression alone even when no case failed this run', () => {
     const run = mkRun({ 'a#det': { verdict: 'pass', kind: 'deterministic' } });
     const diff: BaselineDiff = { ...NO_DIFF, baselineRunId: 'base', regressions: ['a#det'] };
@@ -167,6 +187,14 @@ describe('aggregateRun', () => {
     const agg = aggregateRun(ctx(run), [veto]);
     expect(agg.overall).toBe('fail');
     expect(agg.contributors[0].failing).toEqual(['policy#x']);
+  });
+});
+
+describe('contributorForBindingKind', () => {
+  it('maps deterministic and web to the deterministic contributor, and llm-judge to itself', () => {
+    expect(contributorForBindingKind('deterministic')).toBe('deterministic');
+    expect(contributorForBindingKind('web')).toBe('deterministic');
+    expect(contributorForBindingKind('llm-judge')).toBe('llm-judge');
   });
 });
 

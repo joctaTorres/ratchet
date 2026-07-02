@@ -43,6 +43,16 @@ export function artifactOutputExists(changeDir: string, generates: string): bool
 }
 
 /**
+ * The result of {@link materializeApplyContext}: the resolved context-file
+ * paths for the building agent plus the total count of `@holdout`-tagged
+ * Scenario blocks stripped across all `.feature` outputs for this artifact.
+ */
+export interface ApplyContextResult {
+  paths: string[];
+  heldOutCount: number;
+}
+
+/**
  * Materializes a filtered copy of each `.feature` output for the building
  * agent to read during apply: `@holdout`-tagged Scenario content stripped via
  * {@link filterHoldoutContent}, written to
@@ -56,21 +66,25 @@ export function materializeApplyContext(
   changeDir: string,
   artifactId: string,
   outputs: string[]
-): string[] {
+): ApplyContextResult {
   const canonicalChangeDir = FileSystemUtils.canonicalizeExistingPath(changeDir);
+  let heldOutCount = 0;
 
-  return outputs.map((output) => {
+  const paths = outputs.map((output) => {
     if (!output.endsWith('.feature')) return output;
 
     const relative = path.relative(canonicalChangeDir, output);
     const materializedPath = path.join(canonicalChangeDir, '.apply-context', artifactId, relative);
 
     const content = fs.readFileSync(output, 'utf-8');
-    const filtered = filterHoldoutContent(content);
+    const result = filterHoldoutContent(content);
+    heldOutCount += result.heldOutCount;
 
     fs.mkdirSync(path.dirname(materializedPath), { recursive: true });
-    fs.writeFileSync(materializedPath, filtered, 'utf-8');
+    fs.writeFileSync(materializedPath, result.content, 'utf-8');
 
     return FileSystemUtils.canonicalizeExistingPath(materializedPath);
   });
+
+  return { paths, heldOutCount };
 }

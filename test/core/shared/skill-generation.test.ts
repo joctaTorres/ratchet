@@ -5,6 +5,7 @@ import {
   getCommandContents,
   generateSkillContent,
 } from '../../../src/core/shared/skill-generation.js';
+import { getRctVerifyCommandTemplate } from '../../../src/core/templates/workflows/verify-change.js';
 import { AI_TOOLS } from '../../../src/core/config.js';
 
 describe('skill-generation', () => {
@@ -354,6 +355,27 @@ describe('skill-generation', () => {
 
       expect(content).toContain('Some REPLACED text here.');
       expect(content).not.toContain('PLACEHOLDER');
+    });
+  });
+
+  describe('rct:verify command template holdout warning', () => {
+    it('VERIFY_BODY contains a heldOutCount-based WARNING instruction for verify agents', () => {
+      const cmd = getRctVerifyCommandTemplate();
+
+      // The template must instruct the verify agent to emit a non-blocking
+      // WARNING when heldOutCount > 0, with count only (no names/steps).
+      expect(cmd.content).toContain('heldOutCount');
+      expect(cmd.content).toContain('WARNING');
+      expect(cmd.content).toContain('ratchet eval run');
+    });
+
+    it('VERIFY_BODY notes that @holdout scenario absence is not a coverage gap (step 7)', () => {
+      const cmd = getRctVerifyCommandTemplate();
+
+      // Step 7 must advise the agent not to flag missing held-out scenarios
+      // as uncovered — enforcement is eval run, not verify.
+      expect(cmd.content).toContain('@holdout scenario');
+      expect(cmd.content).toContain('ratchet eval run');
     });
   });
 });

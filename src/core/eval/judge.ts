@@ -25,8 +25,9 @@
  */
 
 import type { EvalCase } from './set.js';
-import type { Binding, LlmJudgeBinding, DeterministicBinding } from './spec.js';
+import type { Binding, LlmJudgeBinding, DeterministicBinding, WebBinding } from './spec.js';
 import { resolveJury, type Jury, type Quorum } from './jury.js';
+import { runWebLifecycle, type WebLifecycleDeps, type WebArtifacts } from './web-lifecycle.js';
 import {
   evaluatePassCondition,
   realBashRunner,
@@ -58,6 +59,8 @@ export interface CaseVerdict extends VoteResolution {
   rubric: string[];
   /** Every juror's individual vote, in cast order. */
   votes: JurorVote[];
+  /** Playwright trace/screenshot captured by a `web` binding's lifecycle harness. `web`-only; ephemeral, cwd-scoped paths. */
+  artifacts?: WebArtifacts;
 }
 
 export interface JudgeDeps {
@@ -67,6 +70,8 @@ export interface JudgeDeps {
   agentName?: string;
   /** Project-level jury default, layered under a per-binding `jury:` override. */
   jury?: Jury;
+  /** Injected seams for the `web` binding lifecycle harness (tests never spawn a real process). */
+  web?: WebLifecycleDeps;
 }
 
 /** A juror's vote: the structured per-clause result plus the all-yes-derived overall pass. */
@@ -375,6 +380,45 @@ async function judgeCheck(
 }
 
 /**
+ * Judge a `web` binding by running the lifecycle harness (start/readiness/
+ * Playwright/teardown) and reducing its outcome to a one-clause `CaseVerdict`,
+ * mirroring `judgeCheck`'s shape. Fail-closed: a readiness timeout never runs
+ * the spec and is always a `fail`, never an assumed pass.
+ */
+async function judgeWeb(binding: WebBinding, cwd: string, deps: JudgeDeps): Promise<CaseVerdict> {
+  const outcome = await runWebLifecycle(binding, cwd, deps.web ?? {});
+  const rubric = [`Playwright spec '${binding.spec}' exits zero`];
+  if (outcome.kind === 'readiness-timeout') {
+    const clauses: ClauseResult[] = [
+      {
+        clause: rubric[0],
+        pass: false,
+        evidence: `App did not become ready within ${binding.readiness.timeoutMs}ms; Playwright spec was never run.`,
+      },
+    ];
+    return { verdict: 'fail', evidence: clauses, rubric, votes: [{ pass: false, clauses }] };
+  }
+  const { passed, result, artifacts } = outcome;
+  const detail = result.stderr.trim() || result.stdout.trim();
+  const clauses: ClauseResult[] = [
+    {
+      clause: rubric[0],
+      pass: passed,
+      evidence: passed
+        ? `Playwright spec '${binding.spec}' passed (exit 0)`
+        : `Playwright spec '${binding.spec}' failed (exit ${result.exitCode})${detail ? `: ${detail.slice(0, 500)}` : ''}`,
+    },
+  ];
+  return {
+    verdict: passed ? 'pass' : 'fail',
+    evidence: clauses,
+    rubric,
+    votes: [{ pass: passed, clauses }],
+    ...(artifacts ? { artifacts } : {}),
+  };
+}
+
+/**
  * Judge a single bound case against its materialized fixture working copy,
  * dispatching on the bound kind. Which contributors run is decided upstream by
  * the gate (see `execute.ts`); a case only reaches here once its contributor is
@@ -389,5 +433,8 @@ export async function judgeCase(
   if (binding.kind === 'deterministic') {
     return judgeCheck(binding, cwd, deps);
   }
-  return judgeAgent(c, binding, cwd, deps);
+  if (binding.kind === 'llm-judge') {
+    return judgeAgent(c, binding, cwd, deps);
+  }
+  return judgeWeb(binding, cwd, deps);
 }

@@ -331,7 +331,15 @@ describe('generateApplyInstructions', () => {
     '',
   ].join('\n');
 
-  it('materializes a filtered .feature context file that strips the @holdout Scenario', async () => {
+  /**
+   * Helper: create `.ratchet/evals/` under a fixture root so `hasEvalIntent`
+   * returns true — filtering only kicks in when the eval store exists.
+   */
+  async function enableEvalIntent(root: string): Promise<void> {
+    await fs.mkdir(path.join(root, '.ratchet', 'evals'), { recursive: true });
+  }
+
+  it('materializes a filtered .feature context file that strips the @holdout Scenario (evalIntent=true)', async () => {
     const dir = await fixture.writeChangeWithTasks('holdout-apply', { done: 0, total: 1 });
     await fs.mkdir(path.join(dir, 'features', 'sample'), { recursive: true });
     await fs.writeFile(
@@ -340,6 +348,8 @@ describe('generateApplyInstructions', () => {
       'utf-8'
     );
     await fixture.writeMetadata('holdout-apply');
+    // Enable eval intent so the holdout gate is active.
+    await enableEvalIntent(fixture.root);
 
     const instructions = await generateApplyInstructions(
       fixture.root,
@@ -368,10 +378,51 @@ describe('generateApplyInstructions', () => {
       'utf-8'
     );
     expect(sourceContent).toBe(HELD_OUT_FEATURE);
+
+    // The heldOutCount surfaces in the returned object.
+    expect(instructions.heldOutCount).toBe(1);
+    expect(instructions.heldOutCounts.features).toBe(1);
+  });
+
+  it('returns source paths unchanged and count 0 when no .ratchet/evals/ exists (evalIntent=false)', async () => {
+    const dir = await fixture.writeChangeWithTasks('holdout-no-eval', { done: 0, total: 1 });
+    await fs.mkdir(path.join(dir, 'features', 'sample'), { recursive: true });
+    await fs.writeFile(
+      path.join(dir, 'features', 'sample', 'sample.feature'),
+      HELD_OUT_FEATURE,
+      'utf-8'
+    );
+    await fixture.writeMetadata('holdout-no-eval');
+    // Do NOT call enableEvalIntent — no .ratchet/evals/ directory.
+
+    const instructions = await generateApplyInstructions(
+      fixture.root,
+      'holdout-no-eval',
+      undefined,
+      planningHomeFor(fixture.root)
+    );
+
+    const rawOutputs = resolveArtifactOutputs(dir, 'features/**/*.feature');
+    const materializedOutputs = instructions.contextFiles.features;
+
+    // Without eval intent, the source path is returned unchanged.
+    expect(materializedOutputs).toHaveLength(1);
+    expect(materializedOutputs[0]).toBe(rawOutputs[0]);
+
+    // No .apply-context directory should be written.
+    const applyContextDir = path.join(dir, '.apply-context');
+    const applyContextExists = await fs.access(applyContextDir).then(() => true).catch(() => false);
+    expect(applyContextExists).toBe(false);
+
+    // Counts must be zero.
+    expect(instructions.heldOutCount).toBe(0);
+    expect(Object.keys(instructions.heldOutCounts)).toHaveLength(0);
   });
 
   it('materializes contextFiles content-equivalent to source when no Scenario is held out', async () => {
     const dir = await fixture.writeValidChange('no-holdout-apply');
+    // Enable eval intent — filtering is active, but nothing to filter.
+    await enableEvalIntent(fixture.root);
 
     const instructions = await generateApplyInstructions(
       fixture.root,
@@ -386,6 +437,7 @@ describe('generateApplyInstructions', () => {
     );
     const materializedContent = await fs.readFile(instructions.contextFiles.features[0], 'utf-8');
     expect(materializedContent).toBe(sourceContent);
+    expect(instructions.heldOutCount).toBe(0);
   });
 
   it('still enumerates and gates the held-out case as an ordinary eval case', async () => {
@@ -397,6 +449,8 @@ describe('generateApplyInstructions', () => {
       'utf-8'
     );
     await fixture.writeMetadata('holdout-eval-set');
+    // Enable eval intent so the holdout gate is active.
+    await enableEvalIntent(fixture.root);
 
     // Regression: materializing the apply-time context must not affect
     // enumerateEvalSet, which reads the real source .feature file directly.
@@ -495,6 +549,8 @@ describe('printApplyInstructionsText', () => {
       changeDir: '/tmp/blocked-demo',
       schemaName: 'ratchet',
       contextFiles: {},
+      heldOutCounts: {},
+      heldOutCount: 0,
       progress: { total: 0, complete: 0, remaining: 0 },
       tasks: [],
       state: 'blocked',
@@ -516,6 +572,8 @@ describe('printApplyInstructionsText', () => {
       changeDir: '/tmp/ready-demo',
       schemaName: 'ratchet',
       contextFiles: { plan: ['/tmp/ready-demo/plan.md'] },
+      heldOutCounts: {},
+      heldOutCount: 0,
       progress: { total: 2, complete: 1, remaining: 1 },
       tasks: [
         { id: '1', description: 'first task', done: true },
@@ -535,6 +593,8 @@ describe('printApplyInstructionsText', () => {
     expect(text).toContain('### Tasks');
     expect(text).toContain('- [x] first task');
     expect(text).toContain('- [ ] second task');
+    // No held-out warning when count is zero
+    expect(text).not.toContain('@holdout scenario(s)');
   });
 
   it('marks progress complete with a check for an all_done snapshot', () => {
@@ -543,6 +603,8 @@ describe('printApplyInstructionsText', () => {
       changeDir: '/tmp/done-demo',
       schemaName: 'ratchet',
       contextFiles: {},
+      heldOutCounts: {},
+      heldOutCount: 0,
       progress: { total: 2, complete: 2, remaining: 0 },
       tasks: [
         { id: '1', description: 'first task', done: true },
@@ -558,5 +620,50 @@ describe('printApplyInstructionsText', () => {
     expect(text).toContain('### Progress');
     expect(text).toContain('2/2 complete ✓');
     expect(text).toContain('All tasks are complete!');
+  });
+
+  it('prints a non-blocking @holdout warning when heldOutCount > 0', () => {
+    const withHeldOut: ApplyInstructions = {
+      changeName: 'holdout-demo',
+      changeDir: '/tmp/holdout-demo',
+      schemaName: 'ratchet',
+      contextFiles: { features: ['/tmp/holdout-demo/.apply-context/features/sample.feature'] },
+      heldOutCounts: { features: 2 },
+      heldOutCount: 2,
+      progress: { total: 1, complete: 0, remaining: 1 },
+      tasks: [{ id: '1', description: 'do the thing', done: false }],
+      state: 'ready',
+      instruction: 'Work through the pending tasks.',
+    };
+
+    printApplyInstructionsText(withHeldOut);
+
+    const text = output();
+    expect(text).toContain('2 @holdout scenario(s) are excluded from this view');
+    expect(text).toContain('ratchet eval run');
+    // The warning must not appear as CRITICAL or block the output
+    expect(text).toContain('### Instruction');
+    expect(text).toContain('Work through the pending tasks.');
+  });
+
+  it('omits the @holdout warning when heldOutCount is 0', () => {
+    const noHeldOut: ApplyInstructions = {
+      changeName: 'clean-demo',
+      changeDir: '/tmp/clean-demo',
+      schemaName: 'ratchet',
+      contextFiles: {},
+      heldOutCounts: {},
+      heldOutCount: 0,
+      progress: { total: 0, complete: 0, remaining: 0 },
+      tasks: [],
+      state: 'ready',
+      instruction: 'Proceed.',
+    };
+
+    printApplyInstructionsText(noHeldOut);
+
+    const text = output();
+    expect(text).not.toContain('@holdout scenario(s)');
+    expect(text).not.toContain('ratchet eval run');
   });
 });

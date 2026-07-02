@@ -204,14 +204,16 @@ describe('artifact-graph/outputs', () => {
       fs.mkdirSync(path.dirname(featurePath), { recursive: true });
       fs.writeFileSync(featurePath, HELD_OUT_FEATURE, 'utf-8');
 
-      const [materializedPath] = materializeApplyContext(tempDir, 'features', [
+      const result = materializeApplyContext(tempDir, 'features', [
         canonical(featurePath),
       ]);
 
-      expect(materializedPath).not.toBe(canonical(featurePath));
-      const materializedContent = fs.readFileSync(materializedPath, 'utf-8');
+      expect(result.paths).toHaveLength(1);
+      expect(result.paths[0]).not.toBe(canonical(featurePath));
+      const materializedContent = fs.readFileSync(result.paths[0], 'utf-8');
       expect(materializedContent).toContain('Scenario: Kept');
       expect(materializedContent).not.toContain('Held out');
+      expect(result.heldOutCount).toBe(1);
     });
 
     it('leaves the source file unchanged after materialization', () => {
@@ -229,21 +231,23 @@ describe('artifact-graph/outputs', () => {
       fs.mkdirSync(path.dirname(featurePath), { recursive: true });
       fs.writeFileSync(featurePath, CLEAN_FEATURE, 'utf-8');
 
-      const [materializedPath] = materializeApplyContext(tempDir, 'features', [
+      const result = materializeApplyContext(tempDir, 'features', [
         canonical(featurePath),
       ]);
 
-      expect(fs.readFileSync(materializedPath, 'utf-8')).toBe(CLEAN_FEATURE);
+      expect(fs.readFileSync(result.paths[0], 'utf-8')).toBe(CLEAN_FEATURE);
+      expect(result.heldOutCount).toBe(0);
     });
 
     it('passes a non-.feature output through unchanged, as its original path', () => {
       const planPath = path.join(tempDir, 'plan.md');
       fs.writeFileSync(planPath, '# plan\n', 'utf-8');
 
-      const [result] = materializeApplyContext(tempDir, 'plan', [canonical(planPath)]);
+      const result = materializeApplyContext(tempDir, 'plan', [canonical(planPath)]);
 
-      expect(result).toBe(canonical(planPath));
-      expect(fs.readFileSync(result, 'utf-8')).toBe('# plan\n');
+      expect(result.paths[0]).toBe(canonical(planPath));
+      expect(fs.readFileSync(result.paths[0], 'utf-8')).toBe('# plan\n');
+      expect(result.heldOutCount).toBe(0);
     });
   });
 });

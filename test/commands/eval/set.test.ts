@@ -15,8 +15,12 @@ import {
   makeEvalFixture,
   TWO_CASE_FEATURE,
   DETERMINISTIC_SPEC,
+  FOUR_CASE_FEATURE,
+  ALL_BINDINGS_SPEC,
   CASE_JSON,
   CASE_TEXT,
+  CASE_LLM,
+  CASE_WEB,
   type EvalFixture,
 } from './eval-fixture.js';
 
@@ -85,6 +89,29 @@ describe('evalSetCommand', () => {
     expect(text).not.toContain('[agent]');
     expect(text).toContain('Status › Status as JSON');
     expect(text).toContain('Status › Status as text');
+  });
+
+  // features/eval-web-binding/web-binding-schema.feature: eval set reports
+  // web-bound cases with the new kind label
+  it('tags a deterministic, llm-judge, web, and unbound case with their kind labels', async () => {
+    await fixture.writeFeature('cli/status.feature', FOUR_CASE_FEATURE);
+    await fixture.writeSpec('cli.yaml', ALL_BINDINGS_SPEC);
+
+    await evalSetCommand({ json: true });
+    const parsed = JSON.parse(output());
+    const byId = Object.fromEntries(parsed.cases.map((c: any) => [c.id, c]));
+    expect(byId[CASE_JSON].binding).toBe('deterministic');
+    expect(byId[CASE_LLM].binding).toBe('llm-judge');
+    expect(byId[CASE_WEB].binding).toBe('web');
+    expect(byId[CASE_TEXT].binding).toBe('unbound');
+
+    logSpy.mockClear();
+    await evalSetCommand({});
+    const text = output();
+    expect(text).toContain(`[deterministic] ${CASE_JSON}`);
+    expect(text).toContain(`[llm-judge] ${CASE_LLM}`);
+    expect(text).toContain(`[web] ${CASE_WEB}`);
+    expect(text).toContain(`[unbound] ${CASE_TEXT}`);
   });
 
   it('rejects combining scope flags before enumerating anything', async () => {

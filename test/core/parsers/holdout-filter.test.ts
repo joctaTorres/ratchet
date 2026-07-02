@@ -34,13 +34,14 @@ describe('filterHoldoutContent', () => {
       '',
     ].join('\n');
 
-    const filtered = filterHoldoutContent(content);
+    const result = filterHoldoutContent(content);
 
-    expect(filtered).toContain('Feature: Sample');
-    expect(filtered).toContain('Scenario: Kept');
-    expect(filtered).toContain('Given c');
-    expect(filtered).not.toContain('Held out');
-    expect(filtered).not.toContain('Given a');
+    expect(result.content).toContain('Feature: Sample');
+    expect(result.content).toContain('Scenario: Kept');
+    expect(result.content).toContain('Given c');
+    expect(result.content).not.toContain('Held out');
+    expect(result.content).not.toContain('Given a');
+    expect(result.heldOutCount).toBe(1);
   });
 
   it('returns content unchanged when no @holdout tags are present', () => {
@@ -57,7 +58,9 @@ describe('filterHoldoutContent', () => {
       '',
     ].join('\n');
 
-    expect(filterHoldoutContent(content)).toBe(content);
+    const result = filterHoldoutContent(content);
+    expect(result.content).toBe(content);
+    expect(result.heldOutCount).toBe(0);
   });
 
   it('returns just the Feature header/description when every Scenario is @holdout', () => {
@@ -77,11 +80,12 @@ describe('filterHoldoutContent', () => {
       '',
     ].join('\n');
 
-    const filtered = filterHoldoutContent(content);
+    const result = filterHoldoutContent(content);
 
-    expect(filtered).toContain('Feature: Sample');
-    expect(filtered).toContain('A description line.');
-    expect(filtered).not.toMatch(/Scenario:/);
+    expect(result.content).toContain('Feature: Sample');
+    expect(result.content).toContain('A description line.');
+    expect(result.content).not.toMatch(/Scenario:/);
+    expect(result.heldOutCount).toBe(2);
   });
 
   it('removes a held-out Scenario Outline along with its Examples table', () => {
@@ -102,12 +106,14 @@ describe('filterHoldoutContent', () => {
       '',
     ].join('\n');
 
-    const filtered = filterHoldoutContent(content);
+    const result = filterHoldoutContent(content);
 
-    expect(filtered).not.toContain('Held out outline');
-    expect(filtered).not.toContain('| value |');
-    expect(filtered).not.toContain('| 1     |');
-    expect(filtered).toContain('Scenario: Kept');
+    expect(result.content).not.toContain('Held out outline');
+    expect(result.content).not.toContain('| value |');
+    expect(result.content).not.toContain('| 1     |');
+    expect(result.content).toContain('Scenario: Kept');
+    // A Scenario Outline counts as one held-out block, not two (Outline + Examples)
+    expect(result.heldOutCount).toBe(1);
   });
 
   it('treats docstring content as opaque, not as tags or Scenario headers', () => {
@@ -128,14 +134,15 @@ describe('filterHoldoutContent', () => {
       '',
     ].join('\n');
 
-    const filtered = filterHoldoutContent(content);
+    const result = filterHoldoutContent(content);
 
     // The @holdout / Scenario: lines inside the docstring are inert; only the
     // genuinely tagged Scenario is dropped.
-    expect(filtered).toContain('Scenario: Kept');
-    expect(filtered).toContain('not a real scenario');
-    expect(filtered).not.toContain('Scenario: Held');
-    expect(filtered).not.toContain('Given c');
+    expect(result.content).toContain('Scenario: Kept');
+    expect(result.content).toContain('not a real scenario');
+    expect(result.content).not.toContain('Scenario: Held');
+    expect(result.content).not.toContain('Given c');
+    expect(result.heldOutCount).toBe(1);
   });
 
   it('detects @holdout combined with another tag on the same line', () => {
@@ -152,10 +159,50 @@ describe('filterHoldoutContent', () => {
       '',
     ].join('\n');
 
-    const filtered = filterHoldoutContent(content);
+    const result = filterHoldoutContent(content);
 
-    expect(filtered).not.toContain('Held out');
-    expect(filtered).toContain('Scenario: Kept');
+    expect(result.content).not.toContain('Held out');
+    expect(result.content).toContain('Scenario: Kept');
+    expect(result.heldOutCount).toBe(1);
+  });
+
+  it('counts zero held-out blocks when there are no @holdout tags', () => {
+    const content = [
+      'Feature: Clean',
+      '  Scenario: Alpha',
+      '    Given x',
+      '    Then y',
+      '',
+    ].join('\n');
+
+    const result = filterHoldoutContent(content);
+    expect(result.heldOutCount).toBe(0);
+    expect(result.content).toBe(content);
+  });
+
+  it('counts each held-out Scenario Outline with Examples table as one block, not two', () => {
+    const content = [
+      'Feature: Outline Test',
+      '  @holdout',
+      '  Scenario Outline: Held outline',
+      '    Given <x>',
+      '    Then <y>',
+      '',
+      '    Examples:',
+      '      | x | y |',
+      '      | 1 | 2 |',
+      '      | 3 | 4 |',
+      '',
+      '  Scenario: Kept',
+      '    Given a',
+      '    Then b',
+      '',
+    ].join('\n');
+
+    const result = filterHoldoutContent(content);
+    expect(result.heldOutCount).toBe(1);
+    expect(result.content).toContain('Scenario: Kept');
+    expect(result.content).not.toContain('Held outline');
   });
 });
 
@@ -204,9 +251,9 @@ describe('filterHoldoutContent / parser tag agreement', () => {
       feature.scenarios.filter((s) => s.tags.includes(HOLDOUT_TAG)).map((s) => s.name)
     );
 
-    const filtered = filterHoldoutContent(FIXTURE);
+    const result = filterHoldoutContent(FIXTURE);
     const keptByFilter = new Set(
-      parseFeatureFile(filtered).scenarios.map((s) => s.name)
+      parseFeatureFile(result.content).scenarios.map((s) => s.name)
     );
 
     for (const s of feature.scenarios) {
@@ -219,5 +266,7 @@ describe('filterHoldoutContent / parser tag agreement', () => {
     // Sanity: the fixture actually exercises both branches.
     expect(parserHeldout).toEqual(new Set(['HeldPlain', 'HeldOutline']));
     expect(keptByFilter).toEqual(new Set(['KeptTagged', 'KeptAfterExamples']));
+    // Two held-out blocks (one plain Scenario, one Scenario Outline)
+    expect(result.heldOutCount).toBe(2);
   });
 });

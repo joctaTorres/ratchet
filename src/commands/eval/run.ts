@@ -13,7 +13,7 @@
  */
 
 import chalk from 'chalk';
-import { executeRun, buildReport, type EvalReport } from '../../core/eval/index.js';
+import { executeRun, evaluateRun, type EvalReport } from '../../core/eval/index.js';
 import {
   projectRoot,
   resolveScope,
@@ -67,7 +67,10 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
     includeSkipped: options.includeSkipped,
     holdout: options.holdout,
   });
-  const report = await buildReport(root, run.runId);
+  // The run path evaluates the invariant gate (with the spawner) and persists its
+  // full result onto the run, so a later `eval report` renders the same verdict
+  // read-only.
+  const report = await evaluateRun(root, run.runId);
   const warnings = [...specWarnings, ...baselineSkipWarnings(report.diff)];
 
   if (options.json) {

@@ -22,10 +22,11 @@ import { judgeCase, type CaseVerdict, type JudgeDeps } from './judge.js';
 import { ALL_CONTRIBUTOR_IDS } from './gate.js';
 import { resolveSkip, type SkipReason } from './skip.js';
 import { filterCasesByHoldout } from './holdout.js';
-import type { ContributorId } from './aggregate.js';
+import { contributorForBindingKind, type ContributorId } from './aggregate.js';
 import {
   generateRunId,
   persistRun,
+  persistCaseArtifacts,
   toSnapshot,
   type EvalRun,
   type CaseRecord,
@@ -96,6 +97,8 @@ function skipped(reason: SkipReason): CaseRecord {
 }
 
 async function judgeBound(
+  projectRoot: string,
+  runId: string,
   c: EvalCase,
   bound: ResolvedBinding,
   fixtures: FixtureManager,
@@ -104,6 +107,7 @@ async function judgeBound(
   const { cwd } = await fixtures.materialize(bound.binding.fixture, bound.binding.setup);
   // The gate already decided this case runs; judge it by its bound kind.
   const verdict = await judgeCase(c, bound.binding, cwd, judge);
+  const artifacts = verdict.artifacts ? persistCaseArtifacts(projectRoot, runId, c.id, verdict.artifacts) : undefined;
   return {
     verdict: verdict.verdict,
     reason: summarizeEvidence(verdict.evidence),
@@ -111,6 +115,7 @@ async function judgeBound(
     rubric: verdict.rubric,
     clauses: verdict.evidence,
     votes: verdict.votes,
+    ...(artifacts ? { artifacts } : {}),
   };
 }
 
@@ -149,10 +154,10 @@ export async function executeRun(projectRoot: string, options: RunOptions): Prom
       run.verdicts[c.id] = { ...UNBOUND };
       continue;
     }
-    // A bound case's contributor is its binding kind (deterministic | llm-judge).
-    const contributor = bound.binding.kind as ContributorId;
+    // A bound case's contributor is its binding kind, folded through the shared mapping.
+    const contributor = contributorForBindingKind(bound.binding.kind);
     run.verdicts[c.id] = options.gate.has(contributor)
-      ? await judgeBound(c, bound, fixtures, options.judge ?? {})
+      ? await judgeBound(projectRoot, run.runId, c, bound, fixtures, options.judge ?? {})
       : disabledContributor(contributor);
   }
 

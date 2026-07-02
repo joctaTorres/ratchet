@@ -15,11 +15,15 @@ invariants; the eval gate's `invariants` contributor enforces them.
 
 Key terms used throughout this document:
 
-- **invariant kinds** — the three shapes an invariant can take. A
+- **invariant kinds** — the four shapes an invariant can take. A
   **`deterministic`** invariant is an absolute predicate (a command that must
   pass). A **`monotonic`** invariant is a named measure that must never decrease
   versus the baseline (e.g. `scenario-count` — the anti-spec-weakening check). A
   **`snapshot`** invariant diffs current output against a checked-in golden file.
+  A **`mutation`** invariant carries a `test`/`budget`/`threshold` triple that
+  types a mutation-testing invariant (seed a small fault, run the user's own
+  `test` command as the oracle, hard-fail a survived mutant); evaluation is
+  wired (see [`kind: mutation`](#kind-mutation)).
 - **`active` flag** — a per-invariant boolean, required on every entry and never
   active-by-default. Only `active: true` invariants are enforced; **inert**
   (`active: false`) ones are declared but skipped, so activating one is always a
@@ -33,7 +37,7 @@ Key terms used throughout this document:
 Three components implement this, each with a single job:
 
 - The typed **loader** (`src/core/eval/invariants.ts`) parses the manifest into
-  the three invariant kinds and decides exactly one thing — whether the manifest
+  the four invariant kinds and decides exactly one thing — whether the manifest
   is well-formed — fail-closed.
 - The per-invariant **evaluator** (`src/core/eval/invariant-evaluator.ts`) takes
   one typed invariant at a time and computes a `pass` / `fail` / `unevaluable`
@@ -58,7 +62,7 @@ flowchart TD
     MANIFEST --> LOADER
 
     LOADER -->|🚫 file absent| EMPTY[✅ empty set<br/>no error]
-    LOADER -->|✓ well-formed| TYPED[📦 typed set<br/>deterministic · monotonic · snapshot]
+    LOADER -->|✓ well-formed| TYPED[📦 typed set<br/>deterministic · monotonic · snapshot · mutation]
     LOADER -->|❌ malformed YAML<br/>❌ invalid invariant<br/>❌ duplicate id| FAIL[🔐 InvariantManifestError<br/>fail closed]
 
     classDef source   fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
@@ -72,11 +76,11 @@ flowchart TD
     class FAIL err
 ```
 
-Each typed invariant is then evaluated against the run to one outcome. Each kind
-is checked its own way, but all three resolve into the same three-valued outcome,
-and anything that cannot be checked fails closed to a violation rather than a
-pass. The diagram funnels the three kinds through a single outcome node rather
-than fanning every kind to every result:
+Each typed invariant is then evaluated against the run to one outcome. All four
+kinds — `deterministic`/`monotonic`/`snapshot`/`mutation` — resolve dynamically
+into the same three-valued outcome. Anything that cannot be checked fails closed
+to a violation rather than a pass. The diagram funnels every kind through a
+single outcome node rather than fanning each to its own result:
 
 ```mermaid
 flowchart TD
@@ -88,10 +92,17 @@ flowchart TD
     EVAL -->|deterministic| DET[🧪 check.run<br/>evaluatePassCondition]
     EVAL -->|monotonic| MON[📈 measure vs<br/>baseline value]
     EVAL -->|snapshot| SNAP[📷 produce.run<br/>vs golden]
+    EVAL -->|mutation| MUTCACHE{{💾 persisted outcome<br/>for this run?}}
+
+    MUTCACHE -->|✓ hit| MUTHIT[📂 read outcome.json<br/>no agent spawn]
+    MUTCACHE -->|✗ miss| MUT[🧬 seed · run test oracle<br/>kill/survive per mutant]
+    MUT --> MUTSAVE[💾 persist diff/output<br/>+ outcome.json]
 
     DET --> OUTCOME
     MON --> OUTCOME
     SNAP --> OUTCOME
+    MUTHIT --> OUTCOME
+    MUTSAVE --> OUTCOME
 
     OUTCOME{{🔀 three-valued outcome}}
     OUTCOME -->|✓ checked · holds| PASS[✅ pass]
@@ -103,12 +114,14 @@ flowchart TD
     classDef kind     fill:#FFE4B5,stroke:#333,stroke-width:2px,color:black
     classDef ok       fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
     classDef err      fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+    classDef cache    fill:#ADD8E6,stroke:#333,stroke-width:2px,color:black
 
     class INV source
     class EVAL,OUTCOME core
-    class DET,MON,SNAP kind
+    class DET,MON,SNAP,MUT kind
     class PASS ok
     class FAILV,UNEV err
+    class MUTCACHE,MUTHIT,MUTSAVE cache
 ```
 
 Run-level, the gate reduces the manifest's active invariants to the `invariants`
@@ -161,7 +174,7 @@ Every invariant carries the shared fields:
 | Field         | Type      | Required | Description                                              |
 | ------------- | --------- | -------- | -------------------------------------------------------- |
 | `id`          | string    | yes      | Unique identifier (min length 1); duplicates are rejected. |
-| `kind`        | string    | yes      | `deterministic`, `monotonic`, or `snapshot`.             |
+| `kind`        | string    | yes      | `deterministic`, `monotonic`, `snapshot`, or `mutation`. |
 | `active`      | boolean   | yes      | Whether the invariant is enforced; never active-by-default. |
 | `description` | string    | no       | Free-form note.                                          |
 
@@ -221,6 +234,42 @@ invariants:
     produce:
       run: ratchet api --json
 ```
+
+### `kind: mutation`
+
+A mutation-testing invariant: seed a small fault (a mutant), run the user's own
+test suite as the oracle, and hard-fail if a mutant survives. `test` is a bare
+command string, not a `check`-style pass condition — a mutation invariant's
+pass/fail is decided per-mutant (kill vs survive) by the downstream harness, not
+by the test command's own exit code in isolation.
+
+| Field       | Type   | Required | Description                                                          |
+| ----------- | ------ | -------- | --------------------------------------------------------------------- |
+| `test`      | string | yes      | The user's test command (min length 1) — the oracle every seeded mutant is run against. No auto-detection, author-supplied, mirroring `check.run`. |
+| `budget`    | number | yes      | Positive integer ceiling: at most this many mutants are seeded per run. |
+| `threshold` | number | yes      | Positive integer floor: at least this many mutants must reach a kill/survive verdict for the invariant to be evaluable. |
+
+```yaml
+invariants:
+  - id: mutants-are-killed
+    kind: mutation
+    active: false
+    test: pnpm test
+    budget: 5
+    threshold: 3
+```
+
+The seed/run-oracle/classify/revert harness exists standalone at
+`src/core/eval/mutation-harness.ts` — see [Mutation harness](eval-mutation-harness.md).
+It drives the configured coding agent through the same spawn seam the
+`llm-judge` binding uses to seed one fault at a time, runs `test` as the
+deterministic oracle, and classifies each fault killed or survived.
+`evaluateInvariant` runs this harness and reduces its per-mutant results to a
+real `pass`/`fail`/`unevaluable` outcome, persisting each mutant's diff and test
+output as replayable run evidence — see
+[How each kind is evaluated](#how-each-kind-is-evaluated). `ratchet init`
+scaffolds a `kind: mutation` entry into the default manifest — see
+[Default manifest](#default-manifest).
 
 ## Loader contract
 
@@ -285,13 +334,37 @@ spawn or filesystem.
   root) via the injected `readFile`, runs `produce.run`, and diffs the produced
   stdout (trimmed) against the golden (trimmed): equal is pass, differing is fail.
   An **absent golden**, or a `produce` command that **throws**, is `unevaluable`.
+- **mutation** — checks for a persisted outcome for this `(run.runId,
+  invariant.id)` first; a hit is returned verbatim, with no harness call and no
+  agent spawn. A miss runs the mutation harness (seeds up to `budget` mutants
+  via the agent spawn seam, gates each on `test` as the kill/survive oracle) and
+  reduces the per-mutant results: any **survived** mutant is a hard `fail`,
+  regardless of how many others were killed. Short of that, **fewer than
+  `threshold`** evaluated mutants is `unevaluable` — not enough evidence to trust
+  a "no survivors" claim. A harness call that **throws**, or an **unusable
+  working tree**, is also `unevaluable` (neither persisted nor cached, since no
+  mutant was seeded). Otherwise (at least `threshold` mutants evaluated, none
+  survived): pass. Whenever at least one mutant ran, every mutant's diff and
+  oracle stdout/stderr — killed or survived alike — is persisted as durable run
+  evidence on `InvariantOutcome.artifacts`, and the reduced outcome itself is
+  persisted alongside it, so a survived mutant's exact fault and test output is
+  reproducible from the run record alone and a repeated evaluation of the same
+  run never re-spawns the agent.
 
 ## Gate contributor
 
-`evaluateInvariantGate({ projectRoot, run, baseline, bash?, readFile? })` is the
-run-level seam that wires the manifest into the verdict. It runs **once per run**,
-inside `buildReport` — the single place a run's verdict is aggregated, shared by
-`eval run`, `eval report`, and any batch `verify` that surfaces an eval verdict.
+`evaluateInvariantGate({ projectRoot, run, baseline, bash?, readFile?, spawner? })`
+is the run-level seam that wires the manifest into the verdict. It runs **once per
+run, at run time**, inside `evaluateRun` (the `eval run` path) — the one command
+that evaluates the gate, running the invariant check/produce commands and, for an
+active `mutation` invariant, spawning the seeding agent. `evaluateRun` **persists
+the reduced result onto the run** (`run.invariantGate`). The read-only report path
+(`renderReport`, the `eval report` command) reads that persisted result instead of
+re-evaluating — so reporting a run never re-runs a check command, spawns an agent,
+or mutates the working tree. A run with no persisted gate (the `invariants`
+contributor was disabled, or a legacy run predating gate persistence) renders its
+invariants **not evaluated** (`EvalReport.invariantsEvaluated: false`) — a neutral
+state that takes no part in the verdict.
 
 1. **Load fail-closed.** A present-but-broken manifest (`InvariantManifestError`)
    returns a non-empty `failing` (the manifest filename) plus a `loadError`, so the
@@ -312,7 +385,7 @@ precomputed upstream and fed into the pure, synchronous aggregation core through
 reads `diff.regressions`. The async command-running stays out of the aggregation
 core, which remains I/O-free.
 
-`buildReport` evaluates the gate **only when the `invariants` contributor is in
+`evaluateRun` evaluates the gate **only when the `invariants` contributor is in
 the run's enabled set** (`run.gate`). A disabled contributor runs no manifest
 command and takes no part in the AND. The per-invariant breakdown is exposed on
 `EvalReport.invariants` (and `EvalReport.loadError`), and `ratchet eval run`
@@ -342,8 +415,8 @@ contributor is absent from the verdict — the same generic mechanism as
 | `loadInvariantManifest(root)`     | Loads and validates the manifest; fail-closed.                      |
 | `invariantsManifestPath(root)`    | Resolves the manifest path under `.ratchet/evals/`.                 |
 | `InvariantManifestError`          | Error raised for any present-but-broken manifest.                   |
-| `Invariant`                       | Discriminated union of the three invariant kinds.                   |
-| `DeterministicInvariant` / `MonotonicInvariant` / `SnapshotInvariant` | Per-kind types.                 |
+| `Invariant`                       | Discriminated union of the four invariant kinds.                    |
+| `DeterministicInvariant` / `MonotonicInvariant` / `SnapshotInvariant` / `MutationInvariant` | Per-kind types.  |
 | `InvariantManifest`               | Load result: `{ invariants: Invariant[] }`.                         |
 | `InvariantSchema`                 | The zod discriminated union backing validation.                     |
 | `evaluateInvariant(inv, ctx)`     | Computes one `pass` / `fail` / `unevaluable` outcome for an invariant; fail-closed. |
@@ -372,6 +445,12 @@ real from the first run rather than opt-in by omission:
   `check.run: test -d <detected-dir>`, ready to flip to `active: true`. When
   none is found, it is emitted as a commented-out placeholder instead of a
   guessed path — never parsed by the loader.
+- **`mutants-are-killed`** (`mutation`) is always **inert** (`active: false`),
+  gated on the same `detectTestDirectory` signal as `tests-still-exist`. When
+  a conventional test directory is found, the entry is emitted as live,
+  uncommented YAML with placeholder `test`/`budget`/`threshold` values ready
+  to fill in and flip to `active: true`. When none is found, it is emitted as
+  a commented-out placeholder instead — never parsed by the loader.
 - **`public-api-unchanged`** (`snapshot`) is always **inert** and always a
   commented-out placeholder. A real `produce.run` needs a toolchain-specific
   command (a TypeScript declaration diff, `cargo public-api`, etc.); ratchet

@@ -13,14 +13,22 @@
  * the non-held-out case(s), and a held-out, deterministic-bound case run
  * under `holdout: true` is judged and gated exactly like any other bound
  * case.
+ *
+ * Also implements the last two scenarios of
+ * features/web-deterministic-fold/deterministic-contributor-fold.feature:
+ * disabling the `deterministic` contributor leaves a `web`-bound case
+ * unjudged without ever starting its app, and restricting the gate to
+ * `deterministic` still judges a `web`-bound case while a sibling
+ * `llm-judge`-bound case is recorded unjudged.
  */
 import { afterEach, describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { executeRun } from '../../../src/core/eval/execute.js';
 import { ALL_CONTRIBUTOR_IDS } from '../../../src/core/eval/gate.js';
 import type { ContributorId } from '../../../src/core/eval/aggregate.js';
+import type { ProcessHandle, ProcessStarter } from '../../../src/core/eval/web-lifecycle.js';
 
 const roots: string[] = [];
 
@@ -188,5 +196,163 @@ describe('executeRun: holdout scope filter', () => {
     expect(record.rubric).toEqual(['contains:applyRequires']);
     expect(record.clauses).toHaveLength(1);
     expect(record.votes).toEqual([{ pass: true, clauses: record.clauses }]);
+  });
+});
+
+describe('executeRun: web-bound cases gate through the deterministic contributor', () => {
+  const WEB_CASE = 'features/web/checkout#checkout-flow';
+  const LLM_CASE = 'features/web/review#review-flow';
+
+  function fakeStart(calls: Array<{ command: string; cwd: string }>): ProcessStarter {
+    return (command, cwd) => {
+      calls.push({ command, cwd });
+      const handle: ProcessHandle = { pid: 1, kill() {} };
+      return handle;
+    };
+  }
+
+  function writeWebFixtures(root: string): void {
+    writeFile(
+      root,
+      '.ratchet/features/web/checkout.feature',
+      'Feature: Checkout\n  Scenario: Checkout flow\n    Given a cart\n    Then it checks out\n'
+    );
+    mkdirSync(path.join(root, '.ratchet/evals/fixtures/storefront-app'), { recursive: true });
+    writeFile(
+      root,
+      '.ratchet/evals/specs/web.yaml',
+      [
+        `${WEB_CASE}:`,
+        '  fixture: storefront-app',
+        '  kind: web',
+        '  start: pnpm dev',
+        '  readiness:',
+        '    url: http://localhost:3000',
+        '    timeoutMs: 5000',
+        '  spec: e2e/checkout.spec.ts',
+        '',
+      ].join('\n')
+    );
+  }
+
+  it('leaves a web-bound case unjudged naming the disabled deterministic contributor, never starting its app', async () => {
+    const root = makeProject();
+    writeWebFixtures(root);
+    const startCalls: Array<{ command: string; cwd: string }> = [];
+    const gate = new Set<ContributorId>(ALL_CONTRIBUTOR_IDS.filter((id) => id !== 'deterministic'));
+    const { run } = await executeRun(root, {
+      scope: { kind: 'store' },
+      gate,
+      judge: { web: { start: fakeStart(startCalls), checkReadiness: async () => true } },
+    });
+    const record = run.verdicts[WEB_CASE];
+    expect(record.verdict).toBe('unjudged');
+    expect(record.reason).toContain("'deterministic'");
+    expect(startCalls).toEqual([]);
+  });
+
+  it('still judges a web-bound case when the gate is restricted to deterministic, while a sibling llm-judge case is disabled', async () => {
+    const root = makeProject();
+    writeWebFixtures(root);
+    writeFile(
+      root,
+      '.ratchet/features/web/review.feature',
+      'Feature: Review\n  Scenario: Review flow\n    Given a review\n    Then it is submitted\n'
+    );
+    writeFile(
+      root,
+      '.ratchet/evals/specs/review.yaml',
+      [`${LLM_CASE}:`, '  fixture: storefront-app', '  kind: llm-judge', '  success: it works', ''].join('\n')
+    );
+    const startCalls: Array<{ command: string; cwd: string }> = [];
+    const gate = new Set<ContributorId>(['deterministic']);
+    const { run } = await executeRun(root, {
+      scope: { kind: 'store' },
+      gate,
+      judge: {
+        web: {
+          start: fakeStart(startCalls),
+          checkReadiness: async () => true,
+          bash: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+        },
+      },
+    });
+    expect(run.verdicts[WEB_CASE].verdict).toBe('pass');
+    expect(startCalls).toHaveLength(1);
+    expect(run.verdicts[LLM_CASE].verdict).toBe('unjudged');
+    expect(run.verdicts[LLM_CASE].reason).toContain("'llm-judge'");
+  });
+
+  // features/web-failure-evidence/failure-artifacts.feature
+  it("persists a failing web-bound case's trace and screenshot as durable, project-relative run evidence", async () => {
+    const root = makeProject();
+    writeWebFixtures(root);
+    const startCalls: Array<{ command: string; cwd: string }> = [];
+    const artifactsSrcDir = mkdtempSync(path.join(tmpdir(), 'eval-web-artifacts-'));
+    roots.push(artifactsSrcDir);
+    const tracePath = path.join(artifactsSrcDir, 'trace.zip');
+    const screenshotPath = path.join(artifactsSrcDir, 'test-failed-1.png');
+    writeFileSync(tracePath, 'trace-bytes');
+    writeFileSync(screenshotPath, 'screenshot-bytes');
+    const readReport = async (): Promise<string> =>
+      JSON.stringify({
+        suites: [
+          {
+            specs: [
+              {
+                tests: [
+                  {
+                    results: [
+                      {
+                        attachments: [
+                          { name: 'trace', path: tracePath },
+                          { name: 'screenshot', path: screenshotPath },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+    const { run } = await executeRun(root, {
+      scope: { kind: 'store' },
+      gate: ALL_GATE,
+      judge: {
+        web: {
+          start: fakeStart(startCalls),
+          checkReadiness: async () => true,
+          bash: async () => ({ exitCode: 1, stdout: '', stderr: '1 failed' }),
+          readReport,
+        },
+      },
+    });
+    const record = run.verdicts[WEB_CASE];
+    expect(record.verdict).toBe('fail');
+    expect(record.artifacts?.trace).toContain(path.join('.ratchet', 'evals', 'runs', run.runId, 'artifacts', WEB_CASE));
+    expect(existsSync(path.join(root, record.artifacts!.trace!))).toBe(true);
+    expect(existsSync(path.join(root, record.artifacts!.screenshot!))).toBe(true);
+  });
+
+  it("leaves a passing web-bound case's CaseRecord.artifacts undefined", async () => {
+    const root = makeProject();
+    writeWebFixtures(root);
+    const startCalls: Array<{ command: string; cwd: string }> = [];
+    const { run } = await executeRun(root, {
+      scope: { kind: 'store' },
+      gate: ALL_GATE,
+      judge: {
+        web: {
+          start: fakeStart(startCalls),
+          checkReadiness: async () => true,
+          bash: async () => ({ exitCode: 0, stdout: '1 passed', stderr: '' }),
+        },
+      },
+    });
+    const record = run.verdicts[WEB_CASE];
+    expect(record.verdict).toBe('pass');
+    expect(record.artifacts).toBeUndefined();
   });
 });

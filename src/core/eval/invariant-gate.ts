@@ -36,7 +36,7 @@ import {
   type FileReader,
 } from './invariant-evaluator.js';
 import type { EvalRun } from './run.js';
-import type { BashRunner } from '../batch/engine/index.js';
+import type { BashRunner, Spawner } from '../batch/engine/index.js';
 
 /** The reduced gate result the `invariants` contributor reads. */
 export interface InvariantGateResult {
@@ -60,6 +60,8 @@ export interface InvariantGateInput {
   baseline: EvalRun | null;
   bash?: BashRunner;
   readFile?: FileReader;
+  spawner?: Spawner;
+  agentName?: string;
 }
 
 /**
@@ -97,6 +99,8 @@ export async function evaluateInvariantGate(
       baseline: input.baseline,
       bash: input.bash,
       readFile: input.readFile,
+      spawner: input.spawner,
+      agentName: input.agentName,
     });
     outcomes.push(outcome);
     if (isInvariantViolation(outcome)) failing.push(outcome.id);

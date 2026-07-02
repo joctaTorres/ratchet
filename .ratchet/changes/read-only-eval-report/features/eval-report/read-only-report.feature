@@ -5,18 +5,6 @@ Feature: Read-only eval report
   check command, never spawns a mutation-seeding agent, and never mutates the
   working tree — while `eval run` remains the one place the gate is evaluated
 
-  # The run-level invariant gate is evaluated inside a single seam that BOTH
-  # `eval run` and `eval report` route through today. Evaluating an active
-  # `mutation` invariant on a cache miss spawns a coding agent and, through the
-  # mutation harness, `git reset --hard` / `git clean -fd`s the tree — so the
-  # read-only `eval report` verb can spawn and mutate. This change splits the two
-  # responsibilities: `evaluateRun` (run path) evaluates the gate WITH the spawner
-  # and PERSISTS the full result onto the run; `renderReport` (report path) is
-  # PURE and reads the persisted result. A run whose gate was never persisted
-  # (invariants disabled, or a legacy run predating this change) renders its
-  # invariants as a neutral "not evaluated" state that never re-evaluates and never
-  # affects the pass/fail gate.
-
   Background:
     Given the run-level invariant gate is evaluated by `evaluateInvariantGate` with a spawner
     And the verdict-aggregation core decides a run's verdict as an AND over contributors

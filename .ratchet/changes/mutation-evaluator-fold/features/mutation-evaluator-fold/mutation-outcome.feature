@@ -7,16 +7,6 @@ Feature: Mutation invariant folds into evaluateInvariant
   is recorded unevaluable — never a silent pass — through the same outcome shape
   every other invariant kind already returns
 
-  # This is the fold slice: `runMutationHarness` (mutation-oracle-harness) already
-  # seeds, runs the oracle, classifies, and reverts one mutant at a time; this
-  # change is the only one that decides what the harness's per-mutant results mean
-  # for the invariant's own pass/fail/unevaluable outcome. Persisting each
-  # mutant's diff and test output as replayable run evidence, and scaffolding a
-  # `kind: mutation` entry from `ratchet init`, are downstream changes
-  # (mutation-evidence-recording, init-mutation-scaffold) — this slice's evidence
-  # is a human-readable summary string, matching every other kind's `measure` /
-  # `evidence` fields.
-
   Background:
     Given an active mutation invariant with a test command, a budget, and a threshold
     And an eval run and the project it was produced in

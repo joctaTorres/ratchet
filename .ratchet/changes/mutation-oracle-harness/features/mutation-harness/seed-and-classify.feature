@@ -5,12 +5,6 @@ Feature: Mutant seeding, oracle run, and kill/survive classification
   So that a `kind: mutation` invariant can classify each mutant as killed or
   survived without any external mutation framework
 
-  # This is the standalone harness slice: seeding, running the oracle,
-  # classifying, and reverting. Folding the result into evaluateInvariant's
-  # pass/fail/unevaluable outcome (budget/threshold semantics included) is
-  # downstream (mutation-evaluator-fold), mirroring how web-lifecycle-harness
-  # shipped runWebLifecycle before web-deterministic-fold wired it into judgeCase.
-
   Scenario: A survived mutant is recorded when the test command still passes
     Given a mutation invariant with a test command and a budget of at least 1
     When the harness seeds one mutant through the configured agent's spawn seam

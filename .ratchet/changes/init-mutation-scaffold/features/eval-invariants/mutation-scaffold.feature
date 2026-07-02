@@ -5,15 +5,6 @@ Feature: Default manifest scaffolds a kind: mutation invariant
   So that turning on real mutation-testing anti-gaming is a matter of filling
   in my own test command rather than hand-authoring the entry from scratch
 
-  # This is the init-scaffolding slice for the mutation invariant kind. The
-  # manifest schema (mutation-invariant-schema), the harness
-  # (mutation-oracle-harness), and the evaluator wiring
-  # (mutation-evaluator-fold, mutation-evidence-recording) are already
-  # shipped and gate over whatever manifest exists. This slice is the one
-  # place that writes the manifest in the first place, on `ratchet init`,
-  # so the mutation invariant is present — inert, but ready to complete —
-  # from the first run.
-
   Scenario: A detected test directory scaffolds a live, inert mutation invariant
     Given a project with no .ratchet/evals/invariants.yaml file and a conventional test directory
     When ratchet init runs for the project

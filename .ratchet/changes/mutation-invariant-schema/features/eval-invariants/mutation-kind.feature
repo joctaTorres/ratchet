@@ -5,12 +5,6 @@ Feature: Mutation invariant schema
   existing three kinds, ready for the evaluator to gate on it in a follow-on
   change
 
-  # This is the schema slice of the mutation invariant: it teaches the loader a
-  # fourth kind and decides only whether a `kind: mutation` entry is well-formed.
-  # Seeding mutants via the agent spawn seam, running `test` as the oracle, and
-  # gating on kill/survive are downstream (mutation-oracle-harness /
-  # mutation-evaluator-fold).
-
   Background:
     Given a project with a .ratchet/evals/ directory
 

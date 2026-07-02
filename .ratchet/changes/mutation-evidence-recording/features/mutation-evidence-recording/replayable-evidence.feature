@@ -7,16 +7,6 @@ Feature: Mutation invariant evidence is persisted as replayable run evidence
   the run record alone, and evaluating the same run a second time never
   re-invokes the coding agent to find out what it already found
 
-  # `evaluateMutation` (mutation-evaluator-fold) already reduces the harness's
-  # per-mutant kill/survive results to a pass/fail/unevaluable outcome, but its
-  # `evidence` is a human-readable summary string only — the mutant's full diff
-  # and the oracle's full stdout/stderr are discarded the moment the outcome is
-  # returned, and a second evaluation of the same run re-runs the harness (and
-  # therefore re-spawns the agent) from scratch. This slice makes that evidence
-  # durable and makes a mutation invariant's evaluation for a given run
-  # idempotent, following the `artifacts?` / `persistCaseArtifacts` convention
-  # `web-failure-evidence` already established for case-level evidence.
-
   Background:
     Given an active mutation invariant with a test command, a budget, and a threshold
     And an eval run and the project it was produced in

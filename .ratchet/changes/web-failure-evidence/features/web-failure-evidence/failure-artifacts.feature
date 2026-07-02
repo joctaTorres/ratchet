@@ -5,14 +5,6 @@ Feature: Failure evidence capture for web-bound cases
   So that the failure is reproducible from the run record alone, without re-running
   the app or digging through a throwaway fixture working copy
 
-  # Trace capture is forced via the harness's own `--trace=retain-on-failure`
-  # invocation, so it is unconditional. Screenshot capture is Playwright's own
-  # `use.screenshot` config feature (there is no CLI override for it) — the
-  # harness reads whatever Playwright itself reports as captured via its JSON
-  # reporter's per-test `attachments[]`, it never fabricates or assumes a
-  # screenshot exists. A project whose Playwright config does not enable
-  # `use.screenshot` will only ever have a trace captured, never a screenshot.
-
   Background:
     Given a `web`-bound case executed through `ratchet eval run`
 

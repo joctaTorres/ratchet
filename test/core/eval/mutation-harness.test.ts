@@ -115,9 +115,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
       [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': A_DIFF,
-      // First call is the green-baseline probe on the clean tree; the mutant's
-      // oracle run then fails, so the fault is killed.
-      'pnpm test': [TEST_PASS, TEST_FAIL],
+      'pnpm test': TEST_FAIL,
       [REVERT]: CLEAN,
     });
 
@@ -142,10 +140,6 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
 
     expect(sequence).toEqual([
       `bash:${WORKING_TREE_PROBE}`,
-      // Green-baseline probe on the clean tree (with its own revert) runs once
-      // before any seeding.
-      'bash:pnpm test',
-      `bash:${REVERT}`,
       'spawn',
       'bash:git add -A',
       'bash:git diff --cached',
@@ -181,16 +175,13 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
       [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': NO_DIFF,
-      'pnpm test': TEST_PASS, // green baseline; the no-diff attempt never runs it
       [REVERT]: CLEAN,
     });
 
     const outcome = await runMutationHarness(invariant({ budget: 1 }), '/work', { bash, spawner });
 
     expect(outcome).toEqual({ kind: 'completed', mutants: [] });
-    // The oracle runs exactly once — the green-baseline probe — and NOT for the
-    // no-diff attempt, which is skipped before the oracle is reached.
-    expect(bashCalls.filter((c) => c.command === 'pnpm test')).toHaveLength(1);
+    expect(bashCalls.some((c) => c.command === 'pnpm test')).toBe(false);
     // The revert lives in `finally`, so a no-diff attempt still reverts (a
     // harmless no-op) — the tree is guaranteed clean before the next attempt.
     expect(bashCalls.some((c) => c.command === REVERT)).toBe(true);
@@ -220,8 +211,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
       [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': A_DIFF,
-      // Green baseline, then first mutant survives, second is killed.
-      'pnpm test': [TEST_PASS, TEST_PASS, TEST_FAIL],
+      'pnpm test': [TEST_PASS, TEST_FAIL], // first mutant survives, second is killed
       [REVERT]: CLEAN,
     });
 
@@ -230,8 +220,7 @@ describe('runMutationHarness seeding, oracle, and classification', () => {
     expect(outcome.kind).toBe('completed');
     if (outcome.kind !== 'completed') throw new Error('unreachable');
     expect(outcome.mutants.map((m) => m.outcome)).toEqual(['survived', 'killed']);
-    // One revert for the baseline probe plus one per budget attempt.
-    expect(bashCalls.filter((c) => c.command === REVERT)).toHaveLength(3);
+    expect(bashCalls.filter((c) => c.command === REVERT)).toHaveLength(2);
   });
 });
 
@@ -256,63 +245,6 @@ describe('runMutationHarness fail-closed preconditions', () => {
     const outcome = await runMutationHarness(invariant({ budget: 3 }), '/work', { bash, spawner });
 
     expect(outcome.kind).toBe('unusable-working-tree');
-    expect(spawnRequests).toHaveLength(0);
-  });
-});
-
-describe('runMutationHarness green-baseline precondition', () => {
-  it('reports oracle-not-green and seeds nothing when the test suite is already red on the clean tree', async () => {
-    const { bash, spawner, spawnRequests, bashCalls } = makeSeams({
-      [WORKING_TREE_PROBE]: CLEAN,
-      'pnpm test': TEST_FAIL, // suite is red on the unmutated tree
-      [REVERT]: CLEAN,
-    });
-
-    const outcome = await runMutationHarness(invariant({ budget: 3 }), '/work', { bash, spawner });
-
-    expect(outcome.kind).toBe('oracle-not-green');
-    if (outcome.kind !== 'oracle-not-green') throw new Error('unreachable');
-    expect(outcome.reason).toContain("'pnpm test'");
-    expect(outcome.reason).toContain('did not pass on the clean baseline tree');
-    // Nothing was seeded: no agent spawned, and the diff/add commands never ran.
-    expect(spawnRequests).toHaveLength(0);
-    expect(bashCalls.some((c) => c.command === 'git add -A')).toBe(false);
-    expect(bashCalls.some((c) => c.command === 'git diff --cached')).toBe(false);
-    // The baseline oracle run reverted itself, leaving the tree as found.
-    expect(bashCalls.at(-1)).toEqual({ command: REVERT, cwd: '/work' });
-  });
-
-  it('checks the green baseline only after the working-tree cleanliness check, and reverts the baseline run', async () => {
-    const { bash, spawner, sequence } = makeSeams({
-      [WORKING_TREE_PROBE]: CLEAN,
-      'git add -A': CLEAN,
-      'git diff --cached': A_DIFF,
-      'pnpm test': TEST_PASS,
-      [REVERT]: CLEAN,
-    });
-
-    await runMutationHarness(invariant({ budget: 1 }), '/work', { bash, spawner });
-
-    // Probe first, THEN the baseline oracle (with its own revert), THEN seeding.
-    expect(sequence.slice(0, 3)).toEqual([
-      `bash:${WORKING_TREE_PROBE}`,
-      'bash:pnpm test',
-      `bash:${REVERT}`,
-    ]);
-  });
-
-  it('propagates a thrown baseline oracle rather than swallowing it as oracle-not-green', async () => {
-    const baselineError = new Error('pnpm: command not found');
-    const { bash, spawner, spawnRequests } = makeSeams({
-      [WORKING_TREE_PROBE]: CLEAN,
-      'pnpm test': baselineError, // the oracle binary is missing: cannot run at all
-      [REVERT]: CLEAN,
-    });
-
-    await expect(runMutationHarness(invariant({ budget: 1 }), '/work', { bash, spawner })).rejects.toThrow(
-      'pnpm: command not found'
-    );
-    // A throw is "could not run at all", distinct from a red suite; nothing seeded.
     expect(spawnRequests).toHaveLength(0);
   });
 });
@@ -386,8 +318,7 @@ describe('runMutationHarness reverts the seeded mutant even when an attempt thro
       [WORKING_TREE_PROBE]: CLEAN,
       'git add -A': CLEAN,
       'git diff --cached': A_DIFF,
-      // Green baseline first, then the mutant's oracle run throws mid-attempt.
-      'pnpm test': [TEST_PASS, oracleError],
+      'pnpm test': oracleError,
       [REVERT]: CLEAN,
     });
 

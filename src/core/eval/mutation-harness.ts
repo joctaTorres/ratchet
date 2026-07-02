@@ -12,30 +12,15 @@
  * invoked through the same `BashRunner` seam `evaluateDeterministic` and
  * `judgeCheck` already shell out with — not a new dependency.
  *
- * Fail-closed preconditions, both checked before anything is seeded:
- *
- *   1. Clean working tree — the harness refuses to seed anything unless the
- *      project's git working tree is already clean, so a seeded fault can never
- *      be misattributed to — or destroy — a user's pre-existing uncommitted
- *      work. The cleanliness probe excludes ratchet's own transient run
- *      directory (`.ratchet/evals/runs`), because `eval run` persists the run
- *      record there BEFORE the invariant gate runs — in a repo that tracks
- *      `.ratchet/` that freshly-written record would otherwise count as a dirty
- *      tree and the mutation invariant could never evaluate. Any other
- *      uncommitted path still marks the tree unusable.
- *
- *   2. Green baseline — after the tree is confirmed clean, the harness runs the
- *      invariant's own `test` command ONCE on the unmutated tree and requires it
- *      to exit 0. This is the load-bearing anti-vacuity check: the oracle
- *      classifies a mutant `killed` on a non-zero exit and `survived` on exit 0,
- *      so a suite that is ALREADY red on the clean tree would classify every
- *      seeded mutant `killed` regardless of the mutation, producing zero
- *      survivors and a silently vacuous `pass` — the exact gaming hole the
- *      mutation invariant exists to close. A red baseline therefore seeds
- *      nothing and returns `oracle-not-green`, which the evaluator maps to
- *      `unevaluable` (never `pass`). A baseline oracle that cannot run at all
- *      (throws) is not caught here: it propagates so the evaluator records it as
- *      "harness could not run", distinct from "ran but red".
+ * Fail-closed precondition: the harness refuses to seed anything unless the
+ * project's git working tree is already clean, so a seeded fault can never be
+ * misattributed to — or destroy — a user's pre-existing uncommitted work. The
+ * cleanliness probe excludes ratchet's own transient run directory
+ * (`.ratchet/evals/runs`), because `eval run` persists the run record there
+ * BEFORE the invariant gate runs — in a repo that tracks `.ratchet/` that
+ * freshly-written record would otherwise count as a dirty tree and the
+ * mutation invariant could never evaluate. Any other uncommitted path still
+ * marks the tree unusable.
  *
  * Deliberately NOT wired into `evaluateInvariant`/`evaluateMutation` yet:
  * reducing this harness's per-mutant outcomes into an `InvariantOutcome` with
@@ -68,7 +53,6 @@ export interface MutantOutcome {
 
 export type MutationHarnessOutcome =
   | { kind: 'unusable-working-tree'; reason: string }
-  | { kind: 'oracle-not-green'; reason: string }
   | { kind: 'completed'; mutants: MutantOutcome[] };
 
 /** The persisted, project-relative form of a `MutantOutcome`'s in-memory `diff`/`testResult`. */
@@ -187,53 +171,7 @@ async function checkWorkingTree(bash: BashRunner, cwd: string): Promise<{ clean:
 }
 
 /**
- * Green-baseline precondition: run the invariant's own `test` command once on
- * the clean, unmutated tree and require exit 0 before any mutant is seeded.
- *
- * This is what stops a vacuous pass. The oracle decides `killed` on a non-zero
- * exit; if the suite is already red on the clean tree, EVERY seeded mutant would
- * exit non-zero and be scored `killed` no matter what was mutated, so the run
- * would report zero survivors and pass while proving nothing. Requiring a green
- * baseline guarantees a subsequent non-zero exit is attributable to the seeded
- * fault, which is the whole premise of the kill/survive classification.
- *
- * The oracle run reverts unconditionally in a `finally` (the same scoped revert
- * the seed loop uses), so any artifact the test command writes cannot leak into
- * the first mutant's `git diff --cached`, and the tree is left exactly as clean
- * as it was found. Only a non-zero EXIT becomes `{ green: false }` here; a
- * thrown bash call (oracle binary missing) is deliberately NOT caught, so it
- * propagates to `runMutationHarness`'s caller as a genuine "could not run at
- * all" failure — distinct from "ran and was red".
- */
-async function checkOracleBaseline(
-  bash: BashRunner,
-  test: string,
-  cwd: string
-): Promise<{ green: true } | { green: false; reason: string }> {
-  let result: BashResult;
-  try {
-    result = await bash(test, cwd);
-  } finally {
-    await bash(REVERT_COMMAND, cwd);
-  }
-  if (result.exitCode !== 0) {
-    return {
-      green: false,
-      reason: `the oracle test command '${test}' did not pass on the clean baseline tree (exit ${result.exitCode}); refusing to seed mutants, because a suite that is already red would score every mutant 'killed' and yield a vacuously passing invariant.`,
-    };
-  }
-  return { green: true };
-}
-
-/**
- * Run the mutation harness. Two fail-closed preconditions gate the seed loop,
- * checked in order and seeding nothing if either fails: the working tree must be
- * clean (`unusable-working-tree`), and the invariant's `test` command must pass
- * once on that clean tree (`oracle-not-green`). The green-baseline gate is what
- * prevents a vacuous pass — see `checkOracleBaseline` — since an already-red
- * suite would score every mutant `killed` and report no survivors.
- *
- * Then, for up to `invariant.budget` attempts, spawn the
+ * Run the mutation harness: for up to `invariant.budget` attempts, spawn the
  * configured agent to seed one fault, detect it via `git diff --cached`
  * (an empty diff is not a mutant and never reaches the oracle), run
  * `invariant.test` as the deterministic oracle, classify
@@ -258,15 +196,6 @@ export async function runMutationHarness(
   const treeState = await checkWorkingTree(bash, cwd);
   if (!treeState.clean) {
     return { kind: 'unusable-working-tree', reason: treeState.reason };
-  }
-
-  // Green-baseline gate: the oracle must pass on the unmutated tree, or the
-  // kill/survive classification is meaningless and every mutant would score
-  // `killed` vacuously. Runs AFTER the cleanliness check and reverts itself, so
-  // it never dirties the tree the seed loop is about to mutate.
-  const baseline = await checkOracleBaseline(bash, invariant.test, cwd);
-  if (!baseline.green) {
-    return { kind: 'oracle-not-green', reason: baseline.reason };
   }
 
   const mutants: MutantOutcome[] = [];

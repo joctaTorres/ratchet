@@ -29,6 +29,11 @@ export type ContributorId = 'deterministic' | 'llm-judge' | 'invariants' | 'regr
  * `web` folds into `deterministic` rather than introducing a new contributor
  * id — an exhaustive switch so a future `BindingKind` fails to compile here
  * instead of silently defaulting.
+ *
+ * The branch density here is inherent to a deliberately exhaustive, type-checked
+ * mapping: it has no `default` on purpose, so the compiler forces every
+ * `BindingKind` to be handled. Adding a `default` to lower the branch count would
+ * defeat that exhaustiveness check.
  */
 export function contributorForBindingKind(kind: BindingKind): ContributorId {
   switch (kind) {

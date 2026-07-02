@@ -141,17 +141,28 @@ interface PlaywrightReport {
   suites?: PlaywrightSuite[];
 }
 
-/** Walk `suites[].specs[].tests[].results[].attachments[]`, recursing into nested `suites[]`. */
+/** Walk one suite's own `specs[].tests[].results[].attachments[]` (no recursion into nested suites). */
+function attachmentsFromSpecs(specs: PlaywrightSpec[] | undefined): PlaywrightAttachment[] {
+  const attachments: PlaywrightAttachment[] = [];
+  for (const spec of specs ?? []) {
+    for (const test of spec.tests ?? []) {
+      for (const result of test.results ?? []) {
+        attachments.push(...(result.attachments ?? []));
+      }
+    }
+  }
+  return attachments;
+}
+
+/**
+ * Walk `suites[].specs[].tests[].results[].attachments[]`, recursing into nested `suites[]`.
+ * Per suite: this suite's own spec attachments first, then those of its nested suites — the
+ * same document order the flat quadruple-nested loop produced.
+ */
 function collectAttachments(suites: PlaywrightSuite[] | undefined): PlaywrightAttachment[] {
   const attachments: PlaywrightAttachment[] = [];
   for (const suite of suites ?? []) {
-    for (const spec of suite.specs ?? []) {
-      for (const test of spec.tests ?? []) {
-        for (const result of test.results ?? []) {
-          attachments.push(...(result.attachments ?? []));
-        }
-      }
-    }
+    attachments.push(...attachmentsFromSpecs(suite.specs));
     attachments.push(...collectAttachments(suite.suites));
   }
   return attachments;
@@ -188,6 +199,32 @@ async function extractArtifacts(
   }
 }
 
+/** The resolved seams the readiness poll loop needs — a subset of the run's resolved deps. */
+interface PollSeams {
+  checkReadiness: ReadinessChecker;
+  bash: BashRunner;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  pollIntervalMs: number;
+}
+
+/**
+ * Poll `readiness` until it succeeds or `readiness.timeoutMs` elapses, returning
+ * whether the app became ready. Check-then-sleep semantics: readiness is probed
+ * before each sleep, so a same-tick-ready app never pays a poll interval, and a
+ * timeout returns `false` (fail-closed — the caller must not run the spec).
+ */
+async function pollUntilReady(readiness: WebReadiness, cwd: string, seams: PollSeams): Promise<boolean> {
+  const deadline = seams.now() + readiness.timeoutMs;
+  while (seams.now() < deadline) {
+    if (await seams.checkReadiness(readiness, cwd, seams.bash)) {
+      return true;
+    }
+    await seams.sleep(seams.pollIntervalMs);
+  }
+  return false;
+}
+
 /**
  * Run a `web` binding's lifecycle: start the app, poll `readiness` until it
  * succeeds or `readiness.timeoutMs` elapses (fail-closed — timeout never runs
@@ -209,16 +246,13 @@ export async function runWebLifecycle(
 
   const handle = start(binding.start, cwd);
   try {
-    const deadline = now() + binding.readiness.timeoutMs;
-    let ready = false;
-    // Check-then-sleep: a same-tick-ready app is never penalized one poll interval.
-    while (now() < deadline) {
-      if (await checkReadiness(binding.readiness, cwd, bash)) {
-        ready = true;
-        break;
-      }
-      await sleep(pollIntervalMs);
-    }
+    const ready = await pollUntilReady(binding.readiness, cwd, {
+      checkReadiness,
+      bash,
+      sleep,
+      now,
+      pollIntervalMs,
+    });
     if (!ready) {
       return { kind: 'readiness-timeout' };
     }

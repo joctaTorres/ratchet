@@ -17,6 +17,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   runWebLifecycle,
+  realProcessStarter,
   defaultReadinessChecker,
   PLAYWRIGHT_NPX_PACKAGE,
   type ProcessHandle,
@@ -516,5 +517,85 @@ describe('runWebLifecycle URL readiness — fetch-rejection resilience', () => {
 
     expect(outcome).toEqual({ kind: 'readiness-timeout' });
     expect(starter.killed).toBe(true); // process torn down even on timeout
+  });
+});
+
+// Regression for: `realProcessStarter().kill()` ran `process.kill(-pid, 'SIGTERM')`
+// unguarded. When the detached process group has already exited by teardown (server
+// self-exited/crashed after readiness, the spec killed it, or Node reaped the leader),
+// that call throws ESRCH. Because `runWebLifecycle` calls `kill()` from a `finally`, an
+// unguarded throw REPLACES the value the `try` was about to return — so a case that
+// actually PASSED surfaces as a thrown ESRCH. These tests exercise the REAL guard in
+// `realProcessStarter` (not a re-implementation), both directly and end-to-end through
+// `runWebLifecycle` driving the real starter.
+describe('realProcessStarter teardown ESRCH guard', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('swallows a real ESRCH from kill() once the detached process group has already exited (teardown already achieved)', async () => {
+    // A detached group that exits immediately; by the time we kill(), its leader is
+    // gone and reaped, so process.kill(-pid, 'SIGTERM') throws a real ESRCH.
+    const handle = realProcessStarter('exit 0', process.cwd());
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(() => handle.kill()).not.toThrow();
+  });
+
+  it('rethrows a non-ESRCH kill() failure (e.g. EPERM) — the guard is scoped, not blanket', () => {
+    const handle = realProcessStarter('exit 0', process.cwd());
+    const eperm = Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw eperm;
+    });
+    try {
+      expect(() => handle.kill()).toThrow('kill EPERM');
+      expect(killSpy).toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+      handle.kill(); // real cleanup; a now-exited group's ESRCH is swallowed by the guard
+    }
+  });
+});
+
+describe('runWebLifecycle teardown does not mask a passing outcome when the process group already exited', () => {
+  it('resolves to a passing outcome (not a thrown ESRCH) when the REAL started process group has self-exited by teardown', async () => {
+    // No `start` injected → the default realProcessStarter is used, so teardown hits the
+    // guarded real kill(). The started `exit 0` group dies during the readiness delay, so
+    // by `finally` process.kill(-pid) throws ESRCH — which the guard must swallow.
+    const { bash } = fakeBash({
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: OK_RESULT,
+    });
+
+    const outcome = await runWebLifecycle(webBinding({ start: 'exit 0' }), process.cwd(), {
+      bash,
+      checkReadiness: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return true;
+      },
+    });
+
+    expect(outcome).toEqual({ kind: 'completed', passed: true, result: OK_RESULT });
+  });
+
+  it('still rejects when a teardown kill() throws a non-ESRCH error — runWebLifecycle adds no blanket catch of its own', async () => {
+    // An injected handle whose kill() throws a generic error proves runWebLifecycle does
+    // NOT swallow teardown faults broadly; only the real starter narrowly swallows ESRCH.
+    const throwingStart: ProcessStarter = () => ({
+      pid: 4242,
+      kill() {
+        throw new Error('teardown boom');
+      },
+    });
+    const { bash } = fakeBash({
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: OK_RESULT,
+    });
+
+    await expect(
+      runWebLifecycle(webBinding(), '/work', {
+        start: throwingStart,
+        checkReadiness: async () => true,
+        bash,
+      })
+    ).rejects.toThrow('teardown boom');
   });
 });

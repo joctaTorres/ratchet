@@ -39,7 +39,12 @@ export type ProcessStarter = (command: string, cwd: string) => ProcessHandle;
 
 /** Starts `command` detached in its own process group so `kill()` can signal the whole group —
  *  a dev-server launcher commonly forks a nested process, and killing only the wrapper shell
- *  would leak the real server. */
+ *  would leak the real server. `kill()` treats `ESRCH` (the group is already gone) as a no-op:
+ *  by teardown the app may have self-exited, been killed by the spec, or had its detached leader
+ *  reaped — and in every such case the teardown that `kill()` exists to guarantee is already
+ *  achieved. Because `runWebLifecycle` calls `kill()` from a `finally`, an unguarded `ESRCH` throw
+ *  would replace the value the `try` was about to return, surfacing a passing case as a thrown
+ *  error; any non-`ESRCH` failure (e.g. `EPERM`) is a real fault and still propagates. */
 export const realProcessStarter: ProcessStarter = (command, cwd) => {
   const child = spawn('bash', ['-c', command], {
     cwd,
@@ -49,10 +54,17 @@ export const realProcessStarter: ProcessStarter = (command, cwd) => {
   return {
     pid: child.pid ?? null,
     kill() {
-      if (child.pid != null) {
-        process.kill(-child.pid, 'SIGTERM');
-      } else {
-        child.kill('SIGTERM');
+      try {
+        if (child.pid != null) {
+          process.kill(-child.pid, 'SIGTERM');
+        } else {
+          child.kill('SIGTERM');
+        }
+      } catch (err) {
+        // The process group is already gone (ESRCH) — teardown is already achieved,
+        // so swallow it as a no-op. Any other error (e.g. EPERM) is a genuine teardown
+        // failure and must propagate, rather than be silently masked in the `finally`.
+        if ((err as NodeJS.ErrnoException).code !== 'ESRCH') throw err;
       }
     },
   };

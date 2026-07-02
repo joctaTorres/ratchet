@@ -8,25 +8,20 @@ tag: instruction-fed-config
 
 ## Intent
 
-Ratchet skills are static, agent-neutral templates. Their dynamic,
-project-specific, config-driven behavior arrives at skill-invocation time as
-**data** — the payload returned by `ratchet instructions <artifact-id>` (and its
-apply/verify counterparts) — never by a skill reading config files inline or
-hard-coding config-branching in template prose. The `ratchet instructions`
-command is the single seam that assembles a skill's dynamic inputs — applicable
-project standards, config-derived choices, resolved context — into one payload
-the skill consults and acts on. This is the standard way to inject dynamic,
-config-driven behavior into ratchet skills.
+Ratchet skills are static templates. Their dynamic, project-specific,
+config-driven behavior arrives at skill-invocation time as **data** — the payload
+returned by `ratchet instructions <artifact-id>` (and its apply/verify
+counterparts) — never by a skill reading config files inline or hard-coding
+config-branching in template prose. The `ratchet instructions` command is the
+single seam that assembles a skill's dynamic inputs — applicable project
+standards, config-derived choices, resolved context — into one payload the skill
+consults and acts on. This is the standard way to inject dynamic, config-driven
+behavior into ratchet skills.
 
-This already works for **project standards**. The applicable standards library
-is resolved and injected into the instructions payload as a `standards` array;
-`ratchet instructions <artifact-id>` surfaces it, and the propose skill embeds
-the applicable standards from that payload. The rendered `rct:propose` /
-`rct:apply` / `rct:verify` skills never read the standards library themselves —
-the payload feeds them. The pattern already reaches beyond standards: a hold-out
-count also travels on the apply/verify payload and drives the verify skill's
-hold-out warning as payload data, not as config the skill reads on its own. This
-standard generalizes that pattern to all config-driven and dynamic skill inputs.
+Project standards already reach skills this way: the applicable standards are
+delivered as a `standards` array in the payload, not read by the skill. This
+standard generalizes that principle to every config-driven and dynamic skill
+input.
 
 ## Guidelines
 
@@ -44,18 +39,15 @@ standard generalizes that pattern to all config-driven and dynamic skill inputs.
   instructions` command layer is the single place that merges standards, config,
   and context into the payload. Keep that assembly at the command/loader layer,
   where it is unit-testable, rather than in fuzzy, untestable skill prose.
-- **Agent-neutral by construction.** This composes with `multi-agent-support`:
-  because the dynamic inputs are DATA in the payload — identical for every agent —
-  and the template body stays static, the behavior is agent-neutral by
-  construction. Config-driven behavior expressed as payload data cannot
-  special-case one agent.
-- **Precedent to follow.** Applicable standards flow to skills via the payload's
-  `standards` array; new config-driven inputs flow the same way. The exemplar
-  application: `propose` consults **hold-out configuration via the instructions
-  payload** — whether and how to author hold-out tags is a decision surfaced
-  through `ratchet instructions`, not something the propose skill reads from config
-  or decides on its own. (This standard names that application; it does not define
-  the hold-out authoring rules themselves — that is a separate concern.)
+- **Agent-neutral by construction.** Because the dynamic inputs are DATA in the
+  payload — identical for every agent — and the template body stays static, the
+  resolved behavior does not change with the agent that consumes it. Config-driven
+  behavior expressed as payload data cannot special-case one agent.
+- **Config-driven decisions are surfaced, not self-served.** When a skill's
+  behavior depends on user or project configuration, that decision is resolved
+  into the payload and the skill acts on the resolved value — it does not read
+  config or decide on its own. This standard governs the routing mechanism only; it
+  does not define any particular config's authoring rules.
 - **Verification treats an inline config read as a defect.** A change that makes a
   skill read config directly, or embeds config-branching in template prose,
   instead of extending the instructions payload and consuming it, does not satisfy
@@ -63,11 +55,11 @@ standard generalizes that pattern to all config-driven and dynamic skill inputs.
 
 ## Applies to
 
-Every ratchet skill that consumes `ratchet instructions` — propose, apply, verify,
-and the batch flows built on them — and every change that adds config-driven or
-dynamic skill behavior. Such a change must route the new behavior through the
-`ratchet instructions <artifact-id>` payload and have the skill consume it as
-data, keeping the assembly at the command/loader layer.
+Any ratchet skill that needs configuration loading, routing, or dynamic behavior
+driven by the user's or project's specific config — and any change that adds such
+behavior. Route it through the `ratchet instructions <artifact-id>` payload and
+have the skill consume it as data, keeping the assembly at the command/loader
+layer.
 
 ## Implemented by
 

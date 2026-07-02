@@ -198,6 +198,8 @@ ratchet archive add-login -y                      # sync features → store, arc
 │   └── invariants.yaml       # anti-gaming invariant manifest (spec-not-weakened active, rest scaffolded inert)
 └── config.yaml               # schema + project context/rules
 
+.gitignore                    # ensured to ignore .ratchet/evals/runs/ (transient run records)
+
 .claude/                      # (per selected tool)
 ├── skills/ratchet-{brainstorm,propose,apply-change,verify-change,archive-change,propose-standard,propose-batch,apply-batch}/
 └── commands/rct/{brainstorm,propose,apply,verify,archive,propose-standard,propose-batch,apply-batch}.md

@@ -90,7 +90,7 @@ function makeSeams(bashResponses: Record<string, BashResult | Error | Array<Bash
   return { bash, spawner, sequence, spawnRequests, bashCalls };
 }
 
-const REVERT = 'git reset --hard HEAD && git clean -fd';
+const REVERT = 'git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs';
 
 describe('runMutationHarness seeding, oracle, and classification', () => {
   it('classifies a mutant as survived when the test command still passes, and reverts before returning', async () => {
@@ -283,6 +283,30 @@ describe('runMutationHarness working-tree precondition scopes out ratchet transi
     if (outcome.kind !== 'unusable-working-tree') throw new Error('unreachable');
     expect(outcome.reason).toContain('git working tree has uncommitted changes');
     expect(spawnRequests).toHaveLength(0);
+  });
+});
+
+// features/mutation-invariant-harness/revert-preserves-runs-dir.feature
+describe('runMutationHarness revert scopes git clean to preserve ratchet transient runs', () => {
+  it('reverts with a clean step that excludes .ratchet/evals/runs so an untracked run record survives while the mutant is removed', async () => {
+    const { bash, spawner, bashCalls } = makeSeams({
+      [WORKING_TREE_PROBE]: CLEAN,
+      'git add -A': CLEAN,
+      'git diff --cached': A_DIFF,
+      'pnpm test': TEST_PASS,
+      [REVERT]: CLEAN,
+    });
+
+    const outcome = await runMutationHarness(invariant({ budget: 1 }), '/work', { bash, spawner });
+
+    expect(outcome.kind).toBe('completed');
+    // The revert issued in `finally` is the scoped clean, not a blanket
+    // `git clean -fd`: it excludes ratchet's transient runs dir so an untracked
+    // run record there is preserved, matching the working-tree probe exclusion,
+    // while the seeded mutant (tracked + staged) is still fully removed.
+    const revert = bashCalls.at(-1)!;
+    expect(revert).toEqual({ command: REVERT, cwd: '/work' });
+    expect(revert.command).toContain('-e .ratchet/evals/runs');
   });
 });
 

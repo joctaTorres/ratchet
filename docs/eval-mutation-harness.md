@@ -49,7 +49,7 @@ flowchart TD
     ORACLE -->|exit 0| SURVIVED[✅ survived]
     ORACLE -->|exit ≠ 0| KILLED[☠️ killed]
 
-    SURVIVED --> REVERT{{♻️ finally: git reset --hard HEAD<br/>&& git clean -fd}}
+    SURVIVED --> REVERT{{♻️ finally: git reset --hard HEAD<br/>&& git clean -fd -e .ratchet/evals/runs}}
     KILLED --> REVERT
     REVERT --> LOOP
 
@@ -125,14 +125,23 @@ export async function runMutationHarness(
    any non-zero exit classifies it `killed`. The mutant's `index` (the
    0-based attempt number), `diff`, `outcome`, and `testResult` are recorded.
 5. **Revert, unconditionally** — the per-attempt body (seed → stage → diff →
-   oracle) runs inside a `try`, with `git reset --hard HEAD && git clean -fd`
-   in the matching `finally`. The revert therefore runs on **every** path —
-   after a mutant is classified (killed or survived), after an empty-diff
-   attempt (a harmless no-op), and even when the spawner or oracle **throws**
-   (the tree is reverted before the error propagates). This restores both
-   tracked and untracked state before the next attempt, so every attempt after
-   the first runs against the unmutated project and a seeded fault can never
-   survive a mid-attempt failure in the user's working tree.
+   oracle) runs inside a `try`, with
+   `git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs` in the
+   matching `finally`. The revert therefore runs on **every** path — after a
+   mutant is classified (killed or survived), after an empty-diff attempt (a
+   harmless no-op), and even when the spawner or oracle **throws** (the tree is
+   reverted before the error propagates). This restores both tracked and
+   untracked state before the next attempt, so every attempt after the first
+   runs against the unmutated project and a seeded fault can never survive a
+   mid-attempt failure in the user's working tree. The clean **excludes
+   ratchet's own transient run directory** (`-e .ratchet/evals/runs`), matching
+   the working-tree probe's exclusion: `git clean` already skips gitignored
+   files, so the common path (a repo where `ratchet init` gitignored the runs
+   dir) is unaffected, but the explicit exclusion also preserves the in-progress
+   run record in a repo that tracks `.ratchet/` without gitignoring the runs dir
+   — the seeded mutant is still fully removed, only ratchet's own transient
+   records are kept. The excluded path is derived from the same
+   `.ratchet/evals/runs` constant as the probe, so the two cannot drift.
 6. **Return** — once `invariant.budget` attempts have run (or ended early via
    the precondition), the harness returns `{ kind: 'completed', mutants }`.
    `mutants` may be shorter than `budget` when one or more attempts produced
@@ -150,7 +159,7 @@ export interface MutationHarnessDeps {
 
 | Field | Default | Purpose |
 |---|---|---|
-| `bash` | `realBashRunner` (`src/core/batch/engine/proof-of-work.ts`) | Runs the cleanliness probe (`git status --porcelain -- . ':(exclude).ratchet/evals/runs'`), `git add -A`, `git diff --cached`, `invariant.test`, and the revert command. |
+| `bash` | `realBashRunner` (`src/core/batch/engine/proof-of-work.ts`) | Runs the cleanliness probe (`git status --porcelain -- . ':(exclude).ratchet/evals/runs'`), `git add -A`, `git diff --cached`, `invariant.test`, and the revert command (`git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs`, whose clean exclusion mirrors the probe). |
 | `spawner` | `realSpawner` (`src/core/batch/engine/agent.ts`) | Spawns the coding-agent subprocess built by the resolved adapter's `buildRequest`. |
 | `agentName` | the engine's default agent | Selects which registered adapter (`resolveAdapter`) builds the seed request; unset resolves the configured default, exactly like `JudgeDeps.agentName`. |
 

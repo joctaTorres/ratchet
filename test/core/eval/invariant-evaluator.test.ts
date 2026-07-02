@@ -230,7 +230,7 @@ describe('evaluateInvariant: snapshot', () => {
 });
 
 describe('evaluateInvariant: mutation', () => {
-  const REVERT = 'git reset --hard HEAD && git clean -fd';
+  const REVERT = 'git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs';
   const CLEAN: BashResult = { exitCode: 0, stdout: '', stderr: '' };
   const DIRTY: BashResult = { exitCode: 0, stdout: ' M src/x.ts\n', stderr: '' };
   const A_DIFF: BashResult = { exitCode: 0, stdout: 'diff --git a/src/x.ts b/src/x.ts\n-a\n+b\n', stderr: '' };

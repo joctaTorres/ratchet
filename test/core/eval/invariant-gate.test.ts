@@ -141,7 +141,7 @@ describe('evaluateInvariantGate', () => {
     const CLEAN: BashResult = { exitCode: 0, stdout: '', stderr: '' };
     const A_DIFF: BashResult = { exitCode: 0, stdout: 'diff --git a/src/x.ts b/src/x.ts\n-a\n+b\n', stderr: '' };
     const TEST_PASS: BashResult = { exitCode: 0, stdout: 'PASS', stderr: '' };
-    const REVERT = 'git reset --hard HEAD && git clean -fd';
+    const REVERT = 'git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs';
     const bash: BashRunner = async (command) => {
       if (command === WORKING_TREE_PROBE) return CLEAN;
       if (command === 'git add -A') return CLEAN;

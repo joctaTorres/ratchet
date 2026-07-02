@@ -484,7 +484,7 @@ describe('read-only eval report (evaluateRun persists, renderReport reads)', () 
   const CLEAN: BashResult = { exitCode: 0, stdout: '', stderr: '' };
   const A_DIFF: BashResult = { exitCode: 0, stdout: 'diff --git a/src/x.ts b/src/x.ts\n-a\n+b\n', stderr: '' };
   const ORACLE_PASS: BashResult = { exitCode: 0, stdout: 'PASS', stderr: '' };
-  const REVERT = 'git reset --hard HEAD && git clean -fd';
+  const REVERT = 'git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs';
   /** A fake git bash that reports a clean tree and a surviving mutant. */
   function fakeGitBash(): BashRunner {
     return async (command) => {

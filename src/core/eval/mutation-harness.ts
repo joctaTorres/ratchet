@@ -71,13 +71,33 @@ export interface MutationHarnessDeps {
 }
 
 /**
+ * Ratchet's own transient run directory, project-relative. `eval run` persists
+ * a run record here BEFORE the invariant gate runs, so it is ratchet-owned and
+ * off-limits to the harness's dirtiness probe AND to its revert. Both the probe
+ * exclusion and the revert's `git clean` exclusion derive from this single
+ * constant so they cannot drift apart on the excluded path.
+ */
+const EVAL_RUNS_RELATIVE_PATH = '.ratchet/evals/runs';
+
+/**
  * The working-tree cleanliness probe. Excludes ratchet's own transient run
  * directory (`.ratchet/evals/runs`) via a git exclude pathspec so a persisted
  * run record does not count as a dirty tree, while any other uncommitted path
  * still does. Runs through `bash -c`, so the pathspec is single-quoted to keep
  * `:(exclude)` intact.
  */
-export const WORKING_TREE_PROBE = "git status --porcelain -- . ':(exclude).ratchet/evals/runs'";
+export const WORKING_TREE_PROBE = `git status --porcelain -- . ':(exclude)${EVAL_RUNS_RELATIVE_PATH}'`;
+
+/**
+ * The per-attempt revert. Restores tracked state (`git reset --hard HEAD`) and
+ * removes untracked files/dirs (`git clean -fd`) — but excludes ratchet's own
+ * transient run directory (`-e .ratchet/evals/runs`) so reverting a seeded
+ * mutant never deletes the in-progress run record, matching the probe's
+ * exclusion. `git clean` already skips gitignored files; the `-e` makes the
+ * exclusion hold even when the consuming repo does NOT gitignore the runs dir.
+ * The excluded path needs no quoting through `bash -c`.
+ */
+const REVERT_COMMAND = `git reset --hard HEAD && git clean -fd -e ${EVAL_RUNS_RELATIVE_PATH}`;
 
 /** Build the seed instructions a spawned agent reads from stdin. */
 export function buildSeedInstructions(invariant: MutationInvariant): string {
@@ -156,11 +176,14 @@ async function checkWorkingTree(bash: BashRunner, cwd: string): Promise<{ clean:
  * (an empty diff is not a mutant and never reaches the oracle), run
  * `invariant.test` as the deterministic oracle, classify
  * `exitCode === 0` as `survived` and non-zero as `killed`, and unconditionally
- * revert with `git reset --hard HEAD && git clean -fd` before the next
- * attempt — leaving the working tree exactly as it started, whether the
- * mutant was killed, survived, seeded no diff, or the attempt threw. The revert
- * lives in a `finally` so a throw from the spawner or the oracle reverts the
- * seeded mutant before propagating, never leaving a fault in the user's tree.
+ * revert with `git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs`
+ * before the next attempt — leaving the working tree exactly as it started,
+ * whether the mutant was killed, survived, seeded no diff, or the attempt
+ * threw. The clean excludes ratchet's transient runs dir (`.ratchet/evals/runs`)
+ * so it never deletes the in-progress run record, matching the probe exclusion.
+ * The revert lives in a `finally` so a throw from the spawner or the oracle
+ * reverts the seeded mutant before propagating, never leaving a fault in the
+ * user's tree.
  */
 export async function runMutationHarness(
   invariant: MutationInvariant,
@@ -196,7 +219,7 @@ export async function runMutationHarness(
       // Unconditional revert: leaves the working tree exactly as it started,
       // whether the mutant was killed/survived, no diff was seeded, or the
       // spawner/oracle threw (in which case the error re-propagates after this).
-      await bash('git reset --hard HEAD && git clean -fd', cwd);
+      await bash(REVERT_COMMAND, cwd);
     }
   }
 

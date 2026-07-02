@@ -1,0 +1,7 @@
+schema: ratchet
+created: 2026-07-02
+standards:
+  - multi-agent-support
+  - generalizable-defaults
+  - documentation
+  - testing

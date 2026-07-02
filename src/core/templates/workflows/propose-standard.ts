@@ -65,7 +65,33 @@ what the standard should enforce, ask before writing.
    so vague aspirations ("write good code") are far less useful than specific rules
    ("every public function has a unit test covering its error path").
 
-6. **Confirm**
+6. **Write it atemporally**
+
+   A standard has no lifecycle: nothing ever re-derives, re-runs, or auto-updates it
+   after you write it. There is no gate that catches a standard that has gone stale.
+   So every statement in it must be atemporal and anti-stale — true regardless of how
+   the implementation moves underneath it.
+
+   - **Be atemporal.** Do NOT cite internal file paths, line numbers, or internal
+     symbol names (private functions, variables, module-internal identifiers), and do
+     NOT narrate the current implementation flow — a "which part does what today"
+     walk-through goes stale the moment the flow changes. Name the *category* of thing
+     the rule governs, not the specific internal location it lives in right now.
+   - **Be durable but project-specific.** Keep the guidance concrete to this project,
+     but anchor it to stable, public surfaces (the observable behavior, the public
+     command or API, the user-facing contract) rather than to implementation
+     internals that churn. Frame the rule around what stays true, not around a snapshot
+     of the code.
+   - **Be self-contained.** Do NOT cross-reference other standards. There is
+     no cascading update or deletion between standards, so if one is renamed or
+     removed nothing fixes a reference to it — each standard must state everything
+     it needs to stand on its own.
+
+   Rationale to keep in mind while writing: a standard is never automatically updated,
+   so a path, line number, internal name, current-flow description, or cross-standard
+   reference is a latent defect that rots silently. Write so there is nothing to rot.
+
+7. **Confirm**
 
    Show the path written and a one-line summary of what the standard enforces.
 

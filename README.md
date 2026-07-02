@@ -141,6 +141,7 @@ ratchet --version
 | **A supported coding-agent CLI** — Claude Code (`claude`), Codex (`codex`), Gemini (`gemini`), or Cursor (`cursor-agent`) | ratchet drives a coding agent for batch changes; at least one must be on your PATH. Install it from the agent's own docs. | To run batch changes |
 | **Python 3.10+ (with `venv` + `pip`), or [`uv`](https://docs.astral.sh/uv/) (preferred)** | Bootstraps the isolated SWE-ReX sidecar runtime. `uv` is preferred for faster, more reliable builds. | To run batch changes |
 | **Docker** | Only needed for the `docker` execution locus. Local runs never use it. | Optional |
+| **Playwright** | Drives the Given/When/Then browser scenarios of a `kind: web` eval binding. | Only when a `kind: web` eval binding is in scope |
 
 Run **`ratchet doctor`** to validate your setup — it checks each of these and prints an actionable remedy for anything missing. `ratchet init` also runs these checks once, automatically, the first time you initialize a project (advisory only — it never blocks setup).
 
@@ -197,6 +198,8 @@ ratchet archive add-login -y                      # sync features → store, arc
 │   └── invariants.yaml       # anti-gaming invariant manifest (spec-not-weakened active, rest scaffolded inert)
 └── config.yaml               # schema + project context/rules
 
+.gitignore                    # ensured to ignore .ratchet/evals/runs/ (transient run records)
+
 .claude/                      # (per selected tool)
 ├── skills/ratchet-{brainstorm,propose,apply-change,verify-change,archive-change,propose-standard,propose-batch,apply-batch}/
 └── commands/rct/{brainstorm,propose,apply,verify,archive,propose-standard,propose-batch,apply-batch}.md
@@ -233,7 +236,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--holdout`/`--no-holdout`, `--json`) |
 | `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--include-skipped`, `--holdout`/`--no-holdout`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
-| `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
+| `eval report --run <id>` | **Read-only** scorecard, failing cases with evidence, and the baseline regression diff, rendered from the run's persisted state — never re-evaluates the invariant gate (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
 
 In `ratchet --help`, the workflow commands `propose`, `apply`, `verify`, `batch`, and `eval` are gathered (in that order) under a single **`Workflow:`** heading; every other command keeps its default placement.
@@ -415,6 +418,15 @@ features/cli/status#status-as-text:
     - "Output is readable prose, not raw JSON"
 ```
 
+A third kind, `web`, declares a browser-scenario lifecycle instead of a check or
+a judge — `start` (boot command), `readiness` (a `url`-or-`command` probe with a
+required `timeoutMs`), and `spec` (the Playwright test that drives the case). It
+gates as a `deterministic` contributor case (exit-zero Playwright run = pass; a
+non-zero exit or a readiness timeout = fail). A failure persists its captured
+Playwright trace (and a screenshot, when the project's own Playwright config
+captures one) as durable run evidence, referenced by path from the run record.
+See [`ratchet eval`](docs/commands/eval.md#bindings) for its full field shape.
+
 **Fixtures run isolated.** Before judging, the fixture is materialized into a
 throwaway temp working copy that becomes the judging cwd, so a check or agent may
 build/run/mutate freely without touching the checked-in fixture or the host repo.
@@ -457,14 +469,18 @@ run --json`/`eval report --json`'s `cases[]`.
 **Hold-out scenarios.** A Scenario tagged `@holdout` is an anti-overfitting
 visibility split, not a skip: `ratchet instructions apply` hands the building
 agent a materialized copy of each `.feature` artifact with `@holdout`-tagged
-content stripped out, so the agent implementing a change never sees a
-held-out case, while `eval run`/`ratchet verify` keep reading the real source
-file and gate it exactly like any other case. `ratchet eval set` reports each
-case's hold-out status alongside its binding kind — `holdout: true`/`false`
-in JSON, a `[holdout]` tag in text — reporting only, with no effect on
-gating. `--holdout`/`--no-holdout` on `eval set`/`eval run` restrict the
-in-scope set to just the held-out or just the non-held-out cases, composing
-with the existing `--changes`/`--change`/`--path` scope flags.
+content stripped out, so the agent implementing a change never sees a held-out
+case. `ratchet verify` reads the same filtered view (by design — it shares the
+same `ratchet instructions apply` builder; re-using it prevents the verify loop
+from leaking held-out content back to apply). Enforcement is `eval run`:
+`enumerateEvalSet()` reads the untouched source file directly and gates
+`@holdout`-tagged Scenarios exactly like any other case. `ratchet eval set`
+reports each case's hold-out status alongside its binding kind —
+`holdout: true`/`false` in JSON, a `[holdout]` tag in text — reporting only,
+with no effect on gating. `--holdout`/`--no-holdout` on `eval set`/`eval run`
+restrict the in-scope set to just the held-out or just the non-held-out cases,
+composing with the existing `--changes`/`--change`/`--path` scope flags.
+Filtering is only active when the project has a `.ratchet/evals/` directory.
 
 **One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
 place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a
@@ -478,10 +494,17 @@ against.
 
 **Invariants (`.ratchet/evals/invariants.yaml`).** The `invariants` contributor
 draws its run-level, anti-gaming checks from a checked-in manifest: a YAML list
-of invariants, each one of three kinds — `deterministic` (an absolute predicate),
+of invariants, each one of four kinds — `deterministic` (an absolute predicate),
 `monotonic` (a named measure that must not decrease vs the baseline), `snapshot`
-(output diffed against a checked-in golden) — and each carrying an `active` flag
-so an invariant can be scaffolded inert before it is turned on. On every `eval
+(output diffed against a checked-in golden), `mutation` (a `test`/`budget`/
+`threshold` mutation-testing invariant — the seed/oracle/classify/revert harness
+at [`docs/eval-mutation-harness.md`](docs/eval-mutation-harness.md) is wired into
+evaluation: a survived mutant is a hard fail, and too little evaluated evidence
+(fewer than `threshold` mutants reaching a verdict) is unevaluable; each
+mutant's diff/test output is persisted as run evidence, reproducible from the
+run record without re-invoking the agent)
+— and each carrying an `active` flag so an invariant can be
+scaffolded inert before it is turned on. On every `eval
 run` the contributor evaluates the manifest's **active** invariants run-level and
 **hard-fails the run — surfaced first, as a sibling to a regression** — when any
 is violated, unevaluable, or the manifest can't be loaded; inert invariants are
@@ -489,8 +512,13 @@ skipped, never counted as vacuous passes. It is **fail-closed** at both layers: 
 absent manifest is the only path to an empty (passing) set, while a malformed
 manifest or an uncheckable active invariant fails the run rather than degrading to
 a vacuous pass. `--no-invariants` (or `eval.gate.invariants: false`) disables the
-gate for a run. See the [eval invariant manifest](docs/eval-invariants.md)
-Reference doc for the schema, the gate contributor, and the loader contract.
+gate for a run. The gate is evaluated **only by `eval run`** (which runs the
+invariant commands, spawns the mutation seeder, and persists the result onto the
+run); the read-only `eval report` reads that persisted result and never
+re-evaluates, spawns, or mutates the tree — a run with no persisted gate reports
+its invariants as _not evaluated_. See the
+[eval invariant manifest](docs/eval-invariants.md) Reference doc for the schema,
+the gate contributor, and the loader contract.
 
 **The gate is configurable.** Which contributors execute and gate a run is
 selectable, generalizing the old `--judge` flag: set `eval.gate` in

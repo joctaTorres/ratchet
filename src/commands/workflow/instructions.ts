@@ -16,6 +16,7 @@ import {
   materializeApplyContext,
   type ArtifactInstructions,
 } from '../../core/artifact-graph/index.js';
+import { hasEvalIntent } from '../../core/eval/index.js';
 import { getChangeDir, resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
 import {
   validateChangeExists,
@@ -300,17 +301,29 @@ export async function generateApplyInstructions(
     }
   }
 
+  // Determine whether this project has an eval store — filtering only makes
+  // sense when `eval run` exists to enforce the held-out scenarios.
+  const evalIntent = hasEvalIntent(projectRoot);
+
   // Build context files from all existing artifacts in schema. Each
   // `.feature` output is materialized as an `@holdout`-filtered copy so the
-  // building agent never reads a held-out Scenario's content directly; other
-  // outputs (e.g. `plan.md`) pass through unchanged.
+  // building agent never reads a held-out Scenario's content directly (when
+  // evalIntent is true); other outputs (e.g. `plan.md`) pass through unchanged.
   const contextFiles: Record<string, string[]> = {};
+  const heldOutCounts: Record<string, number> = {};
   for (const artifact of schema.artifacts) {
     const outputs = resolveArtifactOutputs(changeDir, artifact.generates);
     if (outputs.length > 0) {
-      contextFiles[artifact.id] = materializeApplyContext(changeDir, artifact.id, outputs);
+      const result = evalIntent
+        ? materializeApplyContext(changeDir, artifact.id, outputs)
+        : { paths: outputs, heldOutCount: 0 };
+      contextFiles[artifact.id] = result.paths;
+      if (result.heldOutCount > 0) {
+        heldOutCounts[artifact.id] = result.heldOutCount;
+      }
     }
   }
+  const heldOutCount = Object.values(heldOutCounts).reduce((sum, n) => sum + n, 0);
 
   // Parse tasks if tracking file exists
   let tasks: TaskItem[] = [];
@@ -363,6 +376,8 @@ export async function generateApplyInstructions(
     changeDir,
     schemaName: context.schemaName,
     contextFiles,
+    heldOutCounts,
+    heldOutCount,
     progress: { total, complete, remaining },
     tasks,
     state,
@@ -411,7 +426,7 @@ export async function applyInstructionsCommand(options: ApplyInstructionsOptions
 }
 
 export function printApplyInstructionsText(instructions: ApplyInstructions): void {
-  const { changeName, schemaName, contextFiles, progress, tasks, state, missingArtifacts, instruction } = instructions;
+  const { changeName, schemaName, contextFiles, heldOutCount, progress, tasks, state, missingArtifacts, instruction } = instructions;
 
   console.log(`## Apply: ${changeName}`);
   console.log(`Schema: ${schemaName}`);
@@ -435,6 +450,12 @@ export function printApplyInstructionsText(instructions: ApplyInstructions): voi
         console.log(`- ${artifactId}: ${filePath}`);
       }
     }
+    console.log();
+  }
+
+  // Hold-out warning (non-blocking)
+  if (heldOutCount > 0) {
+    console.log(`⚠️ ${heldOutCount} @holdout scenario(s) are excluded from this view — run \`ratchet eval run\` to enforce them.`);
     console.log();
   }
 

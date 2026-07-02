@@ -1,5 +1,5 @@
-import { afterEach, describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -8,11 +8,21 @@ import {
   loadRun,
   recordVerdict,
   toSnapshot,
+  evalsDir,
+  hasEvalIntent,
   promoteBaseline,
   loadBaselineRunId,
+  runArtifactsDir,
+  persistCaseArtifacts,
+  invariantArtifactsDir,
+  persistMutationEvidence,
+  persistMutationOutcome,
+  loadPersistedMutationOutcome,
   type EvalRun,
 } from '../../../src/core/eval/run.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
+import type { MutantOutcome } from '../../../src/core/eval/mutation-harness.js';
+import type { InvariantOutcome } from '../../../src/core/eval/invariant-evaluator.js';
 
 const roots: string[] = [];
 
@@ -73,7 +83,7 @@ describe('eval run persistence', () => {
   // features/eval-judge/structured-evidence-persistence.feature — the structured
   // judging detail (rubric, per-clause evidence, per-juror votes) and a skipped
   // case's skip source/detail round-trip through persistRun/loadRun unchanged.
-  it('round-trips rubric/clauses/votes/skip on a CaseRecord unchanged', () => {
+  it('round-trips rubric/clauses/votes/skip/artifacts on a CaseRecord unchanged', () => {
     const root = makeProject();
     const run = sampleRun('20260101T000000000Z-roundtrip');
     run.verdicts['f/x#one'] = {
@@ -83,6 +93,7 @@ describe('eval run persistence', () => {
       rubric: ['it works'],
       clauses: [{ clause: 'it works', pass: true, evidence: 'saw it' }],
       votes: [{ pass: true, clauses: [{ clause: 'it works', pass: true, evidence: 'saw it' }] }],
+      artifacts: { trace: '.ratchet/evals/runs/20260101T000000000Z-roundtrip/artifacts/f/x#one/trace.zip' },
     };
     persistRun(root, run);
     expect(loadRun(root, run.runId).verdicts['f/x#one']).toEqual(run.verdicts['f/x#one']);
@@ -96,6 +107,130 @@ describe('eval run persistence', () => {
     };
     persistRun(root, skipRun);
     expect(loadRun(root, skipRun.runId).verdicts['f/x#one']).toEqual(skipRun.verdicts['f/x#one']);
+  });
+});
+
+// features/web-failure-evidence/failure-artifacts.feature — ephemeral,
+// fixture-cwd-scoped trace/screenshot files become durable run evidence.
+describe('persistCaseArtifacts / runArtifactsDir', () => {
+  it('copies a real trace and screenshot file into the run\'s artifacts directory and returns project-relative paths to the copies', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-artifacts';
+    const caseId = 'f/x#one';
+    const srcDir = mkdtempSync(path.join(tmpdir(), 'eval-web-fixture-'));
+    roots.push(srcDir);
+    const tracePath = path.join(srcDir, 'trace.zip');
+    const screenshotPath = path.join(srcDir, 'test-failed-1.png');
+    writeFileSync(tracePath, 'trace-bytes');
+    writeFileSync(screenshotPath, 'screenshot-bytes');
+
+    const persisted = persistCaseArtifacts(root, runId, caseId, {
+      trace: tracePath,
+      screenshot: screenshotPath,
+    });
+
+    const dir = runArtifactsDir(root, runId, caseId);
+    expect(dir).toBe(path.join(root, '.ratchet', 'evals', 'runs', runId, 'artifacts', caseId));
+    expect(persisted).toEqual({
+      trace: path.relative(root, path.join(dir, 'trace.zip')),
+      screenshot: path.relative(root, path.join(dir, 'test-failed-1.png')),
+    });
+    expect(persisted?.trace).not.toBe(tracePath);
+    expect(existsSync(path.join(root, persisted!.trace!))).toBe(true);
+    expect(existsSync(path.join(root, persisted!.screenshot!))).toBe(true);
+    expect(readFileSync(path.join(root, persisted!.trace!), 'utf-8')).toBe('trace-bytes');
+  });
+
+  it('returns undefined and creates no directory when neither trace nor screenshot is present', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-empty';
+    const caseId = 'f/x#one';
+
+    const persisted = persistCaseArtifacts(root, runId, caseId, {});
+
+    expect(persisted).toBeUndefined();
+    expect(existsSync(runArtifactsDir(root, runId, caseId))).toBe(false);
+  });
+});
+
+// features/mutation-evidence-recording/replayable-evidence.feature — every
+// mutant the harness runs (killed or survived alike) gets its diff and oracle
+// output persisted as durable, project-relative run evidence, and the reduced
+// invariant outcome round-trips through the same directory.
+describe('persistMutationEvidence / persistMutationOutcome / invariantArtifactsDir', () => {
+  const KILLED: MutantOutcome = {
+    index: 0,
+    diff: 'diff --git a/src/x.ts b/src/x.ts\n-a\n+b\n',
+    outcome: 'killed',
+    testResult: { exitCode: 1, stdout: '', stderr: '1 test failed' },
+  };
+  const SURVIVED: MutantOutcome = {
+    index: 1,
+    diff: 'diff --git a/src/y.ts b/src/y.ts\n-c\n+d\n',
+    outcome: 'survived',
+    testResult: { exitCode: 0, stdout: 'PASS', stderr: '' },
+  };
+
+  it('writes one .diff and one .log file per mutant and returns project-relative paths that round-trip the diff/oracle output', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-mut';
+    const invariantId = 'mutants-are-killed';
+
+    const evidence = persistMutationEvidence(root, runId, invariantId, [KILLED, SURVIVED]);
+
+    const dir = invariantArtifactsDir(root, runId, invariantId);
+    expect(dir).toBe(path.join(root, '.ratchet', 'evals', 'runs', runId, 'artifacts', 'invariants', invariantId));
+    expect(evidence).toHaveLength(2);
+
+    expect(evidence[0]!.index).toBe(0);
+    expect(evidence[0]!.outcome).toBe('killed');
+    expect(readFileSync(path.join(root, evidence[0]!.diffPath), 'utf-8')).toBe(KILLED.diff);
+    expect(readFileSync(path.join(root, evidence[0]!.testOutputPath), 'utf-8')).toContain('1 test failed');
+
+    expect(evidence[1]!.index).toBe(1);
+    expect(evidence[1]!.outcome).toBe('survived');
+    expect(readFileSync(path.join(root, evidence[1]!.diffPath), 'utf-8')).toBe(SURVIVED.diff);
+    expect(readFileSync(path.join(root, evidence[1]!.testOutputPath), 'utf-8')).toContain('PASS');
+  });
+
+  it('round-trips a full InvariantOutcome, including artifacts, through persistMutationOutcome/loadPersistedMutationOutcome unchanged', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-outcome';
+    const invariantId = 'mutants-are-killed';
+    const evidence = persistMutationEvidence(root, runId, invariantId, [SURVIVED]);
+    const outcome: InvariantOutcome = {
+      id: invariantId,
+      kind: 'mutation',
+      status: 'fail',
+      measure: 'mutation: pnpm test (budget 3, threshold 3) — 1 evaluated, 1 survived',
+      evidence: '1 of 1 evaluated mutant(s) survived',
+      artifacts: evidence,
+    };
+
+    persistMutationOutcome(root, runId, invariantId, outcome);
+
+    expect(loadPersistedMutationOutcome(root, runId, invariantId)).toEqual(outcome);
+  });
+
+  it('returns undefined when nothing has been persisted yet', () => {
+    const root = makeProject();
+    expect(loadPersistedMutationOutcome(root, '20260101T000000000Z-none', 'mutants-are-killed')).toBeUndefined();
+  });
+
+  // Regression for: a corrupt or truncated outcome.json must fail closed to
+  // re-evaluation (return undefined) rather than hard-crashing the caller.
+  it('returns undefined (does not throw) when outcome.json exists but contains corrupt/truncated JSON', () => {
+    const root = makeProject();
+    const runId = '20260101T000000000Z-corrupt';
+    const invariantId = 'mutants-are-killed';
+    const dir = invariantArtifactsDir(root, runId, invariantId);
+    mkdirSync(dir, { recursive: true });
+    // Write truncated JSON that JSON.parse will reject.
+    writeFileSync(path.join(dir, 'outcome.json'), '{"id":"mutants-are-killed","kind":"mutation","sta', 'utf-8');
+
+    const result = loadPersistedMutationOutcome(root, runId, invariantId);
+
+    expect(result).toBeUndefined();
   });
 });
 
@@ -206,5 +341,37 @@ describe('baseline', () => {
 
     expect(() => promoteBaseline(root, 'gated')).toThrow(/incomplete/i);
     expect(loadBaselineRunId(root)).toBe('good');
+  });
+});
+
+describe('evalsDir / hasEvalIntent', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(path.join(tmpdir(), 'eval-intent-'));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('evalsDir returns the .ratchet/evals path under projectRoot', () => {
+    expect(evalsDir(root)).toBe(path.join(root, '.ratchet', 'evals'));
+  });
+
+  it('hasEvalIntent returns true when .ratchet/evals/ is a directory', () => {
+    mkdirSync(path.join(root, '.ratchet', 'evals'), { recursive: true });
+    expect(hasEvalIntent(root)).toBe(true);
+  });
+
+  it('hasEvalIntent returns false when .ratchet/evals/ does not exist', () => {
+    // No evals directory created — just the tmpdir root.
+    expect(hasEvalIntent(root)).toBe(false);
+  });
+
+  it('hasEvalIntent returns false when the path is a file, not a directory', () => {
+    mkdirSync(path.join(root, '.ratchet'), { recursive: true });
+    writeFileSync(path.join(root, '.ratchet', 'evals'), 'not-a-dir');
+    expect(hasEvalIntent(root)).toBe(false);
   });
 });

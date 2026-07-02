@@ -33,9 +33,9 @@ flowchart TD
     FIXTURES[💾 fixtures<br/>.ratchet/evals/fixtures]
 
     SET{{⚙️ eval set<br/>enumerate cases · binding status}}
-    RUN{{⚙️ eval run<br/>judge bound cases · run-level gates}}
+    RUN{{⚙️ eval run<br/>judge cases · evaluate + persist invariant gate}}
     RECORD{{✏️ eval record<br/>manual verdict override}}
-    REPORT{{📊 eval report<br/>scorecard · baseline diff}}
+    REPORT{{📊 eval report<br/>read-only · reads persisted gate}}
     BASELINE{{🏁 eval baseline<br/>promote a complete run}}
 
     RUNSTORE[💾 runs<br/>.ratchet/evals/runs]
@@ -52,7 +52,7 @@ flowchart TD
     RUNSTORE --> RECORD
     RECORD --> RUNSTORE
 
-    RUNSTORE --> REPORT
+    RUNSTORE -. persisted gate .-> REPORT
     BASESTORE -. baseline .-> REPORT
 
     RUNSTORE --> BASELINE
@@ -107,7 +107,7 @@ error.
    produced per Scenario, assigned its stable case id, and sorted by id for
    deterministic output.
 3. **Binding status.** Each case id is looked up in the loaded eval specs. The
-   reported binding is `deterministic`, `llm-judge`, or `unbound`.
+   reported binding is `deterministic`, `llm-judge`, `web`, or `unbound`.
 4. **Hold-out status.** Each case is checked for the `@holdout` Gherkin tag via
    `resolveHoldout()`. JSON reports a `holdout: true`/`false` field per case;
    text appends a `[holdout]` tag after the case id when true. This is
@@ -120,6 +120,12 @@ error.
    effect on binding, judging, the gate, or aggregation.
 6. **Archive exclusion.** The archive (`changes/archive/`) is never a scope
    root regardless of flags.
+
+`eval run` is the **only** surface that enforces held-out scenarios against
+the implementation — it reads the real source `.feature` file directly (never
+through the filtered `contextFiles` used by `ratchet apply`/`ratchet verify`),
+so every `@holdout`-tagged Scenario is judged and gated exactly like any other
+case.
 
 ---
 
@@ -202,6 +208,11 @@ fails the command with the valid ids listed. See
      run-level gate loads `.ratchet/evals/invariants.yaml` **fail-closed** and checks
      only its **active** invariants; any violated, unevaluable, or unloadable
      invariant fails the run, while inert (`active: false`) invariants are skipped.
+     `eval run` is the **only** command that evaluates this gate — it runs the
+     invariant check/produce commands and, for an active `mutation` invariant,
+     spawns the seeding agent — and it **persists the full gate result** (the
+     per-invariant outcomes and the gate pass/fail) onto the run so `eval report`
+     can render the same verdict without re-evaluating.
      See [Eval invariant manifest](../eval-invariants.md#gate-contributor).
 7. **Unbound cases.** A non-skipped case with no binding in any spec is recorded `unjudged`
    with reason `"No eval-spec binding for this case"` and is never passed.
@@ -214,8 +225,11 @@ fails the command with the valid ids listed. See
    boolean pass/fail with its cited evidence, and each juror's individual vote
    (a deterministic check carries the same shape as a one-clause/one-vote
    `llm-judge` case); a skipped case persists its skip source (`tag` or
-   `config`) and matched detail. `eval run --json` surfaces this under
-   `cases[]`.
+   `config`) and matched detail. A failed, judged `web`-bound case additionally
+   persists `artifacts.trace`/`artifacts.screenshot` — project-relative paths
+   under `.ratchet/evals/runs/<run-id>/artifacts/<case-id>/` pointing at its
+   captured Playwright trace and (when the project's own Playwright config
+   captures one) screenshot. `eval run --json` surfaces this under `cases[]`.
 10. **Output.** The run id, the aggregated overall verdict, the
    pass/fail/unjudged/skipped scorecard, and a per-contributor breakdown are
    printed (`deterministic`, `llm-judge`, `invariants`, `regression`).
@@ -277,33 +291,51 @@ ratchet eval report --run <id> [--json]
 | Option | Argument | Description |
 |---|---|---|
 | `--run` | `<id>` | Run id to report. Required. |
-| `--json` | | Output the full `EvalReport` object as JSON, including `cases[]` (see below). |
+| `--json` | | Output the full `EvalReport` object as JSON, including `cases[]` (see below) and `invariantsEvaluated` (`false` for a run with no persisted gate). |
 
 ### Behavior
+
+`eval report` is **read-only**: it renders purely from the run's persisted
+state. It never re-evaluates the invariant gate — no invariant check command is
+re-run, no mutation-seeding agent is spawned, and the working tree is never
+mutated (`git reset --hard` / `git clean -fd` are never invoked). The gate is
+evaluated only by `eval run`, whose result is persisted on the run and read back
+here.
 
 1. The run is loaded. The promoted baseline run (if any) is loaded from the
    path recorded in `.ratchet/evals/baseline.json`.
 2. **Scorecard.** Pass/fail/unjudged counts are derived from the run's verdict
    map; a missing verdict entry is treated as `unjudged`. A run is `complete`
    when no case is unjudged.
-3. **Baseline diff.** The current run's case ids are compared against the
+3. **Invariants.** The per-invariant breakdown and the invariant contribution to
+   the verdict come from the gate result persisted by `eval run` — the report
+   reads it, never re-evaluates it. A run that carries no persisted gate — because
+   the `invariants` contributor was disabled for the run, or because the run
+   predates gate persistence — reports its invariants as **not evaluated**
+   (`invariantsEvaluated: false` in `--json`, an `Invariants: not evaluated` line
+   in text): a neutral state that is never re-evaluated and never affects the
+   pass/fail verdict.
+4. **Baseline diff.** The current run's case ids are compared against the
    baseline run's case ids:
    - **Regression** — present in both, verdict was `pass` in baseline and is
      `fail` now. Regressions are surfaced first in text output.
    - **New** — present in the current run but not in the baseline.
    - **Retired** — present in the baseline but not in the current run.
    - When no baseline is promoted, the diff is empty (no regressions).
-4. **Overall verdict.** The run-level verdict is decided by the
+5. **Overall verdict.** The run-level verdict is decided by the
    [verdict-aggregation core](../eval-verdict-aggregation.md) as a logical AND
    over named contributors: it is `pass` only when every contributor passes. The
    `EvalReport` carries the per-contributor breakdown under `contributors`.
-5. **Structured per-case detail.** `EvalReport.cases[]` holds one entry per run
-   case — `{ id, scenario, verdict, source, rubric, clauses, votes, skip? }` —
-   surfacing every judged case's resolved rubric, per-clause pass/fail
-   evidence, and per-juror votes, or a skipped case's skip source/detail.
-   `eval report --json` surfaces this under `cases[]`; the text rendering
-   prints each failing case's per-clause breakdown beneath its evidence line,
-   plus a `Jury: x/y passed` line when more than one vote was cast.
+6. **Structured per-case detail.** `EvalReport.cases[]` holds one entry per run
+   case — `{ id, scenario, verdict, source, rubric, clauses, votes, skip?,
+   artifacts? }` — surfacing every judged case's resolved rubric, per-clause
+   pass/fail evidence, and per-juror votes, a skipped case's skip
+   source/detail, or a failed `web`-bound case's captured `artifacts.trace`/
+   `artifacts.screenshot` paths. `eval report --json` surfaces this under
+   `cases[]`; the text rendering prints each failing case's per-clause
+   breakdown beneath its evidence line, plus a `Jury: x/y passed` line when
+   more than one vote was cast, and `Trace: <path>`/`Screenshot: <path>` lines
+   when the case captured them.
 
 ---
 
@@ -434,6 +466,55 @@ alphabetical sort order wins and a warning is emitted.
 | `success` | string | Success criteria passed to the spawned judge agent. Required. |
 | `jury` | object | Per-binding jury override (`votes`, `quorum`), layered over the project-level `eval.jury` default. See [`eval:` settings](../configuration/config-yaml.md#eval-settings). Optional. |
 | `rubric` | string[] | Explicit binary rubric, used verbatim instead of auto-deriving one item per Gherkin `Then`-clause. Optional. |
+
+### Web binding
+
+```yaml
+"features/checkout#add-to-cart":
+  fixture: storefront-app
+  kind: web
+  setup: "pnpm install"       # optional; runs once per fixture+setup pair
+  start: "pnpm dev"
+  readiness:
+    url: "http://localhost:3000"   # or `command`; exactly one is required
+    timeoutMs: 15000
+  spec: e2e/add-to-cart.spec.ts
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `fixture` | string | Name of the fixture directory under `.ratchet/evals/fixtures/`. Required. |
+| `kind` | `"web"` | Discriminant. Required. |
+| `setup` | string | Shell command run once to bootstrap the fixture working copy. Optional. |
+| `start` | string | Shell command that boots the app under test. Required. |
+| `readiness.url` | string | URL polled to determine the app is ready. Exactly one of `readiness.url` / `readiness.command` is required. |
+| `readiness.command` | string | Command run to determine the app is ready. Exactly one of `readiness.url` / `readiness.command` is required. |
+| `readiness.timeoutMs` | number | Positive integer milliseconds to wait for readiness. Required; the fail-closed boundary — readiness not reached within it is a failure, never an assumed-ready pass. |
+| `spec` | string | Repo-relative path to the Playwright spec that drives the case's Given/When/Then. Required. |
+
+`start`/`readiness`/`spec` are run by the web binding lifecycle harness
+(`runWebLifecycle`): `start` is launched as a background process, `readiness`
+is polled check-then-sleep until it succeeds or `readiness.timeoutMs` elapses
+(a fail-closed timeout, never an assumed-ready pass), `spec` then runs via a
+bash invocation that forces `--trace=retain-on-failure` and a `list,json`
+reporter pair, and the started process is torn down in a `finally` on every
+path. See [Web binding lifecycle harness](../eval-web-lifecycle.md) for the
+full start/poll/run/teardown contract and its injectable seams. A `web`
+binding runs through `ratchet eval run` like any other binding kind:
+`judgeCase` dispatches it through the harness and reduces the result to a
+`pass`/`fail` verdict (exit-zero Playwright run = `pass`; a non-zero exit or a
+readiness timeout = `fail`), which gates through the `deterministic`
+contributor — see [Verdict aggregation](../eval-verdict-aggregation.md) — so
+`eval.gate.deterministic`/`--only`/`--gate` control a `web`-bound case exactly
+like a `deterministic`-bound one. A failed case's captured Playwright trace
+(and a screenshot, when the project's own Playwright config enables
+`use.screenshot`) is persisted as durable run evidence under
+`.ratchet/evals/runs/<run-id>/artifacts/<case-id>/` and referenced by path
+from the run JSON — see the "Structured per-case detail" steps of `eval run`
+and `eval report` above. `ratchet doctor` probes for the Playwright CLI whenever a
+`kind: web` binding is present among the eval bindings resolved from
+`.ratchet/evals/specs/` — the same resolver used above — and is otherwise absent from
+its report; see the Playwright check under [`ratchet doctor`](doctor.md#checks).
 
 ---
 

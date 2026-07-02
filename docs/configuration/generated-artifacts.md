@@ -24,6 +24,9 @@ sidebar_position: 2
 └── config.yaml             # project config (schema + optional context/rules)
 ```
 
+`init` also ensures the project-root `.gitignore` ignores the transient eval
+run-records directory (see the table below).
+
 | Path | Description |
 |---|---|
 | `features/` | Permanent Gherkin feature store. `ratchet archive` copies a change's `.feature` files here by whole-file replacement. Organized by capability: `features/<capability>/<name>.feature`. |
@@ -34,6 +37,7 @@ sidebar_position: 2
 | `evals/specs/` | YAML eval-spec files. Each file maps case IDs to judge bindings (`fixture`, `kind`, `check` or `success`). Read by `ratchet eval`. |
 | `evals/fixtures/` | Checked-in fixture codebases. Each fixture is a directory (`evals/fixtures/<name>/`) that eval materializes into a throwaway working copy before judging. |
 | `config.yaml` | Project configuration. Contains at minimum `schema: ratchet`. May include `batch.permissions` for agent sandbox policy. Created by `init` when it does not already exist; never overwritten on re-runs. |
+| `.gitignore` (project root) | `init` idempotently ensures the project-root `.gitignore` contains `.ratchet/evals/runs/`, so transient eval run records never dirty the working tree or the mutation invariant gate. The file is created if absent and the entry appended only if missing; a re-run never duplicates it. |
 
 ## Per-tool skills and commands
 

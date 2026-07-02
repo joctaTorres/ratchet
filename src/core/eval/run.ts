@@ -8,13 +8,26 @@
  * does an atomic read-modify-write to override a single case's verdict.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, renameSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  renameSync,
+  copyFileSync,
+  statSync,
+} from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { RATCHET_DIR_NAME } from '../config.js';
 import type { EvalCase } from './set.js';
 import type { ClauseResult, JurorVote, Verdict } from './judge.js';
 import type { BindingKind } from './spec.js';
+import type { WebArtifacts } from './web-lifecycle.js';
+import type { MutantOutcome, MutantEvidence } from './mutation-harness.js';
+import type { InvariantOutcome } from './invariant-evaluator.js';
+import type { InvariantGateResult } from './invariant-gate.js';
 import { isRunComplete, type ContributorId } from './aggregate.js';
 import type { SkipReason } from './skip.js';
 
@@ -43,6 +56,8 @@ export interface CaseRecord {
   votes?: JurorVote[];
   /** The skip source/detail this case matched. Present only on a `skipped` record. */
   skip?: SkipReason;
+  /** Durable, project-relative Playwright trace/screenshot paths. Present only on a failed judged `web`-bound case that captured at least one file. */
+  artifacts?: WebArtifacts;
 }
 
 export interface EvalRun {
@@ -56,6 +71,17 @@ export interface EvalRun {
    * legacy runs persisted before the gate existed ⇒ treated as all-enabled.
    */
   gate?: ContributorId[];
+  /**
+   * The run-level invariant gate result, persisted by `evaluateRun` at run time
+   * (the per-invariant `outcomes`, the violating `failing` ids, and any
+   * `loadError`). The read-only `renderReport` path reads this back rather than
+   * re-evaluating the gate — so reporting a run never re-runs a check command,
+   * spawns a mutation agent, or mutates the tree. Absent when the `invariants`
+   * contributor was disabled for the run, or on a legacy run persisted before
+   * gate persistence existed ⇒ the report renders those invariants
+   * "not evaluated".
+   */
+  invariantGate?: InvariantGateResult;
   cases: CaseSnapshot[];
   verdicts: Record<string, CaseRecord>;
 }
@@ -64,12 +90,145 @@ export function runsDir(projectRoot: string): string {
   return path.join(projectRoot, RATCHET_DIR_NAME, 'evals', 'runs');
 }
 
+/**
+ * Returns the absolute path of the project's `.ratchet/evals/` directory,
+ * whether or not it exists.
+ */
+export function evalsDir(projectRoot: string): string {
+  return path.join(projectRoot, RATCHET_DIR_NAME, 'evals');
+}
+
+/**
+ * Returns `true` when the project has an eval store (`.ratchet/evals/`
+ * directory present), `false` otherwise. Used to gate apply-time
+ * `@holdout` filtering — filtering only makes sense when `eval run` exists
+ * to enforce the held-out scenarios.
+ */
+export function hasEvalIntent(projectRoot: string): boolean {
+  try {
+    return statSync(evalsDir(projectRoot)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function runPath(projectRoot: string, runId: string): string {
   return path.join(runsDir(projectRoot), `${runId}.json`);
 }
 
 export function baselinePath(projectRoot: string): string {
   return path.join(projectRoot, RATCHET_DIR_NAME, 'evals', 'baseline.json');
+}
+
+export function runArtifactsDir(projectRoot: string, runId: string, caseId: string): string {
+  return path.join(runsDir(projectRoot), runId, 'artifacts', caseId);
+}
+
+/**
+ * Copy a `web` binding's ephemeral, fixture-cwd-scoped trace/screenshot files
+ * into the run's durable evidence directory, the moment ephemeral evidence
+ * becomes persisted run evidence. Returns paths relative to `projectRoot`
+ * pointing at the copies, or `undefined` when neither field is present
+ * (nothing to persist, nothing created on disk).
+ */
+export function persistCaseArtifacts(
+  projectRoot: string,
+  runId: string,
+  caseId: string,
+  artifacts: WebArtifacts
+): WebArtifacts | undefined {
+  const present = (['trace', 'screenshot'] as const).filter((key) => artifacts[key] !== undefined);
+  if (present.length === 0) return undefined;
+  const dir = runArtifactsDir(projectRoot, runId, caseId);
+  mkdirSync(dir, { recursive: true });
+  const persisted: WebArtifacts = {};
+  for (const key of present) {
+    const source = artifacts[key] as string;
+    const dest = path.join(dir, path.basename(source));
+    copyFileSync(source, dest);
+    persisted[key] = path.relative(projectRoot, dest);
+  }
+  return persisted;
+}
+
+/** The durable evidence directory for one invariant's evaluation of one run. */
+export function invariantArtifactsDir(projectRoot: string, runId: string, invariantId: string): string {
+  return path.join(runsDir(projectRoot), runId, 'artifacts', 'invariants', invariantId);
+}
+
+function outcomePath(projectRoot: string, runId: string, invariantId: string): string {
+  return path.join(invariantArtifactsDir(projectRoot, runId, invariantId), 'outcome.json');
+}
+
+/**
+ * Write each mutant's diff and oracle stdout/stderr to disk under
+ * `invariantArtifactsDir`, one `mutant-<index>.diff` and one `mutant-<index>.log`
+ * per mutant. Unlike `persistCaseArtifacts`, there is no pre-existing file to
+ * copy — a mutant's evidence originates as in-memory strings the harness
+ * already holds (`diff` / `testResult`) — so this writes content directly.
+ * Returns `MutantEvidence[]` with project-relative paths, one entry per mutant,
+ * killed or survived alike.
+ */
+export function persistMutationEvidence(
+  projectRoot: string,
+  runId: string,
+  invariantId: string,
+  mutants: MutantOutcome[]
+): MutantEvidence[] {
+  const dir = invariantArtifactsDir(projectRoot, runId, invariantId);
+  mkdirSync(dir, { recursive: true });
+  return mutants.map((mutant) => {
+    const diffDest = path.join(dir, `mutant-${mutant.index}.diff`);
+    const logDest = path.join(dir, `mutant-${mutant.index}.log`);
+    writeFileSync(diffDest, mutant.diff, 'utf-8');
+    writeFileSync(
+      logDest,
+      `exit code: ${mutant.testResult.exitCode}\n\n--- stdout ---\n${mutant.testResult.stdout}\n--- stderr ---\n${mutant.testResult.stderr}\n`,
+      'utf-8'
+    );
+    return {
+      index: mutant.index,
+      outcome: mutant.outcome,
+      diffPath: path.relative(projectRoot, diffDest),
+      testOutputPath: path.relative(projectRoot, logDest),
+    };
+  });
+}
+
+/**
+ * Round-trip the full reduced `InvariantOutcome` (status/measure/evidence/
+ * artifacts) for one run+invariant to `outcome.json` in its artifacts
+ * directory — the manifest that makes evaluation of this run+invariant
+ * idempotent.
+ */
+export function persistMutationOutcome(
+  projectRoot: string,
+  runId: string,
+  invariantId: string,
+  outcome: InvariantOutcome
+): void {
+  const dir = invariantArtifactsDir(projectRoot, runId, invariantId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(outcomePath(projectRoot, runId, invariantId), JSON.stringify(outcome, null, 2), 'utf-8');
+}
+
+/** Read back a persisted mutation outcome, or `undefined` when none has been persisted yet.
+ *  A missing file is the normal "not yet evaluated" case and returns `undefined`.
+ *  A corrupt or truncated `outcome.json` is treated as a cache miss (fail-closed to
+ *  re-evaluation) — it also returns `undefined` rather than hard-crashing. */
+export function loadPersistedMutationOutcome(
+  projectRoot: string,
+  runId: string,
+  invariantId: string
+): InvariantOutcome | undefined {
+  const file = outcomePath(projectRoot, runId, invariantId);
+  if (!existsSync(file)) return undefined;
+  try {
+    return JSON.parse(readFileSync(file, 'utf-8')) as InvariantOutcome;
+  } catch {
+    // Corrupt or truncated outcome.json → treat as cache miss, caller will re-evaluate.
+    return undefined;
+  }
 }
 
 /** Generate a sortable run id: `YYYYMMDDTHHMMSSmmmZ-<suffix>`. */

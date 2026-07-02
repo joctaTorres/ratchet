@@ -50,14 +50,17 @@ ratchet init [path] [options]
 
 9. **Default invariant manifest.** `.ratchet/evals/invariants.yaml` is written (`created`) when no manifest exists yet, with `spec-not-weakened` active and the stack-specific `tests-still-exist` / `public-api-unchanged` invariants scaffolded inert (`tests-still-exist` live-but-inert when a conventional test directory is detected, commented otherwise; `public-api-unchanged` always a commented placeholder). Unlike `config.yaml`, this write is never skipped in non-interactive mode — the manifest is deterministic scaffolding, not a user choice, and the anti-gaming gate it feeds must be real on every `ratchet init`, including unattended/CI runs. An existing manifest is never overwritten (`exists`), so user edits (e.g. flipping an invariant active) survive re-init. See the [eval invariant manifest](../eval-invariants.md) reference for the schema.
 
-10. **Sandbox permission setup.** In interactive mode, when no project-level permission policy exists in `.ratchet/config.yaml`, `init` offers to configure an agent sandbox permission posture. This governs what spawned coding agents may do without approval. The offer is skipped in non-interactive mode and when a project-level policy already exists.
+10. **Eval-runs gitignore entry.** `init` idempotently ensures the project-root `.gitignore` ignores the transient eval run-records directory `.ratchet/evals/runs/`, so persisted run records never dirty the working tree or the mutation invariant gate. The `.gitignore` is created if absent, and the entry is appended only when missing — a re-run never duplicates it.
 
-11. **Doctor check.** On a first init (not extend mode), `init` runs a non-blocking dependency check (`ratchet doctor`) and reports any missing external dependencies as warnings. A failing doctor check never aborts initialization.
+11. **Sandbox permission setup.** In interactive mode, when no project-level permission policy exists in `.ratchet/config.yaml`, `init` offers to configure an agent sandbox permission posture. This governs what spawned coding agents may do without approval. The offer is skipped in non-interactive mode and when a project-level policy already exists.
+
+12. **Doctor check.** On a first init (not extend mode), `init` runs a non-blocking dependency check (`ratchet doctor`) and reports any missing external dependencies as warnings. A failing doctor check never aborts initialization.
 
 ## Directory layout created
 
 ```
 <path>/
+├── .gitignore          # ensured to ignore .ratchet/evals/runs/
 └── .ratchet/
     ├── config.yaml
     ├── changes/

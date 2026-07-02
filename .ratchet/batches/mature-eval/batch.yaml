@@ -313,6 +313,63 @@ phases:
         timeout/run/teardown) gates on Playwright exit through the deterministic
         contributor with failure artifacts captured, and that the doctor probe is
         conditional on a web binding being in scope
+    changes:
+      - name: web-binding-schema
+        after: []
+        done: >-
+          `src/core/eval/spec.ts`'s `BindingKind` gains `'web'` alongside
+          `deterministic`/`llm-judge`; a `WebBindingSchema` joins `BindingSchema`'s
+          discriminated union with `fixture`, `kind: 'web'`, a `start` boot command,
+          a `readiness` probe (URL or command) paired with a `timeout` (the
+          fail-closed boundary — readiness not reached within it is a failure, never
+          an assumed-ready pass), a `spec` path to the Playwright test driving
+          Given/When/Then, and an optional `setup`; `ratchet eval set` reports
+          `web`-bound cases with the new kind label alongside the existing two; the
+          `## Bindings` section of `docs/commands/eval.md` documents the new binding
+          shape per `.ratchet/standards/documentation.md`
+      - name: web-lifecycle-harness
+        after: [web-binding-schema]
+        done: >-
+          a lifecycle harness starts the binding's `start` command as a background
+          process via the existing bash spawn seam, polls the `readiness` probe
+          until it succeeds or the binding's `timeout` elapses (timeout exceeded
+          fails the case rather than hanging or assuming readiness), runs the
+          Playwright spec at `spec` via a plain bash invocation (agent-neutral — no
+          agent-specific runner, per `.ratchet/standards/multi-agent-support.md`),
+          and tears down the started process in a `finally` on every path (pass,
+          fail, or readiness timeout)
+      - name: web-deterministic-fold
+        after: [web-lifecycle-harness]
+        done: >-
+          `judgeCase()` in `src/core/eval/judge.ts` dispatches `kind: 'web'`
+          bindings through the lifecycle harness and reduces the harness's
+          Playwright exit code to a `CaseVerdict` (exit-zero = pass) in the same
+          shape `judgeCheck` returns for `deterministic` bindings; `aggregate.ts`'s
+          `deterministicContributor` treats `web`-bound case failures the same as
+          `deterministic`-bound ones (no new `ContributorId` is introduced), so the
+          existing `eval.gate.deterministic` / `--only` / `--gate` selectors
+          continue to control it unchanged
+      - name: web-failure-evidence
+        after: [web-deterministic-fold]
+        done: >-
+          on a failed `web`-bound case, the harness captures the Playwright trace
+          and a screenshot and persists them as run evidence referenced by path from
+          the case's `ClauseResult`/`CaseRecord` (reusing the structured-evidence
+          shape from the `structured-evidence-persistence` change) so the failure is
+          reproducible from the run record alone; a passing case captures no
+          artifact
+      - name: doctor-conditional-playwright-probe
+        after: [web-binding-schema]
+        done: >-
+          `ratchet doctor` (`src/core/doctor/`) adds a Playwright check that is
+          included in the report ONLY when a `kind: web` binding is present among
+          the resolved eval bindings in scope (absent from the report entirely
+          otherwise — never an unconditional probe); when included, it detects
+          whether the Playwright CLI is installed and surfaces install guidance
+          when it is not, in the existing `DoctorCheck` shape (`checkAgents`/
+          `checkDocker`'s pattern); `docs/commands/doctor.md` and
+          `docs/commands/eval.md` document the conditional check per
+          `.ratchet/standards/documentation.md`
 
   # ---------------------------------------------------------------------------
   - name: mutation-invariant
@@ -338,3 +395,57 @@ phases:
         seam, gates on the user's test oracle (survived = hard fail, no-tests =
         skipped/unjudged), records each mutant outcome as replayable evidence, and
         scaffolds inert from init
+    changes:
+      - name: mutation-invariant-schema
+        after: []
+        done: >-
+          `src/core/eval/invariants.ts`'s invariant-kind discriminated union gains a
+          `MutationInvariantSchema` (`kind: 'mutation'`) alongside the existing
+          `deterministic`/`monotonic`/`snapshot` kinds, with required `test` (the
+          user's test command — the oracle, no auto-detection, mirroring `check.run`
+          on the deterministic kind), `budget` (bounds how many mutants are seeded
+          per run), and `threshold` fields, each validated and typed by the loader
+          without breaking the existing three kinds
+      - name: mutation-oracle-harness
+        after: [mutation-invariant-schema]
+        done: >-
+          a harness drives the configured agent through the existing spawn seam
+          (`src/core/batch/engine/agent.ts`'s `Spawner` / `resolveAdapter` /
+          `AgentAdapter.buildRequest`, mirroring `judge.ts`'s
+          `buildVoteRequest`/`castVote` call pattern) to seed up to `budget` small,
+          discrete faults one at a time, applies each fault, runs the invariant's
+          `test` command as the deterministic oracle, classifies kill (the test run
+          fails = killed) vs survive (the test run still passes = survived), and
+          reverts the fault before the next mutant — agent-neutral, no external
+          mutation framework, no agent-specific spawn path
+      - name: mutation-evaluator-fold
+        after: [mutation-oracle-harness]
+        done: >-
+          `src/core/eval/invariant-evaluator.ts`'s `evaluateInvariant` switch gains
+          an `evaluateMutation` case that runs the harness and reduces its
+          per-mutant kill/survive results to an `InvariantOutcome` — any survived
+          mutant is a hard `fail`, a `test` command that can't run (no runnable
+          suite) is `unevaluable` (never a silent `pass`) — in the same shape the
+          `deterministic`/`monotonic`/`snapshot` cases already return, so the
+          existing `invariants` contributor (from the `invariant-set` phase) gates
+          on it unchanged with no new `ContributorId`
+      - name: mutation-evidence-recording
+        after: [mutation-evaluator-fold]
+        done: >-
+          each mutant the harness runs — its seeded fault (patch/diff) and its
+          kill/survive outcome — is persisted as run evidence on the
+          `InvariantOutcome` (extending `evidence`/`measure`, following the
+          `artifacts?`/`persistCaseArtifacts` convention in `src/core/eval/run.ts`),
+          so a survived mutant's exact fault and failing/passing test output is
+          reproducible from the run record alone without re-invoking the agent
+      - name: init-mutation-scaffold
+        after: [mutation-invariant-schema]
+        done: >-
+          `src/core/eval/default-manifest.ts`'s `buildDefaultInvariantManifestYaml()`
+          scaffolds the `kind: mutation` invariant alongside `tests-still-exist` as
+          `active: false` (scaffolded-but-inert) with placeholder
+          `test`/`budget`/`threshold` values the user fills in, following the
+          `testsStillExistBlock` detect-and-still-inert pattern, with no
+          ratchet-specific toolchain literal (per
+          `.ratchet/standards/generalizable-defaults.md`) and no new external
+          dependency

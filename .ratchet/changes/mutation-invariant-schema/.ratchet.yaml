@@ -1,0 +1,5 @@
+schema: ratchet
+created: 2026-07-01
+standards:
+  - testing
+  - documentation

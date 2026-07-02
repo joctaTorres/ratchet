@@ -21,10 +21,30 @@ export {
   type Binding,
   type DeterministicBinding,
   type LlmJudgeBinding,
+  type WebBinding,
+  type WebReadiness,
   type BindingKind,
   type ResolvedBinding,
   type EvalSpecLoadResult,
 } from './spec.js';
+export {
+  runWebLifecycle,
+  realProcessStarter,
+  defaultReadinessChecker,
+  type ProcessHandle,
+  type ProcessStarter,
+  type ReadinessChecker,
+  type WebLifecycleDeps,
+  type WebLifecycleOutcome,
+  type WebArtifacts,
+} from './web-lifecycle.js';
+export {
+  runMutationHarness,
+  buildSeedInstructions,
+  type MutantOutcome,
+  type MutationHarnessOutcome,
+  type MutationHarnessDeps,
+} from './mutation-harness.js';
 export { FixtureManager, type MaterializeResult, type FixtureManagerDeps } from './fixture.js';
 export {
   judgeCase,
@@ -57,6 +77,10 @@ export {
   runsDir,
   runPath,
   baselinePath,
+  runArtifactsDir,
+  persistCaseArtifacts,
+  evalsDir,
+  hasEvalIntent,
   type EvalRun,
   type CaseRecord,
   type CaseSnapshot,
@@ -64,8 +88,10 @@ export {
   type RecordRequest,
 } from './run.js';
 export {
-  buildReport,
+  evaluateRun,
+  renderReport,
   diffAgainstBaseline,
+  type EvaluateRunDeps,
   type EvalReport,
   type Scorecard,
   type FailingCase,
@@ -80,6 +106,7 @@ export {
 export {
   aggregateRun,
   isRunComplete,
+  contributorForBindingKind,
   DEFAULT_CONTRIBUTORS,
   deterministicContributor,
   llmJudgeContributor,

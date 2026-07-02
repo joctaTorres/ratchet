@@ -149,4 +149,138 @@ describe('loadEvalSpecs', () => {
     const specs = loadEvalSpecs(root);
     expect(resolveBinding(specs, 'never#bound')).toBeUndefined();
   });
+
+  // features/eval-web-binding/web-binding-schema.feature
+  it('loads a web binding with a URL readiness probe', () => {
+    const root = makeProject();
+    writeSpec(
+      root,
+      'web.yaml',
+      `a#web-url:
+  fixture: web-app
+  kind: web
+  start: "pnpm start"
+  readiness:
+    url: "http://localhost:3000"
+    timeoutMs: 5000
+  spec: e2e/login.spec.ts
+`
+    );
+    const specs = loadEvalSpecs(root);
+    const b = resolveBinding(specs, 'a#web-url');
+    expect(b?.binding.kind).toBe('web');
+    if (b?.binding.kind === 'web') {
+      expect(b.binding.fixture).toBe('web-app');
+      expect(b.binding.start).toBe('pnpm start');
+      expect(b.binding.readiness).toEqual({ url: 'http://localhost:3000', timeoutMs: 5000 });
+      expect(b.binding.spec).toBe('e2e/login.spec.ts');
+    }
+    expect(specs.warnings).toHaveLength(0);
+  });
+
+  it('loads a web binding with a command readiness probe', () => {
+    const root = makeProject();
+    writeSpec(
+      root,
+      'web.yaml',
+      `a#web-cmd:
+  fixture: web-app
+  kind: web
+  start: "pnpm start"
+  readiness:
+    command: "curl -sf http://localhost:3000"
+    timeoutMs: 5000
+  spec: e2e/login.spec.ts
+`
+    );
+    const specs = loadEvalSpecs(root);
+    const b = resolveBinding(specs, 'a#web-cmd');
+    expect(b?.binding.kind).toBe('web');
+    if (b?.binding.kind === 'web') {
+      expect(b.binding.readiness).toEqual({ command: 'curl -sf http://localhost:3000', timeoutMs: 5000 });
+    }
+    expect(specs.warnings).toHaveLength(0);
+  });
+
+  it('rejects a web binding whose readiness names neither a url nor a command', () => {
+    const root = makeProject();
+    writeSpec(
+      root,
+      'web.yaml',
+      `a#web-neither:
+  fixture: web-app
+  kind: web
+  start: "pnpm start"
+  readiness:
+    timeoutMs: 5000
+  spec: e2e/login.spec.ts
+`
+    );
+    const specs = loadEvalSpecs(root);
+    expect(resolveBinding(specs, 'a#web-neither')).toBeUndefined();
+    expect(specs.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('rejects a web binding missing timeoutMs', () => {
+    const root = makeProject();
+    writeSpec(
+      root,
+      'web.yaml',
+      `a#web-no-timeout:
+  fixture: web-app
+  kind: web
+  start: "pnpm start"
+  readiness:
+    url: "http://localhost:3000"
+  spec: e2e/login.spec.ts
+`
+    );
+    const specs = loadEvalSpecs(root);
+    expect(resolveBinding(specs, 'a#web-no-timeout')).toBeUndefined();
+    expect(specs.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('rejects a web binding missing spec', () => {
+    const root = makeProject();
+    writeSpec(
+      root,
+      'web.yaml',
+      `a#web-no-spec:
+  fixture: web-app
+  kind: web
+  start: "pnpm start"
+  readiness:
+    url: "http://localhost:3000"
+    timeoutMs: 5000
+`
+    );
+    const specs = loadEvalSpecs(root);
+    expect(resolveBinding(specs, 'a#web-no-spec')).toBeUndefined();
+    expect(specs.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('accepts a web binding with a one-time setup command', () => {
+    const root = makeProject();
+    writeSpec(
+      root,
+      'web.yaml',
+      `a#web-setup:
+  fixture: web-app
+  kind: web
+  start: "pnpm start"
+  setup: "pnpm install"
+  readiness:
+    url: "http://localhost:3000"
+    timeoutMs: 5000
+  spec: e2e/login.spec.ts
+`
+    );
+    const specs = loadEvalSpecs(root);
+    const b = resolveBinding(specs, 'a#web-setup');
+    expect(b?.binding.kind).toBe('web');
+    if (b?.binding.kind === 'web') {
+      expect(b.binding.setup).toBe('pnpm install');
+    }
+    expect(specs.warnings).toHaveLength(0);
+  });
 });

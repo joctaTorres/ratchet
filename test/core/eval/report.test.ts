@@ -1,14 +1,16 @@
 import { afterEach, describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { buildReport, diffAgainstBaseline } from '../../../src/core/eval/report.js';
-import { persistRun, promoteBaseline, toSnapshot, type EvalRun, type CaseRecord } from '../../../src/core/eval/run.js';
+import { evaluateRun, renderReport, diffAgainstBaseline } from '../../../src/core/eval/report.js';
+import { WORKING_TREE_PROBE } from '../../../src/core/eval/mutation-harness.js';
+import { persistRun, promoteBaseline, toSnapshot, loadRun, type EvalRun, type CaseRecord } from '../../../src/core/eval/run.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
 import type { Verdict } from '../../../src/core/eval/judge.js';
 import type { BindingKind } from '../../../src/core/eval/spec.js';
 import type { ContributorId } from '../../../src/core/eval/aggregate.js';
+import type { BashRunner, BashResult, Spawner } from '../../../src/core/batch/engine/index.js';
 
 const roots: string[] = [];
 
@@ -77,7 +79,7 @@ describe('scorecard', () => {
         'a#unj': { verdict: 'unjudged' },
       })
     );
-    const report = await buildReport(root, 'r1');
+    const report = await evaluateRun(root, 'r1');
     expect(report.scorecard).toMatchObject({ total: 3, pass: 1, fail: 1, unjudged: 1, complete: false });
     expect(report.failing).toHaveLength(1);
     expect(report.failing[0].evidence).toBe('boom');
@@ -87,8 +89,8 @@ describe('scorecard', () => {
   it('marks a run complete only when nothing is unjudged', async () => {
     const root = makeProject();
     persistRun(root, mkRun('r1', { 'a#p': { verdict: 'pass' } }));
-    expect((await buildReport(root, 'r1')).scorecard.complete).toBe(true);
-    expect((await buildReport(root, 'r1')).overall).toBe('pass');
+    expect((await evaluateRun(root, 'r1')).scorecard.complete).toBe(true);
+    expect((await evaluateRun(root, 'r1')).overall).toBe('pass');
   });
 
   // features/eval-judge/skip-filters.feature — a skipped case is counted in the
@@ -103,7 +105,7 @@ describe('scorecard', () => {
         'a#skip': { verdict: 'skipped', reason: 'Skipped: tagged @skip in f.feature.' },
       })
     );
-    const report = await buildReport(root, 'r1');
+    const report = await evaluateRun(root, 'r1');
     expect(report.scorecard).toMatchObject({ total: 3, pass: 1, fail: 0, unjudged: 1, skipped: 1 });
   });
 
@@ -116,7 +118,7 @@ describe('scorecard', () => {
         'a#skip': { verdict: 'skipped' },
       })
     );
-    const report = await buildReport(root, 'r1');
+    const report = await evaluateRun(root, 'r1');
     expect(report.scorecard.complete).toBe(true);
     expect(() => promoteBaseline(root, 'r1')).not.toThrow();
   });
@@ -133,7 +135,7 @@ describe('overall verdict routed through the aggregation core', () => {
         'a#llm': { verdict: 'pass', kind: 'llm-judge' },
       })
     );
-    const report = await buildReport(root, 'r1');
+    const report = await evaluateRun(root, 'r1');
     expect(report.overall).toBe('fail');
     // Every contributor is reported; the deterministic one fails and names the case.
     const ids = report.contributors.map((c) => c.id);
@@ -148,7 +150,7 @@ describe('overall verdict routed through the aggregation core', () => {
     persistRun(root, mkRun('base', { 'a#x': { verdict: 'pass' } }));
     promoteBaseline(root, 'base');
     persistRun(root, mkRun('cur', { 'a#x': { verdict: 'fail', reason: 'broke' } }));
-    const report = await buildReport(root, 'cur');
+    const report = await evaluateRun(root, 'cur');
     expect(report.overall).toBe('fail');
     const failing = report.contributors.filter((c) => c.status === 'fail').map((c) => c.id);
     // Both the deterministic check and the regression fire on this case.
@@ -174,7 +176,7 @@ describe('AND over the enabled contributor set (run.gate)', () => {
         ['deterministic', 'invariants', 'regression']
       )
     );
-    const report = await buildReport(root, 'gated');
+    const report = await evaluateRun(root, 'gated');
     // The disabled llm-judge contributor is absent from the breakdown and the AND.
     expect(report.contributors.map((c) => c.id)).toEqual([
       'deterministic',
@@ -197,7 +199,7 @@ describe('AND over the enabled contributor set (run.gate)', () => {
         ['deterministic', 'llm-judge', 'invariants', 'regression']
       )
     );
-    const report = await buildReport(root, 'enabled');
+    const report = await evaluateRun(root, 'enabled');
     expect(report.contributors.find((c) => c.id === 'llm-judge')?.status).toBe('fail');
     expect(report.overall).toBe('fail');
   });
@@ -209,7 +211,7 @@ describe('baseline diff', () => {
     persistRun(root, mkRun('base', { 'status-as-json': { verdict: 'pass' } }));
     promoteBaseline(root, 'base');
     persistRun(root, mkRun('cur', { 'status-as-json': { verdict: 'fail', reason: 'broke' } }));
-    const report = await buildReport(root, 'cur');
+    const report = await evaluateRun(root, 'cur');
     expect(report.diff.regressions).toEqual(['status-as-json']);
     expect(report.overall).toBe('fail');
   });
@@ -257,8 +259,8 @@ describe('baseline diff', () => {
 });
 
 // features/eval-invariants/contributor.feature — the run-level invariant gate is
-// evaluated inside buildReport, run-level, over the manifest's ACTIVE invariants.
-describe('invariants gate run-level through buildReport', () => {
+// evaluated inside evaluateRun, run-level, over the manifest's ACTIVE invariants.
+describe('invariants gate run-level through evaluateRun', () => {
   // A monotonic `scenario-count` invariant compares the current run's case count
   // against the promoted baseline's — no command, so the gate runs without bash.
   const MONOTONIC = 'invariants:\n  - id: spec-not-weakened\n    kind: monotonic\n    active: true\n    measure: scenario-count\n';
@@ -270,7 +272,7 @@ describe('invariants gate run-level through buildReport', () => {
     promoteBaseline(root, 'base');
     persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' }, 'a#y': { verdict: 'pass' } }));
     writeManifest(root, MONOTONIC);
-    const report = await buildReport(root, 'cur');
+    const report = await evaluateRun(root, 'cur');
     expect(report.overall).toBe('pass');
     expect(report.contributors.find((c) => c.id === 'invariants')?.status).toBe('pass');
     // The per-invariant breakdown is present on the report.
@@ -285,7 +287,7 @@ describe('invariants gate run-level through buildReport', () => {
     promoteBaseline(root, 'base');
     persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' } }));
     writeManifest(root, MONOTONIC);
-    const report = await buildReport(root, 'cur');
+    const report = await evaluateRun(root, 'cur');
     expect(report.overall).toBe('fail');
     const inv = report.contributors.find((c) => c.id === 'invariants');
     expect(inv?.status).toBe('fail');
@@ -302,7 +304,7 @@ describe('invariants gate run-level through buildReport', () => {
       root,
       'invariants:\n  - id: spec-not-weakened\n    kind: monotonic\n    active: false\n    measure: scenario-count\n'
     );
-    const report = await buildReport(root, 'cur');
+    const report = await evaluateRun(root, 'cur');
     expect(report.overall).toBe('pass');
     expect(report.contributors.find((c) => c.id === 'invariants')?.status).toBe('pass');
     // The inert invariant is not recorded as a passing invariant.
@@ -314,7 +316,7 @@ describe('invariants gate run-level through buildReport', () => {
     // Monotonic with no promoted baseline ⇒ unevaluable ⇒ violation.
     persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' } }));
     writeManifest(root, MONOTONIC);
-    const report = await buildReport(root, 'cur');
+    const report = await evaluateRun(root, 'cur');
     expect(report.overall).toBe('fail');
     expect(report.contributors.find((c) => c.id === 'invariants')?.failing).toEqual([
       'spec-not-weakened',
@@ -326,7 +328,7 @@ describe('invariants gate run-level through buildReport', () => {
     const root = makeProject();
     persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' } }));
     writeManifest(root, 'invariants:\n  - id: bogus\n    kind: not-a-kind\n    active: true\n');
-    const report = await buildReport(root, 'cur');
+    const report = await evaluateRun(root, 'cur');
     expect(report.overall).toBe('fail');
     const inv = report.contributors.find((c) => c.id === 'invariants');
     expect(inv?.status).toBe('fail');
@@ -343,7 +345,7 @@ describe('invariants gate run-level through buildReport', () => {
       mkRun('cur', { 'a#x': { verdict: 'pass' } }, ['deterministic', 'llm-judge', 'regression'])
     );
     writeManifest(root, 'invariants:\n  - id: bogus\n    kind: not-a-kind\n    active: true\n');
-    const report = await buildReport(root, 'cur');
+    const report = await evaluateRun(root, 'cur');
     expect(report.overall).toBe('pass');
     expect(report.contributors.map((c) => c.id)).not.toContain('invariants');
     expect(report.invariants).toEqual([]);
@@ -351,7 +353,7 @@ describe('invariants gate run-level through buildReport', () => {
   });
 });
 
-// features/eval-judge/structured-evidence-persistence.feature — buildReport
+// features/eval-judge/structured-evidence-persistence.feature — evaluateRun
 // exposes one CaseDetail per run case: rubric/clauses/votes for a judged case,
 // skip source/detail for a skipped case, and empty arrays for a case with no
 // judging detail.
@@ -391,7 +393,7 @@ describe('cases: CaseDetail[]', () => {
       },
     };
     persistRun(root, run);
-    const report = await buildReport(root, 'r1');
+    const report = await evaluateRun(root, 'r1');
 
     expect(report.cases).toHaveLength(3);
     const judged = report.cases.find((c) => c.id === 'a#judged');
@@ -417,6 +419,41 @@ describe('cases: CaseDetail[]', () => {
     expect(unbound?.skip).toBeUndefined();
   });
 
+  // features/web-failure-evidence/failure-artifacts.feature — the report
+  // surfaces a failing case's captured trace/screenshot paths alongside its
+  // rubric, clauses, and votes.
+  it('includes artifacts for a run whose CaseRecord carries it, and omits it for one that does not', async () => {
+    const root = makeProject();
+    const withArtifacts: CaseRecord = {
+      verdict: 'fail',
+      reason: '[fail] spec failed',
+      source: 'judged',
+      rubric: ["Playwright spec 'e2e/checkout.spec.ts' exits zero"],
+      clauses: [{ clause: "Playwright spec 'e2e/checkout.spec.ts' exits zero", pass: false, evidence: 'failed' }],
+      votes: [{ pass: false, clauses: [] }],
+      artifacts: {
+        trace: '.ratchet/evals/runs/r1/artifacts/a#web/trace.zip',
+        screenshot: '.ratchet/evals/runs/r1/artifacts/a#web/test-failed-1.png',
+      },
+    };
+    const withoutArtifacts: CaseRecord = { verdict: 'pass', reason: '', source: 'judged' };
+    const run: EvalRun = {
+      runId: 'r1',
+      createdAt: new Date().toISOString(),
+      scope: { kind: 'store' },
+      cases: [mkCase('a#web'), mkCase('a#other')].map((c) => toSnapshot(c, 'deterministic')),
+      verdicts: { 'a#web': withArtifacts, 'a#other': withoutArtifacts },
+    };
+    persistRun(root, run);
+    const report = await evaluateRun(root, 'r1');
+
+    const web = report.cases.find((c) => c.id === 'a#web');
+    expect(web?.artifacts).toEqual(withArtifacts.artifacts);
+
+    const other = report.cases.find((c) => c.id === 'a#other');
+    expect(other?.artifacts).toBeUndefined();
+  });
+
   it('leaves the existing overall-verdict/contributor/scorecard assertions unchanged by the new field', async () => {
     const root = makeProject();
     persistRun(
@@ -426,9 +463,129 @@ describe('cases: CaseDetail[]', () => {
         'a#fail': { verdict: 'fail', reason: 'boom' },
       })
     );
-    const report = await buildReport(root, 'r1');
+    const report = await evaluateRun(root, 'r1');
     expect(report.overall).toBe('fail');
     expect(report.scorecard).toMatchObject({ total: 2, pass: 1, fail: 1 });
     expect(report.cases).toHaveLength(2);
+  });
+});
+
+// features/eval-report/read-only-report.feature — the run path (`evaluateRun`)
+// evaluates the invariant gate WITH the spawner and persists the full result onto
+// the run; the report path (`renderReport`) is pure and reads the persisted
+// result — never re-evaluating, spawning, or mutating the tree. A run with no
+// persisted gate renders its invariants "not evaluated".
+describe('read-only eval report (evaluateRun persists, renderReport reads)', () => {
+  // A one-mutant mutation invariant. Under the run path this seeds a mutant via
+  // the spawner and runs the oracle through the injected bash; a surviving mutant
+  // (oracle still passes) fails the gate.
+  const MUTATION =
+    'invariants:\n  - id: mutants-are-killed\n    kind: mutation\n    active: true\n    test: "run-oracle"\n    budget: 1\n    threshold: 1\n';
+  const CLEAN: BashResult = { exitCode: 0, stdout: '', stderr: '' };
+  const A_DIFF: BashResult = { exitCode: 0, stdout: 'diff --git a/src/x.ts b/src/x.ts\n-a\n+b\n', stderr: '' };
+  const ORACLE_PASS: BashResult = { exitCode: 0, stdout: 'PASS', stderr: '' };
+  const REVERT = 'git reset --hard HEAD && git clean -fd -e .ratchet/evals/runs';
+  /** A fake git bash that reports a clean tree and a surviving mutant. */
+  function fakeGitBash(): BashRunner {
+    return async (command) => {
+      if (command === WORKING_TREE_PROBE) return CLEAN;
+      if (command === 'git add -A') return CLEAN;
+      if (command === 'git diff --cached') return A_DIFF;
+      if (command === 'run-oracle') return ORACLE_PASS;
+      if (command === REVERT) return CLEAN;
+      throw new Error(`fake bash: unexpected command '${command}'`);
+    };
+  }
+
+  it('renderReport on an active mutation invariant does not spawn and does not mutate the tree', () => {
+    const root = makeProject();
+    writeManifest(root, MUTATION);
+    // A run with NO persisted gate — as if invariants had not been evaluated yet.
+    persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' } }));
+    // An untracked sentinel `git clean -fd` WOULD delete if the harness ran.
+    const sentinel = path.join(root, 'untracked-sentinel.txt');
+    writeFileSync(sentinel, 'keep me');
+
+    // A counting spawner: renderReport takes no spawner, so it can never call it.
+    let spawnCalls = 0;
+    const spawner: Spawner = async () => {
+      spawnCalls++;
+      return { exitCode: 0, signal: null, stdout: '', stderr: '' };
+    };
+    void spawner; // wired to prove renderReport has no way to reach it
+
+    const report = renderReport(root, 'cur');
+
+    expect(spawnCalls).toBe(0);
+    expect(existsSync(sentinel)).toBe(true); // tree untouched: no `git clean -fd`
+    expect(report.invariantsEvaluated).toBe(false); // "not evaluated"
+    expect(report.invariants).toEqual([]);
+    // The invariants contributor is present in the AND but stays neutral (pass).
+    expect(report.contributors.find((c) => c.id === 'invariants')?.status).toBe('pass');
+    expect(report.overall).toBe('pass');
+  });
+
+  it('run persists the gate and report reads it to the same verdict with zero re-spawn', async () => {
+    const root = makeProject();
+    writeManifest(root, MUTATION);
+    persistRun(root, mkRun('cur', { 'a#x': { verdict: 'pass' } }));
+
+    let spawnCalls = 0;
+    const spawner: Spawner = async () => {
+      spawnCalls++;
+      return { exitCode: 0, signal: null, stdout: '', stderr: '' };
+    };
+
+    // Run path: evaluates the gate WITH the spawner and persists the result.
+    const runReport = await evaluateRun(root, 'cur', { bash: fakeGitBash(), spawner });
+    expect(spawnCalls).toBe(1); // the mutation agent was spawned once
+    expect(runReport.invariantsEvaluated).toBe(true);
+    expect(runReport.overall).toBe('fail'); // surviving mutant fails the gate
+    expect(runReport.invariants.map((o) => o.id)).toEqual(['mutants-are-killed']);
+    // The full gate result was persisted onto the run.
+    expect(loadRun(root, 'cur').invariantGate?.failing).toEqual(['mutants-are-killed']);
+
+    // Report path: reads the persisted gate — NO additional spawner calls.
+    const reportReport = renderReport(root, 'cur');
+    expect(spawnCalls).toBe(1); // unchanged: renderReport did not re-spawn
+    expect(reportReport.invariantsEvaluated).toBe(true);
+    expect(reportReport.overall).toBe(runReport.overall); // same verdict
+    expect(reportReport.invariants).toEqual(runReport.invariants); // same breakdown
+  });
+
+  it('renders a run whose invariants contributor was disabled as not evaluated', () => {
+    const root = makeProject();
+    // A malformed manifest WOULD fail the gate, but invariants is not in run.gate.
+    writeManifest(root, 'invariants:\n  - id: bogus\n    kind: not-a-kind\n    active: true\n');
+    persistRun(
+      root,
+      mkRun('cur', { 'a#x': { verdict: 'pass' } }, ['deterministic', 'llm-judge', 'regression'])
+    );
+    const report = renderReport(root, 'cur');
+    expect(report.invariantsEvaluated).toBe(false);
+    expect(report.invariants).toEqual([]);
+    expect(report.loadError).toBeUndefined();
+    // The disabled contributor takes no part in the AND.
+    expect(report.contributors.map((c) => c.id)).not.toContain('invariants');
+    expect(report.overall).toBe('pass');
+  });
+
+  it('renders a legacy run (gate enabled, no persisted result) as not evaluated without loading the manifest', () => {
+    const root = makeProject();
+    // A malformed manifest the report path must never load.
+    writeManifest(root, 'invariants:\n  - id: bogus\n    kind: not-a-kind\n    active: true\n');
+    // Legacy run: gate includes invariants, but no invariantGate was persisted.
+    persistRun(
+      root,
+      mkRun('cur', { 'a#x': { verdict: 'pass' } }, ['deterministic', 'invariants', 'regression'])
+    );
+    expect(() => renderReport(root, 'cur')).not.toThrow();
+    const report = renderReport(root, 'cur');
+    expect(report.invariantsEvaluated).toBe(false);
+    expect(report.invariants).toEqual([]);
+    expect(report.loadError).toBeUndefined(); // manifest never loaded
+    // Present in the AND but neutral: the not-evaluated state does not fail the gate.
+    expect(report.contributors.find((c) => c.id === 'invariants')?.status).toBe('pass');
+    expect(report.overall).toBe('pass');
   });
 });

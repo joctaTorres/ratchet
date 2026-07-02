@@ -21,6 +21,7 @@ export {
   isGlobPattern,
   materializeApplyContext,
   resolveArtifactOutputs,
+  type ApplyContextResult,
 } from './outputs.js';
 
 // Schema resolution

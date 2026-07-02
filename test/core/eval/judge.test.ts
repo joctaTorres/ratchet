@@ -4,9 +4,11 @@
  * Implements features/eval-judge/engine-backed-judge.feature (judging through
  * the batch engine seams), features/eval-judge/rubric-decomposition.feature
  * (per-Then-clause rubric derivation, the CoT-before-verdict/anti-sycophancy
- * prompt, and the structured all-yes-gated per-clause verdict), and the
+ * prompt, and the structured all-yes-gated per-clause verdict), the
  * vote-resolution scenarios of features/eval-judge/jury-quorum-resolution.feature
- * (symmetric majority/unanimous quorum, sub-quorum never guesses).
+ * (symmetric majority/unanimous quorum, sub-quorum never guesses), and
+ * features/web-deterministic-fold/judge-dispatch.feature (a `web` binding
+ * dispatched through the lifecycle harness and reduced to a `CaseVerdict`).
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -18,8 +20,9 @@ import {
   type ClauseResult,
 } from '../../../src/core/eval/judge.js';
 import type { EvalCase } from '../../../src/core/eval/set.js';
-import type { Binding, LlmJudgeBinding } from '../../../src/core/eval/spec.js';
+import type { Binding, LlmJudgeBinding, WebBinding } from '../../../src/core/eval/spec.js';
 import type { BashRunner, Spawner } from '../../../src/core/batch/engine/index.js';
+import type { ProcessHandle, ProcessStarter, ReadinessChecker } from '../../../src/core/eval/web-lifecycle.js';
 
 const CASE: EvalCase = {
   id: 'f/x#scenario',
@@ -389,5 +392,106 @@ describe('judgeCase: llm-judge', () => {
     expect(r.votes).toHaveLength(2);
     expect(r.votes[0].pass).toBe(true);
     expect(r.votes[1].pass).toBe(false);
+  });
+});
+
+describe('judgeCase: web', () => {
+  const webBinding: Binding & WebBinding = {
+    fixture: 'storefront-app',
+    kind: 'web',
+    start: 'pnpm dev',
+    readiness: { url: 'http://localhost:3000', timeoutMs: 5000 },
+    spec: 'e2e/add-to-cart.spec.ts',
+  };
+
+  /** A no-op process starter: `web-lifecycle.test.ts` already proves start/teardown in isolation. */
+  const fakeStart: ProcessStarter = () => {
+    const handle: ProcessHandle = { pid: 1, kill() {} };
+    return handle;
+  };
+
+  it('judges a pass when the app becomes ready and the Playwright spec exits zero', async () => {
+    const checkReadiness: ReadinessChecker = async () => true;
+    let bashCalls = 0;
+    const bash: BashRunner = async () => {
+      bashCalls++;
+      return { exitCode: 0, stdout: '1 passed', stderr: '' };
+    };
+    const r = await judgeCase(CASE, webBinding, '/fixture/copy', {
+      web: { start: fakeStart, checkReadiness, bash },
+    });
+    expect(bashCalls).toBe(1);
+    expect(r.verdict).toBe('pass');
+    expect(r.evidence[0].pass).toBe(true);
+    expect(r.evidence[0].evidence).toContain('e2e/add-to-cart.spec.ts');
+    expect(r.rubric).toEqual([`Playwright spec '${webBinding.spec}' exits zero`]);
+    expect(r.votes).toEqual([{ pass: true, clauses: r.evidence }]);
+  });
+
+  it('judges a fail citing the non-zero exit when the app is ready but the Playwright spec fails', async () => {
+    const checkReadiness: ReadinessChecker = async () => true;
+    const bash: BashRunner = async () => ({ exitCode: 1, stdout: '', stderr: '1 failed' });
+    const r = await judgeCase(CASE, webBinding, '/c', { web: { start: fakeStart, checkReadiness, bash } });
+    expect(r.verdict).toBe('fail');
+    expect(r.evidence[0].pass).toBe(false);
+    expect(r.evidence[0].evidence).toContain('exit 1');
+    expect(r.evidence[0].evidence).toContain('e2e/add-to-cart.spec.ts');
+  });
+
+  it('judges a fail citing the readiness timeout without ever running the Playwright spec', async () => {
+    const checkReadiness: ReadinessChecker = async () => false;
+    let bashCalls = 0;
+    const bash: BashRunner = async () => {
+      bashCalls++;
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    // A manual clock: `now()` only advances when `sleep` is awaited, so the poll
+    // loop deterministically exceeds the deadline without a real timer.
+    let elapsed = 0;
+    const clock = {
+      now: () => elapsed,
+      sleep: async (ms: number) => {
+        elapsed += ms;
+      },
+    };
+    const r = await judgeCase(CASE, webBinding, '/c', {
+      web: { start: fakeStart, checkReadiness, bash, sleep: clock.sleep, now: clock.now },
+    });
+    expect(bashCalls).toBe(0);
+    expect(r.verdict).toBe('fail');
+    expect(r.evidence[0].pass).toBe(false);
+    expect(r.evidence[0].evidence).toMatch(/timeout|did not become ready/i);
+    expect(r.artifacts).toBeUndefined();
+  });
+
+  // features/web-failure-evidence/failure-artifacts.feature
+  function playwrightReport(attachments: Array<{ name: string; path: string }>): string {
+    return JSON.stringify({ suites: [{ specs: [{ tests: [{ results: [{ attachments }] }] }] }] });
+  }
+
+  it('carries a failing spec\'s reported trace and screenshot through to CaseVerdict.artifacts', async () => {
+    const checkReadiness: ReadinessChecker = async () => true;
+    const bash: BashRunner = async () => ({ exitCode: 1, stdout: '', stderr: '1 failed' });
+    const readReport = async () =>
+      playwrightReport([
+        { name: 'trace', path: '/c/trace.zip' },
+        { name: 'screenshot', path: '/c/test-failed-1.png' },
+      ]);
+    const r = await judgeCase(CASE, webBinding, '/c', {
+      web: { start: fakeStart, checkReadiness, bash, readReport },
+    });
+    expect(r.verdict).toBe('fail');
+    expect(r.artifacts).toEqual({ trace: '/c/trace.zip', screenshot: '/c/test-failed-1.png' });
+  });
+
+  it('reports no artifacts for a passing spec with an empty attachments list', async () => {
+    const checkReadiness: ReadinessChecker = async () => true;
+    const bash: BashRunner = async () => ({ exitCode: 0, stdout: '1 passed', stderr: '' });
+    const readReport = async () => playwrightReport([]);
+    const r = await judgeCase(CASE, webBinding, '/c', {
+      web: { start: fakeStart, checkReadiness, bash, readReport },
+    });
+    expect(r.verdict).toBe('pass');
+    expect(r.artifacts).toBeUndefined();
   });
 });

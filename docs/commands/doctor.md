@@ -21,7 +21,11 @@ ratchet doctor [options]
 
 ## Checks
 
-Three checks run in a fixed order: agent, runtime, docker.
+Three checks always run, in a fixed order: agent, runtime, docker. A fourth,
+conditional check — Playwright — is appended only when a `kind: web` binding is
+present among the eval bindings resolved from `.ratchet/evals/specs/`; it is absent
+from the report entirely (not merely hidden or skipped) for a project with no web
+binding in scope.
 
 ### Coding-agent CLI (`agent`) — required
 
@@ -53,6 +57,21 @@ Checks whether the Docker daemon is reachable (`docker info`). Docker is only re
 **Info**: `docker info` exits non-zero. Remedy: install Docker and start the daemon if the `docker` locus is needed.
 
 An `info`-status check never affects the exit code.
+
+### Playwright CLI (`playwright`) — optional, conditional
+
+Appended only when a `kind: web` binding is present among the eval bindings resolved
+from `.ratchet/evals/specs/` (the same resolver `eval set`/`eval run` use — see
+[Web binding](eval.md#web-binding)). Absent from the report, and from `--json` output,
+for any project with no web binding in scope. When present, checks whether the
+Playwright CLI is usable (`npx --no-install playwright --version`).
+
+**Pass**: the probe exits zero. Detail reports the detected version.
+
+**Info**: the probe exits non-zero (Playwright is not installed). Remedy: install
+Playwright (`npm install -D @playwright/test && npx playwright install`).
+
+Like Docker, a missing Playwright CLI never fails doctor or affects the exit code.
 
 ## Human output
 
@@ -111,7 +130,7 @@ Fields:
 | Field | Type | Description |
 |---|---|---|
 | `ok` | boolean | `true` iff every `required` check has `status: "pass"`. Drives the exit code. |
-| `checks[].id` | string | Stable machine id: `agent`, `runtime`, or `docker`. |
+| `checks[].id` | string | Stable machine id: `agent`, `runtime`, `docker`, or — only when a `kind: web` binding is in scope — `playwright`. |
 | `checks[].label` | string | Short human label. |
 | `checks[].status` | `"pass"` \| `"fail"` \| `"info"` | Verdict for this check. |
 | `checks[].severity` | `"required"` \| `"optional"` | Whether a failure gates the exit code. |

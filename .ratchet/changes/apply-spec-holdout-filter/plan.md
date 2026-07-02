@@ -30,11 +30,12 @@ staying an ordinary, fully-enumerated gating case everywhere else.
   materialized copies are regenerated on every `ratchet instructions apply`
   call, not source.
 - Implements `features/apply-holdout/apply-time-filter.feature`.
-- `eval run`, `ratchet verify`, `enumerateEvalSet()`, `execute.ts`,
-  `aggregate.ts` are untouched: they already read the real source `.feature`
-  file directly (never through `contextFiles`), so a held-out case keeps
-  being enumerated and gated exactly like any other case. Regression-tested,
-  not re-implemented.
+- `eval run`, `enumerateEvalSet()`, `execute.ts`, `aggregate.ts` are untouched:
+  they already read the real source `.feature` file directly (never through
+  `contextFiles`), so a held-out case keeps being enumerated and gated exactly
+  like any other case. Regression-tested, not re-implemented.
+- `ratchet verify` reads the same filtered `contextFiles` as apply (by design —
+  it shares the `generateApplyInstructions` builder; enforcement is `eval run`).
 - Reference docs (`docs/commands/instructions.md`, `README.md`) document the
   filtering behavior and the stronger sibling-location isolation
   alternative, per `documentation`.
@@ -83,13 +84,14 @@ filter there — rather than growing a second call path or a mode flag —
 keeps this a `delegated-lifecycle`-compliant change: no parallel
 instruction-builder is introduced, and every consumer (interactive skill,
 headless `ratchet apply`, headless `ratchet verify`) goes on getting its
-`contextFiles` from the same one place. The mechanical gate that "gates
-normally at verify" per this phase's success criteria is `eval run` /
-`enumerateEvalSet()` reading the untouched source file directly — a
-wholly separate code path from `contextFiles` — so verdict/aggregation
-cannot be affected by anything this change does to instruction assembly,
-regardless of what a verify-time reviewing agent happens to read for its own
-narrative context.
+`contextFiles` from the same one place. `ratchet verify` reads the same
+filtered view as `apply` by design — this prevents a feedback loop where
+a verify-time agent could expose held-out content back to the apply loop.
+The mechanical enforcement gate is `eval run` / `enumerateEvalSet()` reading
+the untouched source file directly — a wholly separate code path from
+`contextFiles` — so verdict/aggregation cannot be affected by anything this
+change does to instruction assembly, regardless of what a verify-time
+reviewing agent happens to read for its own narrative context.
 
 **No new command, flag, or config key.** This is a change to what one
 existing function returns, not a new user-facing surface beyond that

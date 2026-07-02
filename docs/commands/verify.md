@@ -61,6 +61,27 @@ Read from on-disk change state before any settings resolution or spawn:
 Run state is written under `.ratchet/changes/<change>/.run/` — never under
 `.ratchet/batches/`. See [Run-state locus](../engine/run-state.md).
 
+## Hold-out scenarios
+
+`ratchet verify` reads the same filtered `contextFiles` that `ratchet apply`
+reads — `@holdout`-tagged Scenarios are stripped from the `.feature` files
+before the verify agent reads them. This is intentional: `verify` shares the
+`generateApplyInstructions` builder with `apply`; re-using it prevents the
+verify loop from leaking held-out content back to the building agent.
+
+If the change has held-out Scenarios, the JSON output of
+`ratchet instructions apply --json` carries `heldOutCount > 0` and the verify
+agent emits a non-blocking WARNING naming the count only:
+
+> WARNING: N @holdout scenario(s) are excluded from this view — run `ratchet eval run` to enforce them.
+
+The verify agent must NOT treat a held-out Scenario's absence as a coverage
+gap — held-out Scenarios are legitimately absent from the filtered view;
+enforcement is `eval run`, which reads the real source file directly.
+
+See [`ratchet eval`](./eval.md) for the enforcement surface and
+[`ratchet instructions`](./instructions.md) for filtering details.
+
 ## Help group
 
 `verify` is listed under the `Workflow:` heading in `ratchet --help`, after

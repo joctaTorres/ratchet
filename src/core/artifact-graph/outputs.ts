@@ -61,23 +61,12 @@ export interface ApplyContextResult {
  * The source `.feature` file is never modified. Non-`.feature` outputs (e.g.
  * `plan.md`) pass through unchanged — hold-out visibility only applies to
  * Gherkin scenarios.
- *
- * When `evalIntent` is `false` (no `.ratchet/evals/` directory), filtering is
- * skipped entirely: source paths are returned unchanged and no
- * `.apply-context/` directory is written. Filtering only makes sense when
- * `eval run` exists to enforce the held-out scenarios; without it, stripping
- * would hide content with no enforcement gate in place.
  */
 export function materializeApplyContext(
   changeDir: string,
   artifactId: string,
-  outputs: string[],
-  evalIntent: boolean
+  outputs: string[]
 ): ApplyContextResult {
-  if (!evalIntent) {
-    return { paths: outputs, heldOutCount: 0 };
-  }
-
   const canonicalChangeDir = FileSystemUtils.canonicalizeExistingPath(changeDir);
   let heldOutCount = 0;
 

@@ -199,14 +199,14 @@ describe('artifact-graph/outputs', () => {
       '',
     ].join('\n');
 
-    it('materializes a .feature output with the held-out Scenario stripped, at a distinct path (evalIntent=true)', () => {
+    it('materializes a .feature output with the held-out Scenario stripped, at a distinct path', () => {
       const featurePath = path.join(tempDir, 'features', 'sample.feature');
       fs.mkdirSync(path.dirname(featurePath), { recursive: true });
       fs.writeFileSync(featurePath, HELD_OUT_FEATURE, 'utf-8');
 
       const result = materializeApplyContext(tempDir, 'features', [
         canonical(featurePath),
-      ], true);
+      ]);
 
       expect(result.paths).toHaveLength(1);
       expect(result.paths[0]).not.toBe(canonical(featurePath));
@@ -221,7 +221,7 @@ describe('artifact-graph/outputs', () => {
       fs.mkdirSync(path.dirname(featurePath), { recursive: true });
       fs.writeFileSync(featurePath, HELD_OUT_FEATURE, 'utf-8');
 
-      materializeApplyContext(tempDir, 'features', [canonical(featurePath)], true);
+      materializeApplyContext(tempDir, 'features', [canonical(featurePath)]);
 
       expect(fs.readFileSync(featurePath, 'utf-8')).toBe(HELD_OUT_FEATURE);
     });
@@ -233,7 +233,7 @@ describe('artifact-graph/outputs', () => {
 
       const result = materializeApplyContext(tempDir, 'features', [
         canonical(featurePath),
-      ], true);
+      ]);
 
       expect(fs.readFileSync(result.paths[0], 'utf-8')).toBe(CLEAN_FEATURE);
       expect(result.heldOutCount).toBe(0);
@@ -243,37 +243,10 @@ describe('artifact-graph/outputs', () => {
       const planPath = path.join(tempDir, 'plan.md');
       fs.writeFileSync(planPath, '# plan\n', 'utf-8');
 
-      const result = materializeApplyContext(tempDir, 'plan', [canonical(planPath)], true);
+      const result = materializeApplyContext(tempDir, 'plan', [canonical(planPath)]);
 
       expect(result.paths[0]).toBe(canonical(planPath));
       expect(fs.readFileSync(result.paths[0], 'utf-8')).toBe('# plan\n');
-      expect(result.heldOutCount).toBe(0);
-    });
-
-    it('returns source paths unchanged and count 0 when evalIntent is false, without writing .apply-context/', () => {
-      const featurePath = path.join(tempDir, 'features', 'sample.feature');
-      fs.mkdirSync(path.dirname(featurePath), { recursive: true });
-      fs.writeFileSync(featurePath, HELD_OUT_FEATURE, 'utf-8');
-
-      const result = materializeApplyContext(tempDir, 'features', [
-        canonical(featurePath),
-      ], false);
-
-      // Paths are unchanged — the source path is returned as-is
-      expect(result.paths).toEqual([canonical(featurePath)]);
-      expect(result.heldOutCount).toBe(0);
-
-      // No .apply-context directory must be created
-      expect(fs.existsSync(path.join(tempDir, '.apply-context'))).toBe(false);
-    });
-
-    it('returns source paths unchanged for non-.feature when evalIntent is false', () => {
-      const planPath = path.join(tempDir, 'plan.md');
-      fs.writeFileSync(planPath, '# plan\n', 'utf-8');
-
-      const result = materializeApplyContext(tempDir, 'plan', [canonical(planPath)], false);
-
-      expect(result.paths).toEqual([canonical(planPath)]);
       expect(result.heldOutCount).toBe(0);
     });
   });

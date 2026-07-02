@@ -314,7 +314,9 @@ export async function generateApplyInstructions(
   for (const artifact of schema.artifacts) {
     const outputs = resolveArtifactOutputs(changeDir, artifact.generates);
     if (outputs.length > 0) {
-      const result = materializeApplyContext(changeDir, artifact.id, outputs, evalIntent);
+      const result = evalIntent
+        ? materializeApplyContext(changeDir, artifact.id, outputs)
+        : { paths: outputs, heldOutCount: 0 };
       contextFiles[artifact.id] = result.paths;
       if (result.heldOutCount > 0) {
         heldOutCounts[artifact.id] = result.heldOutCount;

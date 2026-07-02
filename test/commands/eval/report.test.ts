@@ -17,6 +17,8 @@ import {
   promoteBaseline,
   type EvalRun,
   type Verdict,
+  type JurorVote,
+  type WebArtifacts,
 } from '../../../src/core/eval/index.js';
 import { makeEvalFixture, type EvalFixture } from './eval-fixture.js';
 
@@ -30,10 +32,20 @@ vi.mock('../../../src/core/planning-home.js', () => ({
 
 import { evalReportCommand } from '../../../src/commands/eval/report.js';
 
+type Clause = { clause: string; pass: boolean; evidence: string };
+
 interface Entry {
   id: string;
   verdict: Verdict;
   reason?: string;
+  /** The binding kind recorded on the case snapshot (a `web` case carries artifacts). */
+  bindingKind?: 'web' | null;
+  /** Per-clause pass/fail marks rendered by `printCaseDetail`. */
+  clauses?: Clause[];
+  /** Juror votes; a length > 1 triggers the rendered jury tally. */
+  votes?: JurorVote[];
+  /** Captured trace/screenshot paths surfaced onto `CaseDetail.artifacts`. */
+  artifacts?: WebArtifacts;
 }
 
 function makeRun(runId: string, entries: Entry[]): EvalRun {
@@ -47,10 +59,20 @@ function makeRun(runId: string, entries: Entry[]): EvalRun {
       scenario: e.id,
       source: 'features/x.feature',
       steps: [],
-      bindingKind: null,
+      bindingKind: e.bindingKind ?? null,
     })),
     verdicts: Object.fromEntries(
-      entries.map((e) => [e.id, { verdict: e.verdict, reason: e.reason ?? '', source: 'judged' }])
+      entries.map((e) => [
+        e.id,
+        {
+          verdict: e.verdict,
+          reason: e.reason ?? '',
+          source: 'judged',
+          ...(e.clauses ? { clauses: e.clauses } : {}),
+          ...(e.votes ? { votes: e.votes } : {}),
+          ...(e.artifacts ? { artifacts: e.artifacts } : {}),
+        },
+      ])
     ),
   };
 }
@@ -189,5 +211,74 @@ describe('evalReportCommand', () => {
     expect(parsed.invariantsEvaluated).toBe(false);
     expect(parsed.invariants).toEqual([]);
     expect(parsed.overall).toBe('pass');
+  });
+
+  // features/web-failure-evidence/failure-artifacts.feature — a failing web case's
+  // detail surfaces its captured trace/screenshot paths, per-clause pass/fail marks,
+  // and a jury tally when more than one juror voted.
+  it('renders a failing web case detail with clause marks, jury tally, and artifact paths', async () => {
+    persistRun(
+      fixture.root,
+      makeRun('run-web', [
+        {
+          id: 'w',
+          verdict: 'fail',
+          reason: 'spec failed',
+          bindingKind: 'web',
+          clauses: [
+            { clause: 'the page loads', pass: true, evidence: 'ok' },
+            { clause: 'the checkout succeeds', pass: false, evidence: 'timeout' },
+          ],
+          votes: [
+            { pass: true, clauses: [] },
+            { pass: false, clauses: [] },
+          ],
+          artifacts: {
+            trace: '.ratchet/evals/runs/run-web/artifacts/w/trace.zip',
+            screenshot: '.ratchet/evals/runs/run-web/artifacts/w/test-failed-1.png',
+          },
+        },
+      ])
+    );
+
+    await evalReportCommand({ run: 'run-web' });
+    const text = output();
+
+    // Per-clause marks (both the pass and fail branches of the clause ternary).
+    expect(text).toContain('[pass] the page loads');
+    expect(text).toContain('[fail] the checkout succeeds');
+    // Jury tally rendered because more than one juror voted (1 of 2 passed).
+    expect(text).toContain('Jury: 1/2 passed');
+    // Artifact paths surfaced from the persisted CaseRecord.
+    expect(text).toContain('Trace: .ratchet/evals/runs/run-web/artifacts/w/trace.zip');
+    expect(text).toContain(
+      'Screenshot: .ratchet/evals/runs/run-web/artifacts/w/test-failed-1.png'
+    );
+  });
+
+  it('omits artifact and jury lines for a failing case with no artifacts and a single vote', async () => {
+    persistRun(
+      fixture.root,
+      makeRun('run-noart', [
+        {
+          id: 'p',
+          verdict: 'fail',
+          reason: 'assertion failed',
+          clauses: [{ clause: 'the value matches', pass: false, evidence: 'mismatch' }],
+          votes: [{ pass: false, clauses: [] }],
+          // No `artifacts`, single vote: the artifact and jury branches render nothing.
+        },
+      ])
+    );
+
+    await evalReportCommand({ run: 'run-noart' });
+    const text = output();
+
+    // The failing case is still detailed with its single clause mark.
+    expect(text).toContain('[fail] the value matches');
+    // But the false branches of the artifact/jury conditionals render no lines.
+    expect(text).not.toContain('Trace:');
+    expect(text).not.toContain('Screenshot:');
+    expect(text).not.toContain('Jury:');
   });
 });

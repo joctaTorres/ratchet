@@ -7,6 +7,10 @@
  * via plain bash, pass/fail on exit code, teardown-in-finally on every path,
  * and agent-neutral invocation).
  *
+ * Also implements features/web-lifecycle-harness/fail-fast-without-install.feature
+ * (the harness runs Playwright via `npx --no-install`, so a machine lacking
+ * Playwright fails fast instead of triggering a surprise network install).
+ *
  * Every seam (`start`/`bash`/`checkReadiness`/`sleep`/`now`) is injected so no
  * test spawns a real process, hits the network, or waits in real time.
  */
@@ -28,7 +32,7 @@ import type { BashRunner, BashResult } from '../../../src/core/batch/engine/inde
  * these expectations fail rather than silently drifting.
  */
 const playwrightCmd = (spec: string) =>
-  `PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx ${PLAYWRIGHT_NPX_PACKAGE} test ${spec} --trace=retain-on-failure --reporter=list,json`;
+  `PLAYWRIGHT_JSON_OUTPUT_NAME=.ratchet-web-report.json npx --no-install ${PLAYWRIGHT_NPX_PACKAGE} test ${spec} --trace=retain-on-failure --reporter=list,json`;
 
 const webBinding = (overrides: Partial<WebBinding> = {}): WebBinding => ({
   fixture: 'storefront-app',
@@ -167,6 +171,26 @@ describe('runWebLifecycle readiness', () => {
     expect(outcome).toEqual({ kind: 'readiness-timeout' });
     expect(bashCalls).toEqual([]); // spec never run
     expect(starter.killed).toBe(true); // started process torn down
+  });
+});
+
+// features/web-lifecycle-harness/fail-fast-without-install.feature
+describe('runWebLifecycle passes --no-install to npx so a missing Playwright fails fast', () => {
+  it('runs the Playwright test command with --no-install, never triggering an implicit install', async () => {
+    const starter = fakeStarter();
+    const { bash, calls: bashCalls } = fakeBash({
+      [playwrightCmd('e2e/add-to-cart.spec.ts')]: OK_RESULT,
+    });
+
+    await runWebLifecycle(webBinding(), '/work', {
+      start: starter.start,
+      checkReadiness: async () => true,
+      bash,
+    });
+
+    const playwrightRun = bashCalls.find((c) => c.command.includes('npx'));
+    expect(playwrightRun).toBeDefined();
+    expect(playwrightRun!.command).toContain('npx --no-install');
   });
 });
 

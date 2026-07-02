@@ -92,9 +92,13 @@ export async function runWebLifecycle(
 3. **Run the spec** — once ready, the Playwright spec runs through `deps.bash`
    (default `realBashRunner`), the same seam `judgeCheck` (`judge.ts`) uses
    for `deterministic` bindings, as:
-   `` `PLAYWRIGHT_JSON_OUTPUT_NAME=${REPORT_FILE_NAME} npx playwright test ${binding.spec} --trace=retain-on-failure --reporter=list,json` ``.
+   `` `PLAYWRIGHT_JSON_OUTPUT_NAME=${REPORT_FILE_NAME} npx --no-install playwright test ${binding.spec} --trace=retain-on-failure --reporter=list,json` ``.
    `npx` resolves a locally-installed `playwright` binary regardless of which
-   package manager populated `node_modules/.bin`. `--trace=retain-on-failure`
+   package manager populated `node_modules/.bin`. `--no-install` makes a
+   missing Playwright **fail fast** rather than triggering a surprise network
+   install mid-run — matching the `ratchet doctor` probe
+   (`src/core/doctor/checks/playwright.ts`), so behavior is uniform whether the
+   user runs `ratchet doctor` or an actual eval. `--trace=retain-on-failure`
    forces trace capture on a failing test (Playwright's own
    conditional-capture semantics — a passing run's JSON report has no
    attachments). The `list,json` reporter pair keeps the existing

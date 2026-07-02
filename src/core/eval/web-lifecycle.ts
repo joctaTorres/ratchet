@@ -223,7 +223,7 @@ export async function runWebLifecycle(
       return { kind: 'readiness-timeout' };
     }
     const result = await bash(
-      `PLAYWRIGHT_JSON_OUTPUT_NAME=${REPORT_FILE_NAME} npx ${PLAYWRIGHT_NPX_PACKAGE} test ${binding.spec} --trace=retain-on-failure --reporter=list,json`,
+      `PLAYWRIGHT_JSON_OUTPUT_NAME=${REPORT_FILE_NAME} npx --no-install ${PLAYWRIGHT_NPX_PACKAGE} test ${binding.spec} --trace=retain-on-failure --reporter=list,json`,
       cwd
     );
     const artifacts = await extractArtifacts(path.join(cwd, REPORT_FILE_NAME), readReport);

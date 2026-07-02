@@ -65,14 +65,14 @@ what the standard should enforce, ask before writing.
    so vague aspirations ("write good code") are far less useful than specific rules
    ("every public function has a unit test covering its error path").
 
-6. **Write it atemporally**
+6. **Write it to stay accurate as the code changes (atemporal / anti-stale)**
 
    A standard has no lifecycle: nothing ever re-derives, re-runs, or auto-updates it
    after you write it. There is no gate that catches a standard that has gone stale.
-   So every statement in it must be atemporal and anti-stale — true regardless of how
-   the implementation moves underneath it.
+   So every statement in it must stay true regardless of how the implementation moves
+   underneath it — atemporal and anti-stale, not a snapshot of the code as it is today.
 
-   - **Be atemporal.** Do NOT cite internal file paths, line numbers, or internal
+   - **Bind to nothing that moves (atemporal).** Do NOT cite internal file paths, line numbers, or internal
      symbol names (private functions, variables, module-internal identifiers), and do
      NOT narrate the current implementation flow — a "which part does what today"
      walk-through goes stale the moment the flow changes. Name the *category* of thing

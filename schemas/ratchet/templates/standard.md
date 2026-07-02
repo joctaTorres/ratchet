@@ -9,9 +9,9 @@ tag: [unique-kebab-tag]
 ## Intent
 
 [1-2 sentences: what this standard ensures and why it matters. What outcome are
-you protecting? Write atemporally — a standard is never auto-updated, so state what
-stays true, not "how it works today"; do not cite file paths, line numbers, or
-internal symbol names.]
+you protecting? Write so it stays accurate as the code changes (atemporal) — a
+standard is never auto-updated, so state what stays true, not "how it works today";
+do not cite file paths, line numbers, or internal symbol names.]
 
 ## Guidelines
 

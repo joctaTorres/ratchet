@@ -146,6 +146,45 @@ function flattenResultContent(content: unknown): string {
   return String(content);
 }
 
+/**
+ * Shared closing-summary renderer used by both the claude `result` handler and
+ * the opencode `step_finish` handler. Owns the token-line construction, the
+ * cost figure, the divider, and the final `✔`/`✘` print. Callers resolve their
+ * own event schema and pass already-resolved values in — the helper never
+ * parses events.
+ */
+function renderClosingSummary(
+  print: LinePrinter,
+  opts: {
+    ok: boolean;
+    headline: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    cost?: number;
+  }
+): void {
+  const meta: string[] = [];
+  const inTok = opts.inputTokens;
+  const outTok = opts.outputTokens;
+  if (typeof inTok === 'number' || typeof outTok === 'number') {
+    meta.push(`${typeof inTok === 'number' ? inTok : '?'} in / ${typeof outTok === 'number' ? outTok : '?'} out tok`);
+  }
+  if (typeof opts.totalTokens === 'number') {
+    meta.push(`${opts.totalTokens} total tok`);
+  }
+  if (typeof opts.cost === 'number') {
+    meta.push(`$${opts.cost.toFixed(4)}`);
+  }
+  const metaStr = meta.length ? chalk.dim(`  (${meta.join(', ')})`) : '';
+  print(chalk.dim('─'.repeat(40)));
+  if (opts.ok) {
+    print(chalk.green(`✔ success${opts.headline ? ` — ${opts.headline}` : ''}`) + metaStr);
+  } else {
+    print(chalk.red(`✘ error${opts.headline ? ` — ${opts.headline}` : ''}`) + metaStr);
+  }
+}
+
 export function makeStreamJsonRenderer(print: LinePrinter): StreamJsonRenderer {
   let buffer = '';
   // Assistant prose is streamed incrementally via partial deltas; we accumulate
@@ -233,22 +272,15 @@ export function makeStreamJsonRenderer(print: LinePrinter): StreamJsonRenderer {
     flushStreamedText();
     const ok = obj.subtype === 'success' && obj.is_error !== true;
     const summary = typeof obj.result === 'string' ? clip(obj.result, RESULT_MAX_CHARS) : '';
-    const meta: string[] = [];
     const inTok = obj.usage?.input_tokens;
     const outTok = obj.usage?.output_tokens;
-    if (typeof inTok === 'number' || typeof outTok === 'number') {
-      meta.push(`${typeof inTok === 'number' ? inTok : '?'} in / ${typeof outTok === 'number' ? outTok : '?'} out tok`);
-    }
-    if (typeof obj.total_cost_usd === 'number') {
-      meta.push(`$${obj.total_cost_usd.toFixed(4)}`);
-    }
-    const metaStr = meta.length ? chalk.dim(`  (${meta.join(', ')})`) : '';
-    print(chalk.dim('─'.repeat(40)));
-    if (ok) {
-      print(chalk.green(`✔ success${summary ? ` — ${summary}` : ''}`) + metaStr);
-    } else {
-      print(chalk.red(`✘ error${summary ? ` — ${summary}` : ''}`) + metaStr);
-    }
+    renderClosingSummary(print, {
+      ok,
+      headline: summary,
+      inputTokens: typeof inTok === 'number' ? inTok : undefined,
+      outputTokens: typeof outTok === 'number' ? outTok : undefined,
+      cost: typeof obj.total_cost_usd === 'number' ? obj.total_cost_usd : undefined,
+    });
   };
 
   /**
@@ -266,8 +298,9 @@ export function makeStreamJsonRenderer(print: LinePrinter): StreamJsonRenderer {
   /**
    * opencode `step_finish` event: read `part.reason`, `part.tokens`, and
    * `part.cost`; render a closing usage summary mirroring the claude `result`
-   * summary. A `reason` other than `"stop"` is treated as an error. Missing
-   * fields degrade gracefully — print what we have, never crash.
+   * summary. A `reason` of `"stop"`, `"success"`, or empty (`""`) is treated as
+   * success; any other value is treated as an error. Missing fields degrade
+   * gracefully — print what we have, never crash.
    */
   const renderOpencodeStepFinish = (
     part:
@@ -281,26 +314,17 @@ export function makeStreamJsonRenderer(print: LinePrinter): StreamJsonRenderer {
     flushStreamedText();
     const reason = part && typeof part.reason === 'string' ? part.reason : '';
     const ok = reason === 'stop' || reason === '' || reason === 'success';
-    const meta: string[] = [];
     const inTok = part?.tokens?.input;
     const outTok = part?.tokens?.output;
     const totalTok = part?.tokens?.total;
-    if (typeof inTok === 'number' || typeof outTok === 'number') {
-      meta.push(`${typeof inTok === 'number' ? inTok : '?'} in / ${typeof outTok === 'number' ? outTok : '?'} out tok`);
-    }
-    if (typeof totalTok === 'number') {
-      meta.push(`${totalTok} total tok`);
-    }
-    if (part && typeof part.cost === 'number') {
-      meta.push(`$${part.cost.toFixed(4)}`);
-    }
-    const metaStr = meta.length ? chalk.dim(`  (${meta.join(', ')})`) : '';
-    print(chalk.dim('─'.repeat(40)));
-    if (ok) {
-      print(chalk.green(`✔ success${reason ? ` — ${reason}` : ''}`) + metaStr);
-    } else {
-      print(chalk.red(`✘ error${reason ? ` — ${reason}` : ''}`) + metaStr);
-    }
+    renderClosingSummary(print, {
+      ok,
+      headline: reason,
+      inputTokens: typeof inTok === 'number' ? inTok : undefined,
+      outputTokens: typeof outTok === 'number' ? outTok : undefined,
+      totalTokens: typeof totalTok === 'number' ? totalTok : undefined,
+      cost: part && typeof part.cost === 'number' ? part.cost : undefined,
+    });
   };
 
   /**

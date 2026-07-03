@@ -295,13 +295,14 @@ describe('AGENT_BINARIES (single source of truth)', () => {
       codex: 'codex',
       cursor: 'cursor-agent',
       gemini: 'gemini',
+      opencode: 'opencode',
     });
   });
 
   it('is derived from the agentBinary-marked init tools (agents ⊆ init)', () => {
     // Every AGENT_BINARIES id is an init tool that declares an agentBinary, and
-    // its binary equals that tool's agentBinary. Non-agent init tools
-    // (github-copilot, opencode) are excluded.
+    // its binary equals that tool's agentBinary. Non-agent init tool
+    // (github-copilot) is excluded.
     const agentTools = new Map(
       AI_TOOLS.filter((t) => t.agentBinary).map((t) => [t.value, t.agentBinary])
     );
@@ -310,6 +311,5 @@ describe('AGENT_BINARIES (single source of truth)', () => {
       expect(binary).toBe(agentTools.get(id));
     }
     expect(AGENT_BINARIES).not.toHaveProperty('github-copilot');
-    expect(AGENT_BINARIES).not.toHaveProperty('opencode');
   });
 });

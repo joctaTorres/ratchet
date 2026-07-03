@@ -290,6 +290,7 @@ Built-in adapters:
 | `codex` | `codex` binary | `exec -` | no |
 | `gemini` | `gemini` binary | `-p` | no |
 | `cursor` | `cursor` binary | `-p` | no |
+| `opencode` | `opencode` binary | `run --format json` | yes |
 
 All adapters pass the agent instructions on stdin. The binary name for each
 adapter is read from the `AI_TOOLS` registry in `src/core/config.ts`
@@ -367,11 +368,12 @@ text. The applicable set is the batch-engine spawnable agents (the `BUILTIN_ADAP
 | `cursor` | `.cursor/commands/rct-apply.md` |
 | `gemini` | `.gemini/commands/rct-apply.md` |
 | `codex` | `<CODEX_HOME>/prompts/rct-apply.md` (global-scoped, absolute) |
+| `opencode` | `.opencode/commands/rct-apply.md` |
 
-`github-copilot` and `opencode` have command-generation adapters but **no
-batch-engine spawn adapter**, so `resolveAdapter` rejects them with
-`UnknownAgentError` before any spawn — they can never be the spawn agent and are
-out of scope for this spawn-time guarantee.
+`github-copilot` has a command-generation adapter but **no batch-engine spawn
+adapter**, so `resolveAdapter` rejects it with `UnknownAgentError` before any
+spawn — it can never be the spawn agent and is out of scope for this spawn-time
+guarantee. (`opencode` is now a full spawnable agent and is in scope.)
 
 ### Behavior and the bootstrap-failure contract
 
@@ -486,10 +488,12 @@ Defined in `src/core/batch/engine/runtime/stream-json-renderer.ts`.
 
 When an adapter's `emitsStreamJson` capability is `true`, the engine routes each
 stdout line through `makeStreamJsonRenderer` rather than printing it raw. The
-renderer parses one-event-per-line NDJSON (Claude's `--output-format stream-json`
-format) and writes polished output to the engine's line printer. The gating is on
-the adapter capability flag, not on the agent name, so any future adapter that
-sets `emitsStreamJson: true` reuses the same renderer.
+renderer parses one-event-per-line NDJSON and writes polished output to the
+engine's line printer. The gating is on the adapter capability flag, not on the
+agent name, so any future adapter that sets `emitsStreamJson: true` reuses the
+same renderer. The renderer is **multi-schema, not agent-named**: its `dispatch`
+switch parses multiple event envelopes (claude's and opencode's) side by side,
+gated solely on the capability flag.
 
 Event handling:
 
@@ -500,7 +504,13 @@ Event handling:
 | `assistant` | `text` items printed as prose; `tool_use` items printed with glyph + name + target field. |
 | `user` | `tool_result` items printed (truncated to 200 chars / 3 lines; errors in red). |
 | `result` | Closing summary line with success/error, token counts, and USD cost. |
+| `step_start` | OpenCode control noise; silently skipped (mirrors `system`). |
+| `text` | OpenCode prose: `part.text` accumulated and streamed live, like claude's deltas. |
+| `step_finish` | OpenCode closing summary from `part.reason`/`part.tokens`/`part.cost`; an error `reason` is flagged. |
 | Unknown or non-JSON | Raw line printed as fallback; renderer never throws. |
+
+An opencode event whose top-level `type` is recognized but whose `part.type` is
+unrecognized falls through to the raw-line fallback (no new failure mode).
 
 The renderer never mutates the accumulated `AgentSpawnResult.stdout`; the raw
 NDJSON transcript that `mapSessionToOutcome` reads is byte-identical with or
@@ -518,7 +528,7 @@ interface ResolvedPermissionsPolicy {
   posture: PermissionPosture;     // 'repo-sandboxed-permissive' | 'curated-allowlist' | 'full-autonomy'
   allow: string[];                // tool-pattern allowlist (agent-neutral)
   deny: string[];                 // tool-pattern denylist (agent-neutral)
-  raw: Partial<Record<'claude' | 'codex' | 'gemini' | 'cursor', string[]>>;
+  raw: Partial<Record<'claude' | 'codex' | 'gemini' | 'cursor' | 'opencode', string[]>>;
 }
 ```
 
@@ -599,6 +609,21 @@ on shell steps in headless mode.
 cursor's allow/deny is config-file only and cannot be injected via argv; the
 sandboxed and curated postures rely on cursor's built-in approval prompting.
 
+**opencode:**
+
+| Posture | Flags emitted |
+|---|---|
+| `repo-sandboxed-permissive` | _(none — opencode's default per-action gating applies; a one-time warning is emitted)_ |
+| `curated-allowlist` | _(none — same)_ |
+| `full-autonomy` | `--dangerously-skip-permissions` |
+
+opencode exposes a single permission knob, `--dangerously-skip-permissions`
+("auto-approve permissions that are not explicitly denied"), and no argv-only
+bounded auto-edit mode analogous to claude's `acceptEdits` or gemini's
+`auto_edit`. Like cursor, the sandboxed/curated postures therefore rely on
+opencode's own default per-action approval gating — strictly narrower than the
+bypass, not silently equivalent to full autonomy.
+
 ### Raw override escape hatch
 
 The `raw` field carries per-agent argv fragments appended after the posture-derived
@@ -641,9 +666,9 @@ with no manifest scope. See [Standalone settings](./standalone-settings.md) and
 
 ## Requirements
 
-- **Agent CLI on PATH**: one of `claude`, `codex`, `gemini`, or `cursor` matching
-  the configured `agent`. See [doctor](../commands/doctor.md), which probes each
-  registered agent binary.
+- **Agent CLI on PATH**: one of `claude`, `codex`, `gemini`, `cursor`, or
+  `opencode` matching the configured `agent`. See [doctor](../commands/doctor.md),
+  which probes each registered agent binary.
 - **Python >= 3.10**: required for the `local` and `docker` loci. Bootstrap
   probes `python3`, `python`, `python3.12`, `python3.11`, `python3.10` in order.
   `uv` is preferred for venv creation and package install; it falls back to

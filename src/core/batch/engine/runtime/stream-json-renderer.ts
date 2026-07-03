@@ -251,6 +251,86 @@ export function makeStreamJsonRenderer(print: LinePrinter): StreamJsonRenderer {
     }
   };
 
+  /**
+   * opencode `text` event: read `part.text` and stream the prose live. Mirrors
+   * how claude's `stream_event` `text_delta` accumulates `streamedText` so
+   * consecutive `text` events stream incrementally and a closing summary flushes
+   * the joined text exactly once.
+   */
+  const renderOpencodeText = (part: { text?: unknown } | undefined): void => {
+    if (!part || typeof part.text !== 'string') return;
+    streamedText += part.text;
+    streamedThisMessage = true;
+  };
+
+  /**
+   * opencode `step_finish` event: read `part.reason`, `part.tokens`, and
+   * `part.cost`; render a closing usage summary mirroring the claude `result`
+   * summary. A `reason` other than `"stop"` is treated as an error. Missing
+   * fields degrade gracefully — print what we have, never crash.
+   */
+  const renderOpencodeStepFinish = (
+    part:
+      | {
+          reason?: unknown;
+          tokens?: { total?: unknown; input?: unknown; output?: unknown };
+          cost?: unknown;
+        }
+      | undefined
+  ): void => {
+    flushStreamedText();
+    const reason = part && typeof part.reason === 'string' ? part.reason : '';
+    const ok = reason === 'stop' || reason === '' || reason === 'success';
+    const meta: string[] = [];
+    const inTok = part?.tokens?.input;
+    const outTok = part?.tokens?.output;
+    const totalTok = part?.tokens?.total;
+    if (typeof inTok === 'number' || typeof outTok === 'number') {
+      meta.push(`${typeof inTok === 'number' ? inTok : '?'} in / ${typeof outTok === 'number' ? outTok : '?'} out tok`);
+    }
+    if (typeof totalTok === 'number') {
+      meta.push(`${totalTok} total tok`);
+    }
+    if (part && typeof part.cost === 'number') {
+      meta.push(`$${part.cost.toFixed(4)}`);
+    }
+    const metaStr = meta.length ? chalk.dim(`  (${meta.join(', ')})`) : '';
+    print(chalk.dim('─'.repeat(40)));
+    if (ok) {
+      print(chalk.green(`✔ success${reason ? ` — ${reason}` : ''}`) + metaStr);
+    } else {
+      print(chalk.red(`✘ error${reason ? ` — ${reason}` : ''}`) + metaStr);
+    }
+  };
+
+  /**
+   * opencode event envelope: top-level `type` of `step_start` (control noise,
+   * dropped), `text` (stream `part.text` prose), `step_finish` (closing summary
+   * from `part.reason`/`part.tokens`/`part.cost`). An unknown `part.type` (or a
+   * recognized top-level type whose `part` is missing/unrecognized) falls through
+   * to the raw-line contract via the caller's `default` branch.
+   */
+  const dispatchOpencode = (obj: Record<string, unknown>): boolean => {
+    const part = obj.part as Record<string, unknown> | undefined;
+    const partType = part && typeof part === 'object' ? (part.type as string | undefined) : undefined;
+    switch (obj.type) {
+      case 'step_start':
+        return true; // recognized control noise, intentionally silent
+      case 'text':
+        if (partType !== undefined && partType !== 'text') return false; // unknown part.type → raw
+        renderOpencodeText(part as { text?: unknown });
+        return true;
+      case 'step_finish':
+        if (partType !== undefined && partType !== 'step_finish') return false;
+        renderOpencodeStepFinish(
+          part as Parameters<typeof renderOpencodeStepFinish>[0]
+        );
+        return true;
+      default:
+        return false;
+    }
+  };
+
   /** Dispatch one parsed JSON event. Returns false if the type is unknown → raw. */
   const dispatch = (obj: Record<string, unknown>): boolean => {
     const type = obj.type;
@@ -269,6 +349,12 @@ export function makeStreamJsonRenderer(print: LinePrinter): StreamJsonRenderer {
       case 'result':
         renderResult(obj as Parameters<typeof renderResult>[0]);
         return true;
+      case 'step_start':
+      case 'text':
+      case 'step_finish':
+        // opencode event schema. Returns false for an unknown part.type so the
+        // caller raw-dumps the line — multi-schema, never agent-named.
+        return dispatchOpencode(obj);
       default:
         return false;
     }

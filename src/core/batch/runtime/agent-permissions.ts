@@ -229,6 +229,53 @@ function warnCursorBestEffort(posture: string): void {
   );
 }
 
+/**
+ * opencode — like cursor, opencode exposes a single permission knob
+ * (`--dangerously-skip-permissions`, "auto-approve permissions that are not
+ * explicitly denied") and NO argv-only bounded auto-edit mode analogous to
+ * claude's `acceptEdits` or gemini's `auto_edit`. So the opencode mapper
+ * follows the same honest, strictly-narrower approach established for cursor:
+ *
+ * - `full-autonomy` → `--dangerously-skip-permissions` (the bypass, reserved
+ *   for full autonomy only — identical semantic to claude).
+ * - `repo-sandboxed-permissive` / `curated-allowlist` → no bypass flag; emit a
+ *   one-time-per-process warning that the posture is bounded only by opencode's
+ *   own default gating, NOT silently equivalent to full autonomy. argv cannot
+ *   carry a bounded allow/deny for opencode under the locked argv-only decision.
+ */
+function opencodeFlags(policy: ResolvedPermissionsPolicy): string[] {
+  switch (policy.posture) {
+    case 'full-autonomy':
+      return ['--dangerously-skip-permissions'];
+    case 'curated-allowlist':
+    case 'repo-sandboxed-permissive':
+    default:
+      // No bypass flag → opencode keeps its own default per-action approval
+      // gating. argv cannot carry opencode's allow/deny, so warn once that this
+      // posture is bounded only by opencode's own defaults, not by our policy.
+      warnOpencodeBestEffort(policy.posture);
+      return [];
+  }
+}
+
+/**
+ * One-time-per-process warning that a non-full-autonomy opencode posture is
+ * bounded only by opencode's built-in approval gating (argv cannot carry our
+ * policy's allow/deny for opencode). Keeps the mapper effectively pure for
+ * callers — the warning fires at most once per posture and never alters the
+ * returned argv.
+ */
+const warnedOpencodePostures = new Set<string>();
+function warnOpencodeBestEffort(posture: string): void {
+  if (warnedOpencodePostures.has(posture)) return;
+  warnedOpencodePostures.add(posture);
+  console.warn(
+    `[batch] opencode: posture "${posture}" cannot be enforced via argv ` +
+      `(opencode's allow/deny is config-file only). Falling back to opencode's default ` +
+      `per-action approval gating — NOT the bypass. Verify at apply.`
+  );
+}
+
 type Mapper = (policy: ResolvedPermissionsPolicy, repoRoot: string) => string[];
 
 const AGENT_MAPPERS: Record<PermissionRawAgent, Mapper> = {
@@ -236,6 +283,7 @@ const AGENT_MAPPERS: Record<PermissionRawAgent, Mapper> = {
   gemini: (policy) => geminiFlags(policy),
   codex: (policy) => codexFlags(policy),
   cursor: (policy) => cursorFlags(policy),
+  opencode: (policy) => opencodeFlags(policy),
 };
 
 /**

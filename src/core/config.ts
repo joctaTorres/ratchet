@@ -24,7 +24,7 @@ export interface AIToolOption {
    * agents the batch engine can launch (e.g. 'claude', 'cursor-agent'). This is
    * the single source of truth for "which init tools are coding agents": doctor
    * probes this binary on PATH and the engine spawns it. Tools without it (e.g.
-   * github-copilot, opencode) are init configs that are NOT spawnable agents.
+   * github-copilot) are init configs that are NOT spawnable agents.
    */
   agentBinary?: string;
 }
@@ -35,5 +35,5 @@ export const AI_TOOLS: AIToolOption[] = [
   { name: 'Cursor', value: 'cursor', available: true, successLabel: 'Cursor', skillsDir: '.cursor', agentBinary: 'cursor-agent' },
   { name: 'Gemini', value: 'gemini', available: true, successLabel: 'Gemini', skillsDir: '.gemini', agentBinary: 'gemini' },
   { name: 'GitHub Copilot', value: 'github-copilot', available: true, successLabel: 'GitHub Copilot', skillsDir: '.github', detectionPaths: ['.github/copilot-instructions.md', '.github/instructions', '.github/workflows/copilot-setup-steps.yml', '.github/prompts', '.github/agents', '.github/skills', '.github/.mcp.json'] },
-  { name: 'OpenCode', value: 'opencode', available: true, successLabel: 'OpenCode', skillsDir: '.opencode' }
+  { name: 'OpenCode', value: 'opencode', available: true, successLabel: 'OpenCode', skillsDir: '.opencode', agentBinary: 'opencode' }
 ];

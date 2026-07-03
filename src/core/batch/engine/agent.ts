@@ -159,6 +159,17 @@ const BUILTIN_ADAPTERS: Record<string, AgentAdapter> = {
   codex: new CommandAgentAdapter('codex', agentBinaryFor('codex'), () => ['exec', '-'], true),
   gemini: new CommandAgentAdapter('gemini', agentBinaryFor('gemini'), () => ['-p'], true),
   cursor: new CommandAgentAdapter('cursor', agentBinaryFor('cursor'), () => ['-p'], true),
+  // opencode emits structured stream-json NDJSON (one event per line) with
+  // `run --format json`, reading the prompt from stdin. Its event schema
+  // (step_start/text/step_finish) differs from claude's, so the renderer parses
+  // both — gated on `emitsStreamJson`, never the agent name.
+  opencode: new CommandAgentAdapter(
+    'opencode',
+    agentBinaryFor('opencode'),
+    () => ['run', '--format', 'json'],
+    true,
+    true
+  ),
 };
 
 /** The default agent when the resolved settings name none. */
@@ -175,7 +186,7 @@ export const DEFAULT_AGENT = 'claude';
  * `BUILTIN_ADAPTERS`) automatically makes `doctor` probe it and the engine spawn
  * it, with no edit here. `doctor` iterates this map to check every coding agent
  * (never special-casing one). Init tools WITHOUT an `agentBinary` (e.g.
- * github-copilot, opencode) are config targets, not spawnable agents, so they are
+ * github-copilot) are config targets, not spawnable agents, so they are
  * excluded by construction.
  *
  * Invariant (enforced by the drift-guard test): the keys here === the

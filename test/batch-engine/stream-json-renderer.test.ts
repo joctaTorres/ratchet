@@ -173,3 +173,110 @@ describe('stream-json renderer — graceful degradation', () => {
     expect(printed).toHaveLength(0); // recognized control noise, silently ignored
   });
 });
+
+describe('stream-json renderer — opencode event schema', () => {
+  it('drops step_start control noise without printing anything', () => {
+    const { renderer, printed } = harness();
+    renderer.handleLine(JSON.stringify({ type: 'step_start', part: { type: 'step_start' } }) + '\n');
+    expect(printed).toHaveLength(0); // recognized control noise, silently dropped
+  });
+
+  it('streams text-event prose live to the line sink', () => {
+    const { renderer, printed, all } = harness();
+    renderer.handleLine(
+      JSON.stringify({ type: 'text', part: { type: 'text', text: 'Running the apply transition...' } }) + '\n'
+    );
+    // Accumulated streamed text is emitted on stream end (flush) — mirrors how
+    // claude's deltas accumulate until a closing message flushes them.
+    renderer.flush();
+    expect(all()).toContain('Running the apply transition...');
+    expect(printed.some((l) => l.includes('"type"'))).toBe(false); // no raw JSON
+  });
+
+  it('accumulates incremental text across consecutive text events like claude deltas', () => {
+    const { renderer, all } = harness();
+    const text = (t: string) =>
+      renderer.handleLine(JSON.stringify({ type: 'text', part: { type: 'text', text: t } }) + '\n');
+    text('I will ');
+    text('add ');
+    text('a guard clause.');
+    renderer.flush();
+    expect(all()).toContain('I will add a guard clause.');
+  });
+
+  it('renders a step_finish closing summary with the token usage and cost from the event', () => {
+    const { feed, all } = harness();
+    feed({
+      type: 'step_finish',
+      part: {
+        type: 'step_finish',
+        reason: 'stop',
+        tokens: { total: 4100, input: 3295, output: 805 },
+        cost: 0.0521,
+      },
+    });
+    const out = all();
+    // Values come from the event, not hardcoded.
+    expect(out).toContain('3295');
+    expect(out).toContain('805');
+    expect(out).toContain('4100');
+    expect(out).toContain('0.0521');
+    expect(out.toLowerCase()).toContain('success'); // reason "stop" → success
+  });
+
+  it('flags a step_finish with an error reason as an error', () => {
+    const { feed, all } = harness();
+    feed({
+      type: 'step_finish',
+      part: { type: 'step_finish', reason: 'tool_limit_exceeded', tokens: {}, cost: 0 },
+    });
+    const out = all();
+    expect(/error|✘/i.test(out)).toBe(true);
+    expect(out).toContain('tool_limit_exceeded');
+  });
+
+  it('degrades gracefully when a recognized opencode top-level type has an unknown part.type', () => {
+    const { renderer, printed } = harness();
+    const line = JSON.stringify({ type: 'text', part: { type: 'some_future_part', text: 'x' } });
+    expect(() => renderer.handleLine(line + '\n')).not.toThrow();
+    // Unknown part.type under a recognized top-level type → raw fallback.
+    expect(printed).toContain(line);
+  });
+
+  it('does not crash on a step_finish with missing tokens/cost', () => {
+    const { feed, all } = harness();
+    expect(() =>
+      feed({ type: 'step_finish', part: { type: 'step_finish', reason: 'stop' } })
+    ).not.toThrow();
+    expect(all().toLowerCase()).toContain('success');
+  });
+
+  describe('claude regression — unchanged by the opencode branches', () => {
+    it('claude assistant text still renders as prose', () => {
+      const { feed, all } = harness();
+      feed({ type: 'assistant', message: { content: [{ type: 'text', text: 'claude prose still works' }] } });
+      expect(all()).toContain('claude prose still works');
+    });
+
+    it('claude stream_event text deltas still accumulate and flush', () => {
+      const { renderer, printed } = harness();
+      renderer.handleLine(
+        JSON.stringify({
+          type: 'stream_event',
+          event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'delta prose' } },
+        }) + '\n'
+      );
+      renderer.flush();
+      expect(printed.join('\n')).toContain('delta prose');
+    });
+
+    it('claude result still renders its closing summary', () => {
+      const { feed, all } = harness();
+      feed({ type: 'result', subtype: 'success', is_error: false, result: 'claude done', total_cost_usd: 0.01 });
+      const out = all();
+      expect(out).toContain('claude done');
+      expect(out.toLowerCase()).toContain('success');
+      expect(out).toContain('0.01');
+    });
+  });
+});

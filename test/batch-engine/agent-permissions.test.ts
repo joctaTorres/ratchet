@@ -142,6 +142,40 @@ describe('resolvePermissionFlags — codex/cursor (verify-at-apply mappings)', (
   });
 });
 
+describe('resolvePermissionFlags — opencode (best-effort, like cursor)', () => {
+  it('full-autonomy emits --dangerously-skip-permissions and nothing else', () => {
+    expect(resolvePermissionFlags('opencode', policy({ posture: 'full-autonomy' }), REPO)).toEqual([
+      '--dangerously-skip-permissions',
+    ]);
+  });
+  it('repo-sandboxed-permissive does NOT emit the bypass flag', () => {
+    expect(resolvePermissionFlags('opencode', policy(), REPO)).not.toContain(
+      '--dangerously-skip-permissions'
+    );
+  });
+  it('curated-allowlist does NOT emit the bypass flag', () => {
+    expect(
+      resolvePermissionFlags('opencode', policy({ posture: 'curated-allowlist' }), REPO)
+    ).not.toContain('--dangerously-skip-permissions');
+  });
+  it('appends the matching opencode raw override after the (empty) posture flags', () => {
+    const flags = resolvePermissionFlags(
+      'opencode',
+      policy({ raw: { opencode: ['--config', '/tmp/x.json'] } }),
+      REPO
+    );
+    expect(flags.slice(-2)).toEqual(['--config', '/tmp/x.json']);
+  });
+  it('ignores a raw override targeting another agent', () => {
+    const flags = resolvePermissionFlags(
+      'opencode',
+      policy({ raw: { claude: ['--claude-only-flag'] } }),
+      REPO
+    );
+    expect(flags).not.toContain('--claude-only-flag');
+  });
+});
+
 describe('resolvePermissionFlags — per-agent raw override (escape hatch)', () => {
   it('appends the matching agent raw flags after the posture flags', () => {
     const flags = resolvePermissionFlags(
@@ -198,7 +232,7 @@ describe('every posture resolves for every supported agent without throwing', ()
     'curated-allowlist',
     'full-autonomy',
   ];
-  for (const agent of ['claude', 'gemini', 'codex', 'cursor']) {
+  for (const agent of ['claude', 'gemini', 'codex', 'cursor', 'opencode']) {
     for (const posture of postures) {
       it(`${agent} / ${posture}`, () => {
         const flags = resolvePermissionFlags(agent, policy({ posture }), REPO);
@@ -213,7 +247,7 @@ describe('safety invariant — sandboxed/curated must NOT equal full-autonomy', 
   // posture must translate to a flag set that DIFFERS from full-autonomy. This is
   // the regression guard for the cursor defect (where all three postures returned
   // ['--force']) and protects every other adapter from regressing the same way.
-  for (const agent of ['claude', 'gemini', 'codex', 'cursor']) {
+  for (const agent of ['claude', 'gemini', 'codex', 'cursor', 'opencode']) {
     const full = resolvePermissionFlags(agent, policy({ posture: 'full-autonomy' }), REPO);
     it(`${agent}: repo-sandboxed-permissive ≠ full-autonomy`, () => {
       const sandboxed = resolvePermissionFlags(

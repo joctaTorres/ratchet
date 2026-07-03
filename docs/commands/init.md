@@ -77,14 +77,19 @@ Skill files are written outside `.ratchet/`, under each tool's own directory (e.
 
 The following tool IDs are accepted by `--tools`:
 
-| ID | Tool |
-|---|---|
-| `claude` | Claude Code |
-| `codex` | Codex |
-| `cursor` | Cursor |
-| `gemini` | Gemini |
-| `github-copilot` | GitHub Copilot |
-| `opencode` | OpenCode |
+| ID | Tool | Batch-engine spawnable |
+|---|---|---|
+| `claude` | Claude Code | yes |
+| `codex` | Codex | yes |
+| `cursor` | Cursor | yes |
+| `gemini` | Gemini | yes |
+| `opencode` | OpenCode | yes |
+| `github-copilot` | GitHub Copilot | no (init config target only) |
+
+Spawnable coding agents declare an `agentBinary` in the `AI_TOOLS` registry
+(`src/core/config.ts`); `ratchet doctor` probes that binary on PATH and the
+batch engine can spawn it for headless propose/apply/verify and `batch apply`.
+`github-copilot` is an init config target only — it is not a spawnable agent.
 
 ## Deprecated alias
 

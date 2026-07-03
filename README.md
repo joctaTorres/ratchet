@@ -138,7 +138,7 @@ ratchet --version
 | Requirement | Why | Needed when |
 |---|---|---|
 | **Node.js ≥ 20.19** | Runs the `ratchet` CLI. | Always |
-| **A supported coding-agent CLI** — Claude Code (`claude`), Codex (`codex`), Gemini (`gemini`), or Cursor (`cursor-agent`) | ratchet drives a coding agent for batch changes; at least one must be on your PATH. Install it from the agent's own docs. | To run batch changes |
+| **A supported coding-agent CLI** — Claude Code (`claude`), Codex (`codex`), Gemini (`gemini`), Cursor (`cursor-agent`), or OpenCode (`opencode`) | ratchet drives a coding agent for batch changes; at least one must be on your PATH. Install it from the agent's own docs. | To run batch changes |
 | **Python 3.10+ (with `venv` + `pip`), or [`uv`](https://docs.astral.sh/uv/) (preferred)** | Bootstraps the isolated SWE-ReX sidecar runtime. `uv` is preferred for faster, more reliable builds. | To run batch changes |
 | **Docker** | Only needed for the `docker` execution locus. Local runs never use it. | Optional |
 | **Playwright** | Drives the Given/When/Then browser scenarios of a `kind: web` eval binding. | Only when a `kind: web` eval binding is in scope |
@@ -207,7 +207,7 @@ ratchet archive add-login -y                      # sync features → store, arc
 
 The `core` profile installed by a stock `ratchet init` ships the change workflows, the `brainstorm` front door, **and** the batch workflows (`propose-batch` + `apply-batch`). `eval` is the one opt-in workflow — request it with a custom profile.
 
-**Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`.
+**Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`. The batch-engine spawnable coding agents (drivable by `--agent` on the headless verbs and `batch apply`) are `claude`, `codex`, `cursor`, `gemini`, and `opencode`; `github-copilot` is an init config target only.
 
 ## Commands
 
@@ -369,7 +369,7 @@ dials under `.ratchet/config.yaml` `batch:`, with manifest-level overrides).
 
 The coding agent itself runs through a **SWE-ReX agent runtime** with live
 output streaming, configurable to execute **locally**, in **Docker**, or on a
-**remote** host — with pluggable adapters (claude / codex / gemini / cursor). The
+**remote** host — with pluggable adapters (claude / codex / gemini / cursor / opencode). The
 per-agent timeout defaults to 10 minutes and is raised with the
 `batch.agentTimeoutMs` config key or the `RATCHET_AGENT_TIMEOUT_MS` environment
 variable (env wins) when a slow-but-passing proof-of-work needs more time.

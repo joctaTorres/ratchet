@@ -37,6 +37,18 @@ describe('agent adapters — stream-json capability', () => {
     expect(argvOf('cursor')).toEqual(['-p']);
   });
 
+  it('the opencode adapter is declared stream-json capable with the run --format json argv', () => {
+    const opencode = resolveAdapter('opencode');
+    expect(opencode.emitsStreamJson).toBe(true);
+    expect(argvOf('opencode')).toEqual(['run', '--format', 'json']);
+  });
+
+  it('the opencode command + stdin passing are as expected', () => {
+    const req = resolveAdapter('opencode').buildRequest(CTX, 'the prompt', '/cwd', {});
+    expect(req.command).toBe('opencode');
+    expect(req.instructions).toBe('the prompt'); // passed on stdin
+  });
+
   it('the claude command + stdin passing are unchanged', () => {
     const req = resolveAdapter('claude').buildRequest(CTX, 'the prompt', '/cwd', {});
     expect(req.command).toBe('claude');

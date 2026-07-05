@@ -21,11 +21,14 @@ ratchet doctor [options]
 
 ## Checks
 
-Three checks always run, in a fixed order: agent, runtime, docker. A fourth,
-conditional check — Playwright — is appended only when a `kind: web` binding is
-present among the eval bindings resolved from `.ratchet/evals/specs/`; it is absent
-from the report entirely (not merely hidden or skipped) for a project with no web
-binding in scope.
+Three checks always run, in a fixed order: agent, runtime, docker. Two further
+checks are conditional and each is appended only when it is relevant, otherwise
+absent from the report entirely (not merely hidden or skipped):
+
+- **Playwright** — appended only when a `kind: web` binding is present among the
+  eval bindings resolved from `.ratchet/evals/specs/`.
+- **Git remote (`pr-remote`)** — appended only when `prGrouping` is active for the
+  project (resolved from config) **and** the repo has no configured git remote.
 
 ### Coding-agent CLI (`agent`) — required
 
@@ -72,6 +75,28 @@ Playwright CLI is usable (`npx --no-install playwright --version`).
 Playwright (`npm install -D @playwright/test && npx playwright install`).
 
 Like Docker, a missing Playwright CLI never fails doctor or affects the exit code.
+
+### Git remote (`pr-remote`) — optional, conditional
+
+Appended only when `prGrouping` is active for the project (resolved from config via
+the same nearest-wins cascade the batch engine uses — see [`prGrouping`](../configuration/config-yaml.md))
+**and** the repo has no configured git remote. When PR grouping is active, a completed
+batch spawns a PR agent that pushes the work branch and opens a PR; without a remote
+that push has nowhere to go, so this check warns up front rather than at the very end
+of a batch. It is absent from the report, and from `--json` output, whenever
+`prGrouping` is `off` (the default) or a remote is already configured.
+
+A configured remote is detected by probing `git remote` in the project root: a remote
+is present when the command exits zero with non-empty output. Any other outcome
+(non-zero exit or empty output) is treated as "no remote".
+
+**Info**: `prGrouping` is active and no git remote is configured. Detail explains that
+PR grouping is active but the repo has no remote to push to. Remedy: configure a git
+remote (e.g. `git remote add <name> <url>`). The remedy names no forge-specific CLI —
+which forge (`gh`, `glab`, or other) opens the PR is left to the user's environment.
+
+Like Docker and Playwright, this `info` notice never fails doctor or affects the exit
+code.
 
 ## Human output
 
@@ -130,7 +155,7 @@ Fields:
 | Field | Type | Description |
 |---|---|---|
 | `ok` | boolean | `true` iff every `required` check has `status: "pass"`. Drives the exit code. |
-| `checks[].id` | string | Stable machine id: `agent`, `runtime`, `docker`, or — only when a `kind: web` binding is in scope — `playwright`. |
+| `checks[].id` | string | Stable machine id: `agent`, `runtime`, `docker`; `playwright` only when a `kind: web` binding is in scope; `pr-remote` only when `prGrouping` is active and no git remote is configured. |
 | `checks[].label` | string | Short human label. |
 | `checks[].status` | `"pass"` \| `"fail"` \| `"info"` | Verdict for this check. |
 | `checks[].severity` | `"required"` \| `"optional"` | Whether a failure gates the exit code. |

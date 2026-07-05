@@ -8,23 +8,37 @@
  */
 
 import chalk from 'chalk';
+import { execFileSync } from 'child_process';
 import { resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
 import { loadBatchManifest, type Phase } from '../../core/batch/manifest.js';
 import { computeBatchStatus } from '../../core/batch/status.js';
-import { resolveBatchSettings } from '../../core/batch/config.js';
+import { resolveBatchSettings, type PrGrouping } from '../../core/batch/config.js';
 import {
   RatchetBatchEngine,
   computeNextTransition,
   decompositionJournalKey,
+  prJournalKey,
+  hasJournaledPr,
+  readJournalTolerant,
   runProofOfWork,
   type ResolvedStepContext,
   type DecompositionStepContext,
+  type PrStepContext,
   type PriorPhaseResult,
   type StepResult,
   type ProofOfWorkResult,
   type RunProofOfWorkDeps,
 } from '../../core/batch/engine/index.js';
 import type { BatchStatusInfo } from '../../core/batch/status.js';
+// The two pure stacked-grouping policies are imported from their own modules —
+// not the engine index — so they stay the single home of boundary/stacking rules
+// even where tests mock the engine entry points.
+import {
+  detectPrGroupBoundaries,
+  type BoundaryBatchState,
+  type PrGroupBoundary,
+} from '../../core/batch/engine/boundary.js';
+import { selectStackedBases } from '../../core/batch/engine/stacked-base.js';
 import {
   getParkedStep,
   readJournalForChange,
@@ -41,14 +55,32 @@ export interface BatchApplyOptions {
   json?: boolean;
 }
 
+/** The git branch names the completion PR step opens between, resolved by the CLI. */
+export interface ResolvedBranches {
+  /** The work branch the PR opens from (the current branch). */
+  workBranch: string;
+  /** The base branch the PR targets (the repo's default branch). */
+  baseBranch: string;
+}
+
 /**
  * Test/embedding seam. Production callers pass nothing: the project root is
- * resolved from the planning home and the boundary proof-of-work runs via the
- * real bash runner. Tests override `projectRoot` and may inject proof `deps`.
+ * resolved from the planning home, the boundary proof-of-work runs via the real
+ * bash runner, and the PR step's work/base branch are resolved from git. Tests
+ * override `projectRoot`, may inject proof `deps`, and may inject `branches` so
+ * the PR step gets fake branch names without a real git repo.
  */
 export interface BatchApplyDeps {
   projectRoot?: string;
   proof?: RunProofOfWorkDeps;
+  branches?: (projectRoot: string) => ResolvedBranches;
+  /**
+   * Names a stacked PR group's own branch from its stable identity — the
+   * `branchForGroup` resolver `selectStackedBases` consumes. Defaults to the
+   * group id itself (phase or change name, already kebab-case). Only git branch
+   * NAMING lives here; no forge CLI is invoked.
+   */
+  groupBranch?: (boundary: PrGroupBoundary, index: number) => string;
 }
 
 /**
@@ -127,8 +159,28 @@ export async function batchApplyCommand(
   const proofByPhase = readProofOfWorkByPhase(projectRoot, batch);
   const recordedProofPhases = new Set(proofByPhase.keys());
 
+  // Resolve the PR steps' gating inputs ONCE, at the single command seam that
+  // already performs config/journal reads, and hand them to the pure
+  // `pickNextStep` selector as data (`instruction-fed-config`): the resolved
+  // `prGrouping` mode, whether a whole-batch PR-open completion is already
+  // journaled (the one home of that done-rule, `hasJournaledPr`), and the set of
+  // per-group PR keys already recorded — the `change` of every `completion`
+  // entry with `transition: 'pr'`, exactly what `hasJournaledPrForGroup` matches,
+  // so the CLI gate and the engine's per-group resume precondition agree by
+  // construction. The selector reads neither config nor the journal itself.
+  const journal = readJournalTolerant(projectRoot, batch);
+  const prContext = {
+    grouping: settings.prGrouping,
+    alreadyOpened: hasJournaledPr(journal),
+    openedGroupKeys: new Set(
+      journal
+        .filter((e) => e.kind === 'completion' && e.transition === 'pr')
+        .map((e) => e.change)
+    ),
+  };
+
   // Find the next ready, ungated step.
-  const target = pickNextStep(status, manifest.phases, recordedProofPhases);
+  const target = pickNextStep(status, manifest.phases, recordedProofPhases, prContext);
   if (!target) {
     // When nothing is runnable because a phase is held shut by the prior phase's
     // failing `hard-gate` proof, cite that proof (the same gate `computeBatchStatus`
@@ -168,6 +220,34 @@ export async function batchApplyCommand(
   // (the gate `computeBatchStatus` derives from the record).
   if (target.kind === 'proof-of-work') {
     await runProofAtBoundary(projectRoot, batch, target.phase, settings, options, deps.proof);
+    return;
+  }
+
+  // A `pr` target is a PR-open step for a batch that is otherwise done: resolve
+  // the branches (the CLI's job — git only, no forge CLI) and hand them to the
+  // engine's `runPrStep` as data, then persist and render the outcome through the
+  // same paths a change step uses. Routed by `boundary`: present → a fired
+  // stacked group boundary (`per-phase`/`per-change`, `runStackedPr`), absent →
+  // the whole-batch completion PR (`runPr`, unchanged). Mirrors the `decompose` /
+  // `proof-of-work` routing above.
+  if (target.kind === 'pr') {
+    const branches = (deps.branches ?? resolveBranches)(projectRoot);
+    if (target.boundary) {
+      await runStackedPr(
+        projectRoot,
+        batch,
+        engine,
+        manifest.phases,
+        target.phase,
+        target.boundary,
+        settings,
+        branches.baseBranch,
+        deps.groupBranch ?? ((boundary) => boundary.groupId),
+        options
+      );
+    } else {
+      await runPr(projectRoot, batch, engine, target.phase, settings, branches, options);
+    }
     return;
   }
 
@@ -215,15 +295,40 @@ export async function batchApplyCommand(
 }
 
 /**
- * The next runnable step `batch apply` acts on: either a concrete CHANGE step
- * (drives `engine.runStep`) or a phase DECOMPOSE step (drives
- * `engine.runDecompositionStep`). The two are distinguished by `kind` so
+ * The next runnable step `batch apply` acts on: a concrete CHANGE step (drives
+ * `engine.runStep`), a phase DECOMPOSE step (drives `engine.runDecompositionStep`),
+ * a boundary PROOF-OF-WORK step (drives `runProofOfWork`), or the completion PR
+ * step (drives `engine.runPrStep`). The kinds are distinguished by `kind` so
  * `batchApplyCommand` routes each to the right engine entry point.
+ *
+ * `pr` is a PR-open step, surfaced only once the batch is otherwise `done` under
+ * an active grouping mode with unopened work; it carries a phase for the agent's
+ * phase framing and no change (there is none). `boundary` distinguishes the two
+ * shapes: absent → the whole-batch completion PR (`prGrouping: whole-batch`,
+ * routed to `runPr`, unchanged); present → a fired stacked group boundary
+ * (`per-phase`/`per-change`, routed to `runStackedPr`).
  */
 export type ApplyTarget =
   | { kind: 'change'; phase: Phase; change: string; changeDone: string }
   | { kind: 'decompose'; phase: Phase }
-  | { kind: 'proof-of-work'; phase: Phase };
+  | { kind: 'proof-of-work'; phase: Phase }
+  | { kind: 'pr'; phase: Phase; boundary?: PrGroupBoundary };
+
+/**
+ * Map the manifest's phases/changes to the `BoundaryBatchState` that
+ * `detectPrGroupBoundaries` consumes. Shared by `pickNextStep` (stacked-tail
+ * selection) and `runStackedPr` (stacked-base resolution) so the boundary
+ * ordering is derived exactly one way from exactly one input shape.
+ */
+function boundaryStateFromPhases(batch: string, manifestPhases: Phase[]): BoundaryBatchState {
+  return {
+    name: batch,
+    phases: manifestPhases.map((phase) => ({
+      name: phase.name,
+      changes: phase.changes.map((change) => change.name),
+    })),
+  };
+}
 
 /**
  * Pick the next runnable step for `batch apply`: the first ungated phase's first
@@ -246,7 +351,18 @@ export type ApplyTarget =
 export function pickNextStep(
   status: Awaited<ReturnType<typeof computeBatchStatus>>,
   manifestPhases: Phase[],
-  recordedProofPhases: ReadonlySet<string> = new Set()
+  recordedProofPhases: ReadonlySet<string> = new Set(),
+  prContext?: {
+    grouping: PrGrouping;
+    alreadyOpened: boolean;
+    /**
+     * The per-group PR keys already journaled (`prJournalKey(batch, boundary)`
+     * of every recorded PR-open completion) — computed once by
+     * `batchApplyCommand` and passed in as data. Absent behaves as the empty
+     * set: no group opened yet.
+     */
+    openedGroupKeys?: ReadonlySet<string>;
+  }
 ): ApplyTarget | undefined {
   for (let i = 0; i < status.phases.length; i++) {
     const phaseStatus = status.phases[i];
@@ -317,6 +433,55 @@ export function pickNextStep(
   if (status.next?.proof && status.next.phase) {
     const phase = manifestPhases.find((p) => p.name === status.next!.phase);
     if (phase) return { kind: 'proof-of-work', phase };
+  }
+
+  // Completion PR step: reached only after every branch above (change → decompose
+  // → boundary proof → terminal proof) has declined, so it fires at genuine batch
+  // completion — `status.status === 'done'` means every change is done AND the
+  // terminal boundary proof is recorded and passed (the PR opens strictly AFTER
+  // the terminal proof). Gated in the CLI so `off`/unset and an already-opened PR
+  // surface NO target: `pickNextStep` returns `undefined` and the existing
+  // terminal "Nothing to do — all changes are done." output is byte-identical. The
+  // gating inputs are passed in as data; this selector reads neither config nor the
+  // journal. The terminal phase frames the PR agent's instructions.
+  if (
+    status.status === 'done' &&
+    prContext?.grouping === 'whole-batch' &&
+    !prContext.alreadyOpened
+  ) {
+    const terminalPhase = manifestPhases[manifestPhases.length - 1];
+    if (terminalPhase) return { kind: 'pr', phase: terminalPhase };
+  }
+
+  // Stacked PR tail: reached only at genuine batch completion under a STACKED
+  // grouping mode (`per-phase`/`per-change`) — a separate, mode-guarded branch, so
+  // the `off`/unset terminal and the whole-batch tail above stay byte-identical.
+  // Derive the ordered group boundaries from the manifest (the single home of
+  // "where the groups are") and surface a `pr` target for the FIRST boundary whose
+  // per-group PR key is not yet recorded; each subsequent apply opens the next
+  // group, so a resumed loop opens every group exactly once, in boundary order.
+  // The gating inputs (mode + recorded keys) arrive as data — this selector still
+  // reads neither config nor the journal.
+  if (
+    status.status === 'done' &&
+    (prContext?.grouping === 'per-phase' || prContext?.grouping === 'per-change')
+  ) {
+    const boundaries = detectPrGroupBoundaries(
+      boundaryStateFromPhases(status.name, manifestPhases),
+      prContext.grouping
+    );
+    const opened = prContext.openedGroupKeys ?? new Set<string>();
+    for (const boundary of boundaries) {
+      if (opened.has(prJournalKey(status.name, boundary))) continue;
+      // The group's own phase frames the PR agent's instructions: the phase the
+      // boundary's trigger change belongs to (for a `phase` group, the phase
+      // itself; for a `change` group, the phase containing that change).
+      const phase =
+        manifestPhases.find((p) =>
+          p.changes.some((c) => c.name === boundary.triggerChange)
+        ) ?? manifestPhases[manifestPhases.length - 1];
+      if (phase) return { kind: 'pr', phase, boundary };
+    }
   }
   return undefined;
 }
@@ -435,6 +600,174 @@ async function runDecomposition(
   };
 
   const result = await engine.runDecompositionStep(context);
+  persistStepOutcome(projectRoot, batch, key, result);
+  renderResult(projectRoot, batch, [], result, options);
+}
+
+/**
+ * Resolve the git branch names the completion PR step opens between — branch
+ * resolution is the CLI's job (`instruction-fed-config`, `generalizable-defaults`),
+ * delivered to the engine as `PrStepContext` data the `/rct:pr-open` body consumes
+ * as its "Input": `workBranch` from the current branch (`git rev-parse
+ * --abbrev-ref HEAD`), `baseBranch` from the repo's default branch (`git
+ * symbolic-ref --short refs/remotes/origin/HEAD`, stripped of its `origin/`
+ * prefix), each falling back to the neutral `main` when git is unavailable or no
+ * remote is configured (the same no-remote condition the doctor PR-remote warning
+ * flags). Touches only git, which is universal; it invokes NO forge CLI —
+ * detecting and driving `gh`/`glab`/… is the spawned agent's job.
+ */
+export function resolveBranches(projectRoot: string): ResolvedBranches {
+  const git = (args: string[]): string | undefined => {
+    try {
+      return execFileSync('git', args, {
+        cwd: projectRoot,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const workBranch = git(['rev-parse', '--abbrev-ref', 'HEAD']) || 'main';
+  const remoteHead = git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
+  const baseBranch = remoteHead ? remoteHead.replace(/^origin\//, '') : 'main';
+  return { workBranch, baseBranch };
+}
+
+/**
+ * Drive ONE whole-batch PR-open step at batch completion — the structural twin of
+ * `runDecomposition`: honor a halt on the batch-keyed PR park (`prJournalKey`),
+ * build the `PrStepContext` (terminal phase framing, resolved settings, resume
+ * answer/feedback, and the CLI-resolved work/base branch), hand it to the engine's
+ * `runPrStep`, then persist and render the outcome through the SAME
+ * `persistStepOutcome` / `renderResult` paths a change and decomposition step use.
+ * So a blocked/failed PR step parks under the PR key and renders as a reported
+ * step failure with no new failure logic, and an advanced PR step clears the park.
+ * `runPr` never re-authors the commit/push/PR-open steps (they live once in the
+ * `/rct:pr-open` body) and adds no journal writes beyond the shared park state.
+ */
+async function runPr(
+  projectRoot: string,
+  batch: string,
+  engine: RatchetBatchEngine,
+  phase: Phase,
+  settings: ResolvedStepContext['settings'],
+  branches: ResolvedBranches,
+  options: BatchApplyOptions
+): Promise<void> {
+  // A PR step has no change; its journal/park state is keyed by the batch.
+  const key = prJournalKey(batch);
+  const parked = getParkedStep(projectRoot, batch, key);
+  if (precheckPark(parked, key, options)) return;
+
+  const context: PrStepContext = {
+    batch,
+    phase: {
+      name: phase.name,
+      goal: phase.goal,
+      success: phase.success,
+      proofOfWork: phase.proofOfWork,
+    },
+    settings,
+    baseBranch: branches.baseBranch,
+    workBranch: branches.workBranch,
+    // Thread the resolved resume answer/feedback exactly as a change or
+    // decomposition step does (W1): a parked PR step the user answered must carry
+    // that answer into the spawned instructions, not silently drop it on resume.
+    resume: parked
+      ? {
+          kind: parked.kind,
+          reason: parked.reason,
+          answer: parked.answer,
+          feedback: parked.feedback,
+        }
+      : undefined,
+  };
+
+  const result = await engine.runPrStep(context);
+  persistStepOutcome(projectRoot, batch, key, result);
+  renderResult(projectRoot, batch, [], result, options);
+}
+
+/**
+ * Drive ONE stacked per-group PR-open step for a fired boundary — the structural
+ * twin of {@link runPr}, keyed by the PER-GROUP `prJournalKey(batch, boundary)`:
+ * honor a halt on that group's park, resolve the group's stacked base by composing
+ * the two pure policies (`detectPrGroupBoundaries` orders the groups over the
+ * shared `boundaryStateFromPhases` state; `selectStackedBases` maps group 0 to the
+ * batch base branch and group N to group N-1's own branch) and selecting the fired
+ * boundary's entry, build the `PrStepContext` (the boundary, the resolved stacked
+ * `baseBranch`/`workBranch`, phase framing, settings, resume), hand it to the
+ * engine's `runPrStep`, then persist and render through the SAME
+ * `persistStepOutcome` / `renderResult` paths every step uses. So a blocked/failed
+ * per-boundary PR step parks under that group's key and renders as a reported step
+ * failure with no new failure logic, an advanced step clears the park, and the
+ * engine — not this helper — records the per-group `completion`/`blocker` entry.
+ * Branch NAMING is delivered as data (`batchBaseBranch` + the `groupBranch`
+ * resolver); only git identities are involved and no forge CLI is invoked.
+ */
+async function runStackedPr(
+  projectRoot: string,
+  batch: string,
+  engine: RatchetBatchEngine,
+  manifestPhases: Phase[],
+  phase: Phase,
+  boundary: PrGroupBoundary,
+  settings: ResolvedStepContext['settings'],
+  batchBaseBranch: string,
+  groupBranch: (boundary: PrGroupBoundary, index: number) => string,
+  options: BatchApplyOptions
+): Promise<void> {
+  // A stacked PR step has no change; its journal/park state is keyed by the GROUP.
+  const key = prJournalKey(batch, boundary);
+  const parked = getParkedStep(projectRoot, batch, key);
+  if (precheckPark(parked, key, options)) return;
+
+  // Compose the two pure policies over the same boundary state the selector used,
+  // then take the fired boundary's entry: its `headBranch` is the group's own
+  // branch, its `baseBranch` is group N-1's branch (or the batch base for group 0).
+  const bases = selectStackedBases(
+    detectPrGroupBoundaries(boundaryStateFromPhases(batch, manifestPhases), settings.prGrouping),
+    batchBaseBranch,
+    groupBranch
+  );
+  const base = bases.find(
+    (b) => b.boundary.kind === boundary.kind && b.boundary.groupId === boundary.groupId
+  );
+  if (!base) {
+    // Selection and routing derive the boundaries from the same in-memory
+    // manifest, so a missing entry is an internal inconsistency, not a user state.
+    throw new Error(
+      `No stacked base resolved for PR group '${boundary.groupId}' (${boundary.kind}).`
+    );
+  }
+
+  const context: PrStepContext = {
+    batch,
+    phase: {
+      name: phase.name,
+      goal: phase.goal,
+      success: phase.success,
+      proofOfWork: phase.proofOfWork,
+    },
+    settings,
+    baseBranch: base.baseBranch,
+    workBranch: base.headBranch,
+    boundary,
+    // Thread the resolved resume answer/feedback exactly as every other step does
+    // (W1): a parked group the user answered must carry that answer into the
+    // spawned instructions, not silently drop it on resume.
+    resume: parked
+      ? {
+          kind: parked.kind,
+          reason: parked.reason,
+          answer: parked.answer,
+          feedback: parked.feedback,
+        }
+      : undefined,
+  };
+
+  const result = await engine.runPrStep(context);
   persistStepOutcome(projectRoot, batch, key, result);
   renderResult(projectRoot, batch, [], result, options);
 }

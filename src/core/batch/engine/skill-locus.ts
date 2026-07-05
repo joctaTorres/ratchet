@@ -32,6 +32,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { CommandAdapterRegistry } from '../../command-generation/index.js';
 import { getCommandContents } from '../../shared/skill-generation.js';
 import { DEFAULT_AGENT } from './agent.js';
+import { scalarAgent, resolveAgentForStage } from '../agent-setting.js';
+import type { AgentStage } from '../agent-setting.js';
 import type { ChangeStepContext, Transition } from './contract.js';
 import type { BatchSettings, Locus } from '../config.js';
 
@@ -62,6 +64,21 @@ export function rctCommandIdForTransition(transition: Transition): string {
  * own command id rather than reusing a per-change transition's.
  */
 export const DECOMPOSE_COMMAND_ID = 'decompose-phase';
+
+/**
+ * The canonical rct command id for the whole-batch PR-open step, kept in the SAME
+ * single-source style as {@link DECOMPOSE_COMMAND_ID} so the spawn-locus guarantee
+ * (`ensureCommandInSpawnLocus`) and the agent invocation token (`/rct:pr-open`)
+ * resolve the id from one place and cannot drift. This is the COMMAND id (what
+ * instruction the PR agent runs), deliberately distinct from the `pr` routable
+ * agent stage (which agent runs the PR step): the stage selects the binary, this
+ * id selects the skill. The later `pr-spawn-at-completion` change guarantees this
+ * command for the `pr` stage via
+ * `ensureCommandInSpawnLocus(PR_OPEN_COMMAND_ID, settings, root, deps, 'pr')` — no
+ * change to `ensureCommandInSpawnLocus` is needed, since it already render-or-fails
+ * for ANY command id and already accepts the `pr` stage.
+ */
+export const PR_OPEN_COMMAND_ID = 'pr-open';
 
 /**
  * An actionable bootstrap failure: the engine could not guarantee the rct
@@ -138,7 +155,10 @@ export function ensureSkillInSpawnLocus(
     rctCommandIdForTransition(ctx.transition),
     ctx.settings,
     projectRoot,
-    deps
+    deps,
+    // Resolve the command file for the SAME per-stage agent the engine spawns for
+    // this transition, so the rendered rct command matches the spawned binary.
+    ctx.transition
   );
 }
 
@@ -151,6 +171,11 @@ export function ensureSkillInSpawnLocus(
  * spawn ({@link DECOMPOSE_COMMAND_ID}) route through, so no consumer hard-codes a
  * single agent's path or carries its own copy of the guarantee.
  *
+ * An optional `stage` (the running per-change transition) selects the agent that
+ * stage maps to under an `agent` stage-map, so the rendered command matches the
+ * per-stage spawned binary; omitting it (the decomposition path) keeps the
+ * scalar/default resolution.
+ *
  * Throws {@link SkillLocusError} — with an actionable message — when the locus is
  * one the engine cannot render into (e.g. `remote`) or when the render/write
  * fails, so the engine never spawns a delegation the agent cannot run. Pure
@@ -160,9 +185,16 @@ export function ensureCommandInSpawnLocus(
   commandId: string,
   settings: BatchSettings,
   projectRoot: string,
-  deps: SkillLocusDeps = defaultSkillLocusDeps
+  deps: SkillLocusDeps = defaultSkillLocusDeps,
+  stage?: AgentStage
 ): void {
-  const agentId = settings.agent ?? DEFAULT_AGENT;
+  // With a `stage` (a per-change transition) resolve the agent that stage maps to
+  // so the rendered command matches the spawned binary; without one (the
+  // decomposition path) keep the scalar/default resolution. Either way an
+  // unmapped-stage/unset agent falls back to `DEFAULT_AGENT`.
+  const agentId =
+    (stage ? resolveAgentForStage(settings.agent, stage) : scalarAgent(settings.agent)) ??
+    DEFAULT_AGENT;
   const locus: Locus = settings.locus ?? 'local';
 
   // Resolve the PER-AGENT command adapter from the command-generation registry.

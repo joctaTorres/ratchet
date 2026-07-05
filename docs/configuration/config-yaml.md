@@ -54,14 +54,60 @@ Scalar settings (all keys except `permissions`) are nearest-wins across scopes.
 | `gate` | string | `voluntary` | `voluntary` `after-propose` `every-phase` `autonomous` | Controls when the batch engine pauses for human approval between phases. `voluntary` never interrupts; `after-propose` gates after the propose phase; `every-phase` gates after every phase; `autonomous` runs all phases without interruption. |
 | `strategy` | string | `vertical-slice` | `vertical-slice` `feature` | Slice strategy used when the batch manifest is generated. |
 | `proofOfWork` | string | `hard-gate` | `hard-gate` `warn` | What happens when an agent does not produce required proof-of-work. `hard-gate` blocks the phase; `warn` logs a warning and continues. |
+| `prGrouping` | string | `off` | `off` `whole-batch` `per-phase` `per-change` | Whether a completed batch opens a pull request, and how work is grouped into PRs. `off` opens no PR (behavior unchanged). `whole-batch` groups the whole batch's work into a single PR opened by a dedicated `pr`-stage agent at completion. `per-phase` opens one stacked PR per completed phase and `per-change` one stacked PR per change — `batch apply` drives one stacked PR per group boundary, one group per apply in boundary order, idempotently per group (group 0 targets the batch base branch, group N targets group N-1's branch). |
 
 ### Execution locus
 
 | Key | Type | Default | Accepted values | Description |
 |---|---|---|---|---|
 | `locus` | string | `local` | `local` `docker` `remote` | Where the agent runs. `local` drives the in-process ReX sidecar. `docker` runs the step inside a container via ReX `DockerDeployment` with the project root bind-mounted. `remote` drives a `swerex-remote` server over its REST API. |
-| `agent` | string | — | free-form | Coding-agent binary to spawn (e.g. `claude`, `codex`, `cursor-agent`, `gemini`). When unset, the engine uses the agent configured at init time. |
+| `agent` | string \| map | — | an agent name, or a `{propose, apply, verify, pr}` stage-map | Coding agent(s) to spawn. A scalar name (e.g. `claude`, `codex`, `cursor-agent`, `gemini`) applies to every lifecycle stage; a partial per-stage map assigns an agent to each stage (see [Per-stage agent map](#per-stage-agent-map)). When unset, the engine uses the agent configured at init time. |
 | `image` | string | — | free-form | Container image reference for `locus: docker`. Must be non-empty when set. When unset and `locus` is `docker`, the runtime falls back to `python:3.12`. |
+
+#### Per-stage agent map
+
+`agent` accepts **either** a single agent name **or** a map that names a coding
+agent per lifecycle stage — `propose`, `apply`, `verify`, and `pr` (the
+whole-batch PR-opening stage, spawned only when [`prGrouping`](#gate-and-orchestration)
+is active):
+
+```yaml
+batch:
+  agent:
+    propose: claude
+    apply: opencode
+    verify: opencode
+```
+
+Each lifecycle transition spawns the agent its stage maps to — so the example
+above has `claude` propose while `opencode` applies and verifies. The map is
+**partial**: any subset of the four stages may be given. Stage resolution falls
+back in order **mapped stage → scalar → default agent**: a stage the map names
+uses that agent; a stage it omits uses a scalar `agent` if one is in effect,
+otherwise the init-time default. A scalar name is therefore equivalent to naming
+the same agent for every stage, and an unset `agent` keeps the init-time default
+for every stage — both behave exactly as before.
+
+**Cross-scope merge (nearest-wins per stage).** When `agent` is set at more than
+one scope (project config `batch:` ← manifest `settings:`), the values merge one
+stage at a time rather than replacing wholesale:
+
+- a **partial stage-map** merges over a lower scope per stage — each stage it
+  names wins for that stage, while stages it omits keep the lower scope's agent
+  (a lower scalar covers all of them);
+- a **nearer scalar** covers every stage, so it replaces a farther map entirely.
+
+For example, a project-config scalar `claude` with a manifest map `{ apply:
+opencode }` routes `apply` to `opencode` and both `propose` and `verify` to
+`claude`; a project-config map `{ propose: claude, apply: claude }` under a
+manifest map `{ apply: opencode }` routes `propose` to `claude`, `apply` to
+`opencode`, and the unmapped `verify` to the default.
+
+The same shape is validated at both the project-config `batch:` scope and a batch
+manifest's `settings:` scope. Validation rejects an **unknown stage key** (any key
+other than `propose`, `apply`, `verify`, or `pr`) and a **non-string agent value**
+before any agent is spawned; an **unknown agent name** (scalar or mapped) is
+rejected — naming the available adapters — before that stage's agent is spawned.
 
 ### Agent timeout
 

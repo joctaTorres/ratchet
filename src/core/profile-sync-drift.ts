@@ -23,6 +23,7 @@ export const WORKFLOW_TO_SKILL_DIR: Record<WorkflowId, string> = {
   'propose-batch': 'ratchet-propose-batch',
   'decompose-phase': 'ratchet-decompose-phase',
   'brainstorm': 'ratchet-brainstorm',
+  'pr-open': 'ratchet-pr-open',
 };
 
 function toKnownWorkflows(workflows: readonly string[]): WorkflowId[] {

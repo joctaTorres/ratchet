@@ -142,8 +142,9 @@ ratchet --version
 | **Python 3.10+ (with `venv` + `pip`), or [`uv`](https://docs.astral.sh/uv/) (preferred)** | Bootstraps the isolated SWE-ReX sidecar runtime. `uv` is preferred for faster, more reliable builds. | To run batch changes |
 | **Docker** | Only needed for the `docker` execution locus. Local runs never use it. | Optional |
 | **Playwright** | Drives the Given/When/Then browser scenarios of a `kind: web` eval binding. | Only when a `kind: web` eval binding is in scope |
+| **A configured git remote** | PR grouping spawns a PR agent at batch completion that pushes the work branch and opens a PR, which needs somewhere to push. | Only when `prGrouping` is active |
 
-Run **`ratchet doctor`** to validate your setup — it checks each of these and prints an actionable remedy for anything missing. `ratchet init` also runs these checks once, automatically, the first time you initialize a project (advisory only — it never blocks setup).
+Run **`ratchet doctor`** to validate your setup — it checks each of these and prints an actionable remedy for anything missing (including an advisory warning when `prGrouping` is active but your repo has no configured git remote). `ratchet init` also runs these checks once, automatically, the first time you initialize a project (advisory only — it never blocks setup).
 
 ### From source (development)
 
@@ -202,12 +203,12 @@ ratchet archive add-login -y                      # sync features → store, arc
 
 .claude/                      # (per selected tool)
 ├── skills/ratchet-{brainstorm,propose,apply-change,verify-change,archive-change,propose-standard,propose-batch,apply-batch}/
-└── commands/rct/{brainstorm,propose,apply,verify,archive,propose-standard,propose-batch,apply-batch}.md
+└── commands/rct/{brainstorm,propose,apply,verify,archive,propose-standard,propose-batch,apply-batch,pr-open}.md
 ```
 
 The `core` profile installed by a stock `ratchet init` ships the change workflows, the `brainstorm` front door, **and** the batch workflows (`propose-batch` + `apply-batch`). `eval` is the one opt-in workflow — request it with a custom profile.
 
-**Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`. The batch-engine spawnable coding agents (drivable by `--agent` on the headless verbs and `batch apply`) are `claude`, `codex`, `cursor`, `gemini`, and `opencode`; `github-copilot` is an init config target only.
+**Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`. The batch-engine spawnable coding agents (drivable by `--agent` on the headless verbs and `batch apply`) are `claude`, `codex`, `cursor`, `gemini`, and `opencode`; `github-copilot` is an init config target only. In project config or a batch manifest, the `agent` setting is either a single agent name or a partial per-stage `{propose, apply, verify, pr}` map; each lifecycle transition spawns the agent its stage maps to (falling back to a scalar `agent`, then the default), so you can have one agent propose while another applies and verifies (see [config reference](docs/configuration/config-yaml.md#per-stage-agent-map)).
 
 ## Commands
 
@@ -373,6 +374,104 @@ output streaming, configurable to execute **locally**, in **Docker**, or on a
 per-agent timeout defaults to 10 minutes and is raised with the
 `batch.agentTimeoutMs` config key or the `RATCHET_AGENT_TIMEOUT_MS` environment
 variable (env wins) when a slow-but-passing proof-of-work needs more time.
+
+### PR grouping
+
+By default a batch opens **no** pull request — the prior stage agents leave their
+work on the branch and you open a PR yourself. Set **`prGrouping: whole-batch`**
+(in `.ratchet/config.yaml` `batch:` or a manifest override) to have `batch apply`
+open **exactly one** pull request at batch completion. The default is
+**`prGrouping: off`**, which is unchanged behavior.
+
+When `prGrouping: whole-batch` is active, once every change is done and the
+terminal proof-of-work has passed, `batch apply` spawns one agent for the **`pr`
+stage** — the fourth routable agent stage alongside `propose`, `apply`, and
+`verify` (route it independently in the [`agent` map](https://ratchet-ai.dev/configuration/config-yaml),
+e.g. `agent: { pr: opencode }`). That agent delegates to the shared **`/rct:pr-open`**
+instruction: it reads `git log` for the repository's own commit style (defaulting
+to semantic / Conventional Commits), commits the accumulated work, pushes the work
+branch, and opens one PR to the base branch using **whichever forge CLI your
+environment provides** (`gh`, `glab`, …) — ratchet hard-codes no forge. The PR-open
+outcome is recorded in run-state, so re-running the loop never double-opens; a
+commit/push/PR-open failure surfaces as a reported step failure and a later run
+retries. `prGrouping: off` (the default) or unset spawns no PR agent and the loop
+behavior is unchanged. PR opening needs [a configured git remote](#requirements)
+to push to.
+
+The stacked modes **`prGrouping: per-phase`** (one stacked PR per completed phase)
+and **`prGrouping: per-change`** (one stacked PR per change) group work into
+**stacked** pull requests: the engine spawns **one `pr`-stage agent per group
+boundary**, injecting that group's resolved stacked base — group 0 targets the
+batch base branch and group N targets group N-1's branch, so each PR's diff stays
+scoped to its own unit while dependent code still compiles. Each group's PR-open
+outcome is recorded in run-state **keyed by group** (`pr:<batch>:<groupId>`), so a
+resumed loop opens every group exactly once and distinct groups are guarded
+independently; the whole-batch group keeps its batch-level `pr:<batch>` key.
+`batch apply` drives these per-boundary spawns end to end: it opens **one stacked
+PR per group boundary, one group per apply, in boundary order**, and is idempotent
+per group — a resumed loop opens every group exactly once and never double-opens
+one already recorded. The stacked-branch base rule is that **group 0 targets the
+batch base branch and group N targets group N-1's branch**:
+
+```mermaid
+flowchart TD
+  base(["💾 main<br/>batch base branch"])
+  g0(["📝 group 0 branch<br/>per-phase: phase 0 · per-change: change 0"])
+  pr0(["🌐 group 0 PR<br/>base = main"])
+  g1(["📝 group 1 branch<br/>per-phase: phase 1 · per-change: change 1"])
+  pr1(["🌐 group 1 PR<br/>base = group 0 branch"])
+
+  base -->|"group 0 bases on the batch base branch"| g0
+  g0 --> pr0
+  g0 -->|"group 1 bases on group 0's branch"| g1
+  g1 --> pr1
+
+  classDef base fill:#3730a3,stroke:#a5b4fc,stroke-width:2px,color:#ffffff;
+  classDef branch fill:#1f2937,stroke:#93c5fd,stroke-width:2px,color:#ffffff;
+  classDef pr fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+  class base base;
+  class g0,g1 branch;
+  class pr0,pr1 pr;
+```
+
+The whole-batch `batch apply` PR flow (a stacked mode runs this same engine step
+once per group boundary, keyed by group):
+
+```mermaid
+flowchart TD
+  done(["✅ batch done<br/>every change done + terminal proof passed"])
+  grouping{"🔀 prGrouping?"}
+  opened{"🔀 hasJournaledPr?"}
+  nogrouping["❌ no PR agent spawned<br/>Nothing to do — all changes are done."]
+  already["❌ no second spawn<br/>Nothing to do — all changes are done."]
+  spawn["⚙️ spawn one pr-stage agent<br/>/rct:pr-open (work + base branch as Input)"]
+  commit["📝 derive git-log style (semantic default)<br/>commit accumulated work · push work branch"]
+  pr["🌐 open EXACTLY ONE pull request<br/>work branch → base branch (forge CLI)"]
+  record["💾 record pr completion in run-state<br/>transition: 'pr' (hasJournaledPr)"]
+  fail["❌ reported step failure<br/>no pr completion · retry stays possible"]
+
+  done --> grouping
+  grouping -- "off / unset" --> nogrouping
+  grouping -- "whole-batch" --> opened
+  opened -- "already opened" --> already
+  opened -- "not yet opened" --> spawn
+  spawn --> commit
+  commit -- "success" --> pr
+  commit -- "commit / push fails" --> fail
+  pr -- "opened" --> record
+  pr -- "PR-open fails" --> fail
+
+  classDef start fill:#90EE90,stroke:#333,stroke-width:2px,color:#063d1a
+  classDef gate fill:#FFD700,stroke:#333,stroke-width:2px,color:#000000
+  classDef work fill:#87CEEB,stroke:#333,stroke-width:2px,color:#06263d
+  classDef store fill:#E6E6FA,stroke:#5b2a86,stroke-width:2px,color:#2a1452
+  classDef stop fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:#000000
+  class done start
+  class grouping,opened gate
+  class spawn,commit,pr work
+  class record store
+  class nogrouping,already,fail stop
+```
 
 ## Eval suite
 

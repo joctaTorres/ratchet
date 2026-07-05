@@ -155,6 +155,47 @@ describe('resolveBatchSettings', () => {
     expect(settings.image).toBe('manifest/image:2');
     expect(sources.image).toBe('manifest');
   });
+
+  it('resolves a scalar agent from project config (whole-value, source project)', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  agent: opencode\n');
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toBe('opencode');
+    expect(sources.agent).toBe('project');
+  });
+
+  it('resolves a per-stage agent map from project config', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  agent:\n    propose: claude\n    apply: opencode\n    verify: opencode\n'
+    );
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toEqual({
+      propose: 'claude',
+      apply: 'opencode',
+      verify: 'opencode',
+    });
+    expect(sources.agent).toBe('project');
+  });
+
+  it('merges a manifest agent map over a project scalar base per stage', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  agent: claude\n');
+    const manifest = {
+      name: 'q3-auth',
+      phases: [],
+      settings: { agent: { apply: 'opencode' } },
+    } as unknown as BatchManifest;
+    const { settings, sources } = resolveBatchSettings(projectRoot, manifest);
+    // Per-stage cross-scope merge: the manifest's partial map overrides `apply`,
+    // and the project scalar base covers the stages it does not name (propose,
+    // verify, and pr) — so the value materializes to a full map preserving the
+    // scalar fallback per stage.
+    expect(settings.agent).toEqual({
+      propose: 'claude',
+      apply: 'opencode',
+      verify: 'claude',
+      pr: 'claude',
+    });
+    expect(sources.agent).toBe('manifest');
+  });
 });
 
 describe('validateSetting', () => {

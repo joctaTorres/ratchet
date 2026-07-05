@@ -76,7 +76,7 @@ Each command is a Markdown file with YAML frontmatter. The file path and frontma
 
 ### Workflows: core profile vs. eval opt-in
 
-The `core` profile (the default) installs ten workflows. The `eval` workflow is opt-in and only installed when a `custom` profile explicitly lists it.
+The `core` profile (the default) installs eleven workflows. The `eval` workflow is opt-in and only installed when a `custom` profile explicitly lists it.
 
 **Core profile workflows** (installed by `ratchet init` by default):
 
@@ -92,6 +92,15 @@ The `core` profile (the default) installs ten workflows. The `eval` workflow is 
 | `archive-batch` | `ratchet-archive-batch` | `archive-batch` |
 | `propose-batch` | `ratchet-propose-batch` | `propose-batch` |
 | `decompose-phase` | `ratchet-decompose-phase` | `decompose-phase` |
+| `pr-open` | `ratchet-pr-open` | `pr-open` |
+
+The `pr-open` command is also the artifact the batch engine renders into the spawn
+locus for the whole-batch PR step: at batch completion the engine spawns a PR agent
+that delegates to `/rct:pr-open` to commit the accumulated work in the repo's
+`git log` commit style, push the work branch, and open exactly one forge-agnostic PR
+to its base branch. Like every command it is generated for every tool above at the
+tool's command path (e.g. claude `.claude/commands/rct/pr-open.md`, cursor
+`.cursor/commands/rct-pr-open.md`).
 
 The `decompose-phase` command is also the artifact the batch engine renders into
 the spawn locus when `batch apply` drives a phase decomposition (it delegates to

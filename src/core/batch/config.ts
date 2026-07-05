@@ -26,6 +26,8 @@ import type {
   ResolvedPermissionsPolicy,
 } from './permissions-policy.js';
 import type { BatchManifest } from './manifest.js';
+import { AGENT_STAGE_KEYS } from './agent-setting.js';
+import type { AgentSetting, AgentStage, AgentStageMap } from './agent-setting.js';
 
 export const GATE_VALUES = ['voluntary', 'after-propose', 'every-phase', 'autonomous'] as const;
 export const STRATEGY_VALUES = ['vertical-slice', 'feature'] as const;
@@ -39,6 +41,20 @@ export const PROOF_OF_WORK_POLICY_VALUES = ['hard-gate', 'warn'] as const;
  * branch in the engine.
  */
 export const LOCUS_VALUES = ['local', 'docker', 'remote'] as const;
+
+/**
+ * PR-grouping mode: whether a completed batch opens a pull request, and how the
+ * work is grouped into PRs. `off` (the default) is the behavior-unchanged
+ * do-nothing mode — no PR agent is ever spawned. `whole-batch` groups the whole
+ * batch's work into a single PR opened by a dedicated PR agent at completion.
+ * `per-phase` opens one stacked PR per completed phase and `per-change` one
+ * stacked PR per change (their stacked-spawn behavior is wired later in Phase 3;
+ * this vocabulary slice only validates them).
+ *
+ * The single source of truth for the vocabulary; the project-config and manifest
+ * schemas validate the same `off | whole-batch | per-phase | per-change` set.
+ */
+export const PR_GROUPING_VALUES = ['off', 'whole-batch', 'per-phase', 'per-change'] as const;
 
 /**
  * The default container image for `locus: docker` when no `image` is configured.
@@ -57,6 +73,18 @@ export type Gate = (typeof GATE_VALUES)[number];
 export type Strategy = (typeof STRATEGY_VALUES)[number];
 export type ProofOfWorkPolicy = (typeof PROOF_OF_WORK_POLICY_VALUES)[number];
 export type Locus = (typeof LOCUS_VALUES)[number];
+export type PrGrouping = (typeof PR_GROUPING_VALUES)[number];
+
+/**
+ * The single home for "is PR grouping active?". Active means any mode other than
+ * `off`, so every non-`off` mode (`whole-batch`, `per-phase`, `per-change`, and
+ * any future mode) is covered by construction as the vocabulary grows. Consumers
+ * (e.g. the doctor PR-remote check) call this instead of inlining the rule, so
+ * the answer lives in exactly one place.
+ */
+export function isPrGroupingActive(mode: PrGrouping): boolean {
+  return mode !== 'off';
+}
 
 // The agent-agnostic permissions policy schema/types live in their own module to
 // avoid a config↔project-config import cycle; re-exported here for convenience.
@@ -79,7 +107,26 @@ export interface BatchSettings {
   proofOfWork: ProofOfWorkPolicy;
   /** Where the agent runs. Defaults to `local` (the ReX sidecar). */
   locus: Locus;
-  agent?: string;
+  /**
+   * Whether a completed batch opens a pull request, and how work is grouped.
+   * Defaults to `off` (no PR agent spawned, behavior unchanged). `whole-batch`
+   * groups the batch's work into a single PR opened by a dedicated PR agent at
+   * completion. Resolved by the generic nearest-wins cascade like the other
+   * scalar settings.
+   */
+  prGrouping: PrGrouping;
+  /**
+   * The coding agent(s) to spawn. Either a scalar agent name (route every
+   * lifecycle stage to one agent, the default when a plain string or unset) or a
+   * partial `{propose, apply, verify, pr}` stage-map (route each stage independently).
+   * Validated by the shared `AgentSettingSchema` at both config scopes.
+   *
+   * Nearest-wins-per-stage cross-scope merge (see {@link resolveBatchSettings}):
+   * a partial stage-map merges over a lower-scope scalar/map per stage, while a
+   * nearer scalar replaces the whole value (covering every stage). Each stage's
+   * spawn agent is resolved from this value by `resolveAgentForStage`.
+   */
+  agent?: string | AgentStageMap;
   /**
    * Container image for `locus: docker` (free-form, like `agent`). Ignored for
    * `local`. When unset and locus is `docker`, the runtime uses
@@ -261,6 +308,7 @@ export const DEFAULT_BATCH_SETTINGS: BatchSettings = {
   strategy: 'vertical-slice',
   proofOfWork: 'hard-gate',
   locus: 'local',
+  prGrouping: 'off',
 };
 
 const SETTING_KEYS: (keyof BatchSettings)[] = [
@@ -268,6 +316,7 @@ const SETTING_KEYS: (keyof BatchSettings)[] = [
   'strategy',
   'proofOfWork',
   'locus',
+  'prGrouping',
   'agent',
   'image',
   'host',
@@ -282,6 +331,7 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
   strategy: STRATEGY_VALUES,
   proofOfWork: PROOF_OF_WORK_POLICY_VALUES,
   locus: LOCUS_VALUES,
+  prGrouping: PR_GROUPING_VALUES,
   agent: null, // free-form string
   image: null, // free-form string (container image reference)
   host: null, // free-form string (swerex-remote host, optional scheme prefix)
@@ -296,7 +346,10 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
  *
  *   built-in default ← user/global ← project config ← per-change manifest
  *
- * Scalar settings (gate/strategy/agent/…) are nearest-wins. The structured
+ * Scalar settings (gate/strategy/locus/…) are nearest-wins. The `agent` setting
+ * gets a dedicated nearest-wins-per-stage merge (see {@link resolveAgentSetting}):
+ * a partial stage-map merges over a lower-scope scalar/map per stage, a nearer
+ * scalar replaces the whole value. The structured
  * `permissions` policy is merged with documented per-field semantics: posture is
  * nearest-wins, `deny` is the UNION of every scope, `allow` is REPLACED by the
  * nearest scope that defines one, and each agent's `raw` entry is nearest-wins.
@@ -312,6 +365,7 @@ export function resolveBatchSettings(
     strategy: 'default',
     proofOfWork: 'default',
     locus: 'default',
+    prGrouping: 'default',
     agent: 'default',
     image: 'default',
     host: 'default',
@@ -329,6 +383,9 @@ export function resolveBatchSettings(
   const projectBatch = readProjectConfig(projectRoot)?.batch;
   if (projectBatch) {
     for (const key of SETTING_KEYS) {
+      // `agent` is resolved by a dedicated per-stage cross-scope merge below, not
+      // this generic whole-value loop.
+      if (key === 'agent') continue;
       const value = projectBatch[key];
       if (value !== undefined) {
         (writable[key] as BatchSettings[typeof key]) = value as BatchSettings[typeof key];
@@ -340,12 +397,27 @@ export function resolveBatchSettings(
   const manifestOverrides = manifest?.settings;
   if (manifestOverrides) {
     for (const key of SETTING_KEYS) {
+      if (key === 'agent') continue; // see the per-stage merge below
       const value = manifestOverrides[key];
       if (value !== undefined) {
         (writable[key] as BatchSettings[typeof key]) = value as BatchSettings[typeof key];
         sources[key] = 'manifest';
       }
     }
+  }
+
+  // `agent`: per-stage cross-scope merge (mirroring how `permissions` gets bespoke
+  // per-field semantics rather than whole-value nearest-wins). Fed the scalar
+  // scopes low→high (project ← manifest; the user/global scope carries no scalar
+  // `agent`), it merges partial stage-maps nearest-wins per stage over a
+  // lower-scope scalar/map, while a nearer scalar replaces the whole value.
+  const { agent: resolvedAgent, source: agentSource } = resolveAgentSetting([
+    { scope: 'project', agent: projectBatch?.agent },
+    { scope: 'manifest', agent: manifestOverrides?.agent },
+  ]);
+  if (resolvedAgent !== undefined) {
+    settings.agent = resolvedAgent;
+    sources.agent = agentSource ?? 'default';
   }
 
   // Structured permissions: resolved across user ← project ← manifest with
@@ -368,6 +440,66 @@ export function resolveBatchSettings(
   sources.permissions = postureSource;
 
   return { settings, sources };
+}
+
+/**
+ * Merge the `agent` setting across scopes (ordered low→high precedence) into a
+ * single resolved value with a nearest-wins-per-stage cross-scope merge. Tracks a
+ * `base` (the nearest scalar seen) and an accumulating partial `stages` map:
+ *
+ *   - a **scalar** scope sets `base` and resets `stages` — a scalar covers every
+ *     stage, so it overrides any lower-scope per-stage overrides (nearest-wins);
+ *   - a **map** scope merges its entries into `stages` (a nearer stage wins),
+ *     leaving a lower `base` in place as the fallback for stages it does not name.
+ *
+ * The resolved value is: `undefined` when nothing was set; the `base` scalar when
+ * no map contributed; the partial `stages` map when only maps contributed; and a
+ * **materialized full map** (`stages[stage] ?? base` per stage) when a scalar
+ * `base` and a partial map both contributed — so the scalar fallback is preserved
+ * inside a `string | AgentStageMap` value without widening the type. `source` is
+ * the nearest scope that contributed any `agent` value (`undefined` when none did,
+ * so the caller keeps the `default` source).
+ */
+function resolveAgentSetting(
+  layers: { scope: SettingSource; agent: AgentSetting | undefined }[]
+): { agent: BatchSettings['agent']; source: SettingSource | undefined } {
+  let base: string | undefined;
+  let stages: Partial<Record<AgentStage, string>> = {};
+  let mapContributed = false;
+  let source: SettingSource | undefined;
+
+  for (const { scope, agent } of layers) {
+    if (agent === undefined) continue;
+    source = scope;
+    if (typeof agent === 'string') {
+      // A scalar covers every stage: it overrides any lower-scope per-stage
+      // overrides and resets the accumulated partial map (nearest-wins).
+      base = agent;
+      stages = {};
+      mapContributed = false;
+    } else {
+      // A map merges its entries over what's accumulated (nearer stage wins),
+      // leaving a lower scalar `base` in place for stages it does not name.
+      for (const stage of AGENT_STAGE_KEYS) {
+        const mapped = agent[stage];
+        if (mapped !== undefined) stages[stage] = mapped;
+      }
+      mapContributed = true;
+    }
+  }
+
+  if (source === undefined) return { agent: undefined, source: undefined };
+  if (!mapContributed) return { agent: base, source };
+  // A map contributed. When a scalar `base` also contributed, materialize a full
+  // map so the scalar fallback is preserved per stage; otherwise the partial map.
+  if (base !== undefined) {
+    const full: AgentStageMap = {};
+    for (const stage of AGENT_STAGE_KEYS) {
+      full[stage] = stages[stage] ?? base;
+    }
+    return { agent: full, source };
+  }
+  return { agent: { ...stages }, source };
 }
 
 /** Environment variable that overrides the per-agent ReX timeout. */

@@ -229,3 +229,47 @@ phases:
     expect(manifest.phases[0].success).toBe('A user can log in end to end');
   });
 });
+
+// The `agent` setting override accepts a scalar name or a per-stage map — the
+// widened union type at manifest scope (features/agent-stage-map/schema.feature).
+describe('manifest agent setting override', () => {
+  const withAgent = (agentYaml: string): string => `
+name: q3-auth
+settings:
+${agentYaml}
+phases: []
+`;
+
+  it('accepts a scalar agent name', () => {
+    const manifest = parseBatchManifest(withAgent('  agent: opencode'));
+    expect(manifest.settings?.agent).toBe('opencode');
+  });
+
+  it('accepts a per-stage propose/apply/verify agent map', () => {
+    const manifest = parseBatchManifest(
+      withAgent('  agent:\n    propose: claude\n    apply: opencode\n    verify: opencode')
+    );
+    expect(manifest.settings?.agent).toEqual({
+      propose: 'claude',
+      apply: 'opencode',
+      verify: 'opencode',
+    });
+  });
+
+  it('accepts a partial stage map', () => {
+    const manifest = parseBatchManifest(withAgent('  agent:\n    apply: opencode'));
+    expect(manifest.settings?.agent).toEqual({ apply: 'opencode' });
+  });
+
+  it('rejects an unknown stage key', () => {
+    expect(() => parseBatchManifest(withAgent('  agent:\n    deploy: claude'))).toThrow(
+      BatchManifestError
+    );
+  });
+
+  it('rejects a non-string stage value', () => {
+    expect(() => parseBatchManifest(withAgent('  agent:\n    propose: 42'))).toThrow(
+      BatchManifestError
+    );
+  });
+});

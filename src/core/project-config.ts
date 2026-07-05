@@ -4,6 +4,7 @@ import path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { PermissionsPolicySchema } from './batch/permissions-policy.js';
+import { AgentSettingSchema } from './batch/agent-setting.js';
 import { ALL_CONTRIBUTOR_IDS } from './eval/gate.js';
 import { JurySchema } from './eval/jury.js';
 import type { ContributorId } from './eval/aggregate.js';
@@ -53,7 +54,13 @@ export const ProjectConfigSchema = z.object({
       strategy: z.enum(['vertical-slice', 'feature']).optional(),
       proofOfWork: z.enum(['hard-gate', 'warn']).optional(),
       locus: z.enum(['local', 'docker', 'remote']).optional(),
-      agent: z.string().optional(),
+      // PR grouping mode (`PR_GROUPING_VALUES` in batch/config.ts is the source
+      // of truth for the vocabulary; inlined here like the sibling enums to avoid
+      // the project-config ↔ batch/config import cycle).
+      prGrouping: z.enum(['off', 'whole-batch', 'per-phase', 'per-change']).optional(),
+      // Scalar agent name OR a partial {propose, apply, verify, pr} stage-map (one
+      // shared schema, also used by the manifest override — see agent-setting.ts).
+      agent: AgentSettingSchema.optional(),
       image: z.string().optional(),
       host: z.string().optional(),
       port: z.number().optional(),

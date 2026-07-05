@@ -315,7 +315,7 @@ it when present, and failing loudly (never spawning) when it cannot. This is a
 render-or-fail **precondition**, evaluated inside `runChangeStep` **before** the
 spawn request is built and before the runtime is selected/invoked.
 
-The engine drives **two** spawn kinds, both routed through this one guarantee
+The engine drives **three** spawn kinds, all routed through this one guarantee
 (`ensureCommandInSpawnLocus`, with `ensureSkillInSpawnLocus` as the per-change
 wrapper):
 
@@ -325,6 +325,12 @@ wrapper):
   `/rct:decompose-phase <phase>` to author a reachable empty phase's concrete
   change intents into `batch.yaml`. The guarantee renders/verifies the
   `decompose-phase` command the same way before that spawn.
+- **Group-scoped** PR spawns (`runPrStep`) — delegate to `/rct:pr-open` to commit
+  the prior stage agents' accumulated work and open one pull request per fired
+  group boundary (the whole batch under `whole-batch`, or one stacked PR per phase
+  / change under `per-phase` / `per-change`). The guarantee renders/verifies the
+  `pr-open` command for the `pr` stage the same way before that spawn (see
+  [PR step](#pr-step) below).
 
 The prompt itself now **delegates** to that command: `buildAgentInstructions`
 emits the `/rct:<transition> <change>` invocation instead of a hand-built inline
@@ -343,7 +349,7 @@ contract).
 The forced transition selects exactly its own canonical rct command, kept in one
 place (`rctCommandIdForTransition`) so it stays aligned with the prompt-delegation
 change; the phase-scoped decomposition step uses its own single-source id
-(`DECOMPOSE_COMMAND_ID`):
+(`DECOMPOSE_COMMAND_ID`), and the whole-batch PR step uses `PR_OPEN_COMMAND_ID`:
 
 | Step kind | rct command |
 |---|---|
@@ -351,6 +357,16 @@ change; the phase-scoped decomposition step uses its own single-source id
 | `apply` | `/rct:apply` |
 | `verify` | `/rct:verify` |
 | `decompose` (phase) | `/rct:decompose-phase` |
+| `pr-open` (per-group PR) | `/rct:pr-open` |
+
+`pr-open` is the command id (what instruction the PR agent runs), single-sourced in
+`PR_OPEN_COMMAND_ID` beside `DECOMPOSE_COMMAND_ID` — deliberately distinct from the
+`pr` routable agent stage (which agent runs the PR step). The same render-or-fail
+guarantee renders/verifies the `pr-open` command into the spawn locus exactly as it
+does the others, via `ensureCommandInSpawnLocus(PR_OPEN_COMMAND_ID, …, 'pr')`, so it
+is present before the PR agent is told to run it. The engine step that drives this
+command at each fired group boundary is `runPrStep` (see [PR step](#pr-step)
+below).
 
 ### Per-agent command path
 
@@ -427,6 +443,258 @@ flowchart TD
 
 The guarantee adds no user-facing command, flag, or config key — it is internal
 engine behavior — so `README.md` needs no edit.
+
+## PR step
+
+### Overview
+
+```mermaid
+flowchart TD
+  boundary(["✅ group boundary fired<br/>group's changes done + terminal proof passed"])
+  grouping{"🔀 prGrouping active?<br/>(isPrGroupingActive)"}
+  opened{"🔀 hasJournaledPrForGroup?<br/>per-group key pr:batch:groupId"}
+  nogrouping["❌ no PR agent spawned<br/>off / unset — nothing to do"]
+  already["❌ no second spawn<br/>this group's PR already open"]
+  spawn["⚙️ spawn one pr-stage agent<br/>/rct:pr-open (stacked work + base branch as Input)"]
+  commit["📝 derive git-log style (semantic default)<br/>commit accumulated work · push work branch"]
+  pr["🌐 open EXACTLY ONE pull request<br/>work branch → stacked base branch (forge CLI)"]
+  record["💾 record pr completion in run-state<br/>keyed by group: pr:batch:groupId"]
+  fail["❌ reported step failure<br/>no pr completion · this group stays retryable"]
+
+  boundary --> grouping
+  grouping -- "off / unset" --> nogrouping
+  grouping -- "whole-batch / per-phase / per-change" --> opened
+  opened -- "already opened" --> already
+  opened -- "not yet opened" --> spawn
+  spawn --> commit
+  commit -- "success" --> pr
+  commit -- "commit / push fails" --> fail
+  pr -- "opened" --> record
+  pr -- "PR-open fails" --> fail
+
+  classDef start fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+  classDef gate fill:#78350f,stroke:#fbbf24,stroke-width:2px,color:#ffffff;
+  classDef work fill:#1f2937,stroke:#93c5fd,stroke-width:2px,color:#ffffff;
+  classDef store fill:#3730a3,stroke:#a5b4fc,stroke-width:2px,color:#ffffff;
+  classDef stop fill:#7f1d1d,stroke:#fca5a5,stroke-width:2px,color:#ffffff;
+  class boundary start;
+  class grouping,opened gate;
+  class spawn,commit,pr work;
+  class record store;
+  class nogrouping,already,fail stop;
+```
+
+At each fired group boundary, `runPrStep` gates on the active grouping mode
+(`isPrGroupingActive`) and the group's own already-opened flag
+(`hasJournaledPrForGroup`), then spawns one `pr`-stage agent that delegates to
+`/rct:pr-open` to commit the accumulated work in the repo's `git log` style, open
+exactly one PR to the group's stacked base branch, and record the outcome in
+run-state keyed by group — with `off`/unset and an already-opened group both
+short-circuiting to `nothing-ready`.
+
+Defined in `src/core/batch/engine/engine.ts` (`runPrStep`).
+
+`runPrStep` spawns **exactly one** PR agent that delegates to `/rct:pr-open` to
+commit the prior stage agents' accumulated work in the repository's own `git log`
+commit style (defaulting to semantic / Conventional Commits) and open a single
+pull request from the work branch to its base branch, using whichever forge CLI the
+environment provides. It is the structural twin of `runDecompositionStep`: it takes
+the per-batch lock, guarantees the shared command in the spawn locus, builds
+instructions, and hands the request to the shared `spawnAndMap` tail — the engine
+spawns one agent and JOURNALS the outcome, but never re-authors the
+commit/push/PR-open steps inline (those live once in the `/rct:pr-open` body). The
+resolved work/base branch are supplied to the engine as **data** (`PrStepContext`)
+and injected into the prompt as the pr-open "Input" — the engine never derives
+which git branch is base/work.
+
+Under a **stacked** grouping mode (`per-phase` / `per-change`) the host loop calls
+`runPrStep` once per detected boundary, passing that group's `boundary` and its
+resolved stacked base: group 0 targets the batch base branch, and group N (N ≥ 1)
+targets group N-1's branch, so each PR's diff stays scoped to its own unit while
+dependent code still compiles. The two policies that resolve "where are the
+boundaries" (`detectPrGroupBoundaries`) and "what does each group stack on"
+(`selectStackedBases`) remain the single home of those rules; `runPrStep` consumes
+their output as data (`PrStepContext.boundary` + `baseBranch`/`workBranch`) and
+never re-derives boundary or stacking rules inline. A whole-batch step carries no
+`boundary` and behaves exactly as before.
+
+- **Surfaced and routed by `batch apply`.** `batch apply` is what selects a PR
+  step: `pickNextStep` names it as the `pr` `ApplyTarget` (a fourth kind alongside
+  `change | decompose | proof-of-work`) once the batch is otherwise `done` — every
+  change done AND the terminal boundary proof recorded and passed — and
+  `batchApplyCommand` routes that target to `engine.runPrStep`, persisting and
+  rendering its outcome through the same paths a change step uses. Under
+  `whole-batch` the target is the single boundary-less completion PR, gated in the
+  CLI on `prGrouping === 'whole-batch'` and `!hasJournaledPr(...)`. Under a
+  **stacked** mode (`per-phase`/`per-change`) `batch apply` surfaces one `pr`
+  target per detected group boundary, **in boundary order**: the selector derives
+  the ordered boundaries from the manifest via `detectPrGroupBoundaries` and
+  returns the first boundary whose per-group key (`prJournalKey(batch, boundary)`)
+  is not yet in the recorded-state set (`openedGroupKeys`), so each apply opens the
+  next unopened group and a resumed loop opens every group exactly once. An
+  `off`/unset batch and a fully-opened batch (whole-batch PR opened, or every
+  group's key recorded) surface **no** target: the existing terminal "Nothing to
+  do — all changes are done." output is unchanged. The gating inputs (the resolved
+  `prGrouping` mode, the whole-batch already-opened flag, and the per-group
+  `openedGroupKeys` set — the `change` keys of the journal's `pr` completions,
+  exactly what `hasJournaledPrForGroup` matches) are resolved once at the command
+  seam and passed to the pure `pickNextStep` selector as data, which reads neither
+  config nor the journal itself (`instruction-fed-config`).
+- **Branches resolved by the CLI.** For the whole-batch PR, `batch apply` resolves
+  the work branch (the current branch) and base branch (the repo's default branch
+  via the remote HEAD, falling back to `main` with no remote) from **git only** —
+  no forge CLI — and hands them to `runPrStep` as `PrStepContext` data. For a
+  stacked boundary it composes the two pure policies — `detectPrGroupBoundaries`
+  orders the groups and `selectStackedBases` maps group 0's base to the repo base
+  branch and group N's base to group N-1's own branch — and hands the fired
+  group's resolved `baseBranch`/`workBranch` (the group's own branch, named from
+  its stable `groupId`) to `runPrStep` the same way; the engine never derives
+  which branch is base/work. Both seams (`branches`, `groupBranch`) are injectable
+  so tests supply fake branch names without a real git repo.
+- **Gated on an active `prGrouping`.** The step runs for any **active** grouping
+  mode — `whole-batch`, `per-phase`, or `per-change` — resolved through the single
+  `isPrGroupingActive` predicate. With `prGrouping: off` (the default) or unset,
+  `runPrStep` returns a `nothing-ready` result and **no PR agent is ever spawned** —
+  existing batches behave exactly as before. This engine precondition holds
+  independent of any CLI wiring, so a direct `runPrStep` caller is guarded even
+  before per-boundary CLI surfacing lands.
+- **Routed through the `pr` stage.** The spawn agent is resolved via
+  `resolveAgentForStage(settings.agent, 'pr')` — a stage-map routes `pr` to a
+  specific agent (spawned with that agent's own `/rct:pr-open` invocation syntax),
+  a scalar `agent` routes every stage (including `pr`) to it, and an unset/unmapped
+  `pr` falls back to `DEFAULT_AGENT`. An unknown mapped agent is rejected
+  (`UnknownAgentError`) before any spawn.
+- **Per-group idempotent resume.** Each group's PR-open outcome is recorded in
+  run-state under its **own key** — `pr:<batch>` for a whole-batch step,
+  `pr:<batch>:<groupId>` for a stacked phase/change group (`prJournalKey(batch,
+  boundary)`). Only a successful open journals a `completion` entry with
+  `transition: 'pr'` for that key, and the group-scoped rule
+  `hasJournaledPrForGroup(journal, key)` — the single home of "this group's PR is
+  open" — guards the spawn: a resumed run that sees the entry returns
+  `nothing-ready` and never double-opens the group, while distinct groups (distinct
+  keys) are guarded independently, so a resumed loop opens every group exactly once.
+- **Failures surface as reported step failures.** A commit/push/PR-open failure (a
+  non-zero exit without a reported completion, or a reported blocker) maps through
+  the shared outcome path to a failed/blocked step and records a `blocker`, NOT a
+  `completion` — so `hasJournaledPrForGroup` stays UNSET for that group and a
+  subsequent run is free to retry it (other groups are unaffected). An unrenderable
+  spawn locus (`remote`) throws `SkillLocusError` and fails the step with an
+  actionable message before any agent is spawned, the same bootstrap-failure
+  contract as the change/decomposition paths.
+
+The `pr` stage is a fourth routable agent stage alongside `propose | apply |
+verify` (see the [`agent` setting](#agent-adapters)); `pr` is a `StepKind` (for the
+result/journal), never a per-change `Transition`, so it is never derived by
+`computeNextTransition` and never keys a change's done-rule.
+
+## PR group boundary detection
+
+Defined in `src/core/batch/engine/boundary.ts` (`detectPrGroupBoundaries`).
+
+`detectPrGroupBoundaries(batch, mode)` is a pure function that maps the batch's
+ordered phases/changes and the resolved `prGrouping` mode to the ordered list of
+PR group boundaries — the single authoritative answer to "where are the PR groups
+and what identifies each one?" It is a purely *structural* mapping over the batch
+plan (the phases and, within each, its ordered change names); it reads no
+filesystem, consults no run-state journal, and spawns no agent, which makes it
+exhaustively unit-testable over tiny in-memory inputs.
+
+Each mode maps as follows:
+
+- `off` → no boundaries (`[]`) — no PR is ever opened.
+- `whole-batch` → exactly one boundary at batch completion, spanning every change
+  across all phases in order; its identity is the batch name.
+- `per-phase` → one boundary per phase that has at least one change (empty phases
+  are skipped); each is identified by its phase name, and its members are that
+  phase's changes.
+- `per-change` → one boundary per change across all phases in order; each is
+  identified by its change name.
+
+A batch with no changes in any phase yields no boundaries under every mode. Every
+boundary carries a stable group identity (batch, phase, or change name — each
+unique within a batch) and a contiguous 0-based `index` ("group N"), assigned
+sequentially over the produced boundaries so skipped empty phases leave no gap.
+Each boundary also names its `triggerChange` — the group's last change, whose
+completion a later consumer matches to decide *when* the boundary fires — while
+the boundary *set* itself stays fixed by the plan, independent of run progress.
+
+The engine's [PR step](#pr-step) consumes each boundary as data: the host loop
+resolves the fired boundary (from `detectPrGroupBoundaries`) and its stacked base
+(from [`selectStackedBases`](#stacked-pr-base-selection)) and hands them to
+`runPrStep` via `PrStepContext.boundary` + `baseBranch`/`workBranch`, which keys the
+group's run-state entry (`pr:<batch>:<groupId>`) and injects the stacked base into
+the `/rct:pr-open` payload. `detectPrGroupBoundaries` stays the single home of the
+boundary rules; the engine reads its output and never re-derives boundaries inline.
+
+## Stacked PR base selection
+
+Defined in `src/core/batch/engine/stacked-base.ts` (`selectStackedBases`).
+
+### Overview
+
+```mermaid
+flowchart TD
+  base(["💾 main<br/>batch base branch"])
+  g0(["📝 group 0 branch<br/>per-phase: phase 0 · per-change: change 0"])
+  pr0(["🌐 group 0 PR<br/>base = main"])
+  g1(["📝 group 1 branch<br/>per-phase: phase 1 · per-change: change 1"])
+  pr1(["🌐 group 1 PR<br/>base = group 0 branch"])
+
+  base -->|"group 0 bases on the batch base branch"| g0
+  g0 --> pr0
+  g0 -->|"group 1 bases on group 0's branch"| g1
+  g1 --> pr1
+
+  classDef base fill:#3730a3,stroke:#a5b4fc,stroke-width:2px,color:#ffffff;
+  classDef branch fill:#1f2937,stroke:#93c5fd,stroke-width:2px,color:#ffffff;
+  classDef pr fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+  class base base;
+  class g0,g1 branch;
+  class pr0,pr1 pr;
+```
+
+Reading top-down: group 0's PR targets the batch base branch (`main`), and each
+later group's PR targets the **previous group's own branch**, so the groups stack.
+`per-phase` makes one group per completed phase; `per-change` makes one group per
+change — the stacking rule is identical, only the group unit differs. The diagram
+matches `selectStackedBases` exactly: group 0 → `batchBaseBranch`, group N →
+`branchForGroup(boundary N-1)`.
+
+`selectStackedBases(boundaries, batchBaseBranch, branchForGroup)` is a pure
+function that answers the next question after boundary detection: *"what branch
+does each PR group's PR target?"* Given the ordered `PrGroupBoundary[]` (from
+`detectPrGroupBoundaries`), the batch's base branch, and a `branchForGroup`
+resolver that names each group's own branch, it returns one `StackedBase` per
+boundary, in order:
+
+- group 0 → `baseBranch` is the batch base branch; `headBranch` is
+  `branchForGroup(boundary0)`.
+- group N (N ≥ 1) → `baseBranch` is `branchForGroup(boundary N-1)` — the previous
+  group's own branch; `headBranch` is `branchForGroup(boundary N)`.
+- an empty boundary list yields `[]` — nothing to stack.
+
+So the base chain for groups `a, b, c` with branches `pr/<id>` off `main` is
+`main -> pr/a -> pr/b`: each stacked PR's diff stays scoped to its own unit while
+dependent code still compiles. Each `StackedBase` carries its originating
+`boundary`, so a consumer keeps the group's identity/`triggerChange`/member
+changes alongside the resolved base without a second lookup. The mapping runs
+purely over the array's ordering (not `boundary.index`), which keeps it correct
+for any ordered input and — like `detectPrGroupBoundaries` — exhaustively
+unit-testable over tiny in-memory inputs.
+
+Branch naming is **supplied, not baked in**: the concrete group-branch scheme is
+the caller's (engine's) concern, threaded in as the `branchForGroup` resolver, so
+there is no `git`/`gh`/`origin` literal in the policy and no premature commitment
+to a naming convention (`instruction-fed-config`, `generalizable-defaults`).
+
+This policy is wired into `batch apply`: at genuine batch completion under a
+stacked mode, `runStackedPr` composes the two pure policies — `detectPrGroupBoundaries`
+orders the groups and `selectStackedBases` maps group 0's base to the batch base
+branch and group N's base to group N-1's branch — then hands the fired boundary's
+resolved base/head branch to the `/rct:pr-open` payload as Input. `pickNextStep`
+surfaces the first group whose per-group run-state key (`pr:<batch>:<groupId>`) is
+unrecorded, so each apply opens exactly the next unopened group in boundary order
+and a resumed loop opens every group exactly once, idempotently per group.
 
 ## Agent instructions
 

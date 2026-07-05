@@ -544,6 +544,15 @@ entries the agent wrote during the session and the process exit status:
 2. A `completion` journal entry under an `after-propose` gate → `awaiting-approval`.
 3. A `completion` journal entry → `advanced`.
 4. Non-zero exit without a `completion` → `failed` (surfaces as `blocked`).
+   When the transition's resolved spec explicitly named a model AND the agent
+   wrote zero journal entries during the session (the argv-rejection
+   signature), the failure `detail` opens with a model-failure attribution
+   hint — naming the stage, agent, exact model string, and supplying scope
+   (the project config vs the batch manifest), phrased as "if this model id
+   is invalid…" guidance above the captured stderr tail. The hint never
+   interprets stderr content and never diagnoses; `blocker`/`message` are
+   untouched. A bare-name spec, a scope-less (standalone) path, or a failure
+   after journal progress surfaces byte-for-byte today's output.
 5. Zero exit without a `completion` → `blocked`; on-disk evidence (plan.md
    appeared, task checkboxes advanced) is surfaced in the message but the step
    **never auto-advances** on unreported work.

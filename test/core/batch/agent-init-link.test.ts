@@ -22,6 +22,9 @@ import type {
  * - features/agent-init-link/derived-agent-registry.feature
  * - features/agent-init-link/registry-drift-guard.feature
  * - features/agent-init-link/doctor-preserved.feature
+ * - features/model-flag-threading/model-flag-argv.feature (drift guard covers the
+ *   model flag: every spawnable adapter declares a non-empty `modelFlag` and
+ *   `buildRequest` with a model appends exactly that flag and the model string)
  */
 
 /** The set of init tools that declare an agentBinary (the coding agents). */
@@ -100,6 +103,40 @@ describe('registry drift guard', () => {
     const adapterWithoutInit = [...adapterIds].filter((id) => !agentInitIds.has(id));
     expect(initWithoutAdapter).toEqual([]);
     expect(adapterWithoutInit).toEqual([]);
+  });
+
+  /**
+   * Implements: features/model-flag-threading/model-flag-argv.feature
+   * Scenario: The registry drift guard covers the model flag.
+   *
+   * Every spawnable adapter (BUILTIN_ADAPTERS) declares a non-empty `modelFlag`,
+   * and `buildRequest` with a model appends exactly that flag and the model
+   * string. This guards against a future adapter being registered without a flag
+   * or with the wrong flag.
+   */
+  it('every spawnable adapter declares a non-empty model flag', () => {
+    for (const id of Object.keys(AGENT_BINARIES)) {
+      const adapter = resolveAdapter(id);
+      expect(adapter.modelFlag, `adapter '${id}' must declare a non-empty modelFlag`).toBeTruthy();
+      expect(typeof adapter.modelFlag).toBe('string');
+    }
+  });
+
+  it('buildRequest with a model appends exactly [modelFlag, model] after the base argv', () => {
+    for (const id of Object.keys(AGENT_BINARIES)) {
+      const adapter = resolveAdapter(id);
+      const flag = adapter.modelFlag!;
+      const model = 'm-1';
+      const noModelArgs = adapter.buildRequest(CTX, 'instr', '/cwd', {}).args;
+      const withModelArgs = adapter.buildRequest(
+        { ...CTX, model },
+        'instr',
+        '/cwd',
+        {}
+      ).args;
+      // The with-model argv is exactly the no-model argv plus [flag, model].
+      expect(withModelArgs).toEqual([...noModelArgs, flag, model]);
+    }
   });
 });
 

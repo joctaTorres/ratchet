@@ -11,7 +11,7 @@
 import { CommandAdapterRegistry } from '../../command-generation/index.js';
 import { rctCommandIdForTransition, DECOMPOSE_COMMAND_ID, PR_OPEN_COMMAND_ID } from './skill-locus.js';
 import { DEFAULT_AGENT } from './agent.js';
-import { scalarAgent, resolveAgentForStage } from '../agent-setting.js';
+import { scalarAgent, resolveAgentForStage, parseAgentSpec } from '../agent-setting.js';
 import type { ChangeStepContext, DecompositionStepContext, PrStepContext } from './contract.js';
 import type { PrGroupBoundary } from './boundary.js';
 
@@ -44,8 +44,13 @@ function rctInvocation(context: ChangeStepContext): string {
   // Resolve the invocation token for the SAME per-stage agent the engine spawns
   // for this transition, so a stage routed to a non-default agent is handed that
   // agent's invocation syntax (not the default agent's). Falls back to
-  // `DEFAULT_AGENT` for an unmapped stage / unset agent exactly as before.
-  const agentId = resolveAgentForStage(context.settings.agent, context.transition) ?? DEFAULT_AGENT;
+  // `DEFAULT_AGENT` for an unmapped stage / unset agent exactly as before. The
+  // resolved value is a whole `agent[:model]` spec string; the invocation token
+  // keys on the AGENT PART alone, so a spec-form value routes exactly like its
+  // bare name — never the default agent's syntax for a spec-form stage.
+  const resolved = resolveAgentForStage(context.settings.agent, context.transition);
+  const agentId =
+    (resolved !== undefined ? parseAgentSpec(resolved).agent : undefined) ?? DEFAULT_AGENT;
   const adapter =
     CommandAdapterRegistry.get(agentId) ?? CommandAdapterRegistry.get(DEFAULT_AGENT)!;
   const base = `${adapter.getInvocation(commandId)} ${context.change}`;
@@ -237,7 +242,12 @@ export function decompositionJournalKey(phase: string): string {
  * adapter rather than an inline string.
  */
 function rctDecomposeInvocation(context: DecompositionStepContext): string {
-  const agentId = scalarAgent(context.settings.agent) ?? DEFAULT_AGENT;
+  // The resolved value is a whole `agent[:model]` spec string; the invocation
+  // token keys on the AGENT PART alone, so a spec-form value routes exactly like
+  // its bare name — never the default agent's syntax for a spec-form setting.
+  const resolved = scalarAgent(context.settings.agent);
+  const agentId =
+    (resolved !== undefined ? parseAgentSpec(resolved).agent : undefined) ?? DEFAULT_AGENT;
   const adapter =
     CommandAdapterRegistry.get(agentId) ?? CommandAdapterRegistry.get(DEFAULT_AGENT)!;
   const base = `${adapter.getInvocation(DECOMPOSE_COMMAND_ID)} ${context.phase.name}`;
@@ -425,7 +435,12 @@ export function prJournalKey(batch: string, boundary?: PrGroupBoundary): string 
  * invocation — so the token stays the bare `/rct:pr-open`.
  */
 function rctPrOpenInvocation(context: PrStepContext): string {
-  const agentId = resolveAgentForStage(context.settings.agent, 'pr') ?? DEFAULT_AGENT;
+  // The `pr` stage value is a whole `agent[:model]` spec string; the invocation
+  // token keys on the AGENT PART alone, so a spec-form value routes exactly like
+  // its bare name — never the default agent's syntax for a spec-form `pr` stage.
+  const resolved = resolveAgentForStage(context.settings.agent, 'pr');
+  const agentId =
+    (resolved !== undefined ? parseAgentSpec(resolved).agent : undefined) ?? DEFAULT_AGENT;
   const adapter =
     CommandAdapterRegistry.get(agentId) ?? CommandAdapterRegistry.get(DEFAULT_AGENT)!;
   return adapter.getInvocation(PR_OPEN_COMMAND_ID);

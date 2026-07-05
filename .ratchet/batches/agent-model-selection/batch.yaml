@@ -1,0 +1,192 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# A batch coordinates related changes across ordered phases. It references
+# changes by NAME and never owns them: changes live under .ratchet/changes/
+# like any other change and can be inspected, validated, and archived on their
+# own. Status is derived live from change state on disk — never stored here.
+#
+# Phases ship functional software behind an executable proof-of-work, so errors
+# surface early. A later phase is blocked until the prior phase's proof-of-work
+# passes. Changes are created lazily as the batch progresses: an entry with no
+# change directory yet is simply "pending", not an error.
+
+name: agent-model-selection
+created: 2026-07-05
+
+# Per-stage agent routing (shipped by the per-stage-agents-and-prs batch):
+# claude proposes, opencode applies and verifies. Bare agent names only — the
+# `agent[:model]` spec is the feature Phase 1 builds, so this batch cannot use
+# it yet; each agent runs its harness-configured model.
+settings:
+  agent:
+    propose: claude
+    apply: opencode
+    verify: opencode
+
+phases:
+  # ---------------------------------------------------------------------------
+  # Phase 1 — Per-stage model selection, end to end. Built first, so its proof
+  # is concrete. Design decisions locked in brainstorm: combined `agent[:model]`
+  # spec split on the FIRST colon (opencode `provider/model` ids pass through
+  # intact); model part is free-form pass-through (no model registry); parse at
+  # the schema boundary; adapters own their model flag next to the base argv
+  # they already own; merge semantics untouched (nearest-wins per stage on the
+  # whole spec string, so agent+model move atomically across scopes).
+  # ---------------------------------------------------------------------------
+  - name: per-stage-model-selection
+    goal: >-
+      Let every string value of the existing `agent` setting — scalar or
+      per-stage map, at project-config and manifest scope — widen from an agent
+      name to an `agent[:model]` spec, so a user can, for example, have
+      `propose: claude:fable`, `apply: opencode:zai/glm-5.2`,
+      `verify: opencode:qwen/qwen-3.7`. The spec splits on the first `:`; the
+      engine parses it once per transition, resolves the adapter by the agent
+      part (UnknownAgentError still fires before any spawn), and each adapter
+      emits its own model flag (claude/opencode/cursor `--model`, codex/gemini
+      `-m`) only when a model was named.
+    success: >-
+      With `agent: claude:fable` (scalar or per-stage) configured at any scope,
+      the spawned agent's argv carries its model flag with the exact model
+      string; a bare agent name emits no model flag (the agent uses its
+      harness-configured default model) and current argv is byte-for-byte
+      unchanged; `claude:` and `:fable` are rejected at config load naming the
+      offending value; nearest-wins per-stage merge still operates on whole
+      spec strings so agent+model move atomically across scopes; the syntax is
+      documented in README and docs/.
+    proofOfWork:
+      kind: integration
+      run: pnpm test test/batch-engine/agent-model-selection.test.ts
+      pass: exit code 0 — agent-spec parsing and model-flag argv suite green
+    changes:
+      # Schema boundary: the spec syntax and its one pure parser, in the module
+      # that already owns the `agent` setting's shape. Validation and parsing
+      # cannot drift because the schema refinement calls the same parser.
+      - name: agent-spec-syntax
+        done: >-
+          `agent-setting.ts` exports a pure `parseAgentSpec(value)` returning
+          `{agent, model?}` (split on the first `:`; bare names parse to no
+          `model` key), and every string position of the `agent` setting —
+          scalar and stage-map values, both config scopes — validates through a
+          refinement calling that same parser, rejecting empty agent or model
+          parts (`:fable`, `claude:`) with a message naming the offending
+          value; existing bare-name configs validate unchanged.
+      # Engine + adapters: thread the parsed model to the spawn argv. Resolution
+      # keeps returning raw spec strings (merge untouched); the engine parses
+      # once per transition and resolves the adapter by the agent part.
+      - name: model-flag-threading
+        after: [agent-spec-syntax]
+        done: >-
+          The engine parses the resolved spec once per transition, resolves the
+          adapter by the agent part (unknown agents still throw before spawn),
+          and passes the model via a new optional `AgentRequestContext.model`;
+          each `CommandAgentAdapter` declares its `modelFlag` (claude/opencode/
+          cursor `--model`, codex/gemini `-m`) and `buildRequest` appends
+          `[modelFlag, model]` only when a model is set — no model, byte-for-
+          byte today's argv; the adapter/registry drift-guard covers the flag.
+      # Phase proof + user-facing docs: the integration suite proving the
+      # config→argv path, and the documentation for the new spec syntax.
+      - name: model-selection-proof-and-docs
+        after: [model-flag-threading]
+        done: >-
+          `pnpm test test/batch-engine/agent-model-selection.test.ts` passes
+          (exit 0), proving config-to-argv end to end: per-stage specs emit
+          each agent's model flag with the exact model string, bare names emit
+          none, and malformed specs fail config load; README and the docs/
+          Reference document the `agent[:model]` syntax, the first-colon rule,
+          the bare-name harness-default behavior, and pass-through model
+          validation.
+
+  # ---------------------------------------------------------------------------
+  # Phase 2 — Attributed model-failure surfacing + doctor spec-awareness.
+  # Describes behavior over Phase 1's shipped parser: proof is described,
+  # refined at entry. Locked in brainstorm: NO stderr pattern-matching (agent
+  # error text differs per agent/version and would rot) — the clean error is
+  # attribution plus a targeted hint; no retries, no fallback model.
+  # ---------------------------------------------------------------------------
+  - name: model-failure-attribution
+    goal: >-
+      When a transition whose resolved spec explicitly named a model fails with
+      the signature of an argv-level rejection — the agent exited non-zero
+      having made no journal progress — enrich the surfaced step failure with
+      attribution: the stage, the agent, the exact model string, and which
+      scope supplied it (project config vs manifest), phrased as a hint ("if
+      this model id is invalid…") above the stderr tail, never a diagnosis.
+      Doctor stays spec-aware: wherever it reads configured agent values to
+      decide which binaries to probe, it parses through `parseAgentSpec` so
+      `opencode:zai/glm-5.2` probes the `opencode` binary; doctor does not
+      validate model ids.
+    success: >-
+      A step that fails fast under an explicitly named model surfaces a failure
+      naming stage, agent, model string, and supplying scope with the stderr
+      tail below; a transition with no explicit model, or one that failed after
+      making progress, gets today's failure surface unchanged; the batch's
+      existing park/failure flow takes over (no retry, no fallback model);
+      doctor probes the binary of a spec-form agent value and emits no
+      model-related check.
+    proofOfWork:
+      kind: integration
+      # Refined at phase entry: drive a transition with an explicit model
+      # against the fake spawn seam exiting non-zero with no journal progress,
+      # and assert the enriched failure names stage/agent/model/scope — and
+      # that a no-model or progressed failure surfaces unchanged.
+      run: pnpm test test/batch-engine/model-failure-attribution.test.ts
+      pass: exit code 0 — attributed model-failure suite green
+    changes:
+      # Config layer: per-stage supplying-scope exposure. Today `sources.agent`
+      # records only the single nearest scope that contributed ANY agent value,
+      # but the nearest-wins-per-stage merge means each stage's winning spec can
+      # come from a different scope — attribution needs the scope of THIS
+      # stage's value. Pure logic beside the existing merge, unit-testable.
+      - name: stage-scope-resolution
+        done: >-
+          The agent-setting resolution exposes, per stage, which scope —
+          `project` vs `manifest` — supplied that stage's resolved
+          `agent[:model]` spec string under the existing
+          nearest-wins-per-stage merge (a pure lookup beside
+          `resolveAgentSetting` in `batch/config.ts`), with resolved settings
+          and merge results byte-for-byte unchanged; unit tests cover scalar,
+          partial-map, and mixed-scope layerings.
+      # Engine + outcome mapper: thread attribution to the failure surface.
+      # Enrichment fires ONLY on the argv-rejection signature — explicit model,
+      # non-zero exit, no completion, no session journal entries — and is a
+      # hint above the stderr tail, never a diagnosis (no stderr pattern-
+      # matching, no retry, no fallback model).
+      - name: attributed-failure-surface
+        after: [stage-scope-resolution]
+        done: >-
+          When a transition whose parsed spec explicitly named a model exits
+          non-zero with no completion and no journal entries written during
+          the session, the surfaced failed step carries an attribution hint —
+          stage, agent, exact model string, and supplying scope (project
+          config vs manifest), phrased as "if this model id is invalid…" —
+          above the stderr tail (the engine feeds `mapSessionToOutcome` the
+          parsed spec and scope); a bare-name spec, or a failure after session
+          journal progress, surfaces byte-for-byte today's output, and the
+          existing park/failure flow takes over unchanged (no retry, no
+          fallback model).
+      # Doctor: spec-aware binary probing. Independent of the failure surface —
+      # needs only Phase 1's shipped `parseAgentSpec`.
+      - name: doctor-spec-awareness
+        done: >-
+          Every configured `agent` value doctor consults to decide which
+          binaries to probe is parsed through `parseAgentSpec`, so with
+          `agent: opencode:zai/glm-5.2` configured doctor probes the
+          `opencode` binary and never treats the whole spec string as a binary
+          name; doctor validates no model id and its report emits no
+          model-related check; the registry-wide probe of every supported
+          agent CLI is unchanged.
+      # Phase proof + user-facing docs: the integration suite proving the
+      # attributed surface end to end, and the documentation for the hint and
+      # doctor's spec-aware probing.
+      - name: model-failure-proof-and-docs
+        after: [attributed-failure-surface, doctor-spec-awareness]
+        done: >-
+          `pnpm test test/batch-engine/model-failure-attribution.test.ts`
+          passes (exit 0), driving the fake spawn seam: an explicit-model
+          transition exiting non-zero with no journal progress surfaces a
+          failure naming stage, agent, model string, and supplying scope with
+          the stderr tail below; a bare-name or progressed failure surfaces
+          unchanged; doctor probes the agent-part binary of a spec-form value
+          and emits no model-related check; README and the docs/ Reference
+          document the attributed failure hint and doctor's spec-aware
+          probing.

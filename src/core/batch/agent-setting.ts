@@ -51,11 +51,94 @@ export const AgentStageMapSchema = z
   .strict();
 
 /**
+ * An `agent[:model]` spec parsed into its agent part and, when a model is
+ * named, its model part. A bare agent name parses to `{ agent }` with no
+ * `model` key, so consumers can distinguish "use the harness default model"
+ * (no key) from an explicitly named model string.
+ */
+export type AgentSpec = { agent: string; model?: string };
+
+/**
+ * Parse an `agent[:model]` spec string into {@link AgentSpec}.
+ *
+ * Splits on the **first** `:` only, so opencode `provider/model` ids and any
+ * model id that itself contains a colon pass through intact as the model part
+ * (e.g. `opencode:zai/glm-5.2` → `{ agent: "opencode", model: "zai/glm-5.2" }`,
+ * `codex:vendor:tagged-1` → `{ agent: "codex", model: "vendor:tagged-1" }`).
+ * A bare agent name (no colon) parses to `{ agent }` with no `model` key.
+ *
+ * An empty agent part (`:fable`, `:`) or empty model part (`claude:`, `:`) is
+ * rejected with an error whose message names the offending value, so config
+ * load surfaces the bad spec instead of spawn time. The parser is otherwise
+ * free-form pass-through: it never consults the adapter registry and hardcodes
+ * no agent name, so unknown-agent rejection stays where it lives today
+ * (`UnknownAgentError` in `resolveAdapter`, before any spawn).
+ */
+export function parseAgentSpec(value: string): AgentSpec {
+  const colon = value.indexOf(':');
+  if (colon === -1) {
+    if (value.length === 0) {
+      throw new Error(
+        `Invalid agent spec "": empty agent part (expected "agent[:model]")`
+      );
+    }
+    return { agent: value };
+  }
+  const agent = value.slice(0, colon);
+  const model = value.slice(colon + 1);
+  if (agent.length === 0) {
+    throw new Error(
+      `Invalid agent spec "${value}": empty agent part (expected "agent[:model]")`
+    );
+  }
+  if (model.length === 0) {
+    throw new Error(
+      `Invalid agent spec "${value}": empty model part (expected "agent[:model]")`
+    );
+  }
+  return { agent, model };
+}
+
+/**
  * The `agent` setting: a scalar agent name OR a partial stage-map.
  * `z.union([z.string(), …])` keeps the scalar path byte-for-byte compatible with
- * the historical `z.string().optional()` shape.
+ * the historical `z.string().optional()` shape. A `superRefine` validates every
+ * string position (scalar and each stage-map value) through {@link parseAgentSpec}
+ * so a malformed `agent[:model]` spec is rejected at config load — both config
+ * scopes — with the parser's message naming the offending value; the schema
+ * keeps storing whole spec strings so nearest-wins per-stage merge moves agent
+ * and model atomically across scopes.
  */
-export const AgentSettingSchema = z.union([z.string(), AgentStageMapSchema]);
+export const AgentSettingSchema = z
+  .union([z.string(), AgentStageMapSchema])
+  .superRefine((value, ctx) => {
+    if (typeof value === 'string') {
+      try {
+        parseAgentSpec(value);
+      } catch (err) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: (err as Error).message,
+        });
+      }
+      return;
+    }
+    if (value) {
+      for (const stage of AGENT_STAGE_KEYS) {
+        const entry = value[stage];
+        if (typeof entry !== 'string') continue;
+        try {
+          parseAgentSpec(entry);
+        } catch (err) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [stage],
+            message: (err as Error).message,
+          });
+        }
+      }
+    }
+  });
 
 export type AgentStageMap = z.infer<typeof AgentStageMapSchema>;
 export type AgentSetting = z.infer<typeof AgentSettingSchema>;

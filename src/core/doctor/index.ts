@@ -41,7 +41,7 @@ export function runDoctorChecks(
   deps: BootstrapDeps = defaultDeps,
   projectRoot: string = resolveCurrentPlanningHomeSync().root
 ): DoctorReport {
-  const checks = [checkAgents(deps), checkRuntime(deps), checkDocker(deps)];
+  const checks = [checkAgents(deps, projectRoot), checkRuntime(deps), checkDocker(deps)];
   if (hasWebBindingInScope(projectRoot)) {
     checks.push(checkPlaywright(deps));
   }

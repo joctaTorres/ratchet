@@ -2,6 +2,8 @@
  * Unit tests for the batch `agent` setting schema.
  *
  * Implements: features/agent-stage-map/schema.feature
+ * Implements: features/agent-spec-syntax/parse-agent-spec.feature
+ * Implements: features/agent-spec-syntax/schema-validation.feature
  *
  * Pure schema validation — no filesystem, no spawn. Exercises the shared
  * `AgentSettingSchema` (and the inferred stage-map shape) directly, and confirms
@@ -10,6 +12,12 @@
  * (`BatchSettingsOverrideSchema`) — validate the `agent` field identically:
  * scalar accepted, full map accepted, partial map accepted, unset accepted,
  * unknown stage key rejected, non-string stage value rejected.
+ *
+ * Also covers the `agent[:model]` spec syntax: `parseAgentSpec` splits on the
+ * first colon (bare name → no model key; opencode provider/model ids and
+ * colon-bearing model ids pass through intact), rejects empty agent/model parts
+ * naming the offending value, and the schema's `superRefine` forwards the same
+ * message at both config scopes for malformed scalar and stage-map values.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -17,6 +25,8 @@ import {
   AGENT_STAGE_KEYS,
   AgentSettingSchema,
   AgentStageMapSchema,
+  parseAgentSpec,
+  resolveAgentForStage,
 } from '../../../src/core/batch/agent-setting.js';
 import { ProjectConfigSchema } from '../../../src/core/project-config.js';
 import { BatchSettingsOverrideSchema } from '../../../src/core/batch/manifest.js';
@@ -110,5 +120,96 @@ describe('AgentSettingSchema', () => {
     expect(AgentStageMapSchema.safeParse({ propose: 42 }).success).toBe(false);
     expect(AgentStageMapSchema.safeParse({ apply: true }).success).toBe(false);
     expect(AgentStageMapSchema.safeParse({ verify: { nested: 'x' } }).success).toBe(false);
+  });
+});
+
+// parseAgentSpec — pure parser for the `agent[:model]` spec string.
+// Implements: features/agent-spec-syntax/parse-agent-spec.feature
+describe('parseAgentSpec', () => {
+  it('parses a bare agent name to { agent } with no model key', () => {
+    const result = parseAgentSpec('claude');
+    expect(result).toEqual({ agent: 'claude' });
+    expect(result).not.toHaveProperty('model');
+  });
+
+  it('parses an agent:model spec into agent and model parts', () => {
+    expect(parseAgentSpec('claude:fable')).toEqual({ agent: 'claude', model: 'fable' });
+  });
+
+  it.each([
+    ['opencode:zai/glm-5.2', 'opencode', 'zai/glm-5.2'],
+    ['opencode:qwen/qwen-3.7', 'opencode', 'qwen/qwen-3.7'],
+    ['codex:vendor:tagged-1', 'codex', 'vendor:tagged-1'],
+  ])('splits "%s" on the first colon so the model passes through intact', (spec, agent, model) => {
+    expect(parseAgentSpec(spec)).toEqual({ agent, model });
+  });
+
+  it.each(['claude:', ':fable', ':'])('rejects "%s" naming the offending value', (spec) => {
+    expect(() => parseAgentSpec(spec)).toThrow(spec);
+  });
+
+  it('rejects an empty spec string identifying the empty agent part', () => {
+    expect(() => parseAgentSpec('')).toThrow('empty agent part');
+  });
+});
+
+// Schema validation of the `agent[:model]` spec at every string position.
+// Implements: features/agent-spec-syntax/schema-validation.feature
+describe.each(scopes)('agent[:model] spec at $name scope', ({ parse }) => {
+  it('accepts a scalar agent:model spec, preserving the whole spec string', () => {
+    const result = parse('claude:fable');
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toBe('claude:fable');
+  });
+
+  it('accepts a stage-map of agent:model specs, preserving each whole spec string', () => {
+    const map = {
+      propose: 'claude:fable',
+      apply: 'opencode:zai/glm-5.2',
+      verify: 'opencode:qwen/qwen-3.7',
+    };
+    const result = parse(map);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual(map);
+  });
+
+  it('accepts existing bare-name configs unchanged (scalar and map)', () => {
+    const scalar = parse('opencode');
+    expect(scalar.success).toBe(true);
+    if (scalar.success) expect(scalar.data).toBe('opencode');
+
+    const map = parse({ apply: 'opencode' });
+    expect(map.success).toBe(true);
+    if (map.success) expect(map.data).toEqual({ apply: 'opencode' });
+  });
+
+  it.each(['claude:', ':fable'])('rejects a malformed scalar "%s" naming the offending value', (spec) => {
+    const result = parse(spec);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = result.error.issues.map((i) => i.message).join('\n');
+      expect(message).toContain(spec);
+    }
+  });
+
+  it('rejects a malformed spec inside a stage-map value naming the offending value', () => {
+    const result = parse({ apply: ':fable' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = result.error.issues.map((i) => i.message).join('\n');
+      expect(message).toContain(':fable');
+    }
+  });
+});
+
+describe('resolveAgentForStage with agent[:model] specs', () => {
+  it('returns the whole spec string for the mapped stage', () => {
+    expect(resolveAgentForStage({ apply: 'opencode:zai/glm-5.2' }, 'apply')).toBe(
+      'opencode:zai/glm-5.2'
+    );
+  });
+
+  it('returns the whole scalar spec string for any stage', () => {
+    expect(resolveAgentForStage('claude:fable', 'verify')).toBe('claude:fable');
   });
 });

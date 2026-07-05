@@ -196,6 +196,91 @@ describe('resolveBatchSettings', () => {
     });
     expect(sources.agent).toBe('manifest');
   });
+
+  // -------------------------------------------------------------------------
+  // agentStageScopes: per-stage supplying-scope attribution for the `agent`
+  // setting (features/model-failure-attribution/unchanged-surfaces.feature —
+  // "Exposing per-stage scopes changes no resolved setting"). Asserts the scope
+  // matches the supplying scope per stage AND that resolved `settings`/`sources`
+  // equal today's values byte-for-byte.
+  // -------------------------------------------------------------------------
+  it('exposes agentStageScopes attributing every stage to the project for a project scalar', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  agent: claude:fable\n');
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toBe('claude:fable');
+    expect(sources.agent).toBe('project');
+    expect(agentStageScopes).toEqual({
+      propose: 'project',
+      apply: 'project',
+      verify: 'project',
+      pr: 'project',
+    });
+  });
+
+  it('exposes agentStageScopes attributing every stage to the manifest for a manifest scalar', async () => {
+    await writeConfig('schema: ratchet\n');
+    const manifest = {
+      name: 'q3-auth',
+      phases: [],
+      settings: { agent: 'claude:fable' },
+    } as unknown as BatchManifest;
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot, manifest);
+    expect(settings.agent).toBe('claude:fable');
+    expect(sources.agent).toBe('manifest');
+    expect(agentStageScopes).toEqual({
+      propose: 'manifest',
+      apply: 'manifest',
+      verify: 'manifest',
+      pr: 'manifest',
+    });
+  });
+
+  it('exposes agentStageScopes attributing only the named stages to project for a project stage-map', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  agent:\n    propose: claude\n    apply: opencode\n'
+    );
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toEqual({ propose: 'claude', apply: 'opencode' });
+    expect(sources.agent).toBe('project');
+    // Only the stages the map named are attributed; the unnamed stages are absent
+    // (no config scope supplied them — the caller's default agent did).
+    expect(agentStageScopes).toEqual({ propose: 'project', apply: 'project' });
+  });
+
+  it('exposes agentStageScopes for a mixed project-scalar + manifest-map layering', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  agent: claude\n');
+    const manifest = {
+      name: 'q3-auth',
+      phases: [],
+      settings: { agent: { apply: 'opencode:zai/glm-5.2' } },
+    } as unknown as BatchManifest;
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot, manifest);
+    // Byte-for-byte today's merge: the manifest partial map overrides `apply`,
+    // the project scalar covers the rest.
+    expect(settings.agent).toEqual({
+      propose: 'claude',
+      apply: 'opencode:zai/glm-5.2',
+      verify: 'claude',
+      pr: 'claude',
+    });
+    expect(sources.agent).toBe('manifest');
+    // Attribution mirrors the merge: `apply` → manifest (the nearer map named
+    // it), the rest → project (the scalar base covered them).
+    expect(agentStageScopes).toEqual({
+      propose: 'project',
+      apply: 'manifest',
+      verify: 'project',
+      pr: 'project',
+    });
+  });
+
+  it('exposes an empty agentStageScopes when no scope supplies an agent', async () => {
+    await writeConfig('schema: ratchet\n');
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toBeUndefined();
+    expect(sources.agent).toBe('default');
+    expect(agentStageScopes).toEqual({});
+  });
 });
 
 describe('validateSetting', () => {

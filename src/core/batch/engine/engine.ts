@@ -33,8 +33,8 @@ import type {
   Transition,
 } from './contract.js';
 import type { BatchSettings } from '../config.js';
-import { scalarAgent, resolveAgentForStage } from '../agent-setting.js';
-import type { AgentStage } from '../agent-setting.js';
+import { scalarAgent, resolveAgentForStage, parseAgentSpec } from '../agent-setting.js';
+import type { AgentStage, AgentSpec } from '../agent-setting.js';
 import {
   resolveAdapter,
   UnknownAgentError,
@@ -63,7 +63,7 @@ import {
   SkillLocusError,
   type SkillLocusDeps,
 } from './skill-locus.js';
-import { mapSessionToOutcome } from './outcome.js';
+import { mapSessionToOutcome, type ModelAttribution } from './outcome.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
 import {
   computeNextTransition,
@@ -334,10 +334,12 @@ export class RatchetBatchEngine {
       : { ...process.env };
     let request;
     let emitsStreamJson = false;
+    let spec: AgentSpec | undefined;
     try {
       const built = this.buildSpawnRequest(ctx, instructions, projectRoot, env, transition);
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
+      spec = built.spec;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -350,6 +352,18 @@ export class RatchetBatchEngine {
       }
       throw err;
     }
+
+    // Build model-failure attribution only when the parsed spec explicitly
+    // named a model AND the context carries a supplying scope for this
+    // transition's stage. The standalone headless verbs thread no
+    // `agentStageScopes` (their `--agent` flag can override the spec after
+    // scope resolution), so with no scope present the mapper's gate keeps
+    // today's failure surface unchanged.
+    const scope = ctx.agentStageScopes?.[transition];
+    const modelAttribution: ModelAttribution | undefined =
+      spec?.model !== undefined && scope !== undefined
+        ? { stage: transition, agent: spec.agent, model: spec.model, scope }
+        : undefined;
 
     // Snapshot journal length and on-disk change state so we can isolate this
     // session's entries and measure the artifact delta (e.g. apply progress).
@@ -368,6 +382,7 @@ export class RatchetBatchEngine {
       change,
       transition,
       parkForApproval: this.shouldParkForApproval(ctx, transition),
+      modelAttribution,
       before,
       diskBefore,
       diskAfter: () => {
@@ -686,6 +701,7 @@ export class RatchetBatchEngine {
     change: string;
     transition: StepKind;
     parkForApproval: boolean;
+    modelAttribution?: ModelAttribution;
     before: number;
     diskBefore: ChangeDiskState;
     diskAfter: () => ChangeDiskState;
@@ -699,6 +715,7 @@ export class RatchetBatchEngine {
       change,
       transition,
       parkForApproval,
+      modelAttribution,
       before,
       diskBefore,
       diskAfter,
@@ -748,6 +765,7 @@ export class RatchetBatchEngine {
       spawn: spawnResult,
       parkForApproval,
       diskEvidence: { before: diskBefore, after: diskAfter() },
+      modelAttribution,
     });
 
     // Record a journal entry for the transition outcome (the agent may not have
@@ -780,11 +798,13 @@ export class RatchetBatchEngine {
     projectRoot: string,
     env: NodeJS.ProcessEnv,
     stage?: AgentStage
-  ): { request: AgentSpawnRequest; emitsStreamJson: boolean } {
+  ): { request: AgentSpawnRequest; emitsStreamJson: boolean; spec?: AgentSpec } {
     const override = process.env.RATCHET_BATCH_AGENT_CMD;
     if (override && override.trim().length > 0) {
       // The `bash -c` override stands in for the agent binary and is NOT
-      // stream-json-capable (keeps e2e/eval deterministic) → raw streaming.
+      // stream-json-capable (keeps e2e/eval deterministic) → raw streaming. It
+      // bypasses spec parsing, so no `AgentSpec` is returned — the override
+      // path carries no model attribution by construction.
       return {
         request: { command: 'bash', args: ['-c', override], instructions, cwd: projectRoot, env },
         emitsStreamJson: false,
@@ -796,13 +816,29 @@ export class RatchetBatchEngine {
     // decomposition call site keeps the scalar/default resolution. Either way
     // `resolveAdapter` maps an unmapped-stage/unset name to `DEFAULT_AGENT` and
     // rejects an unknown name (`UnknownAgentError`) before any spawn.
-    const agentId = stage
+    const resolved = stage
       ? resolveAgentForStage(context.settings.agent, stage)
       : scalarAgent(context.settings.agent);
-    const adapter = resolveAdapter(agentId, this.adapters);
+    // Parse the resolved spec ONCE per transition: the stored value is a whole
+    // `agent[:model]` spec string (config load already rejected malformed specs,
+    // so this parse cannot throw on validated config). The adapter is resolved by
+    // the AGENT PART — an unknown agent part still throws `UnknownAgentError`
+    // before any spawn, naming `rex` not `rex:some-model`; the model part is
+    // threaded to the adapter via `AgentRequestContext.model` so the adapter
+    // emits its own flag. A bare agent name (no `:`) parses to `{ agent }` with
+    // no `model` key, so the adapter emits no flag and the agent uses its
+    // harness-configured default model — byte-for-byte today's argv.
+    const spec = resolved !== undefined ? parseAgentSpec(resolved) : undefined;
+    const adapter = resolveAdapter(spec?.agent, this.adapters);
     return {
-      request: adapter.buildRequest(context, instructions, projectRoot, env),
+      request: adapter.buildRequest(
+        { ...context, model: spec?.model },
+        instructions,
+        projectRoot,
+        env
+      ),
       emitsStreamJson: adapter.emitsStreamJson === true,
+      spec,
     };
   }
 

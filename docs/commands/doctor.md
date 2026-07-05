@@ -32,11 +32,13 @@ absent from the report entirely (not merely hidden or skipped):
 
 ### Coding-agent CLI (`agent`) — required
 
-Verifies that at least one supported coding-agent CLI binary is present on `PATH`. Supported agents are `claude`, `codex`, `cursor-agent`, and `gemini`. The check passes when any one binary is found. Each detected binary is probed for its version (`--version`); a binary that does not emit a parseable version string is still reported as detected with version unknown.
+Verifies that at least one supported coding-agent CLI binary is present on `PATH`. Supported agents are `claude`, `codex`, `cursor-agent`, `gemini`, and `opencode`. The check passes when any one binary is found. Each detected binary is probed for its version (`--version`); a binary that does not emit a parseable version string is still reported as detected with version unknown.
 
-**Pass**: one or more supported binaries found on `PATH`. Detail lists each detected agent and its version.
+In addition, the check consults the project-scope `batch.agent` setting (the same resolution the batch engine uses — see [`agent`](../configuration/config-yaml.md)): every configured `agent[:model]` value is parsed through the shared spec parser and the **agent part's** binary is probed. So `agent: opencode:zai/glm-5.2` probes the `opencode` binary — the whole spec string is never treated as a binary name. A configured agent whose binary is not on `PATH` fails the check (the actual ENOENT a batch run would hit at spawn), even when another supported binary is detected. The model part of a spec is never validated and doctor emits no model-related check; an agent part not in the supported registry is skipped (unknown-agent rejection stays at spawn time).
 
-**Fail**: no supported binary found on `PATH`. Remedy: install one of the supported CLIs and add it to `PATH`.
+**Pass**: one or more supported binaries found on `PATH` **and** every configured agent's binary present. Detail lists each detected agent and its version.
+
+**Fail**: no supported binary found on `PATH`, or a configured agent's binary is missing. Remedy: install the named CLI and add it to `PATH`.
 
 ### SWE-ReX runtime (`runtime`) — required
 

@@ -46,6 +46,11 @@ export function toStepResult(outcome: EngineStepOutcome): StepResult {
       change: outcome.change,
       transition: outcome.transition,
       blocker: outcome.blocker ?? outcome.detail ?? 'agent step failed',
+      // Surface the captured detail (the attribution hint above the stderr tail
+      // when the argv-rejection signature matched, else today's stderr tail) so
+      // the operator can spot an invalid model id without decoding raw stderr.
+      // `blocker`/`message` stay byte-for-byte today's values.
+      detail: outcome.detail,
       journalRefs: outcome.journalRefs,
       message: outcome.message ?? outcome.detail,
     };
@@ -56,6 +61,7 @@ export function toStepResult(outcome: EngineStepOutcome): StepResult {
     transition: outcome.transition,
     blocker: outcome.blocker,
     approvalRequest: outcome.approvalRequest,
+    detail: outcome.detail,
     journalRefs: outcome.journalRefs,
     message: outcome.message,
   };

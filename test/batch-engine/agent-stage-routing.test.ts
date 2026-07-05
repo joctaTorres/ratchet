@@ -2,6 +2,7 @@
  * Per-stage adapter resolution in the engine (phase proof-of-work).
  *
  * Implements: features/agent-stage-resolution/resolution.feature
+ * Implements: features/model-flag-threading/engine-spec-parsing.feature (spawn scenarios)
  *
  * Drives the engine's change core (`runChangeStep`) and decomposition entry point
  * through the existing fake-adapter + `Spawner` seam (as `engine-agent-override`
@@ -12,6 +13,13 @@
  *     invocation is rendered with that agent's command adapter;
  *   - an unknown mapped agent fails before any spawn;
  *   - the phase-decomposition step (not a lifecycle stage) ignores the stage-map.
+ *
+ * Also covers `engine-spec-parsing.feature` spawn scenarios: a spec-form value
+ * resolves the adapter by its agent part and threads the model into the captured
+ * request context; a bare name threads no model; an unset agent falls back to
+ * the default adapter with no model; an unknown agent part throws
+ * `UnknownAgentError` before any spawn naming the agent part (`rex`, not
+ * `rex:some-model`).
  *
  * The `Spawner` captures the request the engine built; the fake adapters are keyed
  * by real agent ids so `resolveAdapter` picks them, each stamping its own name as
@@ -71,6 +79,29 @@ function fakeAdapter(name: string): AgentAdapter {
       return { command: name, args: [], instructions, cwd, env };
     },
   };
+}
+
+/**
+ * A context-capturing fake adapter: records the `AgentRequestContext` handed to
+ * `buildRequest` so a test can assert the engine threaded `model` (or did not).
+ * The argv carries the model flag pair so spec-form model threading is observable
+ * end-to-end through `buildSpawnRequest`.
+ */
+function capturingAdapter(name: string, modelFlag = '--model'): {
+  adapter: AgentAdapter;
+  captured: AgentRequestContext[];
+} {
+  const captured: AgentRequestContext[] = [];
+  const adapter: AgentAdapter = {
+    name,
+    modelFlag,
+    buildRequest(ctx, instructions, cwd, env): AgentSpawnRequest {
+      captured.push(ctx);
+      const modelFlags = ctx.model ? [modelFlag, ctx.model] : [];
+      return { command: name, args: modelFlags, instructions, cwd, env };
+    },
+  };
+  return { adapter, captured };
 }
 
 // Keyed by real agent ids so `resolveAdapter` (builtins ← extra) picks the fake.
@@ -201,5 +232,99 @@ describe('per-stage adapter resolution — decomposition ignores the stage-map',
     // The decomposition is not a lifecycle stage: the map's `apply` entry does not
     // reach it, so it falls back through the scalar (none) to the default agent.
     expect(calls[0].command).toBe(DEFAULT_AGENT);
+  });
+});
+
+/**
+ * Implements: features/model-flag-threading/engine-spec-parsing.feature (spawn scenarios)
+ *
+ * The engine parses the resolved `agent[:model]` spec once per transition in
+ * `buildSpawnRequest`: the adapter is resolved by the AGENT PART and the model
+ * is threaded into the `AgentRequestContext` handed to `buildRequest`. An unknown
+ * agent part throws `UnknownAgentError` before any spawn, naming the agent part
+ * (not the full spec).
+ */
+describe('engine spec-parsing — buildSpawnRequest threads the model (engine-spec-parsing.feature)', () => {
+  /**
+   * Build an engine whose fake adapters RECORD the context each `buildRequest`
+   * received so the threaded `model` (or its absence) is observable. Keyed by
+   * real agent ids so `resolveAdapter` picks them up via `adapters`.
+   */
+  function engineWithCapturing(
+    adapters: Record<string, AgentAdapter>
+  ): { engine: RatchetBatchEngine; calls: AgentSpawnRequest[] } {
+    const calls: AgentSpawnRequest[] = [];
+    const spawner: Spawner = async (request) => {
+      calls.push(request);
+      return { exitCode: 0, signal: null, stdout: '', stderr: '' };
+    };
+    const engine = new RatchetBatchEngine({
+      spawner,
+      adapters,
+      projectRoot: () => projectRoot,
+      skillLocusDeps: { exists: () => true, writeText: () => {} },
+    });
+    return { engine, calls };
+  }
+
+  // Scenario: Spec-form value resolves the adapter by its agent part and threads the model.
+  it('a spec-form stage value resolves the mapped adapter and threads the exact model', async () => {
+    const opencode = capturingAdapter('opencode');
+    const { engine, calls } = engineWithCapturing({ opencode: opencode.adapter });
+    await engine.runChangeStep(
+      ctx('apply', { apply: 'opencode:zai/glm-5.2' })
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('opencode');
+    // The context handed to the adapter carried the exact model string.
+    expect(opencode.captured[0].model).toBe('zai/glm-5.2');
+    // And the adapter's argv reflects the threaded model via its own flag.
+    expect(calls[0].args).toEqual(['--model', 'zai/glm-5.2']);
+  });
+
+  // Scenario: Bare agent name threads no model.
+  it('a bare agent name threads no model (captured context has no model key)', async () => {
+    const claude = capturingAdapter('claude');
+    const { engine, calls } = engineWithCapturing({ claude: claude.adapter });
+    await engine.runChangeStep(ctx('propose', 'claude'));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('claude');
+    expect(claude.captured[0].model).toBeUndefined();
+    expect(calls[0].args).toEqual([]); // no model flag pair appended
+  });
+
+  // Scenario: Unset agent still falls back to the default adapter with no model.
+  it('an unset agent falls back to the default adapter and threads no model', async () => {
+    // The default agent (claude) must be in the extra registry for this engine
+    // instance, since no builtins are overridden here.
+    const claude = capturingAdapter('claude');
+    const { engine, calls } = engineWithCapturing({ claude: claude.adapter });
+    await engine.runChangeStep(ctx('apply', undefined));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe(DEFAULT_AGENT);
+    expect(claude.captured[0].model).toBeUndefined();
+  });
+
+  // Scenario: Unknown agent part still throws before any spawn.
+  it('an unknown agent part ("rex:some-model") throws UnknownAgentError naming "rex", not the full spec', async () => {
+    // No adapter is registered for "rex"; this engine uses only a claude fake.
+    const claude = capturingAdapter('claude');
+    const { engine, calls } = engineWithCapturing({ claude: claude.adapter });
+    const result = await engine.runChangeStep(ctx('apply', 'rex:some-model'));
+    expect(calls).toHaveLength(0); // no process spawned
+    expect(result.state).toBe('blocked');
+    expect(result.blocker).toContain('rex');
+    expect(result.blocker).not.toContain('rex:some-model');
+    expect(result.blocker).toMatch(/available adapters/i);
+  });
+
+  // Scenario: Spec-form scalar value threads the model too (scalar covers every stage).
+  it('a spec-form SCALAR value resolves the adapter and threads the model for every stage', async () => {
+    const claude = capturingAdapter('claude');
+    const { engine, calls } = engineWithCapturing({ claude: claude.adapter });
+    await engine.runChangeStep(ctx('propose', 'claude:fable'));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('claude');
+    expect(claude.captured[0].model).toBe('fable');
   });
 });

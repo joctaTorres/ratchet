@@ -61,7 +61,7 @@ Scalar settings (all keys except `permissions`) are nearest-wins across scopes.
 | Key | Type | Default | Accepted values | Description |
 |---|---|---|---|---|
 | `locus` | string | `local` | `local` `docker` `remote` | Where the agent runs. `local` drives the in-process ReX sidecar. `docker` runs the step inside a container via ReX `DockerDeployment` with the project root bind-mounted. `remote` drives a `swerex-remote` server over its REST API. |
-| `agent` | string \| map | — | an agent name, or a `{propose, apply, verify, pr}` stage-map | Coding agent(s) to spawn. A scalar name (e.g. `claude`, `codex`, `cursor-agent`, `gemini`) applies to every lifecycle stage; a partial per-stage map assigns an agent to each stage (see [Per-stage agent map](#per-stage-agent-map)). When unset, the engine uses the agent configured at init time. |
+| `agent` | string \| map | — | an `agent[:model]` spec, or a `{propose, apply, verify, pr}` stage-map of spec values | Coding agent(s) to spawn. A scalar spec applies to every lifecycle stage; a partial per-stage map assigns a spec to each stage (see [Per-stage agent map](#per-stage-agent-map)). Each spec is an agent name optionally followed by `:model` (e.g. `claude`, `claude:fable`, `opencode:zai/glm-5.2`) — see [Agent `[:model]` spec](#agent-model-spec). When unset, the engine uses the agent configured at init time. |
 | `image` | string | — | free-form | Container image reference for `locus: docker`. Must be non-empty when set. When unset and `locus` is `docker`, the runtime falls back to `python:3.12`. |
 
 #### Per-stage agent map
@@ -103,11 +103,71 @@ opencode }` routes `apply` to `opencode` and both `propose` and `verify` to
 manifest map `{ apply: opencode }` routes `propose` to `claude`, `apply` to
 `opencode`, and the unmapped `verify` to the default.
 
+Resolution records, per stage, which scope (project config vs manifest)
+supplied that stage's resolved `agent[:model]` spec — so a model-rejection
+failure can be attributed to the scope that supplied the model. A stage
+attributed to `project` carried the project config's spec; a stage attributed
+to `manifest` carried the manifest's; a stage no scope supplied (the default
+agent) carries no attribution. The resolved value and merge results are
+unchanged by this attribution. This per-stage scope is what the engine's
+model-failure hint names: when a transition whose spec explicitly named a
+model fails fast (non-zero exit, no journal progress), the surfaced failure
+names the stage, agent, exact model string, and the supplying scope above the
+stderr tail — so the operator can correct the `agent` setting at that scope
+rather than reverse-engineer the merge.
+
 The same shape is validated at both the project-config `batch:` scope and a batch
 manifest's `settings:` scope. Validation rejects an **unknown stage key** (any key
-other than `propose`, `apply`, `verify`, or `pr`) and a **non-string agent value**
+other than `propose`, `apply`, `verify`, or `pr`), a **non-string agent value**,
+and a **malformed `agent[:model]` spec** (empty agent part or empty model part,
+e.g. `claude:`, `:fable`, `:`) — naming the offending value — at config load,
 before any agent is spawned; an **unknown agent name** (scalar or mapped) is
 rejected — naming the available adapters — before that stage's agent is spawned.
+
+#### Agent `[:model]` spec
+
+Every string value of the `agent` setting — the scalar form and each stage-map
+value, at both the project-config `batch:` scope and the manifest `settings:`
+scope — is an `agent[:model]` spec: an agent name, optionally followed by a
+model after the first `:`.
+
+```yaml
+batch:
+  agent:
+    propose: claude:fable
+    apply: opencode:zai/glm-5.2
+    verify: opencode:qwen/qwen-3.7
+```
+
+The spec splits on the **first** `:` only, so a model id that itself contains a
+colon or slash passes through intact (e.g. `opencode:zai/glm-5.2` → agent
+`opencode`, model `zai/glm-5.2`; `codex:vendor:tagged-1` → agent `codex`, model
+`vendor:tagged-1`). A bare agent name (no `:`) carries no model — the spawned
+agent uses its harness-configured default model, and existing bare-name configs
+validate byte-for-byte unchanged.
+
+The model part is free-form pass-through: the parser keeps no model registry and
+never consults the adapter registry. Whether the agent part names a **known**
+agent stays a resolution/spawn-time concern (`UnknownAgentError` in
+`resolveAdapter`, before any spawn). A spec with an **empty agent part**
+(`:fable`, `:`) or **empty model part** (`claude:`, `:`) is rejected at config
+load with a message naming the offending value, e.g. `Invalid agent spec
+":fable": empty agent part (expected "agent[:model]")`.
+
+The schema validates but does not transform: stored values remain whole spec
+strings, so the cross-scope nearest-wins per-stage merge moves agent and model
+**atomically** — a nearer `apply: opencode:zai/glm-5.2` replaces a farther
+`apply` agent and model together, never one without the other.
+
+When the engine spawns an agent for a transition, it parses the resolved spec
+once and threads the model part to that agent's adapter via the request context.
+Each adapter declares its own model flag — claude, opencode, and cursor use
+`--model`; codex and gemini use `-m` — and the adapter appends `[flag, model]`
+to the spawn argv **only when a model is named**. A bare agent name (no `:`
+model part) emits no model flag, so the agent runs its harness-configured default
+model and the spawn argv is byte-for-byte identical to a config with no model
+named. The model pair sits between the agent's base argv and any permission
+flags, so the base argv shape and the trailing permission block are preserved.
 
 ### Agent timeout
 

@@ -2,6 +2,13 @@ import { describe, it, expect } from 'vitest';
 import type { ResolvedStepContext, BatchSettings, ProofOfWork, Transition } from 'ratchet-ai';
 import { buildAgentInstructions } from '../../src/core/batch/engine/instructions.js';
 
+/**
+ * Implements (header): features/model-flag-threading/engine-spec-parsing.feature
+ * Scenario: Instruction invocation tokens resolve through the agent part of a
+ * spec — a spec-form stage value renders the MAPPED agent's invocation token,
+ * never the default agent's.
+ */
+
 const POW: ProofOfWork = { kind: 'integration', run: 'echo ok', pass: 'exit 0' };
 
 function settings(over: Partial<BatchSettings> = {}): BatchSettings {
@@ -320,5 +327,51 @@ describe('buildAgentInstructions — per-change definition of done', () => {
     expect(line!).not.toMatch(/\bClaude\b/);
     expect(line!).not.toMatch(/\bCursor\b/);
     expect(line!).not.toMatch(/\bCodex\b/);
+  });
+});
+
+/**
+ * Implements: features/model-flag-threading/engine-spec-parsing.feature
+ * Scenario: Instruction invocation tokens resolve through the agent part of a spec.
+ *
+ * A spec-form stage value (`opencode:zai/glm-5.2`) renders the MAPPED agent's
+ * invocation token (opencode's `/rct-<id>`), never the default agent's
+ * (`/rct:<id>`). The model part never reaches the invocation — only the agent
+ * part selects the token. A spec-form scalar does the same for every stage.
+ */
+describe('buildAgentInstructions — spec-form agent resolves the mapped invocation token (engine-spec-parsing.feature)', () => {
+  it('a spec-form stage value renders the mapped agent\'s invocation token (opencode)', () => {
+    const text = buildAgentInstructions(
+      context('apply', { settings: settings({ agent: { apply: 'opencode:zai/glm-5.2' } }) })
+    );
+    // opencode uses the hyphen-namespaced token, not claude's colon one.
+    expect(text).toContain('/rct-apply add-login-api');
+    expect(text).not.toContain('/rct:apply');
+  });
+
+  it('a spec-form scalar renders the mapped agent\'s invocation token for every stage', () => {
+    const text = buildAgentInstructions(
+      context('propose', { settings: settings({ agent: 'cursor:fable' }) })
+    );
+    expect(text).toContain('/rct-propose add-login-api');
+    expect(text).not.toContain('/rct:propose');
+  });
+
+  it('a spec-form stage-map value keeps the default agent token for unmapped stages', () => {
+    // Only `apply` is mapped to a spec-form value; `propose` falls back to the
+    // default (claude) colon-namespaced token.
+    const text = buildAgentInstructions(
+      context('propose', { settings: settings({ agent: { apply: 'opencode:zai/glm-5.2' } }) })
+    );
+    expect(text).toContain('/rct:propose add-login-api');
+  });
+
+  it('a spec-form value with a colon in the model part still resolves the agent part', () => {
+    // `codex:vendor:tagged-1` parses to agent `codex`, model `vendor:tagged-1`;
+    // the invocation token keys on `codex` only.
+    const text = buildAgentInstructions(
+      context('apply', { settings: settings({ agent: { apply: 'codex:vendor:tagged-1' } }) })
+    );
+    expect(text).toContain('/rct-apply add-login-api');
   });
 });

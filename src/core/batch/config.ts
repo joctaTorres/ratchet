@@ -301,6 +301,17 @@ export type SettingSource = 'default' | 'user' | 'project' | 'manifest';
 export interface ResolvedBatchSettings {
   settings: BatchSettings;
   sources: Record<keyof BatchSettings, SettingSource>;
+  /**
+   * Per-stage supplying scope for the resolved `agent` setting, the pure sibling
+   * of {@link resolveAgentSetting}'s merge: each stage's entry names the scope
+   * (project/manifest) whose value IS that stage's resolved `agent[:model]`
+   * spec string, mirroring the merge's `stages[stage] ?? base` materialization.
+   * Absent for a stage no config scope supplied (the caller's default agent).
+   * Resolved `settings` and `sources` stay byte-for-byte unchanged by this
+   * exposure; it only attributes each stage to its supplying scope for the
+   * engine's model-failure hint. See {@link resolveAgentStageScopes}.
+   */
+  agentStageScopes: Partial<Record<AgentStage, SettingSource>>;
 }
 
 export const DEFAULT_BATCH_SETTINGS: BatchSettings = {
@@ -411,14 +422,22 @@ export function resolveBatchSettings(
   // scopes low→high (project ← manifest; the user/global scope carries no scalar
   // `agent`), it merges partial stage-maps nearest-wins per stage over a
   // lower-scope scalar/map, while a nearer scalar replaces the whole value.
-  const { agent: resolvedAgent, source: agentSource } = resolveAgentSetting([
-    { scope: 'project', agent: projectBatch?.agent },
-    { scope: 'manifest', agent: manifestOverrides?.agent },
-  ]);
+  const agentLayers = [
+    { scope: 'project' as SettingSource, agent: projectBatch?.agent },
+    { scope: 'manifest' as SettingSource, agent: manifestOverrides?.agent },
+  ];
+  const { agent: resolvedAgent, source: agentSource } = resolveAgentSetting(agentLayers);
   if (resolvedAgent !== undefined) {
     settings.agent = resolvedAgent;
     sources.agent = agentSource ?? 'default';
   }
+
+  // Per-stage supplying-scope attribution for the `agent` setting: the pure
+  // sibling of the merge above, replayed over the SAME layers so each stage's
+  // scope names the layer whose value IS that stage's resolved spec string.
+  // Computed here (where the layers live) and exposed as `agentStageScopes` so
+  // the engine never re-reads config; resolved `settings`/`sources` are untouched.
+  const agentStageScopes = resolveAgentStageScopes(agentLayers);
 
   // Structured permissions: resolved across user ← project ← manifest with
   // per-field merge semantics (see resolvePermissionsPolicy). The user/global
@@ -439,7 +458,7 @@ export function resolveBatchSettings(
   settings.permissions = policy;
   sources.permissions = postureSource;
 
-  return { settings, sources };
+  return { settings, sources, agentStageScopes };
 }
 
 /**
@@ -460,7 +479,7 @@ export function resolveBatchSettings(
  * the nearest scope that contributed any `agent` value (`undefined` when none did,
  * so the caller keeps the `default` source).
  */
-function resolveAgentSetting(
+export function resolveAgentSetting(
   layers: { scope: SettingSource; agent: AgentSetting | undefined }[]
 ): { agent: BatchSettings['agent']; source: SettingSource | undefined } {
   let base: string | undefined;
@@ -500,6 +519,71 @@ function resolveAgentSetting(
     return { agent: full, source };
   }
   return { agent: { ...stages }, source };
+}
+
+/**
+ * Per-stage scope attribution for the resolved `agent` setting, a pure sibling
+ * of {@link resolveAgentSetting} that replays the same scalar-resets /
+ * map-merges-per-stage fold over the same low→high layers but tracks which
+ * scope supplied each stage's resolved spec string instead of the value itself.
+ *
+ * Returns a `Partial<Record<AgentStage, SettingSource>>` mirroring the merge's
+ * `stages[stage] ?? base` materialization: a **scalar** layer sets a base scope
+ * and resets the accumulated per-stage scopes (it covers every stage,
+ * nearest-wins); a **map** layer records its own scope for each stage it names
+ * (a nearer stage wins). A stage's attribution is its per-stage scope, falling
+ * back to the base scope when a scalar contributed, and absent when nothing
+ * supplied that stage — so an attributed scope always names the layer whose
+ * value IS that stage's resolved `agent[:model]` spec string. Absent means
+ * "no config scope supplied this stage (the caller's default agent did)".
+ *
+ * Hardcodes no agent name and consumes spec strings opaquely. Pure: no
+ * filesystem, no spawn, no I/O — unit-testable over in-memory layers. Does not
+ * call {@link resolveAgentSetting} and changes nothing about the shipping merge
+ * or its results; the agreement invariant is asserted in tests over the same
+ * layers.
+ */
+export function resolveAgentStageScopes(
+  layers: { scope: SettingSource; agent: AgentSetting | undefined }[]
+): Partial<Record<AgentStage, SettingSource>> {
+  let baseScope: SettingSource | undefined;
+  let stageScopes: Partial<Record<AgentStage, SettingSource>> = {};
+  let mapContributed = false;
+
+  for (const { scope, agent } of layers) {
+    if (agent === undefined) continue;
+    if (typeof agent === 'string') {
+      // A scalar covers every stage: it overrides any lower-scope per-stage
+      // attributions and resets the accumulated partial map (nearest-wins).
+      baseScope = scope;
+      stageScopes = {};
+      mapContributed = false;
+    } else {
+      // A map records its own scope for each stage it names (nearer stage wins).
+      for (const stage of AGENT_STAGE_KEYS) {
+        const mapped = agent[stage];
+        if (mapped !== undefined) stageScopes[stage] = scope;
+      }
+      mapContributed = true;
+    }
+  }
+
+  // No layer contributed anything: no attribution for any stage.
+  if (baseScope === undefined && !mapContributed) return {};
+
+  const result: Partial<Record<AgentStage, SettingSource>> = {};
+  for (const stage of AGENT_STAGE_KEYS) {
+    const perStage = stageScopes[stage];
+    if (perStage !== undefined) {
+      result[stage] = perStage;
+    } else if (baseScope !== undefined) {
+      // A scalar covered this stage (no nearer map named it): attribute it to
+      // the scalar's scope — exactly mirroring the merge's `stages[stage] ?? base`.
+      result[stage] = baseScope;
+    }
+    // else: nothing supplied this stage — absent (no attribution).
+  }
+  return result;
 }
 
 /** Environment variable that overrides the per-agent ReX timeout. */

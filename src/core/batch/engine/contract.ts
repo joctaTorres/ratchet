@@ -7,7 +7,8 @@
  * shared shape of that hand-off. `status`/`view`/`config` never touch the engine.
  */
 
-import type { BatchSettings } from '../config.js';
+import type { BatchSettings, SettingSource } from '../config.js';
+import type { AgentStage } from '../agent-setting.js';
 import type { ProofOfWork } from '../manifest.js';
 import type { JournalEntry } from '../journal.js';
 import type { PrGroupBoundary } from './boundary.js';
@@ -56,6 +57,17 @@ interface BaseStepContext {
   transition: Transition;
   phase: StepPhase;
   settings: BatchSettings;
+  /**
+   * Per-stage supplying scope for the resolved `agent` setting, threaded from
+   * {@link resolveBatchSettings}. When present for the running transition's
+   * stage, the engine builds a model-failure attribution naming that scope so a
+   * fast failure under an explicit model can surface which scope supplied it
+   * (the project config vs the batch manifest). Left undefined by the standalone
+   * headless verbs (their `--agent` flag can override the spec after scope
+   * resolution, so a threaded scope could lie; with no scope present the
+   * mapper's gate keeps today's failure surface).
+   */
+  agentStageScopes?: Partial<Record<AgentStage, SettingSource>>;
   /** Prior journal entries for this change (resume context). */
   journal: JournalEntry[];
   /** Resume context when the step was parked. */
@@ -199,6 +211,13 @@ export interface StepResult {
   blocker?: string;
   /** Present when state is `awaiting-approval`: the proposal summary. */
   approvalRequest?: string;
+  /**
+   * Captured agent output surfaced on a failed/blocked step. Carries the
+   * model-failure attribution hint (when the failure matches the
+   * argv-rejection signature) above the truncated stderr tail, so the operator
+   * can spot an invalid model id without decoding raw stderr.
+   */
+  detail?: string;
   /** Pointer to journal entries this step produced (indices or ids). */
   journalRefs?: number[];
   message?: string;

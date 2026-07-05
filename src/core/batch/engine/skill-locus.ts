@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { CommandAdapterRegistry } from '../../command-generation/index.js';
 import { getCommandContents } from '../../shared/skill-generation.js';
 import { DEFAULT_AGENT } from './agent.js';
-import { scalarAgent, resolveAgentForStage } from '../agent-setting.js';
+import { scalarAgent, resolveAgentForStage, parseAgentSpec } from '../agent-setting.js';
 import type { AgentStage } from '../agent-setting.js';
 import type { ChangeStepContext, Transition } from './contract.js';
 import type { BatchSettings, Locus } from '../config.js';
@@ -174,7 +174,9 @@ export function ensureSkillInSpawnLocus(
  * An optional `stage` (the running per-change transition) selects the agent that
  * stage maps to under an `agent` stage-map, so the rendered command matches the
  * per-stage spawned binary; omitting it (the decomposition path) keeps the
- * scalar/default resolution.
+ * scalar/default resolution. The resolved value is a whole `agent[:model]` spec
+ * string; the command adapter is resolved by the AGENT PART, so a spec-form
+ * stage value routes exactly like its bare name — never the default agent's path.
  *
  * Throws {@link SkillLocusError} — with an actionable message — when the locus is
  * one the engine cannot render into (e.g. `remote`) or when the render/write
@@ -191,10 +193,16 @@ export function ensureCommandInSpawnLocus(
   // With a `stage` (a per-change transition) resolve the agent that stage maps to
   // so the rendered command matches the spawned binary; without one (the
   // decomposition path) keep the scalar/default resolution. Either way an
-  // unmapped-stage/unset agent falls back to `DEFAULT_AGENT`.
+  // unmapped-stage/unset agent falls back to `DEFAULT_AGENT`. The resolved value
+  // is a whole `agent[:model]` spec string; the command adapter keys on the
+  // AGENT PART alone, so a spec-form value resolves its mapped adapter exactly
+  // like its bare name — never the default agent's path, and never a
+  // synthetic-agent skip (a real adapter is always found for a spec-form value
+  // whose agent part is a registered agent).
+  const resolved =
+    stage ? resolveAgentForStage(settings.agent, stage) : scalarAgent(settings.agent);
   const agentId =
-    (stage ? resolveAgentForStage(settings.agent, stage) : scalarAgent(settings.agent)) ??
-    DEFAULT_AGENT;
+    (resolved !== undefined ? parseAgentSpec(resolved).agent : undefined) ?? DEFAULT_AGENT;
   const locus: Locus = settings.locus ?? 'local';
 
   // Resolve the PER-AGENT command adapter from the command-generation registry.

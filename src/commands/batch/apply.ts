@@ -146,7 +146,7 @@ export async function batchApplyCommand(
   const projectRoot = deps.projectRoot ?? resolveCurrentPlanningHomeSync().root;
   const batch = resolveBatchName(projectRoot, name);
   const manifest = loadBatchManifest(projectRoot, batch);
-  const { settings } = resolveBatchSettings(projectRoot, manifest);
+  const { settings, agentStageScopes } = resolveBatchSettings(projectRoot, manifest);
   const status = await computeBatchStatus(projectRoot, manifest);
 
   // The engine is bundled into this package; construct it and run in-process.
@@ -276,6 +276,10 @@ export async function batchApplyCommand(
       proofOfWork: phase.proofOfWork,
     },
     settings,
+    // Thread the per-stage supplying scopes so a fast failure under an explicit
+    // model can attribute the stage's spec to its supplying scope (project config
+    // vs batch manifest). Left undefined for the decompose/PR/standalone paths.
+    agentStageScopes,
     journal: readJournalForChange(projectRoot, batch, change),
     resume: parked
       ? {

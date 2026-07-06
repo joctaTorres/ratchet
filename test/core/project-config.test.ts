@@ -587,6 +587,24 @@ context: |
         // The value is never echoed.
         expect(warned.every((s) => !s.includes('123'))).toBe(true);
       });
+
+      it('ignores prototype-chain key names without nuking the whole config', () => {
+        // `constructor`/`toString` live on Object.prototype, so a naive
+        // `key in shape` check would treat them as known keys and then call
+        // `.safeParse` on the inherited value, throwing and reverting the
+        // entire config to null. They must be ignored like any unknown key.
+        writeYaml('batch:\n  constructor: nope\n  toString: nope\n  gate: after-propose\n');
+
+        const config = readProjectConfig(tempDir);
+
+        // Config still parses; the valid sibling survives and the
+        // prototype-chain keys are silently ignored (partial schema).
+        expect(config).not.toBeNull();
+        expect(config?.batch?.gate).toBe('after-propose');
+        // The prototype-chain names never become own keys of the parsed batch.
+        expect(Object.hasOwn(config!.batch!, 'constructor')).toBe(false);
+        expect(Object.hasOwn(config!.batch!, 'toString')).toBe(false);
+      });
     });
 
     describe('multi-line and special characters', () => {

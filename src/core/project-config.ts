@@ -289,7 +289,7 @@ function parseBatchPerKey(rawBatch: unknown): ProjectConfig['batch'] {
 
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {
-    if (!(key in shape)) continue; // unknown key: ignored (schema is partial)
+    if (!Object.hasOwn(shape, key)) continue; // unknown key (incl. prototype-chain names like `constructor`): ignored (schema is partial)
     const fieldSchema = shape[key]!;
     const result = fieldSchema.safeParse(value);
     if (result.success) {

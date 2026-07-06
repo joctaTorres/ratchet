@@ -43,7 +43,13 @@ toward.
 3. **Standalone settings.** Settings resolve `flag → project config → default`
    via `resolveChangeStepSettings` (no manifest). An invalid `--agent`,
    `--locus`, or `--image` value fails with an actionable error before any agent
-   is spawned.
+   is spawned. A malformed `agent[:model]` spec (empty agent or model part,
+   e.g. `claude:`, `:fable`; whitespace-padded like `claude: opus`, `claude :m`,
+   `" claude"`; or a model part starting with `-` like `claude:-flag`) is
+   rejected with an actionable error **naming the offending value** before any
+   spawn — the same shared schema (`AgentSettingSchema` → `parseAgentSpec`)
+   that the load and write paths use, so the flag path can never diverge from
+   what the loader accepts.
 4. **Forced propose.** A `ChangeStepContext` is built with `batch` undefined,
    `transition: 'propose'`, the joined `-m` guidance, and the change-local
    journal, then run once via `engine.runChangeStep`. `computeNextTransition` is

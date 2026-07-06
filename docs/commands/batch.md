@@ -253,6 +253,17 @@ or `[default]`. `authToken` is always redacted in output (`***`).
 only. Invalid enum values are rejected and the file is left unchanged. Secret
 values (e.g. `authToken`) are not echoed back.
 
+The `agent` key is validated through the same shared `AgentSettingSchema` the
+loaders use (so the write path can never persist what the loader rejects): a
+scalar value is validated as an `agent[:model]` spec, and a value whose
+trimmed form starts with `{` is parsed as a YAML flow map and validated as a
+per-stage map (each entry checked). A malformed value (e.g. `agent=claude:`)
+is rejected with an error naming the offending value, and the file is left
+byte-for-byte unchanged. A valid inline map (e.g.
+`agent={apply: opencode, verify: 'claude:fable'}`) persists as a real YAML
+map the loader round-trips with no warning; a valid scalar persists as a
+plain string.
+
 Settable keys:
 
 | Key | Values | Default |
@@ -261,7 +272,7 @@ Settable keys:
 | `strategy` | `vertical-slice` \| `feature` | `vertical-slice` |
 | `proofOfWork` | `hard-gate` \| `warn` | `hard-gate` |
 | `locus` | `local` \| `docker` \| `remote` | `local` |
-| `agent` | string | (adapter default) |
+| `agent` | `agent[:model]` spec, or an inline `{propose, apply, verify, pr}` stage-map (validated through the shared schema; rejected without writing when malformed) | (adapter default) |
 | `image` | string | `python:3.12` (docker locus) |
 | `host` | string | (required for remote) |
 | `port` | number | (required for remote) |
@@ -447,6 +458,28 @@ Execution sequence:
 carries the decomposed phase's name. When nothing is
 ready, `{ state: 'nothing-ready', message: '...' }`. When a step is pre-checked
 as parked, `{ state: 'parked', change, reason, hint }`.
+
+**Attributed fast failures**: when a transition (or a batch-driven pr / phase-
+decomposition step) whose resolved spec explicitly named a model fails fast on a
+real non-zero exit code (no signal — `signal === null`, not a signal kill), with
+no journal progress — the argv-rejection signature — the surfaced
+`blocker`/`message` carry the stage/agent/model/scope attribution hint, so the
+non-JSON blocked line (`⚠ blocked — …`), the parked-step reason re-shown on
+resume, and the journal entry message recorded for the transition all name the
+exact model string and its supplying scope as "if this model id is invalid…"
+guidance (the `detail` field still opens with the hint above the captured stderr
+tail for `--json` consumers). The `pr` stage spawn is attributed via its `pr`
+stage entry's supplying scope; the phase-decomposition spawn (which resolves via
+the scalar `agent` setting, never a stage map) is attributed via the uniform
+supplying scope across every stage. A signal-killed spawn (e.g. a `timeout`
+SIGKILL, OOM kill — `exitCode: null, signal: 'SIGKILL'`) under a valid explicit
+model is NOT a real exit code, so the hint is suppressed there even with zero
+journal progress; the bare-failure fallback names the signal (`via signal
+SIGKILL`) and surfaces the stderr tail on every rendered surface without the
+hint, so an externally killed agent under a valid model never misdirects the
+operator. Bare-name specs, stage-map-driven decompose spawns (default agent, no
+model), scope-less standalone paths, and failures after journal progress render
+byte-for-byte today's output with no hint.
 
 ## `batch rerun-proof`
 

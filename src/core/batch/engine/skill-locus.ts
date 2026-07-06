@@ -201,8 +201,31 @@ export function ensureCommandInSpawnLocus(
   // whose agent part is a registered agent).
   const resolved =
     stage ? resolveAgentForStage(settings.agent, stage) : scalarAgent(settings.agent);
-  const agentId =
-    (resolved !== undefined ? parseAgentSpec(resolved).agent : undefined) ?? DEFAULT_AGENT;
+  // Parse the resolved `agent[:model]` spec to take the AGENT PART that selects
+  // the command adapter. The shared schema (`AgentSettingSchema`) and the
+  // standalone flag seam (`resolveChangeStepSettings` → `validateSetting`)
+  // already reject a malformed spec upstream, so under normal operation this
+  // call never throws. WRAP it anyway: a spec that slips past upstream
+  // validation (or a future regression that removes it) must NOT escape as a
+  // raw `Error` from `parseAgentSpec` here — the engine's catch blocks handle
+  // only `SkillLocusError`/`UnknownAgentError`, so a raw throw would crash the
+  // process instead of failing the step structurally. Funnel it into the same
+  // structured `SkillLocusError` channel the engine already maps to a
+  // resumable `failed` step, naming the offending value and stating the agent
+  // is NOT spawned.
+  let agentId: string = DEFAULT_AGENT;
+  if (resolved !== undefined) {
+    try {
+      agentId = parseAgentSpec(resolved).agent;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new SkillLocusError(
+        `Cannot guarantee the rct '${commandId}' command in the spawn locus: the ` +
+          `resolved agent spec "${resolved}" is malformed (${detail}). The agent ` +
+          `is NOT spawned.`
+      );
+    }
+  }
   const locus: Locus = settings.locus ?? 'local';
 
   // Resolve the PER-AGENT command adapter from the command-generation registry.

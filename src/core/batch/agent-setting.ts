@@ -82,6 +82,11 @@ export function parseAgentSpec(value: string): AgentSpec {
         `Invalid agent spec "": empty agent part (expected "agent[:model]")`
       );
     }
+    if (value !== value.trim()) {
+      throw new Error(
+        `Invalid agent spec "${value}": agent part "${value}" has leading or trailing whitespace (expected "agent[:model]")`
+      );
+    }
     return { agent: value };
   }
   const agent = value.slice(0, colon);
@@ -94,6 +99,21 @@ export function parseAgentSpec(value: string): AgentSpec {
   if (model.length === 0) {
     throw new Error(
       `Invalid agent spec "${value}": empty model part (expected "agent[:model]")`
+    );
+  }
+  if (agent !== agent.trim()) {
+    throw new Error(
+      `Invalid agent spec "${value}": agent part "${agent}" has leading or trailing whitespace (expected "agent[:model]")`
+    );
+  }
+  if (model !== model.trim()) {
+    throw new Error(
+      `Invalid agent spec "${value}": model part "${model}" has leading or trailing whitespace (expected "agent[:model]")`
+    );
+  }
+  if (model.startsWith('-')) {
+    throw new Error(
+      `Invalid agent spec "${value}": model part "${model}" must not start with "-" (expected "agent[:model]")`
     );
   }
   return { agent, model };

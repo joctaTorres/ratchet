@@ -28,6 +28,8 @@ import type {
 import type { BatchManifest } from './manifest.js';
 import { AGENT_STAGE_KEYS } from './agent-setting.js';
 import type { AgentSetting, AgentStage, AgentStageMap } from './agent-setting.js';
+import { AgentSettingSchema } from './agent-setting.js';
+import { parse as parseYamlFlow } from 'yaml';
 
 export const GATE_VALUES = ['voluntary', 'after-propose', 'every-phase', 'autonomous'] as const;
 export const STRATEGY_VALUES = ['vertical-slice', 'feature'] as const;
@@ -586,6 +588,41 @@ export function resolveAgentStageScopes(
   return result;
 }
 
+/**
+ * Derive the single uniform supplying scope for a stage-less spawn (the
+ * decomposition spawn, which resolves via `scalarAgent` — a stage map never
+ * routes it). Returns the scope only when EVERY {@link AGENT_STAGE_KEYS} entry
+ * is present AND identical; otherwise `undefined`.
+ *
+ * The invariant this encodes: whenever the decompose spawn carries an explicit
+ * model, `settings.agent` is a scalar, and {@link resolveAgentStageScopes}
+ * materialized every stage to that scalar's scope — so a uniform map is the
+ * honest supplying scope for the stage-less scalar resolution. A mixed, partial,
+ * or empty map cannot arise from a scalar setting under an explicit model, so
+ * it resolves to no scope (the engine gates this behind
+ * `spec?.model !== undefined`, so a coincidentally-uniform map that resolves no
+ * scalar spec can never produce a false attribution).
+ *
+ * Pure: no filesystem, no spawn, no I/O — unit-testable over an in-memory map.
+ * Sibling of {@link resolveAgentStageScopes}; consumes spec strings opaquely.
+ */
+export function uniformAgentScope(
+  scopes: Partial<Record<AgentStage, SettingSource>> | undefined
+): SettingSource | undefined {
+  if (scopes === undefined) return undefined;
+  let uniform: SettingSource | undefined;
+  for (const stage of AGENT_STAGE_KEYS) {
+    const scope = scopes[stage];
+    if (scope === undefined) return undefined;
+    if (uniform === undefined) {
+      uniform = scope;
+    } else if (scope !== uniform) {
+      return undefined;
+    }
+  }
+  return uniform;
+}
+
 /** Environment variable that overrides the per-agent ReX timeout. */
 export const AGENT_TIMEOUT_ENV_VAR = 'RATCHET_AGENT_TIMEOUT_MS';
 
@@ -671,9 +708,29 @@ export interface SetResult {
   error?: string;
   key?: keyof BatchSettings;
   value?: string;
+  /**
+   * The typed value to persist for keys whose CLI string form is not the storage
+   * form. Today only the `agent` key sets this: a scalar spec stays a string,
+   * but a `{`-prefixed inline stage map is parsed into a real map so the
+   * persisted YAML is a map (not a quoted string) the loader accepts. When
+   * unset, the raw `value` string is persisted.
+   */
+  parsedValue?: string | AgentStageMap;
 }
 
-/** Validate a `key=value` setting against the allowed enum values. */
+/**
+ * Validate a `key=value` setting against the allowed enum values AND, for the
+ * `agent` key, against the shared `AgentSettingSchema` (whose `superRefine`
+ * routes every string position through `parseAgentSpec`). The write path and
+ * the load path thus never diverge: a value the write path accepts is exactly
+ * what the loader accepts.
+ *
+ * For the `agent` key, a value whose trimmed form starts with `{` is parsed as
+ * a YAML flow map and validated as a stage map (so per-stage entries are
+ * checked); any other value is validated as a scalar spec string. Failures
+ * return `ok: false` with an error naming the offending value (and the stage
+ * key for map entries).
+ */
 export function validateSetting(key: string, value: string): SetResult {
   if (!SETTING_KEYS.includes(key as keyof BatchSettings)) {
     return {
@@ -723,7 +780,67 @@ export function validateSetting(key: string, value: string): SetResult {
     };
   }
 
+  // The `agent` key is validated through the SAME shared schema the loaders use
+  // (AgentSettingSchema's superRefine routes every string position through
+  // parseAgentSpec), so the write path can never persist what the loader
+  // rejects. A value starting (after trim) with `{` is parsed as a YAML flow
+  // map and validated as a stage map (per-stage entries checked); any other
+  // value is validated as a scalar spec string. On success the typed value is
+  // carried back via `parsedValue` so the persist step writes a real map (not
+  // a quoted string) for map input, mirroring how `port`/`insecure` persist
+  // their real types.
+  if (key === 'agent') {
+    return validateAgentSetting(value);
+  }
+
   return { ok: true, key: key as keyof BatchSettings, value };
+}
+
+/**
+ * Validate an `agent` CLI value through {@link AgentSettingSchema}. A value
+ * whose trimmed form starts with `{` is parsed as a YAML flow map and validated
+ * as a stage map; any other value is validated as a scalar spec string. On
+ * success the typed value (string or stage map) is carried via `parsedValue`.
+ * On failure the error names the offending value (and the stage key for map
+ * entries), derived from the zod issues.
+ */
+function validateAgentSetting(value: string): SetResult {
+  const trimmed = value.trim();
+  let parsed: unknown = value;
+  if (trimmed.startsWith('{')) {
+    try {
+      parsed = parseYamlFlow(value);
+    } catch {
+      return {
+        ok: false,
+        key: 'agent',
+        value,
+        error: `Invalid value for 'agent': '${value}' is not a valid YAML flow map.`,
+      };
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        key: 'agent',
+        value,
+        error: `Invalid value for 'agent': '${value}' must be a stage map (e.g. {apply: claude:fable}).`,
+      };
+    }
+  }
+  const result = AgentSettingSchema.safeParse(parsed);
+  if (!result.success) {
+    const messages = result.error.issues.map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.join('.') : '';
+      return path ? `agent.${path}: ${issue.message}` : `agent: ${issue.message}`;
+    });
+    return {
+      ok: false,
+      key: 'agent',
+      value,
+      error: `Invalid value for 'agent': ${messages.join('; ')}`,
+    };
+  }
+  return { ok: true, key: 'agent', value, parsedValue: result.data as string | AgentStageMap };
 }
 
 /** A port is a positive integer (numeric string, no decimals/sign/whitespace). */
@@ -789,7 +906,16 @@ export function resolveChangeStepSettings(
     if (!validation.ok) {
       throw new Error(validation.error);
     }
-    (writable[key] as BatchSettings[typeof key]) = value as BatchSettings[typeof key];
+    // For the `agent` key, persist the typed value (a map override must be
+    // applied as a real map, not the raw CLI string). A scalar override stays
+    // a plain string. The validation already ran `parseAgentSpec` through the
+    // shared schema, so a malformed standalone `--agent` value throws here
+    // (naming the value) BEFORE any settings are mutated or any agent spawned.
+    const typed =
+      key === 'agent' && validation.parsedValue !== undefined
+        ? validation.parsedValue
+        : value;
+    (writable[key] as BatchSettings[typeof key]) = typed as BatchSettings[typeof key];
   };
 
   applyOverride('agent', overrides.agent);
@@ -846,6 +972,12 @@ export function setProjectBatchSetting(
     batch[key] = Number(value.trim());
   } else if (key === 'insecure') {
     batch[key] = value.trim() === 'true';
+  } else if (key === 'agent' && validation.parsedValue !== undefined) {
+    // A map-typed `agent` (from a `{`-prefixed inline stage map) is persisted as
+    // a real YAML map, not a quoted string — mirroring how `port`/`insecure`
+    // persist their real types so the loader round-trips the value with no
+    // warning. A scalar spec stays a plain string.
+    batch[key] = validation.parsedValue;
   } else {
     batch[key] = value;
   }

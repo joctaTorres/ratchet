@@ -16,7 +16,7 @@
  * Phase proof-of-work: `pnpm test test/batch-engine/agent-model-selection.test.ts`.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -34,8 +34,8 @@ import type {
   BatchManifest,
   ProofOfWork,
 } from '../../src/core/batch/config.js';
-import { resolveBatchSettings } from '../../src/core/batch/config.js';
-import { ProjectConfigSchema } from '../../src/core/project-config.js';
+import { resolveBatchSettings, setProjectBatchSetting, resolveChangeStepSettings } from '../../src/core/batch/config.js';
+import { readProjectConfig } from '../../src/core/project-config.js';
 import { parseBatchManifest } from '../../src/core/batch/manifest.js';
 
 const ENV = 'RATCHET_BATCH_AGENT_CMD';
@@ -273,32 +273,57 @@ describe('nearest-wins per-stage merge moves agent and model atomically across s
 });
 
 // -----------------------------------------------------------------------------
-// Scenario: An empty model part fails config load naming the offending value
-// Scenario: An empty agent part fails manifest load naming the offending value
+// Scenario: An invalid agent value in config is warned by name and value, and
+// valid sibling settings survive — driven through the REAL load/write seams
+// (readProjectConfig / setProjectBatchSetting), not a hand-rolled YAML re-parse.
+// (e2e-real-seams.feature)
 // -----------------------------------------------------------------------------
 describe('malformed specs fail load before any spawn naming the offending value', () => {
-  it('project config "claude:" is rejected at config load naming "claude:"', async () => {
-    // Write a project config whose batch agent value is "claude:". The config-
-    // load validator is ProjectConfigSchema.shape.batch (the schema readProjectConfig
-    // safeParses); it rejects the malformed spec forwarding the parser's message,
-    // which names the offending value — before any agent is spawned.
+  it('readProjectConfig warns naming agent and "claude:" and preserves valid gate sibling', async () => {
+    // Write a project config whose batch section sets gate "after-propose" and
+    // agent "claude:". The real loader (readProjectConfig) warns naming `agent`
+    // and the offending value "claude:" — NOT the generic gate/strategy/proofOfWork
+    // text — and preserves the valid `gate` sibling while dropping only `agent`.
     const ratchetDir = path.join(projectRoot, '.ratchet');
     await fs.mkdir(ratchetDir, { recursive: true });
     await fs.writeFile(
       path.join(ratchetDir, 'config.yaml'),
-      'schema: ratchet\nbatch:\n  agent: "claude:"\n'
+      'schema: ratchet\nbatch:\n  gate: after-propose\n  agent: "claude:"\n'
     );
 
-    // The config-load validation rejects the malformed spec naming "claude:".
-    const raw = await fs.readFile(path.join(ratchetDir, 'config.yaml'), 'utf-8');
-    const yaml = (await import('yaml')).parse(raw);
-    const result = ProjectConfigSchema.shape.batch.safeParse(yaml.batch);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const message = result.error.issues.map((i) => i.message).join('\n');
-      expect(message).toContain('claude:');
-      expect(message).toMatch(/empty model part/);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const config = readProjectConfig(projectRoot);
+      // The warning names `agent` and the offending value "claude:".
+      const warned = warnSpy.mock.calls
+        .map((c) => String(c[0]))
+        .filter((s) => s.includes('batch.agent'));
+      expect(warned.some((s) => s.includes('claude:'))).toBe(true);
+      // It does NOT use the generic gate/strategy/proofOfWork text.
+      expect(warned.every((s) => !s.includes('gate/strategy/proofOfWork'))).toBe(true);
+      // Valid sibling survives; only agent is dropped.
+      expect(config?.batch?.gate).toBe('after-propose');
+      expect(config?.batch?.agent).toBeUndefined();
+    } finally {
+      warnSpy.mockRestore();
     }
+  });
+
+  it('setProjectBatchSetting with agent="claude:" is not ok, names the value, and leaves the file unchanged', async () => {
+    // The real write seam (setProjectBatchSetting) validates through the shared
+    // AgentSettingSchema and refuses to persist what the loader rejects. The
+    // config file on disk is byte-for-byte unchanged.
+    const ratchetDir = path.join(projectRoot, '.ratchet');
+    await fs.mkdir(ratchetDir, { recursive: true });
+    const original = 'schema: ratchet\nbatch:\n  gate: after-propose\n';
+    await fs.writeFile(path.join(ratchetDir, 'config.yaml'), original);
+
+    const result = setProjectBatchSetting(projectRoot, 'agent', 'claude:');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('claude:');
+
+    const after = await fs.readFile(path.join(ratchetDir, 'config.yaml'), 'utf-8');
+    expect(after).toBe(original);
   });
 
   it('manifest ":fable" is rejected at manifest load naming ":fable"', async () => {
@@ -315,5 +340,69 @@ describe('malformed specs fail load before any spawn naming the offending value'
     ].join('\n');
 
     expect(() => parseBatchManifest(manifestYaml)).toThrow(/:fable/);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Scenario: the standalone --agent flag fails before any spawn naming the
+// offending value, and valid flag values behave byte-for-byte unchanged.
+// (fail-before-spawn.feature)
+//
+// Drives the REAL settings resolution seam (resolveChangeStepSettings), not a
+// hand-rolled re-parse: the flag path routes through validateSetting →
+// AgentSettingSchema → parseAgentSpec, the same shared authority the load and
+// write paths use. Phase proof-of-work for the standalone-agent-flag boundary.
+// -----------------------------------------------------------------------------
+describe('standalone --agent flag fails before any spawn naming the offending value (fail-before-spawn.feature)', () => {
+  it('resolveChangeStepSettings throws naming "claude:" before returning settings', () => {
+    expect(() =>
+      resolveChangeStepSettings(projectRoot, { agent: 'claude:' })
+    ).toThrow(/claude:/);
+  });
+
+  it('resolveChangeStepSettings throws naming " claude" (leading whitespace)', () => {
+    expect(() =>
+      resolveChangeStepSettings(projectRoot, { agent: ' claude' })
+    ).toThrow(/ claude/);
+  });
+
+  it('resolveChangeStepSettings throws naming "claude:-flag" (dash-leading model part)', () => {
+    expect(() =>
+      resolveChangeStepSettings(projectRoot, { agent: 'claude:-flag' })
+    ).toThrow(/claude:-flag/);
+  });
+});
+
+describe('valid standalone --agent values behave byte-for-byte unchanged (fail-before-spawn.feature)', () => {
+  it('a bare --agent "claude" spawns with no model flag, byte-for-byte identical to no override', async () => {
+    // Both captures go through the REAL resolution seam
+    // (resolveChangeStepSettings) so the permissions policy and every other
+    // defaulted field are identical between the two runs — the ONLY variable
+    // is the `--agent claude` override. A bare name touches nothing: argv is
+    // byte-for-byte identical to running with no override at all.
+    const resolvedBare = resolveChangeStepSettings(projectRoot, { agent: 'claude' });
+    calls = [];
+    await engine().runChangeStep(ctx('apply', undefined, { settings: { ...resolvedBare } }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('claude');
+    expectNoModelFlag(calls[0].args, '--model');
+    const bareArgs = [...calls[0].args];
+
+    // No override: falls back to the default agent (also claude). Same argv.
+    const resolvedNone = resolveChangeStepSettings(projectRoot, {});
+    calls = [];
+    await engine().runChangeStep(ctx('apply', undefined, { settings: { ...resolvedNone } }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('claude');
+    expectNoModelFlag(calls[0].args, '--model');
+    expect(calls[0].args).toEqual(bareArgs);
+  });
+
+  it('a spec-form --agent "claude:fable" spawns claude with --model fable', async () => {
+    const resolved = resolveChangeStepSettings(projectRoot, { agent: 'claude:fable' });
+    await engine().runChangeStep(ctx('apply', undefined, { settings: { ...resolved } }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('claude');
+    expectModelFlag(calls[0].args, '--model', 'fable');
   });
 });

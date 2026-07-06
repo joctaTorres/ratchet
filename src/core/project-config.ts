@@ -224,19 +224,14 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
       }
     }
 
-    // Parse batch field using Zod (project-level batch defaults)
+    // Parse batch field using Zod (project-level batch defaults). Per-key
+    // resilient: each present key is safeParsed independently against the batch
+    // schema's shape, so a malformed key (e.g. `agent: "claude:"`) is dropped
+    // with a warning naming the key path and offending value, while valid
+    // siblings (gate, locus, permissions, …) are preserved instead of being
+    // silently reverted to defaults. Replaces the prior whole-section drop.
     if (raw.batch !== undefined) {
-      const batchField = ProjectConfigSchema.shape.batch;
-      const batchResult = batchField.safeParse(raw.batch);
-      if (batchResult.success) {
-        if (batchResult.data) {
-          config.batch = batchResult.data;
-        }
-      } else {
-        console.warn(
-          `Invalid 'batch' field in config (check gate/strategy/proofOfWork values)`
-        );
-      }
+      config.batch = parseBatchPerKey(raw.batch);
     }
 
     // Parse eval field using Zod (project-level eval defaults)
@@ -261,6 +256,60 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
     console.warn(`Failed to parse .ratchet/config.yaml:`, error);
     return null;
   }
+}
+
+/**
+ * Per-key resilient parse of the `batch:` section. Each present key is
+ * safeParsed independently against the batch schema's shape; valid keys are
+ * kept, and each failing key is dropped with a warning naming the key path
+ * (`batch.<key>[.<path>]`) and the offending value (JSON-stringified; secrets
+ * excluded: `authToken` is never echoed — its warning names the key only).
+ *
+ * This replaces the prior whole-section drop (which emitted a generic
+ * `check gate/strategy/proofOfWork values` warning and silently reverted
+ * valid gate/locus/permissions siblings to defaults). The field-by-field
+ * resilience mirrors what `readProjectConfig` already does for the top-level
+ * fields (schema/context/rules/eval).
+ *
+ * Unknown keys are ignored (the schema is `.partial()`, not `.strict()`) —
+ * unchanged, out of scope.
+ */
+function parseBatchPerKey(rawBatch: unknown): ProjectConfig['batch'] {
+  if (typeof rawBatch !== 'object' || rawBatch === null || Array.isArray(rawBatch)) {
+    console.warn(`Invalid 'batch' field in config (must be an object)`);
+    return undefined;
+  }
+  const source = rawBatch as Record<string, unknown>;
+  const batchSchema = ProjectConfigSchema.shape.batch;
+  // The batch schema is `z.object({...}).partial().optional()`; unwrap to the
+  // inner object schema to iterate its shape keys.
+  const shape = (
+    batchSchema instanceof z.ZodOptional ? batchSchema.unwrap() : batchSchema
+  ).shape as Record<string, z.ZodTypeAny>;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (!Object.hasOwn(shape, key)) continue; // unknown key (incl. prototype-chain names like `constructor`): ignored (schema is partial)
+    const fieldSchema = shape[key]!;
+    const result = fieldSchema.safeParse(value);
+    if (result.success) {
+      out[key] = result.data;
+    } else {
+      for (const issue of result.error.issues) {
+        const path = issue.path.length > 0 ? issue.path.join('.') : '';
+        const keyPath = path ? `batch.${key}.${path}` : `batch.${key}`;
+        // Never echo the secret `authToken` value — name the key only.
+        if (key === 'authToken') {
+          console.warn(`Invalid '${keyPath}': ${issue.message}`);
+        } else {
+          console.warn(
+            `Invalid '${keyPath}': ${issue.message} (value: ${JSON.stringify(value)})`
+          );
+        }
+      }
+    }
+  }
+  return Object.keys(out).length > 0 ? (out as ProjectConfig['batch']) : undefined;
 }
 
 /**

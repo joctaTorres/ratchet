@@ -1,0 +1,191 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# Fixes the 8 findings of the PR #95 review (branch batch/model, stacked base
+# for this branch). Review verdict: request-changes. Findings, verified against
+# code (file:line anchors are pre-fix):
+#
+#   1 [High]  The model-failure attribution hint lives only in StepResult.detail;
+#             every human-facing surface — renderResult blocked branch
+#             (src/commands/batch/apply.ts:873), parkStep reason (apply.ts:124),
+#             journal entry (engine.ts:775, records message ?? blocker), and
+#             change-step-common renderStepResult — prints blocker/message, so a
+#             non-`--json` operator (incl. the generated apply-batch skill) never
+#             sees the hint. No test asserts the hint is DISPLAYED.
+#   2 [Med]   readProjectConfig (src/core/project-config.ts:228) safeParses the
+#             whole `batch` section; on ANY failure it prints a generic warning
+#             naming gate/strategy/proofOfWork (never `agent`) and DROPS the
+#             entire batch section — gate/locus/permissions silently revert to
+#             defaults. The e2e test claiming "rejected at load naming the value"
+#             re-parses YAML itself and never goes through readProjectConfig.
+#   3 [Med]   `ratchet batch config set agent "claude:"` writes fine
+#             (validateSetting, config.ts:677, has no parseAgentSpec check) and
+#             the next load then hits finding 2. Write accepts what load rejects.
+#   4 [LoMed] Standalone `--agent "claude:"` passes resolveChangeStepSettings,
+#             then parseAgentSpec throws a plain Error inside
+#             ensureCommandInSpawnLocus (skill-locus.ts:205); engine catch blocks
+#             handle only SkillLocusError/UnknownAgentError → raw unhandled
+#             throw, no structured/journaled failed step.
+#   5 [Low]   agentStageScopes is threaded only into change-step contexts
+#             (apply.ts:282); the batch-driven PR spawn (engine.ts:634) and
+#             decompose get no attribution despite `pr` being a routable stage.
+#   6 [Low]   outcome.ts:170 counts `signal !== null` as non-zero, so a timeout
+#             SIGKILL under a VALID model with zero journal entries fires the
+#             "if this model id is invalid…" hint — wrong knob for timeouts.
+#   7 [Nit]   parseAgentSpec doesn't trim: "claude: opus" ships --model " opus";
+#             "claude :m" passes load AND doctor and dies only at spawn.
+#   8 [Nit]   A model part starting with `-` (claude:--dangerously-skip-…) rides
+#             into argv as a flag-shaped token; spawn is shell-less so injection
+#             is impossible, but a leading-`-` rejection closes flag confusion.
+
+name: review-fixes
+created: 2026-07-05
+
+# Per-stage agents AND models (the feature the parent batch shipped): claude
+# on opus proposes, opencode (harness-default model) applies, claude on sonnet
+# verifies.
+settings:
+  agent:
+    propose: claude:opus
+    apply: opencode
+    verify: claude:sonnet
+
+phases:
+  # ---------------------------------------------------------------------------
+  # Phase 1 — Malformed-spec honesty at every boundary (findings 2,3,4,7,8).
+  # One invariant, enforced everywhere a spec crosses a boundary: a malformed
+  # `agent[:model]` spec is rejected LOUDLY, NAMING the offending value, at the
+  # earliest boundary it crosses (parser → write path → load path → CLI flag),
+  # and an invalid value never silently degrades unrelated settings.
+  # ---------------------------------------------------------------------------
+  - name: spec-honesty-at-every-boundary
+    goal: >-
+      Make every boundary a spec crosses honest about malformed values.
+      Parser (findings 7,8): parseAgentSpec rejects specs whose agent or model
+      part has leading/trailing whitespace and models starting with `-`, with
+      messages naming the offending value. Write path (finding 3):
+      `ratchet batch config set agent <value>` validates through parseAgentSpec
+      (scalar and stage-map values) and refuses to persist what the loader
+      rejects. Load path (finding 2): an invalid `batch` section in project
+      config no longer silently drops the whole section behind a generic
+      gate/strategy/proofOfWork warning — the warning names the actual failing
+      key(s) and offending value(s) from the zod issues, and valid sibling
+      settings are not silently reverted to defaults without saying so.
+      CLI flag (finding 4): a malformed standalone `--agent` value fails as a
+      structured, actionable error before any spawn — never a raw unhandled
+      throw from deep inside skill-locus.
+    success: >-
+      "claude: opus", "claude :m", and "claude:-flag" are rejected by the
+      parser/schema naming the value; `batch config set agent "claude:"` exits
+      non-zero without writing; a project config with `agent: "claude:"`
+      alongside gate/locus settings loads with a warning naming `agent` and the
+      offending value (not the generic gate/strategy/proofOfWork text) and does
+      not silently revert the valid siblings; standalone `--agent "claude:"`
+      produces a structured actionable error naming the value with no spawn and
+      no raw throw; all pre-fix valid specs and bare names behave byte-for-byte
+      unchanged; the phase proof runs the honest path (readProjectConfig /
+      the real CLI seams), not a hand-rolled YAML re-parse.
+    proofOfWork:
+      kind: integration
+      run: pnpm test test/batch-engine/agent-model-selection.test.ts
+      pass: exit code 0 — spec-honesty suite green through the real load/write/flag seams
+    changes:
+      # Parser first: hygiene rules the other boundaries' messages build on.
+      - name: spec-parser-hygiene
+        done: >-
+          parseAgentSpec rejects an agent or model part with leading/trailing
+          whitespace and a model part starting with `-`, each with a message
+          naming the offending value; the schema refinement (both scopes)
+          surfaces those messages; all previously-valid specs and bare names
+          parse unchanged, and existing suites stay green.
+      # Write + load: config set refuses bad specs; project-config load failure
+      # names the real failing keys/values and stops nuking valid siblings.
+      - name: config-write-load-honesty
+        after: [spec-parser-hygiene]
+        done: >-
+          `ratchet batch config set agent <malformed>` fails without writing,
+          naming the value (scalar and per-stage map entries); readProjectConfig
+          on an invalid `batch` section emits a warning derived from the actual
+          zod issues (key paths and offending values, e.g. naming `agent` and
+          "claude:") instead of the generic gate/strategy/proofOfWork text, and
+          the handling of valid sibling settings is explicit — they are either
+          preserved or the warning states plainly that the section was ignored;
+          the agent-model-selection e2e proves the load path through
+          readProjectConfig itself, replacing the hand-rolled YAML re-parse.
+      # CLI flag: structured failure instead of a raw throw.
+      - name: standalone-agent-flag-error
+        after: [spec-parser-hygiene]
+        done: >-
+          A standalone step run with a malformed `--agent` value fails before
+          any spawn with a structured, actionable error naming the offending
+          value (matching the src/commands/apply.ts "actionable error" contract),
+          never a raw unhandled Error from skill-locus or engine internals;
+          valid `--agent` values (bare and spec-form) behave unchanged.
+
+  # ---------------------------------------------------------------------------
+  # Phase 2 — Attribution visibility (findings 1,5,6). The hint must actually
+  # reach the operator on every surface that renders a failed step, cover the
+  # pr/decompose stages, and never fire on signal kills. Decomposed at entry.
+  # ---------------------------------------------------------------------------
+  - name: attribution-visibility
+    goal: >-
+      Make the model-failure attribution hint reach the operator everywhere a
+      failed step is rendered (finding 1): the non-JSON `batch apply` blocked
+      output, the parked-step reason shown on resume, the journal entry, and
+      the standalone change-step renderer all carry the hint (today only
+      StepResult.detail does, so non-`--json` consumers — including the
+      generated apply-batch orchestrator skill — see the pre-fix generic
+      failure). Thread agentStageScopes into the batch-driven PR and decompose
+      spawn contexts so a `pr:`/decompose-stage fast-failure under an explicit
+      model gets the same attribution (finding 5). Gate the hint on real exit
+      codes: a signal-killed agent (e.g. timeout SIGKILL) under a valid model
+      must not be told its model id may be invalid (finding 6).
+    success: >-
+      Driving a fast-failing explicit-model transition WITHOUT --json shows the
+      stage/agent/model/scope hint in the blocked output, the parked reason,
+      and the journal; the pr stage fast-failing under agent {pr: X:bad} gets
+      the attributed surface; a signal-killed spawn surfaces without the hint;
+      no-model and progressed failures remain byte-for-byte unchanged; display
+      is asserted by tests (stdout/rendered-surface assertions, not only
+      result.detail).
+    proofOfWork:
+      kind: integration
+      # Refined at phase entry: extend the attribution suite with rendered-
+      # surface assertions (non-JSON output, park reason, journal), a pr-stage
+      # attribution case, and a signal-kill no-hint case.
+      run: pnpm test test/batch-engine/model-failure-attribution.test.ts
+      pass: exit code 0 — attribution-visibility suite green incl. rendered-surface assertions
+    changes:
+      # Surfaces first: the hint must reach every renderer before the stage
+      # coverage / gating intents can assert their behavior on display output.
+      - name: attribution-rendered-surfaces
+        done: >-
+          A fast-failing explicit-model transition renders the
+          stage/agent/model/scope hint on every human-facing surface — the
+          non-JSON `batch apply` blocked output, the parked-step reason shown
+          on resume, the journal entry, and the standalone change-step renderer
+          (src/commands/change-step-common.ts) — asserted by
+          stdout/rendered-surface tests, not only StepResult.detail; no-model
+          and progressed failures render byte-for-byte unchanged.
+      # Stage coverage: pr/decompose spawns get the same attribution context
+      # change-step transitions already carry, asserted on the new surfaces.
+      - name: pr-decompose-stage-attribution
+        after: [attribution-rendered-surfaces]
+        done: >-
+          agentStageScopes is threaded into the batch-driven pr and decompose
+          spawn contexts (engine.ts pr step and decompose paths, today only
+          change-step contexts get it via apply.ts) so a fast-failure under an
+          explicit per-stage model (e.g. agent {pr: "X:bad"}) produces the same
+          attributed rendered surface as change-step transitions; pr/decompose
+          runs without an explicit model behave unchanged.
+      # Gating: signal kills are not argv rejections — a valid model killed by
+      # timeout must never be told its model id may be invalid.
+      - name: signal-kill-hint-gate
+        after: [attribution-rendered-surfaces]
+        done: >-
+          The attribution hint fires only on a real non-zero exit code: a
+          signal-killed spawn (e.g. timeout SIGKILL) under a valid explicit
+          model surfaces its failure on every rendered surface WITHOUT the
+          "model id may be invalid" hint (outcome.ts currently counts
+          `signal !== null` as the same failure shape), while exit-code
+          fast-failures with zero journal entries keep the hint; both cases
+          asserted in the attribution suite on rendered output.

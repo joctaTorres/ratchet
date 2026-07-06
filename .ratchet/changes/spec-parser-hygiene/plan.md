@@ -1,0 +1,33 @@
+# spec-parser-hygiene
+
+## Why
+
+`parseAgentSpec` accepts specs with stray whitespace (`"claude: opus"` ships `--model " opus"` to the spawned agent; `"claude :m"` passes config load and doctor and dies only at spawn) and accepts a model part starting with `-` (`claude:--dangerously-skip-permissions` rides into argv as a flag-shaped token). This is findings 7 and 8 of the PR #95 review: the parser is the earliest boundary a spec crosses, and it must reject these malformed values loudly, naming the offending value, so the later boundaries (config write/load, `--agent` flag — sibling changes in this phase) inherit honest messages.
+
+## What Changes
+
+- `parseAgentSpec` (`src/core/batch/agent-setting.ts`) rejects an agent part or model part with leading or trailing whitespace, with an error message naming the full offending spec and the offending part (implements `features/spec-parser-hygiene/whitespace-rejection.feature`). A bare agent name (no colon) is the agent part, so `" claude"` / `"claude "` are rejected the same way.
+- `parseAgentSpec` rejects a model part starting with `-`, with an error message naming the full offending spec and the offending model part (implements `features/spec-parser-hygiene/leading-dash-model.feature`).
+- The `AgentSettingSchema` refinement surfaces these new parser messages unchanged at both config scopes — project config and batch manifest, scalar and per-stage map values (implements `features/spec-parser-hygiene/schema-surfacing-and-compat.feature`). No schema code change is expected: the existing `superRefine` already relays any `parseAgentSpec` throw; this change proves it with tests.
+- All previously-valid specs and bare names parse byte-for-byte unchanged: bare names, `agent:model`, models containing `/`, `:`, or interior `-` (e.g. `codex:gpt-5.2-codex`).
+- Reference docs updated: the "Agent `[:model]` spec" section of `docs/configuration/config-yaml.md` and the malformed-spec sentence in `README.md` describe the two new rejection rules.
+- No breaking change for valid configs; configs that previously "worked" only by dying at spawn (whitespace specs) now fail at config load with a named value — that is the intended honesty fix, not a regression.
+
+## Design
+
+- **Reject, never auto-trim.** Silently trimming `"claude: opus"` would repair the value but hide the config defect, and it diverges from the phase invariant (malformed specs are rejected loudly, naming the value, at the earliest boundary). Rejection keeps one behavior for every malformed shape.
+- **Checks live inside `parseAgentSpec`, after the existing empty-part checks.** The parser is the single authority every consumer already routes through (schema refinement at both scopes, doctor, skill-locus, engine, instructions), so adding the rules there propagates them everywhere without touching call sites. Check order per part: empty first (an empty part keeps its existing "empty … part" message), then whitespace (`part !== part.trim()`), then leading `-` on the model. `trim()`'s definition of whitespace (spaces, tabs, etc.) is the rule — no hand-rolled character class.
+- **Error messages follow the existing format** so the schema refinement and every human-facing surface stay consistent: `Invalid agent spec "<value>": agent part "<part>" has leading or trailing whitespace (expected "agent[:model]")`, same shape for the model part, and `Invalid agent spec "<value>": model part "<part>" must not start with "-" (expected "agent[:model]")`.
+- **Scope guard: parser only.** Interior whitespace, unknown agent names, and model-registry validation stay out — the parser remains free-form pass-through and agent-neutral (it hardcodes no agent name), preserving the `multi-agent-support` standard; unknown-agent rejection stays with `UnknownAgentError` in `resolveAdapter`. Findings 2, 3, and 4 (load-path warning, config-set write validation, `--agent` flag structured error) are the sibling changes `config-write-load-honesty` and `standalone-agent-flag-error`.
+- **No doctor change needed:** `checkAgents` consumes `resolveBatchSettings(...).settings.agent`, which is already schema-validated, so its `parseAgentSpec` call never sees a value the schema rejected.
+- **Testing standard (`testing` tag):** the parser and schema are pure logic, so all new coverage is unit-layer in `test/core/batch/agent-setting.test.ts` (no filesystem, no spawn), extending the existing `describe.each(scopes)` pattern so both config scopes are asserted; nothing is pushed up the pyramid. The phase-level integration proof (`pnpm test test/batch-engine/agent-model-selection.test.ts`) plus the full suite and coverage gate must stay green.
+- **Documentation standard (`documentation` tag):** `docs/configuration/config-yaml.md` already documents the empty-part rejection with example messages; the new rules extend that same section. No new diagram — this is a small extension to an existing leaf utility's reference section, not a core-flow change.
+
+## Tasks
+
+- [x] 1.1 Add failing unit tests in `test/core/batch/agent-setting.test.ts` for `parseAgentSpec` whitespace rejection: `"claude: opus"`, `"claude :m"`, `" claude:opus"`, `"claude:opus "`, `"claude: "`, and bare `" claude"` / `"claude "` — each asserting the message names the full spec and the offending part (whitespace-rejection.feature)
+- [x] 1.2 Add failing unit tests for leading-dash model rejection: `"claude:-flag"` and `"claude:--dangerously-skip-permissions"` rejected naming the value; `"codex:gpt-5.2-codex"` still parses (leading-dash-model.feature)
+- [x] 1.3 Implement the whitespace and leading-dash rules in `parseAgentSpec` (`src/core/batch/agent-setting.ts`) with the message format from ## Design; tests from 1.1–1.2 pass
+- [x] 2.1 Add unit tests proving the schema refinement surfaces the new messages at both scopes via the existing `describe.each(scopes)` harness: scalar `"claude: opus"` and `"claude:-flag"` fail with issues naming the value; stage-map `{apply: "claude :m"}` fails with issue path `apply` naming the value; previously-valid specs and bare names (including `"opencode:zai/glm-5.2"`, `"codex:vendor:tagged-1"`) still validate (schema-surfacing-and-compat.feature)
+- [x] 3.1 Documentation (per the `documentation` standard): update the "Agent `[:model]` spec" section of `docs/configuration/config-yaml.md` with the whitespace and leading-dash rejection rules and example messages, and update the malformed-spec sentence in `README.md` (line ~211) to include the new rejected shapes
+- [x] 4.1 Run the full suite and coverage gate (`pnpm test`), confirming existing suites — including `test/batch-engine/agent-model-selection.test.ts`, doctor, and agent-scope/stage-resolution tests — stay green with no coverage regression

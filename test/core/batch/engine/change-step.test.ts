@@ -342,4 +342,29 @@ describe('resolveChangeStepSettings', () => {
 
     expect(result.state).toBe('blocked');
   });
+
+  // -------------------------------------------------------------------------
+  // `agent` override validation (write-path-validation.feature — "a malformed
+  // standalone agent override fails before any settings are applied"). The
+  // override is validated through `validateSetting` (which runs the shared
+  // AgentSettingSchema), so a malformed `--agent` value throws naming the value
+  // BEFORE any settings are mutated or any agent spawned.
+  // -------------------------------------------------------------------------
+  it('throws naming the value when a standalone --agent=claude: override is malformed', () => {
+    expect(() => resolveChangeStepSettings(projectRoot, { agent: 'claude:' })).toThrow(
+      /claude:/
+    );
+  });
+
+  it('applies a valid scalar --agent override unchanged', () => {
+    const s = resolveChangeStepSettings(projectRoot, { agent: 'codex:gpt-5.2-codex' });
+    expect(s.agent).toBe('codex:gpt-5.2-codex');
+  });
+
+  it('applies a valid inline-map --agent override as a real map', () => {
+    const s = resolveChangeStepSettings(projectRoot, {
+      agent: "{apply: opencode, verify: 'claude:fable'}",
+    });
+    expect(s.agent).toEqual({ apply: 'opencode', verify: 'claude:fable' });
+  });
 });

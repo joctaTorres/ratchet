@@ -4,11 +4,15 @@
  * Implements:
  *  - features/model-failure-attribution/attribution-hint.feature
  *  - features/model-failure-attribution/unchanged-surfaces.feature
+ *  - features/signal-kill-hint-gate/signal-kill-hint-gate.feature
  *
  * The attribution enrichment is pure, so it lands at the unit layer: the hint
  * fires only on the full argv-rejection signature (explicit model + supplying
- * scope + non-zero exit + no completion + zero session journal entries), and
- * every other input surfaces byte-for-byte what today's mapping produces.
+ * scope + real non-zero exit code + no completion + zero session journal
+ * entries), and every other input surfaces byte-for-byte what today's mapping
+ * produces. A signal-killed spawn (exitCode null, signal non-null) is NOT a
+ * real non-zero exit code, so the hint is suppressed even under an explicit
+ * model — the bare-failure fallback (describeExit naming the signal) handles it.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -160,6 +164,13 @@ const attribution: ModelAttribution = {
   scope: 'project',
 };
 
+// The full hint text the mapper must thread into `blocker`/`message` for the
+// attributed argv-rejection signature (matches `modelAttributionHint` output).
+const HINT =
+  'The "apply" stage ran the "opencode" agent with model "zai/glm-5.2" ' +
+  'supplied by the project config. If this model id is invalid or not ' +
+  'available to this agent, correct the `agent` setting at that scope and resume.';
+
 describe('mapSessionToOutcome — attributed model-failure hint', () => {
   it('prepends the hint naming stage, agent, model, and scope above the stderr tail', () => {
     const outcome = mapSessionToOutcome(
@@ -180,9 +191,24 @@ describe('mapSessionToOutcome — attributed model-failure hint', () => {
     expect(outcome.detail!.indexOf('if this model id is invalid')).toBeLessThan(
       outcome.detail!.indexOf('error: unknown model id')
     );
-    // blocker/message are untouched by the hint.
-    expect(outcome.blocker).toBe('Agent exited with code 2 without reporting completion.');
-    expect(outcome.message).toBe('Agent failed during apply.');
+  });
+
+  it('threads the hint into `blocker` after the exit sentence and into `message` after the transition sentence', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: 2, stderr: 'error: unknown model id' }),
+        modelAttribution: attribution,
+      })
+    );
+    // `blocker` opens with today's exit sentence, then the hint.
+    expect(outcome.blocker).toBe(
+      `Agent exited with code 2 without reporting completion. ${HINT}`
+    );
+    // `message` opens with today's transition sentence, then the hint.
+    expect(outcome.message).toBe(`Agent failed during apply. ${HINT}`);
+    // `detail` shape is unchanged: hint above the stderr tail.
+    expect(outcome.detail).toBe(`${HINT}\n\nerror: unknown model id`);
   });
 
   it('names the batch manifest scope when the manifest supplied the spec', () => {
@@ -260,27 +286,49 @@ describe('mapSessionToOutcome — attribution gate (byte-for-byte today without 
     // No modelAttribution supplied → bare-name / no-scope path.
     const attributed = failedBaseline({ modelAttribution: undefined });
     const today = failedBaseline();
-    expect(attributed.detail).toBe(today.detail);
-    expect(attributed.blocker).toBe(today.blocker);
-    expect(attributed.message).toBe(today.message);
+    expect(attributed).toEqual(today);
+  });
+
+  it('a scope-less (standalone, attribution absent) failure surfaces byte-for-byte today', () => {
+    // Standalone verbs thread no agentStageScopes, so the engine builds no
+    // attribution → modelAttribution is undefined. The mapper's gate never
+    // fires and every field (blocker/message/detail) is today's shape.
+    const scopeLess = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: 2, stderr: 'error: unknown model id' }),
+        modelAttribution: undefined,
+      })
+    );
+    const today = failedBaseline();
+    expect(scopeLess).toEqual(today);
+    expect(scopeLess.blocker).not.toMatch(/if this model id is invalid/i);
+    expect(scopeLess.message).not.toMatch(/if this model id is invalid/i);
   });
 
   it('a failure with session journal progress surfaces unchanged (hint does not fire)', () => {
+    const progressedEntries: JournalEntry[] = [
+      { at: '', kind: 'progress', message: 'made some progress', change: 'add-login-api', transition: 'apply' },
+    ];
     const progressed = mapSessionToOutcome(
       input({
         transition: 'apply',
         spawn: spawn({ exitCode: 2, stderr: 'error: unknown model id' }),
-        sessionEntries: [
-          { at: '', kind: 'progress', message: 'made some progress', change: 'add-login-api', transition: 'apply' },
-        ],
+        sessionEntries: progressedEntries,
         sessionIndices: [0],
         modelAttribution: attribution,
       })
     );
-    const today = failedBaseline();
-    expect(progressed.detail).toBe(today.detail);
-    expect(progressed.blocker).toBe(today.blocker);
-    expect(progressed.message).toBe(today.message);
+    // Today's baseline: the same progressed failure WITHOUT threaded scopes.
+    const today = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: 2, stderr: 'error: unknown model id' }),
+        sessionEntries: progressedEntries,
+        sessionIndices: [0],
+      })
+    );
+    expect(progressed).toEqual(today);
   });
 
   it('a zero-exit failure surfaces unchanged', () => {
@@ -296,9 +344,7 @@ describe('mapSessionToOutcome — attribution gate (byte-for-byte today without 
     const today = mapSessionToOutcome(
       input({ transition: 'apply', spawn: spawn({ exitCode: 0, stderr: '' }) })
     );
-    expect(outcome.detail).toBe(today.detail);
-    expect(outcome.blocker).toBe(today.blocker);
-    expect(outcome.message).toBe(today.message);
+    expect(outcome).toEqual(today);
   });
 
   it('a reported blocker surfaces unchanged (blocker branch precedes failed)', () => {
@@ -355,5 +401,73 @@ describe('mapSessionToOutcome — attribution gate (byte-for-byte today without 
       })
     );
     expect(outcome).toEqual(today);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Signal-kill hint gate (features/signal-kill-hint-gate/signal-kill-hint-gate.feature).
+// The hint fires only on a REAL non-zero exit code (spawn.signal === null). A
+// signal-killed spawn (exitCode null, signal non-null) under a valid explicit
+// model surfaces its failure on every rendered surface WITHOUT the hint, while
+// the exit-code fast-failure (code 2, no signal) still carries the hint.
+// -----------------------------------------------------------------------------
+describe('mapSessionToOutcome — signal-kill hint gate', () => {
+  it('a signal-killed spawn under an explicit model surfaces blocked with NO hint and names the signal', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: null, signal: 'SIGKILL', stderr: 'killed' }),
+        modelAttribution: attribution,
+      })
+    );
+    expect(outcome.state).toBe('failed');
+    // No rendered surface carries the hint.
+    expect(outcome.detail).not.toMatch(/if this model id is invalid/i);
+    expect(outcome.blocker).not.toMatch(/if this model id is invalid/i);
+    expect(outcome.message).not.toMatch(/if this model id is invalid/i);
+    expect(outcome.detail).not.toMatch(/the .* config/i);
+    expect(outcome.blocker).not.toMatch(/the .* config/i);
+    expect(outcome.message).not.toMatch(/the .* config/i);
+    // The detail, blocker, and message name the signal that killed the agent.
+    expect(outcome.detail).toContain('killed');
+    expect(outcome.blocker).toMatch(/via signal SIGKILL/);
+    expect(outcome.blocker).toMatch(/exited via signal SIGKILL without reporting completion/);
+  });
+
+  it('the exit-code fast failure (code 2, no signal) still carries the hint', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: 2, stderr: 'error: unknown model id' }),
+        modelAttribution: attribution,
+      })
+    );
+    expect(outcome.state).toBe('failed');
+    expect(outcome.detail).toMatch(/if this model id is invalid/i);
+    expect(outcome.blocker).toBe(
+      `Agent exited with code 2 without reporting completion. ${HINT}`
+    );
+    expect(outcome.message).toBe(`Agent failed during apply. ${HINT}`);
+  });
+
+  it('a signal kill with modelAttribution undefined deep-equals today\'s scope-less signal-kill output', () => {
+    // The gate change touches only the hint sub-branch: a signal kill with no
+    // attribution maps byte-for-byte to today's scope-less signal-kill output.
+    const gated = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: null, signal: 'SIGKILL', stderr: 'killed' }),
+        modelAttribution: undefined,
+      })
+    );
+    const today = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: null, signal: 'SIGKILL', stderr: 'killed' }),
+      })
+    );
+    expect(gated).toEqual(today);
+    expect(gated.blocker).toMatch(/via signal SIGKILL/);
+    expect(gated.blocker).not.toMatch(/if this model id is invalid/i);
   });
 });

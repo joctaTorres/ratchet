@@ -46,7 +46,7 @@ import {
 import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
 import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
 import { makeRexRemoteRuntime } from './runtime/rex-remote-runtime.js';
-import { validateRemoteSettings, resolveAgentTimeoutMs, isPrGroupingActive } from '../config.js';
+import { validateRemoteSettings, resolveAgentTimeoutMs, isPrGroupingActive, uniformAgentScope } from '../config.js';
 import { makeStreamJsonRenderer } from './runtime/stream-json-renderer.js';
 import {
   buildAgentInstructions,
@@ -469,6 +469,7 @@ export class RatchetBatchEngine {
     const env: NodeJS.ProcessEnv = { ...process.env, RATCHET_BATCH_NAME: batch };
     let request;
     let emitsStreamJson = false;
+    let spec: AgentSpec | undefined;
     try {
       const built = this.buildSpawnRequest(
         { batch, change: key, settings: context.settings },
@@ -478,6 +479,7 @@ export class RatchetBatchEngine {
       );
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
+      spec = built.spec;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -490,6 +492,19 @@ export class RatchetBatchEngine {
       }
       throw err;
     }
+
+    // Build model-failure attribution only when the parsed spec explicitly named
+    // a model AND the context carries a uniform supplying scope across every
+    // stage. The decomposition spawn resolves via `scalarAgent` (a stage map
+    // never routes it), so its supplying scope is the single scope every stage
+    // agrees on (`uniformAgentScope`) — absent for a stage-map agent setting
+    // (which falls to the default agent with no model) and for scope-less
+    // standalone paths, so the mapper's gate keeps today's failure surface there.
+    const decomposeScope = uniformAgentScope(context.agentStageScopes);
+    const modelAttribution: ModelAttribution | undefined =
+      spec?.model !== undefined && decomposeScope !== undefined
+        ? { stage: 'decompose', agent: spec.agent, model: spec.model, scope: decomposeScope }
+        : undefined;
 
     // Snapshot the decomposition journal (keyed by phase) so we can isolate this
     // session's entries. The decomposition artifact is the `batch.yaml` edit the
@@ -512,6 +527,7 @@ export class RatchetBatchEngine {
       change: key,
       transition: 'decompose',
       parkForApproval: false,
+      modelAttribution,
       before,
       diskBefore: diskState,
       diskAfter: () => diskState,
@@ -625,6 +641,7 @@ export class RatchetBatchEngine {
     const env: NodeJS.ProcessEnv = { ...process.env, RATCHET_BATCH_NAME: batch };
     let request;
     let emitsStreamJson = false;
+    let spec: AgentSpec | undefined;
     try {
       // Route the PR step through the `pr` STAGE of the agent map, exactly as a
       // change step routes propose/apply/verify: a stage-map spawns the mapped
@@ -640,6 +657,7 @@ export class RatchetBatchEngine {
       );
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
+      spec = built.spec;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -652,6 +670,18 @@ export class RatchetBatchEngine {
       }
       throw err;
     }
+
+    // Build model-failure attribution only when the parsed spec explicitly named
+    // a model AND the context carries a supplying scope for the `pr` stage. The
+    // PR spawn routes via the `pr` stage (exactly as a change step routes its
+    // transition), so its supplying scope is `agentStageScopes.pr` — absent for a
+    // bare-name spec, a stage-map that does not name `pr`, and scope-less
+    // standalone paths, so the mapper's gate keeps today's failure surface there.
+    const prScope = context.agentStageScopes?.pr;
+    const modelAttribution: ModelAttribution | undefined =
+      spec?.model !== undefined && prScope !== undefined
+        ? { stage: 'pr', agent: spec.agent, model: spec.model, scope: prScope }
+        : undefined;
 
     // Snapshot the PR journal (keyed by batch) so we can isolate this session's
     // entries. There is no change directory for a PR step, so — like the
@@ -670,6 +700,7 @@ export class RatchetBatchEngine {
       change: key,
       transition: 'pr',
       parkForApproval: false,
+      modelAttribution,
       before,
       diskBefore: diskState,
       diskAfter: () => diskState,

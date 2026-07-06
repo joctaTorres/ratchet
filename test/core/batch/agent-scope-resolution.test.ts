@@ -17,6 +17,7 @@ import { AGENT_STAGE_KEYS } from '../../../src/core/batch/agent-setting.js';
 import {
   resolveAgentSetting,
   resolveAgentStageScopes,
+  uniformAgentScope,
 } from '../../../src/core/batch/config.js';
 import type { SettingSource } from '../../../src/core/batch/config.js';
 import type { AgentSetting, AgentStage, AgentStageMap } from '../../../src/core/batch/agent-setting.js';
@@ -230,6 +231,69 @@ describe('resolveAgentStageScopes', () => {
         }
       });
     }
+  });
+});
+
+/**
+ * Unit tests for `uniformAgentScope` — the stage-less scalar-resolution sibling
+ * of `resolveAgentStageScopes` used by the decomposition spawn (which resolves
+ * via `scalarAgent`, so a stage map never routes it). Implements the
+ * "uniform supplying scope is derived only when every stage agrees" scenario of
+ * features/pr-decompose-stage-attribution/decompose-stage-attribution.feature.
+ *
+ * Pure in-memory: returns the single scope when every AGENT_STAGE_KEYS entry is
+ * present and identical; mixed, partial, empty, and `undefined` maps resolve to
+ * `undefined`.
+ */
+describe('uniformAgentScope', () => {
+  it('returns the scope when every stage names the same scope', () => {
+    const scopes: Partial<Record<AgentStage, SettingSource>> = {};
+    for (const stage of ALL_STAGES) scopes[stage] = 'project';
+    expect(uniformAgentScope(scopes)).toBe('project');
+  });
+
+  it('returns the manifest scope when every stage names the manifest scope', () => {
+    const scopes: Partial<Record<AgentStage, SettingSource>> = {};
+    for (const stage of ALL_STAGES) scopes[stage] = 'manifest';
+    expect(uniformAgentScope(scopes)).toBe('manifest');
+  });
+
+  it('returns undefined for a mixed map (stages disagree)', () => {
+    const scopes: Partial<Record<AgentStage, SettingSource>> = {
+      propose: 'project',
+      apply: 'manifest',
+      verify: 'project',
+      pr: 'project',
+    };
+    expect(uniformAgentScope(scopes)).toBeUndefined();
+  });
+
+  it('returns undefined for a partial map (a stage is absent)', () => {
+    const scopes: Partial<Record<AgentStage, SettingSource>> = {
+      propose: 'project',
+      apply: 'project',
+      // verify absent
+      pr: 'project',
+    };
+    expect(uniformAgentScope(scopes)).toBeUndefined();
+  });
+
+  it('returns undefined for an empty map', () => {
+    expect(uniformAgentScope({})).toBeUndefined();
+  });
+
+  it('returns undefined when the scopes map is undefined', () => {
+    expect(uniformAgentScope(undefined)).toBeUndefined();
+  });
+
+  it('returns undefined when a single stage differs from an otherwise-uniform map', () => {
+    const scopes: Partial<Record<AgentStage, SettingSource>> = {
+      propose: 'project',
+      apply: 'project',
+      verify: 'project',
+      pr: 'manifest',
+    };
+    expect(uniformAgentScope(scopes)).toBeUndefined();
   });
 });
 

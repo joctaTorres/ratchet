@@ -104,11 +104,19 @@ export interface MapOutcomeInput {
   /** Pre-computed on-disk change state before/after the session. */
   diskEvidence: DiskEvidence;
   /**
-   * Model-failure attribution, consulted in exactly one branch: a non-zero exit
-   * without a completion AND zero session journal entries (the argv-rejection
+   * Model-failure attribution, consulted in exactly one branch: a real
+   * non-zero exit code (spawn.signal === null, not a signal kill) without a
+   * completion AND zero session journal entries (the argv-rejection
    * signature). When present there, the outcome's `detail` opens with the
-   * attribution hint above the truncated stderr tail. Every other branch and
-   * every absent attribution surfaces byte-for-byte today's output.
+   * attribution hint above the truncated stderr tail, and `blocker`/`message`
+   * carry the hint too — so every rendered surface that prints `blocker`/
+   * `message` (the non-JSON `batch apply` blocked line, the parked-step reason
+   * shown on resume, the journal entry message, the standalone change-step
+   * renderer) surfaces the hint. Every other branch and every absent
+   * attribution surfaces byte-for-byte today's output. A signal-killed spawn
+   * (e.g. a `timeout` SIGKILL) under a valid explicit model is NOT a real exit
+   * code, so the hint is suppressed there even with zero journal entries — the
+   * bare-failure fallback (describeExit naming the signal) handles it.
    */
   modelAttribution?: ModelAttribution;
 }
@@ -177,19 +185,28 @@ export function mapSessionToOutcome(input: MapOutcomeInput): EngineStepOutcome {
     // explicitly named a model (attribution present) AND the agent wrote zero
     // journal entries during the session (the argv-rejection signature — an
     // agent that made any journal progress got past argv parsing, so the hint
-    // would mislead), the detail opens with the stage/agent/model/scope hint
-    // above the stderr tail. `blocker`/`message` are untouched even when the
-    // hint fires, and every other input surfaces byte-for-byte today's output.
-    if (input.modelAttribution && sessionEntries.length === 0) {
+    // would mislead) AND the spawn exited with a real non-zero exit code
+    // (spawn.signal === null — a signal-killed agent, e.g. a `timeout` SIGKILL,
+    // was killed externally; its model was likely valid and the hint would
+    // misdirect the operator), the hint is threaded into `detail`, `blocker`,
+    // and `message`. Every human-facing surface prints `blocker`/`message` (the
+    // non-JSON `batch apply` blocked line, the parked-step reason shown on
+    // resume, the journal entry message, the standalone change-step renderer),
+    // so threading the hint into those two fields reaches every rendered
+    // surface without any renderer edits. `detail` keeps today's shape (hint
+    // above the stderr tail) for `--json` consumers. No other branch is
+    // touched: bare-name, progressed, scope-less, signal-killed, and zero-exit
+    // failures render byte-for-byte today's output.
+    if (input.modelAttribution && sessionEntries.length === 0 && spawn.signal === null) {
       const hint = modelAttributionHint(input.modelAttribution);
       return {
         state: 'failed',
         change,
         transition,
         detail: stderrTail ? `${hint}\n\n${stderrTail}` : hint,
-        blocker: `Agent exited ${describeExit(spawn)} without reporting completion.`,
+        blocker: `Agent exited ${describeExit(spawn)} without reporting completion. ${hint}`,
         journalRefs: sessionIndices,
-        message: `Agent failed during ${transition}.`,
+        message: `Agent failed during ${transition}. ${hint}`,
       };
     }
     return {

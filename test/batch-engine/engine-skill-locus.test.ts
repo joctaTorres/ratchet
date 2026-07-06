@@ -185,6 +185,62 @@ describe('engine — a render failure blocks before any spawn', () => {
  * as a synthetic agent with no command surface. The model part is irrelevant to
  * the locus guarantee; only the agent part selects the command adapter.
  */
+/**
+ * Implements: features/standalone-agent-flag/engine-structured-failure.feature
+ * Scenario: the engine maps the wrapped spec failure to a structured failed step.
+ *
+ * A change step whose settings carry a malformed agent spec (one that slipped
+ * past upstream validation) yields a structured `failed` step with a blocker
+ * naming the offending spec — never a raw `Error` escaping `runChangeStep` —
+ * and ZERO spawn attempts. The engine's existing `SkillLocusError` catch blocks
+ * map the wrapped throw to a resumable, journaled `failed` step with no code
+ * change; this test pins that mapping at the engine seam.
+ */
+describe('engine — a malformed agent spec maps to a structured failed step with no spawn (engine-structured-failure.feature)', () => {
+  it('a malformed scalar "claude:" yields a failed step naming the spec, no raw escape, zero spawns', async () => {
+    const rec = recordingRuntime();
+    const printed: string[] = [];
+    const engine = new RatchetBatchEngine({
+      runtime: rec.runtime,
+      projectRoot: () => projectRoot,
+      printLine: (l) => printed.push(l),
+    });
+
+    const result = await engine.runChangeStep(
+      context({ settings: settings({ agent: 'claude:' }) })
+    );
+
+    // Structured `failed` step (mapped to `blocked` resumable by the outcome
+    // channel), never a raw Error escaping runChangeStep.
+    expect(result.state).toBe('blocked');
+    const surfaced = (result.message ?? '') + '\n' + printed.join('\n');
+    expect(surfaced).toContain('claude:'); // names the offending spec
+    expect(surfaced).toMatch(/not spawned/i); // states the agent is NOT spawned
+    // ZERO spawn attempts — the guarantee ran before the spawn request was built.
+    expect(rec.calls).toBe(0);
+  });
+
+  it('a malformed stage-map value {apply: "claude:"} yields a failed step naming the spec for that stage', async () => {
+    const rec = recordingRuntime();
+    const printed: string[] = [];
+    const engine = new RatchetBatchEngine({
+      runtime: rec.runtime,
+      projectRoot: () => projectRoot,
+      printLine: (l) => printed.push(l),
+    });
+
+    const result = await engine.runChangeStep(
+      context({ settings: settings({ agent: { apply: 'claude:' } }) })
+    );
+
+    expect(result.state).toBe('blocked');
+    const surfaced = (result.message ?? '') + '\n' + printed.join('\n');
+    expect(surfaced).toContain('claude:');
+    expect(surfaced).toMatch(/not spawned/i);
+    expect(rec.calls).toBe(0);
+  });
+});
+
 describe('engine — spawn-locus guarantee resolves the command adapter by the agent part (engine-spec-parsing.feature)', () => {
   it('a spec-form stage value resolves the mapped command adapter (claude:fable)', async () => {
     const rec = recordingRuntime();

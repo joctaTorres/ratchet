@@ -209,7 +209,7 @@ export async function batchApplyCommand(
   // author that phase's concrete change intents into batch.yaml, then return. The
   // next apply selects the new changes as ordinary propose/apply/verify steps.
   if (target.kind === 'decompose') {
-    await runDecomposition(projectRoot, batch, engine, status, target.phase, settings, options);
+    await runDecomposition(projectRoot, batch, engine, status, target.phase, settings, agentStageScopes, options);
     return;
   }
 
@@ -241,12 +241,13 @@ export async function batchApplyCommand(
         target.phase,
         target.boundary,
         settings,
+        agentStageScopes,
         branches.baseBranch,
         deps.groupBranch ?? ((boundary) => boundary.groupId),
         options
       );
     } else {
-      await runPr(projectRoot, batch, engine, target.phase, settings, branches, options);
+      await runPr(projectRoot, batch, engine, target.phase, settings, agentStageScopes, branches, options);
     }
     return;
   }
@@ -278,7 +279,7 @@ export async function batchApplyCommand(
     settings,
     // Thread the per-stage supplying scopes so a fast failure under an explicit
     // model can attribute the stage's spec to its supplying scope (project config
-    // vs batch manifest). Left undefined for the decompose/PR/standalone paths.
+    // vs batch manifest). Left undefined for the standalone paths only.
     agentStageScopes,
     journal: readJournalForChange(projectRoot, batch, change),
     resume: parked
@@ -573,6 +574,7 @@ async function runDecomposition(
   status: BatchStatusInfo,
   phase: Phase,
   settings: ResolvedStepContext['settings'],
+  agentStageScopes: ResolvedStepContext['agentStageScopes'],
   options: BatchApplyOptions
 ): Promise<void> {
   // A decomposition has no change; its journal/park state is keyed by the phase.
@@ -590,6 +592,10 @@ async function runDecomposition(
     },
     priorResults: priorPhaseResults(status, phase.name),
     settings,
+    // Thread the per-stage supplying scopes so a fast-failing decompose spawn
+    // under an explicit scalar model can attribute its uniform supplying scope
+    // (project config vs batch manifest). The standalone paths thread no scopes.
+    agentStageScopes,
     // Thread the resolved resume answer/feedback exactly as a change step does
     // (W1): a parked decomposition that the user answered must carry that answer
     // into the spawned instructions, not silently drop it on resume.
@@ -656,6 +662,7 @@ async function runPr(
   engine: RatchetBatchEngine,
   phase: Phase,
   settings: ResolvedStepContext['settings'],
+  agentStageScopes: ResolvedStepContext['agentStageScopes'],
   branches: ResolvedBranches,
   options: BatchApplyOptions
 ): Promise<void> {
@@ -673,6 +680,10 @@ async function runPr(
       proofOfWork: phase.proofOfWork,
     },
     settings,
+    // Thread the per-stage supplying scopes so a fast-failing PR spawn under an
+    // explicit per-stage model can attribute the `pr` stage's supplying scope
+    // (project config vs batch manifest). The standalone paths thread no scopes.
+    agentStageScopes,
     baseBranch: branches.baseBranch,
     workBranch: branches.workBranch,
     // Thread the resolved resume answer/feedback exactly as a change or
@@ -718,6 +729,7 @@ async function runStackedPr(
   phase: Phase,
   boundary: PrGroupBoundary,
   settings: ResolvedStepContext['settings'],
+  agentStageScopes: ResolvedStepContext['agentStageScopes'],
   batchBaseBranch: string,
   groupBranch: (boundary: PrGroupBoundary, index: number) => string,
   options: BatchApplyOptions
@@ -755,6 +767,11 @@ async function runStackedPr(
       proofOfWork: phase.proofOfWork,
     },
     settings,
+    // Thread the per-stage supplying scopes so a fast-failing stacked PR spawn
+    // under an explicit per-stage model can attribute the `pr` stage's supplying
+    // scope (project config vs batch manifest). The standalone paths thread no
+    // scopes.
+    agentStageScopes,
     baseBranch: base.baseBranch,
     workBranch: base.headBranch,
     boundary,

@@ -142,6 +142,18 @@ export interface DecompositionStepContext {
   priorResults: PriorPhaseResult[];
   settings: BatchSettings;
   /**
+   * Per-stage supplying scope for the resolved `agent` setting, threaded from
+   * {@link resolveBatchSettings} (via `batchApplyCommand`). The decomposition
+   * spawn resolves via `scalarAgent` — a stage map never routes it — so its
+   * supplying scope is the uniform scope across every stage
+   * ({@link uniformAgentScope}). When present and the parsed spec names a
+   * model, the engine builds a model-failure attribution naming that scope so a
+   * fast-failing decompose spawn under an explicit scalar model surfaces the
+   * same attributed hint a change step gets. Left undefined by the standalone
+   * paths (no scope present → the mapper's gate keeps today's failure surface).
+   */
+  agentStageScopes?: Partial<Record<AgentStage, SettingSource>>;
+  /**
    * Resume context when the decomposition step was parked (W1). Mirrors a change
    * step's `resume`: when the user answered a blocker (or rejected with feedback),
    * the resolved text rides along as a trailing argument of the decompose-phase
@@ -170,6 +182,18 @@ export interface PrStepContext {
   /** The terminal phase framing surfaced in the PR agent's instructions. */
   phase: StepPhase;
   settings: BatchSettings;
+  /**
+   * Per-stage supplying scope for the resolved `agent` setting, threaded from
+   * {@link resolveBatchSettings} (via `batchApplyCommand`). The PR spawn routes
+   * via the `pr` STAGE of the agent map (exactly as a change step routes
+   * propose/apply/verify), so its supplying scope is `agentStageScopes.pr`.
+   * When present and the parsed spec names a model, the engine builds a
+   * model-failure attribution naming that scope so a fast-failing PR spawn
+   * under an explicit per-stage model surfaces the same attributed hint a
+   * change step gets. Left undefined by the standalone paths (no scope present
+   * → the mapper's gate keeps today's failure surface).
+   */
+  agentStageScopes?: Partial<Record<AgentStage, SettingSource>>;
   /** Resume context when the PR step was parked. */
   resume?: StepResume;
   /** The base branch the PR targets — resolved upstream, delivered as data. */

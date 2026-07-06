@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -344,6 +344,48 @@ describe('validateSetting', () => {
     const blank = validateSetting('image', '   ');
     expect(blank.ok).toBe(false);
   });
+
+  // -------------------------------------------------------------------------
+  // `agent` write-path validation (write-path-validation.feature): the write
+  // path validates through the SAME shared schema the loaders use
+  // (AgentSettingSchema's superRefine routes every string position through
+  // parseAgentSpec), so it can never persist what the loader rejects.
+  // -------------------------------------------------------------------------
+  describe('agent spec validation (write path)', () => {
+    it.each(['claude:', ':fable', 'claude: opus', 'claude :m', 'claude:-flag'])(
+      'rejects malformed scalar %j naming the value',
+      (value) => {
+        const result = validateSetting('agent', value);
+        expect(result.ok).toBe(false);
+        expect(result.error).toContain(value);
+      }
+    );
+
+    it('rejects a malformed per-stage entry in an inline map naming the stage and value', () => {
+      const result = validateSetting('agent', "{apply: 'claude:'}");
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('apply');
+      expect(result.error).toContain('claude:');
+    });
+
+    it('accepts a valid scalar spec', () => {
+      const result = validateSetting('agent', 'opencode:zai/glm-5.2');
+      expect(result.ok).toBe(true);
+      expect(result.parsedValue).toBe('opencode:zai/glm-5.2');
+    });
+
+    it('accepts a bare agent name', () => {
+      const result = validateSetting('agent', 'claude');
+      expect(result.ok).toBe(true);
+      expect(result.parsedValue).toBe('claude');
+    });
+
+    it('accepts a valid inline stage map and returns a parsed map', () => {
+      const result = validateSetting('agent', "{apply: opencode, verify: 'claude:fable'}");
+      expect(result.ok).toBe(true);
+      expect(result.parsedValue).toEqual({ apply: 'opencode', verify: 'claude:fable' });
+    });
+  });
 });
 
 describe('setProjectBatchSetting', () => {
@@ -393,6 +435,66 @@ describe('setProjectBatchSetting', () => {
     // YAML reads a numeric string back as a number.
     expect(parsed.batch.port).toBe(8123);
     expect(parsed.batch.authToken).toBe('tok');
+  });
+
+  // -------------------------------------------------------------------------
+  // `agent` write-path (write-path-validation.feature): a malformed agent
+  // value leaves the config file byte-for-byte unchanged; a valid inline map
+  // persists as a real YAML map the loader round-trips with no warning; a
+  // valid scalar persists as a plain string.
+  // -------------------------------------------------------------------------
+  it('leaves the config file byte-for-byte unchanged when agent=claude: is rejected', async () => {
+    const original = 'schema: ratchet\nbatch:\n  gate: after-propose\n';
+    await writeConfig(original);
+    const result = setProjectBatchSetting(projectRoot, 'agent', 'claude:');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('claude:');
+    const after = readFileSync(
+      path.join(projectRoot, '.ratchet', 'config.yaml'),
+      'utf-8'
+    );
+    expect(after).toBe(original);
+  });
+
+  it('persists a valid inline stage map as a real YAML map the loader round-trips with no warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await writeConfig('schema: ratchet\n');
+      const result = setProjectBatchSetting(
+        projectRoot,
+        'agent',
+        "{apply: opencode, verify: 'claude:fable'}"
+      );
+      expect(result.ok).toBe(true);
+      const parsed = parseYaml(
+        readFileSync(path.join(projectRoot, '.ratchet', 'config.yaml'), 'utf-8')
+      );
+      // Persisted as a real map, not a quoted string.
+      expect(parsed.batch.agent).toEqual({ apply: 'opencode', verify: 'claude:fable' });
+      expect(typeof parsed.batch.agent).toBe('object');
+      // The loader round-trips it with no warning.
+      const { readProjectConfig } = await import('../../../src/core/project-config.js');
+      const loaded = readProjectConfig(projectRoot);
+      expect(loaded?.batch?.agent).toEqual({
+        apply: 'opencode',
+        verify: 'claude:fable',
+      });
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("Invalid 'batch")
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('persists a valid scalar agent as a plain string', async () => {
+    await writeConfig('schema: ratchet\n');
+    const result = setProjectBatchSetting(projectRoot, 'agent', 'opencode:zai/glm-5.2');
+    expect(result.ok).toBe(true);
+    const parsed = parseYaml(
+      readFileSync(path.join(projectRoot, '.ratchet', 'config.yaml'), 'utf-8')
+    );
+    expect(parsed.batch.agent).toBe('opencode:zai/glm-5.2');
   });
 });
 

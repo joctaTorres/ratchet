@@ -108,4 +108,32 @@ describe('proposeCommand', () => {
     expect(printed.state).toBe('advanced');
     expect(printed.change).toBe('add-login');
   });
+
+  /**
+   * Implements: features/standalone-agent-flag/fail-before-spawn.feature
+   * Scenario Outline: a malformed --agent value fails the standalone verb
+   * naming the value with no spawn.
+   *
+   * A malformed `--agent` value (`claude:`) is rejected by settings resolution
+   * (`resolveChangeStepSettings` → `validateSetting` → `AgentSettingSchema` →
+   * `parseAgentSpec`) with an actionable error naming the offending value
+   * BEFORE any spawn — matching the src/commands/apply.ts "actionable error"
+   * contract (a plain Error with a message naming the value, thrown before any
+   * settings mutation or spawn). The injected spawn seam is never invoked.
+   */
+  it('rejects a malformed --agent "claude:" with an actionable error naming the value BEFORE any spawn', async () => {
+    const spawner = vi.fn<Parameters<Spawner>, ReturnType<Spawner>>();
+
+    await expect(
+      proposeCommand(
+        'Add login',
+        { agent: 'claude:' },
+        { projectRoot: () => fixture.root, spawner }
+      )
+    ).rejects.toThrow(/claude:/);
+
+    // The spawn seam is NEVER invoked — settings resolution threw before any
+    // spawn request was built.
+    expect(spawner).not.toHaveBeenCalled();
+  });
 });

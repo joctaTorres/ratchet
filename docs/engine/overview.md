@@ -544,15 +544,34 @@ entries the agent wrote during the session and the process exit status:
 2. A `completion` journal entry under an `after-propose` gate → `awaiting-approval`.
 3. A `completion` journal entry → `advanced`.
 4. Non-zero exit without a `completion` → `failed` (surfaces as `blocked`).
-   When the transition's resolved spec explicitly named a model AND the agent
-   wrote zero journal entries during the session (the argv-rejection
-   signature), the failure `detail` opens with a model-failure attribution
-   hint — naming the stage, agent, exact model string, and supplying scope
-   (the project config vs the batch manifest), phrased as "if this model id
-   is invalid…" guidance above the captured stderr tail. The hint never
-   interprets stderr content and never diagnoses; `blocker`/`message` are
-   untouched. A bare-name spec, a scope-less (standalone) path, or a failure
-   after journal progress surfaces byte-for-byte today's output.
+   When the transition's (or batch-driven pr / phase-decomposition step's)
+   resolved spec explicitly named a model AND the agent wrote zero journal
+   entries during the session (the argv-rejection signature) AND the spawn
+   exited with a real non-zero exit code (`signal === null`, not a signal
+   kill), the failure carries a model-failure attribution hint — naming the
+   stage, agent, exact model string, and supplying scope (the project config
+   vs the batch manifest), phrased as "if this model id is invalid…"
+   guidance. The hint opens the `detail` field above the captured stderr tail
+   (for `--json` consumers) AND is threaded into the surfaced
+   `blocker`/`message` fields, so every human-facing rendered surface that
+   prints them carries it: the non-JSON `batch apply` blocked line, the
+   parked-step reason shown on resume, the journal entry message recorded for
+   the transition, and the standalone change-step renderer. The `pr` stage
+   spawn is attributed via its `pr` stage entry's supplying scope; the
+   phase-decomposition spawn (which resolves via the scalar `agent` setting,
+   never a stage map) is attributed via the uniform supplying scope across
+   every stage. The hint never interprets stderr content and never diagnoses.
+   A signal-killed spawn (e.g. a `timeout` SIGKILL, OOM kill — `exitCode:
+   null, signal: 'SIGKILL'`) under a valid explicit model is NOT a real exit
+   code, so the hint is suppressed there even with zero journal entries; the
+   bare-failure fallback (`describeExit` naming the signal, stderr tail
+   intact) surfaces the failure on every rendered surface without the hint,
+   so an externally killed agent under a perfectly valid model never
+   misdirects the operator into "fixing" a model id that was never the
+   problem. A bare-name spec, a stage-map-driven decompose spawn (default
+   agent, no model), a scope-less (standalone) path, or a failure after
+   journal progress surfaces byte-for-byte today's output — only the
+   argv-rejection attribution branch changes.
 5. Zero exit without a `completion` → `blocked`; on-disk evidence (plan.md
    appeared, task checkboxes advanced) is surfaced in the message but the step
    **never auto-advances** on unreported work.

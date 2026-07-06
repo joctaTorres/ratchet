@@ -47,6 +47,18 @@ over these values; both are overridden by flags passed to individual commands.
 
 Scalar settings (all keys except `permissions`) are nearest-wins across scopes.
 
+### Invalid batch key load behavior
+
+The `batch:` section is parsed **per-key** (resilient): each present key is
+validated independently, so a malformed key (e.g. `agent: "claude:"`) is
+dropped with a warning naming the key path (`batch.agent`, or
+`batch.agent.apply` for a malformed per-stage map entry) and the offending
+value, while valid sibling settings (e.g. `gate`, `locus`, `permissions`) are
+preserved instead of being silently reverted to defaults. The secret
+`authToken` is never echoed — its warning names the key only. A fully valid
+section loads warning-free and value-identical. Unknown keys are ignored
+(the schema is `.partial()`, not `.strict()`).
+
 ### Gate and orchestration
 
 | Key | Type | Default | Accepted values | Description |
@@ -153,6 +165,19 @@ agent stays a resolution/spawn-time concern (`UnknownAgentError` in
 (`:fable`, `:`) or **empty model part** (`claude:`, `:`) is rejected at config
 load with a message naming the offending value, e.g. `Invalid agent spec
 ":fable": empty agent part (expected "agent[:model]")`.
+
+A spec whose agent part or model part has **leading or trailing whitespace**
+is likewise rejected at config load, naming the offending value and which part
+is at fault — e.g. `Invalid agent spec "claude: opus": model part " opus" has
+leading or trailing whitespace (expected "agent[:model]")` (and `" claude"`,
+`"claude "`, `"claude :m"`, `"claude: "` the same way). The parser rejects
+rather than auto-trims: silently trimming `"claude: opus"` would repair the
+value but hide the config defect. A model part **starting with `-`** is also
+rejected — e.g. `Invalid agent spec "claude:-flag": model part "-flag" must
+not start with "-" (expected "agent[:model]")` — so a flag-shaped token like
+`claude:--dangerously-skip-permissions` never rides into a spawned agent's argv
+as an option. Interior dashes stay valid (`codex:gpt-5.2-codex`), as do models
+containing `/` or `:`.
 
 The schema validates but does not transform: stored values remain whole spec
 strings, so the cross-scope nearest-wins per-stage merge moves agent and model

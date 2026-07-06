@@ -151,6 +151,61 @@ describe('parseAgentSpec', () => {
   it('rejects an empty spec string identifying the empty agent part', () => {
     expect(() => parseAgentSpec('')).toThrow('empty agent part');
   });
+
+  it.each<[spec: string, part: 'agent' | 'model']>([
+    ['claude: opus', 'model'],
+    ['claude :m', 'agent'],
+    [' claude:opus', 'agent'],
+    ['claude:opus ', 'model'],
+    ['claude: ', 'model'],
+  ])('rejects %j naming the full spec and the whitespace-bearing %s part', (spec, part) => {
+    try {
+      parseAgentSpec(spec);
+      throw new Error(`expected parseAgentSpec(${JSON.stringify(spec)}) to throw`);
+    } catch (err) {
+      const message = (err as Error).message;
+      expect(message).toContain(spec);
+      expect(message).toContain('leading or trailing whitespace');
+      expect(message).toContain(`${part} part`);
+    }
+  });
+
+  it.each([' claude', 'claude '])(
+    'rejects bare agent name "%s" with whitespace naming the offending part',
+    (spec) => {
+      try {
+        parseAgentSpec(spec);
+        throw new Error(`expected parseAgentSpec(${JSON.stringify(spec)}) to throw`);
+      } catch (err) {
+        const message = (err as Error).message;
+        expect(message).toContain(spec);
+        expect(message).toContain('leading or trailing whitespace');
+        expect(message).toContain('agent part');
+      }
+    }
+  );
+
+  it.each([
+    'claude:-flag',
+    'claude:--dangerously-skip-permissions',
+  ])('rejects "%s" naming the value and identifying the model part as starting with "-"', (spec) => {
+    try {
+      parseAgentSpec(spec);
+      throw new Error(`expected parseAgentSpec(${JSON.stringify(spec)}) to throw`);
+    } catch (err) {
+      const message = (err as Error).message;
+      expect(message).toContain(spec);
+      expect(message).toContain('must not start with "-"');
+      expect(message).toContain('model part');
+    }
+  });
+
+  it('keeps an interior dash in a model part valid (codex:gpt-5.2-codex)', () => {
+    expect(parseAgentSpec('codex:gpt-5.2-codex')).toEqual({
+      agent: 'codex',
+      model: 'gpt-5.2-codex',
+    });
+  });
 });
 
 // Schema validation of the `agent[:model]` spec at every string position.
@@ -198,6 +253,43 @@ describe.each(scopes)('agent[:model] spec at $name scope', ({ parse }) => {
     if (!result.success) {
       const message = result.error.issues.map((i) => i.message).join('\n');
       expect(message).toContain(':fable');
+    }
+  });
+
+  it.each(['claude: opus', 'claude:-flag'])(
+    'surfaces the parser hygiene message for scalar "%s" at this scope naming the value',
+    (spec) => {
+      const result = parse(spec);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const message = result.error.issues.map((i) => i.message).join('\n');
+        expect(message).toContain(spec);
+      }
+    }
+  );
+
+  it('surfaces the parser hygiene message for a stage-map value at path "apply" naming the value', () => {
+    const result = parse({ apply: 'claude :m' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const applyIssue = result.error.issues.find((i) => i.path.includes('apply'));
+      expect(applyIssue).toBeDefined();
+      expect(applyIssue?.message).toContain('claude :m');
+    }
+  });
+
+  it.each<[spec: string, agent: string, model: string | undefined]>([
+    ['claude', 'claude', undefined],
+    ['claude:fable', 'claude', 'fable'],
+    ['opencode:zai/glm-5.2', 'opencode', 'zai/glm-5.2'],
+    ['codex:vendor:tagged-1', 'codex', 'vendor:tagged-1'],
+  ])('keeps previously-valid spec %j parsing byte-for-byte unchanged', (spec, agent, model) => {
+    const parsed = parseAgentSpec(spec);
+    if (model === undefined) {
+      expect(parsed).toEqual({ agent });
+      expect(parsed).not.toHaveProperty('model');
+    } else {
+      expect(parsed).toEqual({ agent, model });
     }
   });
 });

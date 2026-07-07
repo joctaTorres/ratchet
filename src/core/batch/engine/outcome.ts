@@ -155,6 +155,51 @@ function truncate(text: string, max = 2000): string {
   return trimmed.length > max ? trimmed.slice(0, max) + '… (truncated)' : trimmed;
 }
 
+/**
+ * Build the outcome for a non-zero exit WITHOUT a completion — the failed step.
+ *
+ * Attribution enriches EXACTLY this failure shape: when the parsed spec
+ * explicitly named a model (attribution present) AND the agent wrote zero
+ * journal entries during the session (the argv-rejection signature — an agent
+ * that made any journal progress got past argv parsing, so the hint would
+ * mislead) AND the spawn exited with a real non-zero exit code (spawn.signal ===
+ * null — a signal-killed agent, e.g. a `timeout` SIGKILL, was killed externally;
+ * its model was likely valid and the hint would misdirect the operator), the
+ * hint is threaded into `detail`, `blocker`, and `message`. Every human-facing
+ * surface prints `blocker`/`message` (the non-JSON `batch apply` blocked line,
+ * the parked-step reason shown on resume, the journal entry message, the
+ * standalone change-step renderer), so threading the hint into those two fields
+ * reaches every rendered surface without any renderer edits. `detail` keeps
+ * today's shape (hint above the stderr tail) for `--json` consumers. No other
+ * branch is touched: bare-name, progressed, scope-less, signal-killed, and
+ * zero-exit failures render byte-for-byte today's output.
+ */
+function buildNonZeroExitFailure(input: MapOutcomeInput): EngineStepOutcome {
+  const { change, transition, sessionEntries, sessionIndices, spawn } = input;
+  const stderrTail = truncate(spawn.stderr || spawn.stdout || '');
+  if (input.modelAttribution && sessionEntries.length === 0 && spawn.signal === null) {
+    const hint = modelAttributionHint(input.modelAttribution);
+    return {
+      state: 'failed',
+      change,
+      transition,
+      detail: stderrTail ? `${hint}\n\n${stderrTail}` : hint,
+      blocker: `Agent exited ${describeExit(spawn)} without reporting completion. ${hint}`,
+      journalRefs: sessionIndices,
+      message: `Agent failed during ${transition}. ${hint}`,
+    };
+  }
+  return {
+    state: 'failed',
+    change,
+    transition,
+    detail: stderrTail,
+    blocker: `Agent exited ${describeExit(spawn)} without reporting completion.`,
+    journalRefs: sessionIndices,
+    message: `Agent failed during ${transition}.`,
+  };
+}
+
 export function mapSessionToOutcome(input: MapOutcomeInput): EngineStepOutcome {
   const { change, transition, sessionEntries, sessionIndices, spawn } = input;
 
@@ -179,45 +224,9 @@ export function mapSessionToOutcome(input: MapOutcomeInput): EngineStepOutcome {
 
   // Non-zero exit WITHOUT a completion report is a failed step. State stays
   // consistent: the CLI parks it (failed -> blocked) and the batch is resumable.
+  // The attribution-enriched vs. plain-failure split lives in one helper.
   if (nonZero && !completion) {
-    const stderrTail = truncate(spawn.stderr || spawn.stdout || '');
-    // Attribution enriches EXACTLY this failure shape: when the parsed spec
-    // explicitly named a model (attribution present) AND the agent wrote zero
-    // journal entries during the session (the argv-rejection signature — an
-    // agent that made any journal progress got past argv parsing, so the hint
-    // would mislead) AND the spawn exited with a real non-zero exit code
-    // (spawn.signal === null — a signal-killed agent, e.g. a `timeout` SIGKILL,
-    // was killed externally; its model was likely valid and the hint would
-    // misdirect the operator), the hint is threaded into `detail`, `blocker`,
-    // and `message`. Every human-facing surface prints `blocker`/`message` (the
-    // non-JSON `batch apply` blocked line, the parked-step reason shown on
-    // resume, the journal entry message, the standalone change-step renderer),
-    // so threading the hint into those two fields reaches every rendered
-    // surface without any renderer edits. `detail` keeps today's shape (hint
-    // above the stderr tail) for `--json` consumers. No other branch is
-    // touched: bare-name, progressed, scope-less, signal-killed, and zero-exit
-    // failures render byte-for-byte today's output.
-    if (input.modelAttribution && sessionEntries.length === 0 && spawn.signal === null) {
-      const hint = modelAttributionHint(input.modelAttribution);
-      return {
-        state: 'failed',
-        change,
-        transition,
-        detail: stderrTail ? `${hint}\n\n${stderrTail}` : hint,
-        blocker: `Agent exited ${describeExit(spawn)} without reporting completion. ${hint}`,
-        journalRefs: sessionIndices,
-        message: `Agent failed during ${transition}. ${hint}`,
-      };
-    }
-    return {
-      state: 'failed',
-      change,
-      transition,
-      detail: stderrTail,
-      blocker: `Agent exited ${describeExit(spawn)} without reporting completion.`,
-      journalRefs: sessionIndices,
-      message: `Agent failed during ${transition}.`,
-    };
+    return buildNonZeroExitFailure(input);
   }
 
   if (completion) {

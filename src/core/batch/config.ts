@@ -745,6 +745,96 @@ export interface SetResult {
 }
 
 /**
+ * Per-key validation/serialization for settings whose CLI string needs a shape
+ * check beyond the generic {@link ALLOWED_VALUES} enum gate and/or a typed
+ * storage form. Both the write path ({@link validateSetting}) and the persist
+ * path ({@link setProjectBatchSetting}) read this ONE table, so a new persisted
+ * key adds a single entry here instead of a branch in each function.
+ */
+interface SettingCodec {
+  /**
+   * Shape validation beyond the enum gate. Returns a {@link SetResult} to
+   * short-circuit `validateSetting` — an error, or (for `agent`) the success
+   * result carrying the typed `parsedValue`. Returns `undefined` to accept the
+   * value and fall through to the generic success.
+   */
+  validate?: (value: string, key: keyof BatchSettings) => SetResult | undefined;
+  /**
+   * Map an accepted CLI string to its persisted YAML value (mirroring the real
+   * schema type so the loader round-trips it without warning). Absent means the
+   * raw string is persisted verbatim.
+   */
+  serialize?: (value: string, validation: SetResult) => unknown;
+}
+
+const SETTING_CODECS: Partial<Record<keyof BatchSettings, SettingCodec>> = {
+  // A free-form `image` must be a non-empty reference — an empty value is
+  // rejected before any container is started so the project config is left
+  // unchanged (see features/container-locus/configurable-image.feature).
+  image: {
+    validate: (value) =>
+      value.trim().length === 0
+        ? {
+            ok: false,
+            error: `Invalid value for 'image': the container image reference must not be empty.`,
+          }
+        : undefined,
+  },
+  // The remote-locus `host`/`authToken` each require a non-empty value, rejected
+  // before the project config is written (see features/remote-locus/config-and-validation).
+  host: {
+    validate: (value, key) =>
+      value.trim().length === 0
+        ? { ok: false, error: `Invalid value for '${key}': it must not be empty.` }
+        : undefined,
+  },
+  authToken: {
+    validate: (value, key) =>
+      value.trim().length === 0
+        ? { ok: false, error: `Invalid value for '${key}': it must not be empty.` }
+        : undefined,
+  },
+  // `port` and `agentTimeoutMs` are positive integers, rejected before the config
+  // is written and persisted with their real numeric type (a quoted string would
+  // be rejected by the manifest/project-config schemas on read).
+  port: {
+    validate: (value, key) =>
+      !isValidPort(value)
+        ? {
+            ok: false,
+            error: `Invalid value for '${key}': it must be a positive integer (got '${value}').`,
+          }
+        : undefined,
+    serialize: (value) => Number(value.trim()),
+  },
+  agentTimeoutMs: {
+    validate: (value, key) =>
+      !isValidPort(value)
+        ? {
+            ok: false,
+            error: `Invalid value for '${key}': it must be a positive integer (got '${value}').`,
+          }
+        : undefined,
+    serialize: (value) => Number(value.trim()),
+  },
+  // `insecure` is a boolean in the schema, so persist its real type.
+  insecure: {
+    serialize: (value) => value.trim() === 'true',
+  },
+  // The `agent` key is validated through the SAME shared schema the loaders use
+  // (AgentSettingSchema's superRefine routes every string position through
+  // parseAgentSpec), so the write path can never persist what the loader
+  // rejects. On success the typed value is carried via `parsedValue`; a
+  // `{`-prefixed inline stage map is persisted as a real YAML map (not a quoted
+  // string), mirroring how `port`/`insecure` persist their real types.
+  agent: {
+    validate: (value) => validateAgentSetting(value),
+    serialize: (value, validation) =>
+      validation.parsedValue !== undefined ? validation.parsedValue : value,
+  },
+};
+
+/**
  * Validate a `key=value` setting against the allowed enum values AND, for the
  * `agent` key, against the shared `AgentSettingSchema` (whose `superRefine`
  * routes every string position through `parseAgentSpec`). The write path and
@@ -773,53 +863,15 @@ export function validateSetting(key: string, value: string): SetResult {
     };
   }
 
-  // A free-form `image` must be a non-empty reference — an empty value is
-  // rejected before any container is started so the project config is left
-  // unchanged (see features/container-locus/configurable-image.feature).
-  if (key === 'image' && value.trim().length === 0) {
-    return {
-      ok: false,
-      error: `Invalid value for 'image': the container image reference must not be empty.`,
-    };
-  }
+  // Per-key shape validation lives in the codec table so validate and persist
+  // never diverge. A codec that returns a SetResult short-circuits here (an
+  // error, or the `agent` success carrying `parsedValue`); `undefined` falls
+  // through to the generic success below.
+  const typedKey = key as keyof BatchSettings;
+  const codecResult = SETTING_CODECS[typedKey]?.validate?.(value, typedKey);
+  if (codecResult) return codecResult;
 
-  // The remote-locus settings each have a shape constraint, rejected before the
-  // project config is written (see features/remote-locus/config-and-validation).
-  if ((key === 'host' || key === 'authToken') && value.trim().length === 0) {
-    return {
-      ok: false,
-      error: `Invalid value for '${key}': it must not be empty.`,
-    };
-  }
-  if (key === 'port' && !isValidPort(value)) {
-    return {
-      ok: false,
-      error: `Invalid value for 'port': it must be a positive integer (got '${value}').`,
-    };
-  }
-  // `agentTimeoutMs` is a positive integer (milliseconds), validated like `port`
-  // so a malformed value is rejected before the project config is written.
-  if (key === 'agentTimeoutMs' && !isValidPort(value)) {
-    return {
-      ok: false,
-      error: `Invalid value for 'agentTimeoutMs': it must be a positive integer (got '${value}').`,
-    };
-  }
-
-  // The `agent` key is validated through the SAME shared schema the loaders use
-  // (AgentSettingSchema's superRefine routes every string position through
-  // parseAgentSpec), so the write path can never persist what the loader
-  // rejects. A value starting (after trim) with `{` is parsed as a YAML flow
-  // map and validated as a stage map (per-stage entries checked); any other
-  // value is validated as a scalar spec string. On success the typed value is
-  // carried back via `parsedValue` so the persist step writes a real map (not
-  // a quoted string) for map input, mirroring how `port`/`insecure` persist
-  // their real types.
-  if (key === 'agent') {
-    return validateAgentSetting(value);
-  }
-
-  return { ok: true, key: key as keyof BatchSettings, value };
+  return { ok: true, key: typedKey, value };
 }
 
 /**
@@ -991,22 +1043,12 @@ export function setProjectBatchSetting(
     string,
     unknown
   >;
-  // `port` is a number and `insecure` is a boolean in the schema, so persist
-  // them with their real type (a quoted string would be rejected by the
-  // manifest/project-config schemas on read).
-  if (key === 'port' || key === 'agentTimeoutMs') {
-    batch[key] = Number(value.trim());
-  } else if (key === 'insecure') {
-    batch[key] = value.trim() === 'true';
-  } else if (key === 'agent' && validation.parsedValue !== undefined) {
-    // A map-typed `agent` (from a `{`-prefixed inline stage map) is persisted as
-    // a real YAML map, not a quoted string — mirroring how `port`/`insecure`
-    // persist their real types so the loader round-trips the value with no
-    // warning. A scalar spec stays a plain string.
-    batch[key] = validation.parsedValue;
-  } else {
-    batch[key] = value;
-  }
+  // Persist through the SAME codec table `validateSetting` used, so a key's
+  // storage form (numeric `port`/`agentTimeoutMs`, boolean `insecure`, real-map
+  // `agent`) is defined in one place. Keys with no `serialize` persist the raw
+  // string verbatim.
+  const codec = SETTING_CODECS[key as keyof BatchSettings];
+  batch[key] = codec?.serialize ? codec.serialize(value, validation) : value;
   raw.batch = batch;
 
   writeFileSync(filePath, stringifyYaml(raw), 'utf-8');

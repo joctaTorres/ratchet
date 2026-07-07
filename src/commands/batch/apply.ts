@@ -161,16 +161,69 @@ export async function batchApplyCommand(
 
   // Resolve the PR steps' gating inputs ONCE, at the single command seam that
   // already performs config/journal reads, and hand them to the pure
-  // `pickNextStep` selector as data (`instruction-fed-config`): the resolved
-  // `prGrouping` mode, whether a whole-batch PR-open completion is already
-  // journaled (the one home of that done-rule, `hasJournaledPr`), and the set of
-  // per-group PR keys already recorded — the `change` of every `completion`
-  // entry with `transition: 'pr'`, exactly what `hasJournaledPrForGroup` matches,
-  // so the CLI gate and the engine's per-group resume precondition agree by
-  // construction. The selector reads neither config nor the journal itself.
-  const journal = readJournalTolerant(projectRoot, batch);
-  const prContext = {
-    grouping: settings.prGrouping,
+  // `pickNextStep` selector as data (see `buildPrContext`).
+  const prContext = buildPrContext(readJournalTolerant(projectRoot, batch), settings.prGrouping);
+
+  // Find the next ready, ungated step.
+  const target = pickNextStep(status, manifest.phases, recordedProofPhases, prContext);
+  if (!target) {
+    renderNoTarget(status, manifest.phases, proofByPhase, options);
+    return;
+  }
+
+  const ctx: ApplyDispatchContext = {
+    projectRoot,
+    batch,
+    engine,
+    manifestPhases: manifest.phases,
+    settings,
+    agentStageScopes,
+    options,
+    deps,
+  };
+
+  // The non-change kinds (decompose / boundary or terminal proof / PR) each route
+  // to their own engine entry point; a `change` target drives `engine.runStep`.
+  if (target.kind !== 'change') {
+    await dispatchNonChangeTarget(target, ctx, status);
+    return;
+  }
+
+  await runChangeTarget(target, ctx);
+}
+
+/**
+ * The shared inputs the per-step-kind dispatch helpers consume — assembled once
+ * in `batchApplyCommand` and threaded through so each handler routes its target
+ * to the right engine entry point without re-resolving config/journal state.
+ */
+interface ApplyDispatchContext {
+  projectRoot: string;
+  batch: string;
+  engine: RatchetBatchEngine;
+  manifestPhases: Phase[];
+  settings: ResolvedStepContext['settings'];
+  agentStageScopes: ResolvedStepContext['agentStageScopes'];
+  options: BatchApplyOptions;
+  deps: BatchApplyDeps;
+}
+
+/**
+ * Assemble the PR steps' gating inputs for the pure `pickNextStep` selector
+ * (`instruction-fed-config`): the resolved `prGrouping` mode, whether a
+ * whole-batch PR-open completion is already journaled (the one home of that
+ * done-rule, `hasJournaledPr`), and the set of per-group PR keys already recorded
+ * — the `change` of every `completion` entry with `transition: 'pr'`, exactly
+ * what `hasJournaledPrForGroup` matches, so the CLI gate and the engine's
+ * per-group resume precondition agree by construction. The selector reads neither
+ * config nor the journal itself.
+ */
+function buildPrContext(
+  journal: ReturnType<typeof readJournalTolerant>,
+  grouping: PrGrouping
+): { grouping: PrGrouping; alreadyOpened: boolean; openedGroupKeys: Set<string> } {
+  return {
+    grouping,
     alreadyOpened: hasJournaledPr(journal),
     openedGroupKeys: new Set(
       journal
@@ -178,80 +231,131 @@ export async function batchApplyCommand(
         .map((e) => e.change)
     ),
   };
+}
 
-  // Find the next ready, ungated step.
-  const target = pickNextStep(status, manifest.phases, recordedProofPhases, prContext);
-  if (!target) {
-    // When nothing is runnable because a phase is held shut by the prior phase's
-    // failing `hard-gate` proof, cite that proof (the same gate `computeBatchStatus`
-    // derived) instead of the generic "everything is gated" message. The terminal
-    // phase's failing proof gates no successor (there is none), so it is cited
-    // separately: it is what holds the batch out of `done`.
-    const proofBlock =
-      proofBlockReason(status, proofByPhase) ??
-      terminalProofBlockReason(status, manifest.phases, proofByPhase);
-    const text =
-      status.status === 'done'
-        ? chalk.green('Nothing to do — all changes are done.')
-        : proofBlock
-          ? chalk.red(`No ready step — blocked by ${proofBlock}`)
-          : chalk.dim('No ready step. Everything is blocked, gated, or parked.');
-    if (options.json) {
-      console.log(JSON.stringify({ state: 'nothing-ready', message: text }, null, 2));
-    } else {
-      console.log(text);
-    }
-    return;
+/**
+ * Render the no-runnable-step outcome. When nothing is runnable because a phase is
+ * held shut by the prior phase's failing `hard-gate` proof, cite that proof (the
+ * same gate `computeBatchStatus` derived) instead of the generic "everything is
+ * gated" message. The terminal phase's failing proof gates no successor (there is
+ * none), so it is cited separately: it is what holds the batch out of `done`.
+ */
+function renderNoTarget(
+  status: BatchStatusInfo,
+  manifestPhases: Phase[],
+  proofByPhase: ReadonlyMap<string, ProofOfWorkRecord>,
+  options: BatchApplyOptions
+): void {
+  const proofBlock =
+    proofBlockReason(status, proofByPhase) ??
+    terminalProofBlockReason(status, manifestPhases, proofByPhase);
+  const text =
+    status.status === 'done'
+      ? chalk.green('Nothing to do — all changes are done.')
+      : proofBlock
+        ? chalk.red(`No ready step — blocked by ${proofBlock}`)
+        : chalk.dim('No ready step. Everything is blocked, gated, or parked.');
+  if (options.json) {
+    console.log(JSON.stringify({ state: 'nothing-ready', message: text }, null, 2));
+  } else {
+    console.log(text);
   }
+}
 
-  // A reachable, ungated phase whose `changes` are still empty is a decomposition
-  // step: spawn ONE agent (delegating to the canonical decomposition skill) to
-  // author that phase's concrete change intents into batch.yaml, then return. The
-  // next apply selects the new changes as ordinary propose/apply/verify steps.
-  if (target.kind === 'decompose') {
-    await runDecomposition(projectRoot, batch, engine, status, target.phase, settings, agentStageScopes, options);
-    return;
-  }
-
-  // A `proof-of-work` target is the prior phase's boundary check: run that
-  // phase's configured proof-of-work once, journal the verdict, and return. The
-  // next apply consults the recorded verdict: a passing proof advances into the
-  // phase with work, while a failing `hard-gate` proof keeps that phase blocked
-  // (the gate `computeBatchStatus` derives from the record).
-  if (target.kind === 'proof-of-work') {
-    await runProofAtBoundary(projectRoot, batch, target.phase, settings, options, deps.proof);
-    return;
-  }
-
-  // A `pr` target is a PR-open step for a batch that is otherwise done: resolve
-  // the branches (the CLI's job — git only, no forge CLI) and hand them to the
-  // engine's `runPrStep` as data, then persist and render the outcome through the
-  // same paths a change step uses. Routed by `boundary`: present → a fired
-  // stacked group boundary (`per-phase`/`per-change`, `runStackedPr`), absent →
-  // the whole-batch completion PR (`runPr`, unchanged). Mirrors the `decompose` /
-  // `proof-of-work` routing above.
-  if (target.kind === 'pr') {
-    const branches = (deps.branches ?? resolveBranches)(projectRoot);
-    if (target.boundary) {
-      await runStackedPr(
-        projectRoot,
-        batch,
-        engine,
-        manifest.phases,
+/**
+ * Route a non-`change` target to its engine entry point, mirroring the previous
+ * inline `if (target.kind === …)` chain exactly:
+ *
+ *   - `decompose`      → spawn ONE agent that authors the empty phase's concrete
+ *                        change intents into batch.yaml (`runDecomposition`).
+ *   - `proof-of-work`  → run that phase's configured boundary proof once and
+ *                        journal the verdict (`runProofAtBoundary`).
+ *   - `pr`             → resolve the branches (the CLI's job — git only, no forge
+ *                        CLI) and open the PR (`runPrTarget`).
+ */
+async function dispatchNonChangeTarget(
+  target: Exclude<ApplyTarget, { kind: 'change' }>,
+  ctx: ApplyDispatchContext,
+  status: BatchStatusInfo
+): Promise<void> {
+  switch (target.kind) {
+    case 'decompose':
+      await runDecomposition(
+        ctx.projectRoot,
+        ctx.batch,
+        ctx.engine,
+        status,
         target.phase,
-        target.boundary,
-        settings,
-        agentStageScopes,
-        branches.baseBranch,
-        deps.groupBranch ?? ((boundary) => boundary.groupId),
-        options
+        ctx.settings,
+        ctx.agentStageScopes,
+        ctx.options
       );
-    } else {
-      await runPr(projectRoot, batch, engine, target.phase, settings, agentStageScopes, branches, options);
-    }
-    return;
+      return;
+    case 'proof-of-work':
+      await runProofAtBoundary(
+        ctx.projectRoot,
+        ctx.batch,
+        target.phase,
+        ctx.settings,
+        ctx.options,
+        ctx.deps.proof
+      );
+      return;
+    case 'pr':
+      await runPrTarget(target, ctx);
+      return;
   }
+}
 
+/**
+ * Drive a `pr` target: resolve the work/base branches (git only, no forge CLI)
+ * and route by `boundary` — present → a fired stacked group boundary
+ * (`per-phase`/`per-change`, `runStackedPr`), absent → the whole-batch completion
+ * PR (`runPr`, unchanged).
+ */
+async function runPrTarget(
+  target: Extract<ApplyTarget, { kind: 'pr' }>,
+  ctx: ApplyDispatchContext
+): Promise<void> {
+  const branches = (ctx.deps.branches ?? resolveBranches)(ctx.projectRoot);
+  if (target.boundary) {
+    await runStackedPr(
+      ctx.projectRoot,
+      ctx.batch,
+      ctx.engine,
+      ctx.manifestPhases,
+      target.phase,
+      target.boundary,
+      ctx.settings,
+      ctx.agentStageScopes,
+      branches.baseBranch,
+      ctx.deps.groupBranch ?? ((boundary) => boundary.groupId),
+      ctx.options
+    );
+  } else {
+    await runPr(
+      ctx.projectRoot,
+      ctx.batch,
+      ctx.engine,
+      target.phase,
+      ctx.settings,
+      ctx.agentStageScopes,
+      branches,
+      ctx.options
+    );
+  }
+}
+
+/**
+ * Drive a `change` target through `engine.runStep`: honor a halt on the change's
+ * park, build the `ResolvedStepContext`, run the step, then persist and render the
+ * outcome. The prior inline change-step body, unchanged.
+ */
+async function runChangeTarget(
+  target: Extract<ApplyTarget, { kind: 'change' }>,
+  ctx: ApplyDispatchContext
+): Promise<void> {
+  const { projectRoot, batch, engine, manifestPhases, settings, agentStageScopes, options } = ctx;
   const { phase, change, changeDone } = target;
 
   // Respect halts: a parked step does not advance until input is recorded.
@@ -296,7 +400,7 @@ export async function batchApplyCommand(
 
   persistStepOutcome(projectRoot, batch, change, result);
 
-  renderResult(projectRoot, batch, manifest.phases, result, options);
+  renderResult(projectRoot, batch, manifestPhases, result, options);
 }
 
 /**

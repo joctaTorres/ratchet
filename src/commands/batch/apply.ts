@@ -369,6 +369,40 @@ export function pickNextStep(
     openedGroupKeys?: ReadonlySet<string>;
   }
 ): ApplyTarget | undefined {
+  // The selection order is load-bearing: change/boundary-proof → decompose →
+  // terminal proof → whole-batch PR tail → stacked PR tail. Each selector returns
+  // its target or `undefined`, and the first non-undefined wins (short-circuit
+  // `??`), byte-identical to the previous single sequential body.
+  return (
+    selectChangeOrBoundaryProof(status, manifestPhases, recordedProofPhases) ??
+    selectDecomposeStep(status, manifestPhases, recordedProofPhases) ??
+    selectTerminalProofStep(status, manifestPhases) ??
+    selectWholeBatchPrStep(status, manifestPhases, prContext) ??
+    selectStackedPrStep(status, manifestPhases, prContext)
+  );
+}
+
+/**
+ * The resolved PR gating inputs `pickNextStep` consumes as data — the same shape
+ * the public selector accepts inline. Extracted so the per-branch selector
+ * helpers share one type; `pickNextStep`'s public signature is unchanged.
+ */
+interface PickPrContext {
+  grouping: PrGrouping;
+  alreadyOpened: boolean;
+  openedGroupKeys?: ReadonlySet<string>;
+}
+
+/**
+ * First branch: the first ungated phase's first runnable change (`ready` /
+ * `in-progress` / `awaiting-verify`), preceded by its immediately-preceding
+ * phase's one-time boundary proof-of-work.
+ */
+function selectChangeOrBoundaryProof(
+  status: BatchStatusInfo,
+  manifestPhases: Phase[],
+  recordedProofPhases: ReadonlySet<string>
+): ApplyTarget | undefined {
   for (let i = 0; i < status.phases.length; i++) {
     const phaseStatus = status.phases[i];
     if (phaseStatus.gated) continue;
@@ -399,56 +433,78 @@ export function pickNextStep(
       }
     }
   }
+  return undefined;
+}
 
-  // No runnable change anywhere. A reachable, ungated phase with empty `changes`
-  // is the outstanding decomposition step (`computeBatchStatus` already ordered
-  // change-before-decompose and gated-after-ungated, so `next.decompose` is set
-  // only when this is genuinely next).
-  if (status.next?.decompose && status.next.phase) {
-    const phase = manifestPhases.find((p) => p.name === status.next!.phase);
-    if (phase) {
-      // Boundary before decomposition (S4): the phase about to be decomposed is
-      // entered off its predecessor's shipped slice, so the predecessor's
-      // boundary proof must run FIRST — exactly as it does before a change step.
-      // If the immediately-preceding phase is done, has a configured
-      // proof-of-work, and has not been recorded yet, run that proof before the
-      // decompose step (the next apply, with the proof recorded, decomposes).
-      const phaseIndex = status.phases.findIndex((p) => p.name === phase.name);
-      if (phaseIndex > 0) {
-        const predStatus = status.phases[phaseIndex - 1];
-        const predecessor = manifestPhases.find((p) => p.name === predStatus.name);
-        if (
-          predecessor &&
-          predStatus.status === 'done' &&
-          predecessor.proofOfWork &&
-          !recordedProofPhases.has(predecessor.name)
-        ) {
-          return { kind: 'proof-of-work', phase: predecessor };
-        }
-      }
-      return { kind: 'decompose', phase };
+/**
+ * Second branch: a reachable, ungated phase with empty `changes` is the
+ * outstanding decomposition step (`computeBatchStatus` already ordered
+ * change-before-decompose and gated-after-ungated, so `next.decompose` is set
+ * only when this is genuinely next), preceded by its predecessor's boundary proof.
+ */
+function selectDecomposeStep(
+  status: BatchStatusInfo,
+  manifestPhases: Phase[],
+  recordedProofPhases: ReadonlySet<string>
+): ApplyTarget | undefined {
+  if (!(status.next?.decompose && status.next.phase)) return undefined;
+  const phase = manifestPhases.find((p) => p.name === status.next!.phase);
+  if (!phase) return undefined;
+  // Boundary before decomposition (S4): the phase about to be decomposed is
+  // entered off its predecessor's shipped slice, so the predecessor's boundary
+  // proof must run FIRST — exactly as it does before a change step. If the
+  // immediately-preceding phase is done, has a configured proof-of-work, and has
+  // not been recorded yet, run that proof before the decompose step (the next
+  // apply, with the proof recorded, decomposes).
+  const phaseIndex = status.phases.findIndex((p) => p.name === phase.name);
+  if (phaseIndex > 0) {
+    const predStatus = status.phases[phaseIndex - 1];
+    const predecessor = manifestPhases.find((p) => p.name === predStatus.name);
+    if (
+      predecessor &&
+      predStatus.status === 'done' &&
+      predecessor.proofOfWork &&
+      !recordedProofPhases.has(predecessor.name)
+    ) {
+      return { kind: 'proof-of-work', phase: predecessor };
     }
   }
+  return { kind: 'decompose', phase };
+}
 
-  // Terminal-phase boundary proof (C2): once every change is done and nothing is
-  // left to decompose, `computeBatchStatus` surfaces the LAST phase's unrun proof
-  // as `next.proof`. The last phase has no successor, so its boundary proof is
-  // never triggered by entering a later phase; selecting it here is what runs and
-  // records it, and the batch is not `done` until that record is satisfied.
-  if (status.next?.proof && status.next.phase) {
-    const phase = manifestPhases.find((p) => p.name === status.next!.phase);
-    if (phase) return { kind: 'proof-of-work', phase };
-  }
+/**
+ * Third branch: the terminal-phase boundary proof (C2). Once every change is done
+ * and nothing is left to decompose, `computeBatchStatus` surfaces the LAST phase's
+ * unrun proof as `next.proof`. The last phase has no successor, so its boundary
+ * proof is never triggered by entering a later phase; selecting it here is what
+ * runs and records it, and the batch is not `done` until that record is satisfied.
+ */
+function selectTerminalProofStep(
+  status: BatchStatusInfo,
+  manifestPhases: Phase[]
+): ApplyTarget | undefined {
+  if (!(status.next?.proof && status.next.phase)) return undefined;
+  const phase = manifestPhases.find((p) => p.name === status.next!.phase);
+  if (phase) return { kind: 'proof-of-work', phase };
+  return undefined;
+}
 
-  // Completion PR step: reached only after every branch above (change → decompose
-  // → boundary proof → terminal proof) has declined, so it fires at genuine batch
-  // completion — `status.status === 'done'` means every change is done AND the
-  // terminal boundary proof is recorded and passed (the PR opens strictly AFTER
-  // the terminal proof). Gated in the CLI so `off`/unset and an already-opened PR
-  // surface NO target: `pickNextStep` returns `undefined` and the existing
-  // terminal "Nothing to do — all changes are done." output is byte-identical. The
-  // gating inputs are passed in as data; this selector reads neither config nor the
-  // journal. The terminal phase frames the PR agent's instructions.
+/**
+ * Fourth branch: the whole-batch completion PR. Reached only after every branch
+ * above has declined, so it fires at genuine batch completion — `status.status
+ * === 'done'` means every change is done AND the terminal boundary proof is
+ * recorded and passed (the PR opens strictly AFTER the terminal proof). Gated in
+ * the CLI so `off`/unset and an already-opened PR surface NO target: returns
+ * `undefined` and the existing terminal "Nothing to do — all changes are done."
+ * output is byte-identical. The gating inputs are passed in as data; this selector
+ * reads neither config nor the journal. The terminal phase frames the PR agent's
+ * instructions.
+ */
+function selectWholeBatchPrStep(
+  status: BatchStatusInfo,
+  manifestPhases: Phase[],
+  prContext?: PickPrContext
+): ApplyTarget | undefined {
   if (
     status.status === 'done' &&
     prContext?.grouping === 'whole-batch' &&
@@ -457,16 +513,25 @@ export function pickNextStep(
     const terminalPhase = manifestPhases[manifestPhases.length - 1];
     if (terminalPhase) return { kind: 'pr', phase: terminalPhase };
   }
+  return undefined;
+}
 
-  // Stacked PR tail: reached only at genuine batch completion under a STACKED
-  // grouping mode (`per-phase`/`per-change`) — a separate, mode-guarded branch, so
-  // the `off`/unset terminal and the whole-batch tail above stay byte-identical.
-  // Derive the ordered group boundaries from the manifest (the single home of
-  // "where the groups are") and surface a `pr` target for the FIRST boundary whose
-  // per-group PR key is not yet recorded; each subsequent apply opens the next
-  // group, so a resumed loop opens every group exactly once, in boundary order.
-  // The gating inputs (mode + recorded keys) arrive as data — this selector still
-  // reads neither config nor the journal.
+/**
+ * Fifth branch: the stacked PR tail. Reached only at genuine batch completion
+ * under a STACKED grouping mode (`per-phase`/`per-change`) — a separate,
+ * mode-guarded branch, so the `off`/unset terminal and the whole-batch tail stay
+ * byte-identical. Derive the ordered group boundaries from the manifest (the
+ * single home of "where the groups are") and surface a `pr` target for the FIRST
+ * boundary whose per-group PR key is not yet recorded; each subsequent apply opens
+ * the next group, so a resumed loop opens every group exactly once, in boundary
+ * order. The gating inputs (mode + recorded keys) arrive as data — this selector
+ * still reads neither config nor the journal.
+ */
+function selectStackedPrStep(
+  status: BatchStatusInfo,
+  manifestPhases: Phase[],
+  prContext?: PickPrContext
+): ApplyTarget | undefined {
   if (
     status.status === 'done' &&
     (prContext?.grouping === 'per-phase' || prContext?.grouping === 'per-change')

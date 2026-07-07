@@ -484,30 +484,12 @@ export function resolveBatchSettings(
 export function resolveAgentSetting(
   layers: { scope: SettingSource; agent: AgentSetting | undefined }[]
 ): { agent: BatchSettings['agent']; source: SettingSource | undefined } {
-  let base: string | undefined;
-  let stages: Partial<Record<AgentStage, string>> = {};
-  let mapContributed = false;
-  let source: SettingSource | undefined;
-
-  for (const { scope, agent } of layers) {
-    if (agent === undefined) continue;
-    source = scope;
-    if (typeof agent === 'string') {
-      // A scalar covers every stage: it overrides any lower-scope per-stage
-      // overrides and resets the accumulated partial map (nearest-wins).
-      base = agent;
-      stages = {};
-      mapContributed = false;
-    } else {
-      // A map merges its entries over what's accumulated (nearer stage wins),
-      // leaving a lower scalar `base` in place for stages it does not name.
-      for (const stage of AGENT_STAGE_KEYS) {
-        const mapped = agent[stage];
-        if (mapped !== undefined) stages[stage] = mapped;
-      }
-      mapContributed = true;
-    }
-  }
+  // Fold recording the agent SPEC STRING at each position (scalar `base` and each
+  // named map stage), then materialize the resolved value.
+  const { base, stages, mapContributed, source } = foldAgentLayers(
+    layers,
+    (_scope, value) => value
+  );
 
   if (source === undefined) return { agent: undefined, source: undefined };
   if (!mapContributed) return { agent: base, source };
@@ -521,6 +503,64 @@ export function resolveAgentSetting(
     return { agent: full, source };
   }
   return { agent: { ...stages }, source };
+}
+
+/**
+ * The accumulated result of {@link foldAgentLayers}: the nearest scalar layer's
+ * recorded value (`base`), an accumulating partial per-stage map (`stages`),
+ * whether any map contributed after the last scalar (`mapContributed`), and the
+ * nearest scope that contributed anything (`source`).
+ */
+interface AgentLayerFold<T> {
+  base: T | undefined;
+  stages: Partial<Record<AgentStage, T>>;
+  mapContributed: boolean;
+  source: SettingSource | undefined;
+}
+
+/**
+ * The shared scalar-resets / map-merges-per-stage fold over the `agent` layers
+ * (ordered low→high precedence) that both {@link resolveAgentSetting} and
+ * {@link resolveAgentStageScopes} consume. It runs the identical nearest-wins
+ * merge but is parameterized over WHAT each layer records at a string position
+ * via `select`: `resolveAgentSetting` records the spec string itself; the scope
+ * sibling records the supplying scope. This keeps the two consumers' merge
+ * semantics provably identical (the agreement invariant is asserted in tests).
+ *
+ *   - a **scalar** layer sets `base` (to `select(scope, spec)`) and resets the
+ *     accumulated per-stage map — a scalar covers every stage, overriding any
+ *     lower-scope per-stage overrides (nearest-wins);
+ *   - a **map** layer records `select(scope, mapped)` for each stage it names (a
+ *     nearer stage wins), leaving a lower `base` in place for unnamed stages.
+ *
+ * Pure over in-memory layers; each consumer does its own final materialization.
+ */
+function foldAgentLayers<T>(
+  layers: { scope: SettingSource; agent: AgentSetting | undefined }[],
+  select: (scope: SettingSource, value: string) => T
+): AgentLayerFold<T> {
+  let base: T | undefined;
+  let stages: Partial<Record<AgentStage, T>> = {};
+  let mapContributed = false;
+  let source: SettingSource | undefined;
+
+  for (const { scope, agent } of layers) {
+    if (agent === undefined) continue;
+    source = scope;
+    if (typeof agent === 'string') {
+      base = select(scope, agent);
+      stages = {};
+      mapContributed = false;
+    } else {
+      for (const stage of AGENT_STAGE_KEYS) {
+        const mapped = agent[stage];
+        if (mapped !== undefined) stages[stage] = select(scope, mapped);
+      }
+      mapContributed = true;
+    }
+  }
+
+  return { base, stages, mapContributed, source };
 }
 
 /**
@@ -548,27 +588,13 @@ export function resolveAgentSetting(
 export function resolveAgentStageScopes(
   layers: { scope: SettingSource; agent: AgentSetting | undefined }[]
 ): Partial<Record<AgentStage, SettingSource>> {
-  let baseScope: SettingSource | undefined;
-  let stageScopes: Partial<Record<AgentStage, SettingSource>> = {};
-  let mapContributed = false;
-
-  for (const { scope, agent } of layers) {
-    if (agent === undefined) continue;
-    if (typeof agent === 'string') {
-      // A scalar covers every stage: it overrides any lower-scope per-stage
-      // attributions and resets the accumulated partial map (nearest-wins).
-      baseScope = scope;
-      stageScopes = {};
-      mapContributed = false;
-    } else {
-      // A map records its own scope for each stage it names (nearer stage wins).
-      for (const stage of AGENT_STAGE_KEYS) {
-        const mapped = agent[stage];
-        if (mapped !== undefined) stageScopes[stage] = scope;
-      }
-      mapContributed = true;
-    }
-  }
+  // Same fold as the merge, but recording each position's SUPPLYING SCOPE instead
+  // of the spec string (the `select` ignores the value and records the scope).
+  const {
+    base: baseScope,
+    stages: stageScopes,
+    mapContributed,
+  } = foldAgentLayers(layers, (scope) => scope);
 
   // No layer contributed anything: no attribution for any stage.
   if (baseScope === undefined && !mapContributed) return {};

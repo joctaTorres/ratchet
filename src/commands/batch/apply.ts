@@ -29,7 +29,7 @@ import {
   type ProofOfWorkResult,
   type RunProofOfWorkDeps,
 } from '../../core/batch/engine/index.js';
-import type { BatchStatusInfo } from '../../core/batch/status.js';
+import type { BatchStatusInfo, ChangeStatus } from '../../core/batch/status.js';
 // The two pure stacked-grouping policies are imported from their own modules —
 // not the engine index — so they stay the single home of boundary/stacking rules
 // even where tests mock the engine entry points.
@@ -498,6 +498,50 @@ interface PickPrContext {
 }
 
 /**
+ * The change statuses whose next step is runnable by the change branch. `ready`
+ * and `in-progress` are self-evident; `awaiting-verify` is selectable because its
+ * runnable next step is the verify gate, which must run before the change can be
+ * done (the engine derives `verify` via `computeNextTransition`) — skipping it
+ * would strand verify.
+ */
+const RUNNABLE_STATUSES: ReadonlySet<ChangeStatus> = new Set<ChangeStatus>([
+  'ready',
+  'in-progress',
+  'awaiting-verify',
+]);
+
+/**
+ * The immediately-preceding phase's one-time boundary proof-of-work, or
+ * `undefined` when there is no such pending proof. Shared by the change and
+ * decompose branches, which pass DIFFERENT gates via `requireDoneWithProof`:
+ *
+ * - `false` (change branch): returns the predecessor whenever it exists and its
+ *   proof has not been recorded yet. The predecessor is `done` (else this phase
+ *   would be gated), so the boundary is real without re-checking status/proof.
+ * - `true` (decompose branch): additionally requires the predecessor to be
+ *   `done` AND to have a configured `proofOfWork` before it is returned.
+ *
+ * In both cases `predStatus` is the `status.phases` entry immediately before the
+ * target phase (`undefined` when the target is first), and a missing manifest
+ * predecessor or an already-recorded proof yields `undefined`.
+ */
+function pendingBoundaryProof(
+  predStatus: BatchStatusInfo['phases'][number] | undefined,
+  manifestPhases: Phase[],
+  recordedProofPhases: ReadonlySet<string>,
+  requireDoneWithProof: boolean
+): Phase | undefined {
+  if (!predStatus) return undefined;
+  const predecessor = manifestPhases.find((p) => p.name === predStatus.name);
+  if (!predecessor) return undefined;
+  if (recordedProofPhases.has(predecessor.name)) return undefined;
+  if (requireDoneWithProof && !(predStatus.status === 'done' && predecessor.proofOfWork)) {
+    return undefined;
+  }
+  return predecessor;
+}
+
+/**
  * First branch: the first ungated phase's first runnable change (`ready` /
  * `in-progress` / `awaiting-verify`), preceded by its immediately-preceding
  * phase's one-time boundary proof-of-work.
@@ -513,22 +557,16 @@ function selectChangeOrBoundaryProof(
     const phase = manifestPhases.find((p) => p.name === phaseStatus.name);
     if (!phase) continue;
     for (const change of phaseStatus.changes) {
-      if (
-        change.status === 'ready' ||
-        change.status === 'in-progress' ||
-        // `awaiting-verify` is selectable: its runnable next step is the verify
-        // gate, which must run before the change can be done (the engine derives
-        // `verify` via `computeNextTransition`). Skipping it would strand verify.
-        change.status === 'awaiting-verify'
-      ) {
+      if (RUNNABLE_STATUSES.has(change.status)) {
         // Boundary: run the immediately-preceding phase's proof-of-work once
-        // before entering this phase's outstanding work. The predecessor is
-        // `done` (else this phase would be gated), so the boundary is real.
-        const predecessor =
-          i > 0
-            ? manifestPhases.find((p) => p.name === status.phases[i - 1].name)
-            : undefined;
-        if (predecessor && !recordedProofPhases.has(predecessor.name)) {
+        // before entering this phase's outstanding work.
+        const predecessor = pendingBoundaryProof(
+          i > 0 ? status.phases[i - 1] : undefined,
+          manifestPhases,
+          recordedProofPhases,
+          false
+        );
+        if (predecessor) {
           return { kind: 'proof-of-work', phase: predecessor };
         }
         // The derived status already carries the per-change definition of done,
@@ -561,17 +599,14 @@ function selectDecomposeStep(
   // not been recorded yet, run that proof before the decompose step (the next
   // apply, with the proof recorded, decomposes).
   const phaseIndex = status.phases.findIndex((p) => p.name === phase.name);
-  if (phaseIndex > 0) {
-    const predStatus = status.phases[phaseIndex - 1];
-    const predecessor = manifestPhases.find((p) => p.name === predStatus.name);
-    if (
-      predecessor &&
-      predStatus.status === 'done' &&
-      predecessor.proofOfWork &&
-      !recordedProofPhases.has(predecessor.name)
-    ) {
-      return { kind: 'proof-of-work', phase: predecessor };
-    }
+  const predecessor = pendingBoundaryProof(
+    phaseIndex > 0 ? status.phases[phaseIndex - 1] : undefined,
+    manifestPhases,
+    recordedProofPhases,
+    true
+  );
+  if (predecessor) {
+    return { kind: 'proof-of-work', phase: predecessor };
   }
   return { kind: 'decompose', phase };
 }

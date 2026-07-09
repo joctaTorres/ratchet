@@ -144,7 +144,7 @@ ratchet --version
 | **Playwright** | Drives the Given/When/Then browser scenarios of a `kind: web` eval binding. | Only when a `kind: web` eval binding is in scope |
 | **A configured git remote** | PR grouping spawns a PR agent at batch completion that pushes the work branch and opens a PR, which needs somewhere to push. | Only when `prGrouping` is active |
 
-Run **`ratchet doctor`** to validate your setup — it checks each of these and prints an actionable remedy for anything missing (including an advisory warning when `prGrouping` is active but your repo has no configured git remote). Doctor also verifies that any agent CLI named by your project's `batch.agent` setting is installed (an `agent[:model]` spec is parsed and the agent part's binary is probed; the model part is never validated). `ratchet init` also runs these checks once, automatically, the first time you initialize a project (advisory only — it never blocks setup).
+Run **`ratchet doctor`** to validate your setup — it checks each of these and prints an actionable remedy for anything missing (including an advisory warning when `prGrouping` is active but your repo has no configured git remote, and an advisory nudge toward the `docker` locus when batch runs are local with a permissive permission posture). Doctor also verifies that any agent CLI named by your project's `batch.agent` setting is installed (an `agent[:model]` spec is parsed and the agent part's binary is probed; the model part is never validated). `ratchet init` also runs these checks once, automatically, the first time you initialize a project (advisory only — it never blocks setup).
 
 ### From source (development)
 
@@ -230,7 +230,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `new batch <name>` | Scaffold a batch manifest (`.ratchet/batches/<name>/batch.yaml`) |
 | `batch status [name]` | Live phase/change status derived from disk, incl. parked gates/blockers (`--json`) |
 | `batch view` / `batch list` | Rich dashboards of a batch (or all batches) |
-| `batch config [name]` | Resolved batch settings: project defaults + manifest overrides + agent permissions |
+| `batch config [name]` | Resolved batch settings: project defaults + manifest overrides + agent permissions, with honest per-locus isolation and per-agent enforcement rendering |
 | `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step) |
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
 | `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |

@@ -19,6 +19,7 @@ import { resolveCurrentPlanningHomeSync } from '../planning-home.js';
 import { checkAgents } from './checks/agents.js';
 import { checkRuntime } from './checks/runtime.js';
 import { checkDocker } from './checks/docker.js';
+import { checkBatchIsolation } from './checks/batch-isolation.js';
 import { checkPlaywright } from './checks/playwright.js';
 import { checkPrRemote } from './checks/pr-remote.js';
 import { hasWebBindingInScope } from './web-scope.js';
@@ -42,6 +43,11 @@ export function runDoctorChecks(
   projectRoot: string = resolveCurrentPlanningHomeSync().root
 ): DoctorReport {
   const checks = [checkAgents(deps, projectRoot), checkRuntime(deps), checkDocker(deps)];
+  // Batch-isolation nudge (optional): warn on a permissive / full-autonomy
+  // posture running on the advisory `local` locus, pointing at `locus: docker`
+  // for real containment. Silent (omitted) on docker / remote.
+  const batchIsolation = checkBatchIsolation(projectRoot);
+  if (batchIsolation) checks.push(batchIsolation);
   if (hasWebBindingInScope(projectRoot)) {
     checks.push(checkPlaywright(deps));
   }

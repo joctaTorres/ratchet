@@ -1,0 +1,281 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# Objective: harden the ratchet batch ENGINE and rex RUNTIME by fixing GitHub
+# issues #78-#91 (engine + rex-runtime), in dependency order. Each phase is a
+# vertical slice a user can exercise via `ratchet batch apply` / `eval run` and
+# ships behind an executable proof-of-work. Only phase 1 is decomposed into
+# concrete change intents; phases 2-4 stay goal+proof and are decomposed lazily
+# at phase entry with the prior phase's real results in hand.
+
+name: engine-runtime-hardening
+created: 2026-07-09
+
+settings:
+  # Stacked PRs: one PR per phase. Each phase PR is stacked on the previous
+  # phase's branch (see per-phase success criteria: the PR links every issue it
+  # fixes with `Closes #N`).
+  prGrouping: per-phase
+  # Per-stage agent routing (agent[:model]; spec splits on the FIRST colon, so
+  # the opencode provider/model id passes through intact).
+  agent:
+    propose: claude:fable
+    apply: opencode:openrouter/z-ai/glm-5.2
+    verify: opencode:openrouter/z-ai/glm-5.2
+    decompose: claude:opus
+    pr: claude:opus
+
+phases:
+  # ── Phase 1 — Wave 0: spawn/env plumbing (#89, #80) ────────────────────────
+  - name: spawn-env-plumbing
+    goal: >-
+      Make the agent spawn seam trustworthy end to end: the per-step env the
+      engine builds actually reaches the spawned agent on both rex runtimes
+      (#89), and any RATCHET_BATCH_AGENT_CMD / RATCHET_EVAL_AGENT_CMD override is
+      loudly surfaced and audit-stamped (#80). This unblocks every later
+      env-based hardening step (#86 allowlist) and closes a live doc/code
+      contract violation.
+      PR: the phase PR MUST link `Closes #89` and `Closes #80`.
+    success: >-
+      Running `ratchet batch apply` / `eval run` with a per-step env var makes it
+      observable inside the spawned agent on the sidecar AND remote runtimes; an
+      active agent-cmd override prints a one-line notice (text output plus
+      `agentOverride: true` in `--json`) and stamps `via: env-override`
+      provenance into the journal entries/run records it produces; spawn-request
+      construction lives in one shared helper. The phase PR links Closes #89 and
+      Closes #80.
+    proofOfWork:
+      kind: integration
+      run: npm test -- test/batch-engine/rex-sidecar-runtime.test.ts test/batch-engine/rex-remote-runtime.test.ts
+      pass: exit code 0 — env threaded through both rex runtimes and override notice + provenance asserted
+    changes:
+      - name: thread-env-through-rex-runtimes
+        done: >-
+          Sidecar and remote rex runtimes export AgentSpawnRequest.env before
+          launching the agent; a test asserts a per-step env var set by the
+          engine is visible to the spawned command on BOTH runtimes; the
+          insecure/allowInsecure and env drift in docs/engine/agent-runtime.md is
+          corrected. Fixes #89.
+      - name: gate-and-mark-agent-cmd-override
+        after: [thread-env-through-rex-runtimes]
+        done: >-
+          An active RATCHET_BATCH_AGENT_CMD / RATCHET_EVAL_AGENT_CMD prints a
+          one-line override notice (text + `agentOverride: true` in `--json`) and
+          stamps `via: env-override` on the journal entries/run records produced
+          under it; the override+spawn-request construction is extracted into a
+          single shared helper (coordinates with the #67 triplication). Fixes #80.
+
+  # ── Phase 2 — Wave 1: integrity gates (#78, #82, #81) ──────────────────────
+  - name: integrity-gates
+    goal: >-
+      Close the holes that let a batch advance a step without real evidence:
+      self-attested completions (#78), trivially-satisfiable proof-of-work
+      conditions (#82), and an `every-phase` gate that only parks propose (#81).
+      DECOMPOSE (required): before authoring change intents, the decompose agent
+      MUST run `gh issue view` on #78, #82, and #81 against the CURRENT tree and
+      confirm each is still open and unfixed; drop or trim any intent whose issue
+      phase 1 already resolved, and record that check in the change intents.
+      PR: the phase PR MUST link `Closes #N` for every issue it actually fixes.
+    success: >-
+      `ratchet batch report --complete` on propose/apply/verify is corroborated
+      against the disk evidence the engine already collects and fails closed
+      (blocked) on mismatch; empty `contains:`/`regex:` needles and
+      echo-your-own-pass-phrase proof conditions are rejected at manifest load;
+      the `every-phase` gate parks the transitions its docs now name. The phase
+      PR links every issue it fixes.
+    proofOfWork:
+      kind: integration
+      # Refined at phase entry to the specific outcome/proof-of-work/gate suites
+      # once the fixes name their test files.
+      run: npm test -- test/batch-engine/
+      pass: exit code 0 — completion corroboration, proof-condition validation, and gate-matrix suites green
+    changes:
+      # DECOMPOSE check (2026-07-09): `gh issue view` #78, #82, #81 — all three
+      # confirmed OPEN and unfixed in the current tree after phase-1
+      # (spawn-env-plumbing) shipped. Verified against code: mapSessionToOutcome
+      # (outcome.ts) advances on any completion entry without consulting the
+      # `diskEvidence` it already carries; evaluatePassCondition
+      # (proof-of-work.ts) does `stdout.includes(needle)` on empty needles and
+      # ProofOfWorkSchema (manifest.ts) only checks `pass` is non-empty;
+      # shouldParkForApproval (engine.ts) returns false for every transition but
+      # `propose`, so `every-phase` == `after-propose`. No intent dropped.
+      - name: corroborate-reported-completions
+        done: >-
+          `mapSessionToOutcome` no longer advances a step on a bare `--complete`
+          entry: a claimed completion is corroborated against the `diskEvidence`
+          the engine already collects (propose → plan/change dir exists; apply →
+          reported-complete tasks are checked/progressed; verify → the completion
+          carries the verify verdict), and a mismatch fails closed as `blocked`
+          with a "reported complete but disk disagrees" blocker; a completion
+          followed by a non-zero exit / signal is at least warned (arguably
+          blocked). Documented in outcome.ts. `gh issue view 78` confirmed OPEN
+          and unfixed at decompose (2026-07-09). Fixes #78.
+      - name: validate-proof-conditions-at-load
+        done: >-
+          Manifest load (ProofOfWorkSchema / the manifest validation step in
+          manifest.ts) rejects an empty `contains:` needle, an empty `regex:`
+          pattern, and an invalid `regex:` (surfacing the compile error), and
+          warns/rejects the echo-your-own-pass-phrase self-satisfying shape (the
+          literal pass needle appearing in the `run` command); the recorded proof
+          verdict persists which condition kind matched and the matched excerpt.
+          `gh issue view 82` confirmed OPEN and unfixed at decompose
+          (2026-07-09). Fixes #82.
+      - name: enforce-every-phase-gate-matrix
+        after: [corroborate-reported-completions]
+        done: >-
+          `shouldParkForApproval` threads the gate policy and transition instead
+          of hardcoding `propose`: `after-propose` parks propose only,
+          `every-phase` parks the transitions the docs now name (first step of
+          each phase, or every transition — one is picked and documented),
+          `autonomous` parks nothing; `docs/commands/batch.md` and the config
+          docs are updated so the gate's documented behavior matches the code,
+          and per-gate park scenarios are added. `gh issue view 81` confirmed
+          OPEN and unfixed at decompose (2026-07-09). Fixes #81.
+
+  # ── Phase 3 — Wave 2: lifecycle & isolation (#79, #85, #86, #87, #88) ──────
+  - name: lifecycle-and-isolation
+    goal: >-
+      Reap agents deterministically and make the sandbox/permission story
+      honest: teardown kills the agent, not just the sidecar (#79); the docker
+      locus stops being a root/unbounded/open-network mount (#85); posture output
+      stops naming isolation that isn't there (#86); a repo-committed manifest
+      can't silently escalate to full-autonomy (#87); and `batch config` renders
+      per-agent enforcement truthfully (#88).
+      DECOMPOSE (required): before authoring change intents, the decompose agent
+      MUST `gh issue view` #79, #85, #86, #87, and #88 against the current tree
+      and confirm each is still valid; adjust intents to reality (phase-1 env
+      plumbing may have shifted #86) and record the check.
+      PR: the phase PR MUST link `Closes #N` for every issue it actually fixes.
+    success: >-
+      An overall timeout/teardown kills the agent's process group with no
+      orphaned nohup/docker/remote agents and no leftover sentinel files; the
+      docker locus runs as the host uid with memory/pids/network knobs and a
+      documented isolation contract; `batch config` states the real isolation per
+      locus and per-agent enforcement status; manifest scope can only NARROW
+      permissions (raising posture requires operator-owned config or an explicit
+      opt-in). The phase PR links every issue it fixes.
+    proofOfWork:
+      kind: integration
+      # Refined at phase entry; the rex e2e locus scripts (test/e2e/rex-*.sh) may
+      # join the runnable command once the teardown/sandbox fixes name them.
+      run: npm test -- test/batch-engine/
+      pass: exit code 0 — teardown-reaping, docker-hardening, posture-honesty, and manifest-escalation suites green
+    changes:
+      # DECOMPOSE check (2026-07-09): `gh issue view` #79, #85, #86, #87, #88 —
+      # all five confirmed OPEN and valid in the current tree after phases 1-2
+      # shipped. Verified against code: sidecar.py still launches the agent
+      # detached (`nohup bash -c … &`) with `ratchet-rex-<token>.log/.done`
+      # sentinels in the workdir root and no pgid tracking, and `realSpawner`
+      # (agent.ts:366) has no timeout at all (#79); docker_args is only
+      # `-v mount_host:mount_container` — no `--user`/`--memory`/`--pids-limit`/
+      # `--network` (#85); locus defaults to `local` (engine.ts:202), posture to
+      # `repo-sandboxed-permissive` (permissions-policy.ts:72) (#86/#87);
+      # `batch config` (config.ts:118) prints the posture bare with no isolation
+      # or per-agent enforcement status, and cursor emits no flags (#86/#88).
+      # REALITY ADJUSTMENT (#86): phase-1 (spawn-env-plumbing) threaded a
+      # per-step `AgentSpawnRequest.env` seam through both rex runtimes, but the
+      # local sidecar bootstrap (rex-bootstrap.ts:518) STILL spreads full
+      # `process.env` — so the env-allowlist half of #86 is unaddressed and is
+      # split into its own intent (`scope-local-agent-env`) that plugs into that
+      # new seam. #86's config/doctor/doc-honesty half is merged with #88 into
+      # `render-honest-isolation-and-enforcement` (same `batch config` surface).
+      # No intent dropped.
+      - name: reap-agents-on-teardown
+        done: >-
+          The agent is launched in its own process group (setsid / recorded
+          pgid) instead of a bare `nohup … &`, and teardown on ALL paths
+          (overall timeout, error, and clean shutdown) kills that group: the
+          sidecar attempts `{op:"shutdown"}` with a short grace then SIGKILLs the
+          group and gains a SIGTERM handler that stops the docker deployment, the
+          remote runtime kills the launched pid (via a runDir pidfile) before
+          closing the session, and `realSpawner` gains the sidecar's
+          timeout/kill semantics (or the eval judge is routed through the
+          timeout-aware runtime); `ratchet-rex-<token>.log/.done` sentinels move
+          under `.ratchet/batches/<b>/.run/<id>/` and are swept in teardown. A
+          test asserts that after a timeout there are no orphaned
+          nohup/docker/remote agents and no leftover sentinel files.
+          `gh issue view 79` confirmed OPEN and unfixed at decompose
+          (2026-07-09). Fixes #79.
+      - name: harden-docker-locus
+        done: >-
+          The docker locus (`docker_args` in sidecar.py) runs the agent as the
+          host uid/gid (`--user $(id -u):$(id -g)`, overridable for images that
+          need root setup), applies resource limits with sane defaults
+          (`--memory`, `--pids-limit`, optional `--cpus`) overridable via batch
+          settings, and makes network policy configurable
+          (`network: bridge|none|<name>`, default documented); the rw repo mount
+          stays by design. `docs/engine/agent-runtime.md` documents the honest
+          isolation contract (repo writable by design; uid, resources, env, and
+          network per config — what the container does and does not protect).
+          `gh issue view 85` confirmed OPEN and unfixed at decompose
+          (2026-07-09). Fixes #85.
+      - name: restrict-manifest-permission-escalation
+        done: >-
+          Permission-policy resolution lets the per-change/manifest scope only
+          NARROW permissions (add denies, lower posture) and NEVER raise posture
+          above the project/user-scope value; raising posture requires
+          operator-owned project/user config, or — if manifest-level raising is
+          retained — an explicit one-time confirmation that refuses in headless
+          mode without an `--allow-manifest-escalation` flag; `batch apply`
+          prints the effective posture and its source scope at the start of every
+          run. A test asserts a committed `batch.yaml` setting
+          `permissions.posture: full-autonomy` cannot silently escalate a run
+          whose project/user scope is `repo-sandboxed-permissive`.
+          `gh issue view 87` confirmed OPEN and unfixed at decompose
+          (2026-07-09). Fixes #87.
+      - name: scope-local-agent-env
+        done: >-
+          The local-locus agent spawn no longer inherits the full host
+          environment: the sidecar bootstrap that currently spreads full
+          `process.env` (rex-bootstrap.ts:518) passes only an allowlist (PATH,
+          HOME, adapter-required keys) layered over the per-step
+          `AgentSpawnRequest.env` seam that phase-1 threaded through the runtimes;
+          a test asserts a non-allowlisted host secret is NOT visible to the
+          spawned agent. This closes the env-scoping half of #86 (coordinates
+          with the same eval-judge fix in #59). `gh issue view 86` confirmed OPEN
+          at decompose (2026-07-09); phase-1 built the env seam but did not scope
+          it. Fixes #86 (env-scoping half).
+      - name: render-honest-isolation-and-enforcement
+        after:
+          [restrict-manifest-permission-escalation, scope-local-agent-env, harden-docker-locus]
+        done: >-
+          `batch config`/`batch view` states the REAL isolation per locus (local
+          = advisory, no filesystem/network isolation, env scoped to the
+          allowlist; docker = container isolation with the #85 uid/resource/
+          network contract; remote = server boundary) and never displays an
+          unenforced posture bare — it renders per-agent enforcement status
+          (`claude: enforced via flags; cursor: NOT ENFORCED — agent defaults
+          apply`) and the escalation source
+          (`full-autonomy (set by batch manifest — repo-controlled)`);
+          `docs/engine/agent-runtime.md` documents the threat model per locus and
+          reframes the argv denylist as best-effort damage reduction (real
+          containment = docker locus); a `ratchet doctor` check nudges toward the
+          docker locus when batches run on `local` with a permissive/full-autonomy
+          posture (and/or probes that the agent's `--help` exposes the flags the
+          mapping uses). `gh issue view 86`/`88` confirmed OPEN at decompose
+          (2026-07-09). Fixes #86 (posture-honesty half) and #88.
+
+  # ── Phase 4 — Wave 3: refactor & cleanup / direct-fixes (#83, #91, #90, #84) ─
+  - name: refactor-and-cleanup
+    goal: >-
+      Consolidate duplicated engine/runtime logic and clear dead-code / doc
+      drift: one selection engine (#83), dedup shquote/tail-poll/command-builder
+      plus sidecar tests wired into CI (#91), bounded protocol buffers with
+      aligned cursor arithmetic and surfaced non-JSON frames (#90), and the
+      doc/code-drift + dead-branch sweep (#84).
+      DECOMPOSE (required): before authoring change intents, the decompose agent
+      MUST `gh issue view` #83, #91, #90, and #84 — several are cleanups that
+      earlier phases may have already absorbed (e.g. #90's cursor fix overlaps
+      #91's dedup); confirm each remaining item is still valid, drop what is done,
+      and record the check.
+      PR: the phase PR MUST link `Closes #N` for every issue it actually fixes.
+    success: >-
+      A single selection engine owns gate/eligibility (dead `selectRunnableStep`
+      removed); shquote/tail-poll/command-builder exist once with cross-language
+      contract tests and the sidecar test runs in CI; protocol partial-line
+      buffers are bounded, remote and sidecar byte cursors agree, and non-JSON
+      frames are surfaced not dropped; doc/code drift and dead branches are
+      removed. Full suite green. The phase PR links every issue it fixes.
+    proofOfWork:
+      kind: integration
+      run: npm test
+      pass: exit code 0 — full suite green after consolidation and cleanup

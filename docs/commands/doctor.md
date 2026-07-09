@@ -21,14 +21,17 @@ ratchet doctor [options]
 
 ## Checks
 
-Three checks always run, in a fixed order: agent, runtime, docker. Two further
-checks are conditional and each is appended only when it is relevant, otherwise
-absent from the report entirely (not merely hidden or skipped):
+Three checks always run, in a fixed order: agent, runtime, docker. Three
+further checks are conditional and each is appended only when it is relevant,
+otherwise absent from the report entirely (not merely hidden or skipped):
 
 - **Playwright** — appended only when a `kind: web` binding is present among the
   eval bindings resolved from `.ratchet/evals/specs/`.
 - **Git remote (`pr-remote`)** — appended only when `prGrouping` is active for the
   project (resolved from config) **and** the repo has no configured git remote.
+- **Batch isolation (`batch-isolation`)** — appended only when the resolved
+  batch locus is `local` **and** the effective permission posture is permissive
+  (`repo-sandboxed-permissive` or `full-autonomy`).
 
 ### Coding-agent CLI (`agent`) — required
 
@@ -97,8 +100,39 @@ PR grouping is active but the repo has no remote to push to. Remedy: configure a
 remote (e.g. `git remote add <name> <url>`). The remedy names no forge-specific CLI —
 which forge (`gh`, `glab`, or other) opens the PR is left to the user's environment.
 
-Like Docker and Playwright, this `info` notice never fails doctor or affects the exit
-code.
+Like Docker and Playwright, this `info` notice never fails doctor or affects the
+exit code.
+
+### Batch isolation (`batch-isolation`) — optional, conditional
+
+Appended only when the resolved batch locus is `local` **and** the effective
+permission posture is permissive (`repo-sandboxed-permissive` or `full-autonomy`).
+It is absent from the report when the locus is `docker` or `remote`, or when the
+posture is `curated-allowlist` (already restrictive enough that no nudge is
+warranted). The check resolves the same batch settings `batch config` uses (see
+[`batch config`](batch.md#batch-config)).
+
+The local locus imposes no process boundary — the permission posture is the only
+gate. A permissive posture on the local locus means the agent can write anywhere
+the operator's account can. This check nudges the operator toward the `docker`
+locus, which adds a real container boundary, rather than silently relying on
+advisory posture alone.
+
+**Info**: locus is `local` and posture is `full-autonomy` — the strongest nudge.
+Detail explains that full autonomy with no process boundary gives the agent the
+operator's full write surface. Remedy: set `locus: docker` to add a container
+boundary (and see
+[#85](https://github.com/anomaly-ai/ratchet/issues/85) for the container
+hardening contract).
+
+**Info**: locus is `local` and posture is `repo-sandboxed-permissive` — a softer
+advisory nudge. Remedy: consider `locus: docker` for a process boundary, or
+`curated-allowlist` to restrict the agent to an approved command set.
+
+**Absent**: locus is `docker` or `remote`, or posture is `curated-allowlist`.
+
+Like the other optional checks, this `info` notice never fails doctor or affects
+the exit code.
 
 ## Human output
 
@@ -157,7 +191,7 @@ Fields:
 | Field | Type | Description |
 |---|---|---|
 | `ok` | boolean | `true` iff every `required` check has `status: "pass"`. Drives the exit code. |
-| `checks[].id` | string | Stable machine id: `agent`, `runtime`, `docker`; `playwright` only when a `kind: web` binding is in scope; `pr-remote` only when `prGrouping` is active and no git remote is configured. |
+| `checks[].id` | string | Stable machine id: `agent`, `runtime`, `docker`; `playwright` only when a `kind: web` binding is in scope; `pr-remote` only when `prGrouping` is active and no git remote is configured; `batch-isolation` only when locus is `local` and posture is permissive. |
 | `checks[].label` | string | Short human label. |
 | `checks[].status` | `"pass"` \| `"fail"` \| `"info"` | Verdict for this check. |
 | `checks[].severity` | `"required"` \| `"optional"` | Whether a failure gates the exit code. |

@@ -29,6 +29,20 @@ export const PERMISSION_POSTURE_VALUES = [
 ] as const;
 export type PermissionPosture = (typeof PERMISSION_POSTURE_VALUES)[number];
 
+/**
+ * Privilege ranking of the postures, from least to most privileged. The single
+ * definition of "raise" vs "narrow" for posture: a layer RAISES posture when its
+ * value ranks ABOVE the accumulated value, and NARROWS when it ranks at or
+ * below. `curated-allowlist (0) < repo-sandboxed-permissive (1) < full-autonomy
+ * (2)`. Pure data, unit-testable; consumed by the merge seam to clamp a
+ * manifest layer that tries to raise posture above the operator-owned scopes.
+ */
+export const POSTURE_PRIVILEGE_RANK: Record<PermissionPosture, number> = {
+  'curated-allowlist': 0,
+  'repo-sandboxed-permissive': 1,
+  'full-autonomy': 2,
+};
+
 /** The agents the per-agent `raw` override escape hatch recognizes. */
 export const PERMISSION_RAW_AGENTS = ['claude', 'codex', 'gemini', 'cursor', 'opencode'] as const;
 export type PermissionRawAgent = (typeof PERMISSION_RAW_AGENTS)[number];

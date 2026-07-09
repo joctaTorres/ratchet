@@ -31,7 +31,13 @@ import {
   rmSync,
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { DEFAULT_DOCKER_IMAGE } from '../../config.js';
+import {
+  DEFAULT_DOCKER_IMAGE,
+  DEFAULT_DOCKER_MEMORY,
+  DEFAULT_DOCKER_PIDS_LIMIT,
+  DEFAULT_DOCKER_NETWORK,
+} from '../../config.js';
+import { scopeAgentEnv } from '../agent-env.js';
 
 /**
  * The single pinned swe-rex version. Verified resolvable + importable in the
@@ -51,7 +57,7 @@ export const MIN_PYTHON = { major: 3, minor: 10 } as const;
  * is only reached when `REX_IMAGE` is unset, which Node always threads; the
  * cross-language sync is noted there.
  */
-export { DEFAULT_DOCKER_IMAGE };
+export { DEFAULT_DOCKER_IMAGE, DEFAULT_DOCKER_MEMORY, DEFAULT_DOCKER_PIDS_LIMIT, DEFAULT_DOCKER_NETWORK };
 
 /**
  * The `docker` extra label recorded in the readiness marker. The docker locus
@@ -123,6 +129,20 @@ export interface BootstrapOptions {
   mountHost?: string;
   /** REX_MOUNT_CONTAINER to pass through (docker locus only): in-container mount point. */
   mountContainer?: string;
+  /**
+   * REX_DOCKER_USER to pass through (docker locus only): host uid:gid for
+   * `docker run --user`. When unset, the sidecar resolves the current host
+   * uid:gid. Ignored for `local`.
+   */
+  dockerUser?: string;
+  /** REX_DOCKER_MEMORY to pass through (docker locus only): `docker run --memory`. */
+  dockerMemory?: string;
+  /** REX_DOCKER_PIDS_LIMIT to pass through (docker locus only): `docker run --pids-limit`. */
+  dockerPidsLimit?: number;
+  /** REX_DOCKER_CPUS to pass through (docker locus only): `docker run --cpus`. */
+  dockerCpus?: number;
+  /** REX_DOCKER_NETWORK to pass through (docker locus only): `docker run --network`. */
+  network?: string;
   /** Injected seams; defaults to the real fs/child_process. */
   deps?: BootstrapDeps;
 }
@@ -488,7 +508,10 @@ export function preflightDockerDaemon(deps: BootstrapDeps): void {
  * which swe-rex under-declares), which forces a rebuild of a local-only venv on
  * first docker use. The image +
  * mount env (`REX_IMAGE`/`REX_MOUNT_HOST`/`REX_MOUNT_CONTAINER`) is threaded to
- * the sidecar. `local` is unaffected: no docker probe, no extras, no image/mount.
+ * the sidecar, along with the docker hardening env (`REX_DOCKER_USER`/
+ * `REX_DOCKER_MEMORY`/`REX_DOCKER_PIDS_LIMIT`/`REX_DOCKER_CPUS`/
+ * `REX_DOCKER_NETWORK`). `local` is unaffected: no docker probe, no extras, no
+ * image/mount.
  */
 export function bootstrapRexRuntime(options: BootstrapOptions = {}): ResolvedLaunch {
   const deps = options.deps ?? defaultDeps;
@@ -515,7 +538,7 @@ export function bootstrapRexRuntime(options: BootstrapOptions = {}): ResolvedLau
   // Prepend the venv bin to PATH so the sidecar's interpreter + tooling resolve.
   const inheritedPath = process.env.PATH ?? '';
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...scopeAgentEnv(process.env),
     PATH: `${layout.binDir}${path.delimiter}${inheritedPath}`,
     VIRTUAL_ENV: layout.venvDir,
   };
@@ -526,6 +549,26 @@ export function bootstrapRexRuntime(options: BootstrapOptions = {}): ResolvedLau
     env.REX_IMAGE = options.image && options.image.trim() ? options.image : DEFAULT_DOCKER_IMAGE;
     if (options.mountHost !== undefined) env.REX_MOUNT_HOST = options.mountHost;
     if (options.mountContainer !== undefined) env.REX_MOUNT_CONTAINER = options.mountContainer;
+    // Docker hardening knobs. Each is threaded only when the caller supplies a
+    // value; the Python sidecar applies its OWN unset-fallback for the ones with
+    // defaults (memory/pids/network), and simply omits the flag when the env is
+    // absent (cpus/user). Node is the single source of truth for defaults.
+    if (options.dockerUser !== undefined && options.dockerUser.trim()) {
+      env.REX_DOCKER_USER = options.dockerUser;
+    }
+    env.REX_DOCKER_MEMORY =
+      options.dockerMemory && options.dockerMemory.trim()
+        ? options.dockerMemory
+        : DEFAULT_DOCKER_MEMORY;
+    env.REX_DOCKER_PIDS_LIMIT = String(
+      options.dockerPidsLimit ?? DEFAULT_DOCKER_PIDS_LIMIT
+    );
+    env.REX_DOCKER_NETWORK =
+      options.network && options.network.trim() ? options.network : DEFAULT_DOCKER_NETWORK;
+    // cpus is opt-in: no default → no flag when unset.
+    if (options.dockerCpus !== undefined) {
+      env.REX_DOCKER_CPUS = String(options.dockerCpus);
+    }
   }
 
   return {

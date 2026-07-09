@@ -1,8 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   resolvePermissionFlags,
+  resolvePostureEnforcement,
   REPO_SANDBOX_DENY_PATTERNS,
 } from '../../src/core/batch/runtime/agent-permissions.js';
+import {
+  PERMISSION_POSTURE_VALUES,
+  PERMISSION_RAW_AGENTS,
+} from '../../src/core/batch/permissions-policy.js';
 import type {
   ResolvedPermissionsPolicy,
   PermissionPosture,
@@ -266,4 +271,87 @@ describe('safety invariant — sandboxed/curated must NOT equal full-autonomy', 
       expect(curated).not.toEqual(full);
     });
   }
+});
+
+// Feature: posture-enforcement-rendering.feature
+// Proves resolvePostureEnforcement is derived from the real per-agent mappers:
+// a posture whose mapping emits a non-empty argv fragment reports enforced, and
+// an empty fragment reports NOT ENFORCED — agent defaults apply. Iterates every
+// agent in PERMISSION_RAW_AGENTS × every posture so no agent is special-cased.
+describe('resolvePostureEnforcement — derived from the real permission translator', () => {
+  const postures = PERMISSION_POSTURE_VALUES;
+
+  for (const agent of PERMISSION_RAW_AGENTS) {
+    for (const posture of postures) {
+      it(`${agent} / ${posture} agrees with resolvePermissionFlags posture output`, () => {
+        const pol = policy({ posture });
+        const status = resolvePostureEnforcement(agent, pol, REPO);
+        // Derive the posture flags directly from the mapper (silenced) so the
+        // test asserts the exact derivation the enforcement status claims.
+        const postureFlags = resolvePermissionFlags(agent, pol, REPO);
+        const rawForAgent = pol.raw[agent] ?? [];
+        const mapperOutput = postureFlags.slice(0, postureFlags.length - rawForAgent.length);
+        expect(status.agent).toBe(agent);
+        expect(status.enforced).toBe(mapperOutput.length > 0);
+        expect(status.detail).toBe(
+          mapperOutput.length > 0
+            ? 'enforced via flags'
+            : 'NOT ENFORCED — agent defaults apply'
+        );
+      });
+    }
+  }
+
+  it('claude / repo-sandboxed-permissive reports enforced via flags', () => {
+    expect(resolvePostureEnforcement('claude', policy(), REPO)).toEqual({
+      agent: 'claude',
+      enforced: true,
+      detail: 'enforced via flags',
+    });
+  });
+
+  it('cursor / repo-sandboxed-permissive reports NOT ENFORCED — agent defaults apply', () => {
+    expect(resolvePostureEnforcement('cursor', policy(), REPO)).toEqual({
+      agent: 'cursor',
+      enforced: false,
+      detail: 'NOT ENFORCED — agent defaults apply',
+    });
+  });
+
+  it('opencode / repo-sandboxed-permissive reports NOT ENFORCED — agent defaults apply', () => {
+    expect(resolvePostureEnforcement('opencode', policy(), REPO)).toEqual({
+      agent: 'opencode',
+      enforced: false,
+      detail: 'NOT ENFORCED — agent defaults apply',
+    });
+  });
+
+  it('full-autonomy is enforced for every agent (the bypass flag)', () => {
+    for (const agent of PERMISSION_RAW_AGENTS) {
+      expect(
+        resolvePostureEnforcement(agent, policy({ posture: 'full-autonomy' }), REPO).enforced
+      ).toBe(true);
+    }
+  });
+
+  it('is side-effect-free: cursor/opencode best-effort warnings never fire', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      for (const posture of postures) {
+        resolvePostureEnforcement('cursor', policy({ posture }), REPO);
+        resolvePostureEnforcement('opencode', policy({ posture }), REPO);
+      }
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('an unknown agent reports NOT ENFORCED with no posture flags', () => {
+    expect(resolvePostureEnforcement('future-agent', policy(), REPO)).toEqual({
+      agent: 'future-agent',
+      enforced: false,
+      detail: 'NOT ENFORCED — agent defaults apply',
+    });
+  });
 });

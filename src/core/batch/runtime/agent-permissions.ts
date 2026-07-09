@@ -196,7 +196,11 @@ function codexFlags(policy: ResolvedPermissionsPolicy): string[] {
  * silently equivalent to full autonomy. Re-verify exact flags once `cursor-agent`
  * is on PATH (e.g. a config-file-based allow/deny or a future approval-mode flag).
  */
-function cursorFlags(policy: ResolvedPermissionsPolicy): string[] {
+function cursorFlags(
+  policy: ResolvedPermissionsPolicy,
+  _repoRoot: string,
+  opts?: MapperOptions
+): string[] {
   switch (policy.posture) {
     case 'full-autonomy':
       // BYPASS: skip write/command confirmation entirely. Bypass lives here only.
@@ -207,7 +211,7 @@ function cursorFlags(policy: ResolvedPermissionsPolicy): string[] {
       // No `--force` → cursor keeps its default per-action approval gating. argv
       // cannot carry cursor's allow/deny (config-file only), so warn once that
       // this posture is bounded only by cursor's own defaults, not by our policy.
-      warnCursorBestEffort(policy.posture);
+      if (!opts?.silent) warnCursorBestEffort(policy.posture);
       return [];
   }
 }
@@ -243,7 +247,11 @@ function warnCursorBestEffort(posture: string): void {
  *   own default gating, NOT silently equivalent to full autonomy. argv cannot
  *   carry a bounded allow/deny for opencode under the locked argv-only decision.
  */
-function opencodeFlags(policy: ResolvedPermissionsPolicy): string[] {
+function opencodeFlags(
+  policy: ResolvedPermissionsPolicy,
+  _repoRoot: string,
+  opts?: MapperOptions
+): string[] {
   switch (policy.posture) {
     case 'full-autonomy':
       return ['--dangerously-skip-permissions'];
@@ -253,7 +261,7 @@ function opencodeFlags(policy: ResolvedPermissionsPolicy): string[] {
       // No bypass flag → opencode keeps its own default per-action approval
       // gating. argv cannot carry opencode's allow/deny, so warn once that this
       // posture is bounded only by opencode's own defaults, not by our policy.
-      warnOpencodeBestEffort(policy.posture);
+      if (!opts?.silent) warnOpencodeBestEffort(policy.posture);
       return [];
   }
 }
@@ -276,15 +284,51 @@ function warnOpencodeBestEffort(posture: string): void {
   );
 }
 
-type Mapper = (policy: ResolvedPermissionsPolicy, repoRoot: string) => string[];
+/**
+ * Internal options forwarded to per-agent mappers. `silent` suppresses the
+ * cursor/opencode one-time warnings so a pure query (e.g.
+ * {@link resolvePostureEnforcement}) can consult the mappers without side
+ * effects; the spawn path omits it so warnings fire exactly as today.
+ */
+interface MapperOptions {
+  silent?: boolean;
+}
+
+type Mapper = (
+  policy: ResolvedPermissionsPolicy,
+  repoRoot: string,
+  opts?: MapperOptions
+) => string[];
 
 const AGENT_MAPPERS: Record<PermissionRawAgent, Mapper> = {
   claude: (policy, repoRoot) => claudeFlags(policy, repoRoot),
   gemini: (policy) => geminiFlags(policy),
   codex: (policy) => codexFlags(policy),
-  cursor: (policy) => cursorFlags(policy),
-  opencode: (policy) => opencodeFlags(policy),
+  cursor: (policy, repoRoot, opts) => cursorFlags(policy, repoRoot, opts),
+  opencode: (policy, repoRoot, opts) => opencodeFlags(policy, repoRoot, opts),
 };
+
+/**
+ * Resolve the posture-derived argv fragment for one agent under a resolved
+ * policy. This is the posture portion only (the per-agent mapper output),
+ * WITHOUT the `raw` override escape hatch, so callers that reason about
+ * whether the posture itself is enforced (e.g.
+ * {@link resolvePostureEnforcement}) consult exactly the flags the mapping
+ * emits. Honors `opts.silent` to keep cursor/opencode warnings out of pure
+ * queries.
+ *
+ * Pure: no I/O, no spawning.
+ */
+function resolvePostureFlags(
+  agentName: string,
+  policy: ResolvedPermissionsPolicy,
+  repoRoot: string,
+  opts?: MapperOptions
+): string[] {
+  const agent = agentName as PermissionRawAgent;
+  const mapper = AGENT_MAPPERS[agent];
+  return mapper ? mapper(policy, repoRoot, opts) : [];
+}
 
 /**
  * Resolve the permission argv fragment for one agent under a resolved policy.
@@ -295,16 +339,59 @@ const AGENT_MAPPERS: Record<PermissionRawAgent, Mapper> = {
  * yields no posture flags but still honors a `raw` entry if one happens to match,
  * so an unknown future agent can be driven entirely via `raw`.
  *
- * Pure: no I/O, no spawning.
+ * Pure: no I/O, no spawning. The cursor/opencode one-time best-effort warnings
+ * fire on the spawn path (this call) exactly as before.
  */
 export function resolvePermissionFlags(
   agentName: string,
   policy: ResolvedPermissionsPolicy,
   repoRoot: string
 ): string[] {
-  const agent = agentName as PermissionRawAgent;
-  const mapper = AGENT_MAPPERS[agent];
-  const postureFlags = mapper ? mapper(policy, repoRoot) : [];
-  const rawForAgent = policy.raw[agent] ?? [];
+  const postureFlags = resolvePostureFlags(agentName, policy, repoRoot);
+  const rawForAgent = policy.raw[agentName as PermissionRawAgent] ?? [];
   return [...postureFlags, ...rawForAgent];
+}
+
+/**
+ * The resolved enforcement status for one agent under a posture: whether the
+ * posture actually reaches the agent as argv flags, or is a no-op that leaves
+ * the agent's own default gating in charge. Derived from the SAME per-agent
+ * mappers that build spawn argv so the rendered status can never drift from
+ * what actually reaches the agent — the exact failure mode #88 names.
+ */
+export interface PostureEnforcement {
+  /** The agent name the status was resolved for. */
+  agent: string;
+  /** True when the posture mapping emits a non-empty argv fragment. */
+  enforced: boolean;
+  /** Human-facing phrase: `enforced via flags` / `NOT ENFORCED — agent defaults apply`. */
+  detail: string;
+}
+
+/**
+ * Resolve the per-agent enforcement status for a posture. A posture that yields
+ * a non-empty posture-flag fragment (or the full-autonomy bypass flag) is
+ * `enforced via flags`; an empty fragment is `NOT ENFORCED — agent defaults
+ * apply`. Consults the same per-agent mappers as {@link resolvePermissionFlags}
+ * but with the cursor/opencode one-time warnings suppressed, so this pure query
+ * never emits side effects.
+ *
+ * Pure: no I/O, no spawning, no warnings.
+ */
+export function resolvePostureEnforcement(
+  agentName: string,
+  policy: ResolvedPermissionsPolicy,
+  repoRoot: string
+): PostureEnforcement {
+  const postureFlags = resolvePostureFlags(agentName, policy, repoRoot, {
+    silent: true,
+  });
+  const enforced = postureFlags.length > 0;
+  return {
+    agent: agentName,
+    enforced,
+    detail: enforced
+      ? 'enforced via flags'
+      : 'NOT ENFORCED — agent defaults apply',
+  };
 }

@@ -220,3 +220,178 @@ describe('batchConfigCommand permissions block', () => {
     expect(out).toContain('--allowedTools');
   });
 });
+
+// =========================================================================
+// Feature: config-isolation-per-locus.feature + posture-enforcement-rendering
+// Proves `batch config` renders an honest isolation line per locus and a
+// per-agent enforcement line per distinct resolved stage agent, and that a
+// manifest-sourced posture names its source scope.
+// =========================================================================
+describe('batchConfigCommand isolation + enforcement rendering', () => {
+  let fixture: BatchFixture;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let xdgConfigHome: string;
+  let priorXdgConfigHome: string | undefined;
+
+  beforeEach(async () => {
+    fixture = await makeBatchFixture();
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    resolvePlanningHomeMock.mockReturnValue({ root: fixture.root });
+    // Isolate the user permission scope so the default posture (not a user-set
+    // one) resolves, keeping these tests source-deterministic.
+    xdgConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), 'ratchet-xdg-cfg-'));
+    priorXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdgConfigHome;
+  });
+
+  afterEach(async () => {
+    if (priorXdgConfigHome === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = priorXdgConfigHome;
+    }
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    await fixture.cleanup();
+    await fs.rm(xdgConfigHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  function output(): string {
+    return logSpy.mock.calls.map((args) => args.join(' ')).join('\n');
+  }
+
+  // --- config-isolation-per-locus.feature ---------------------------------
+
+  it('renders the local locus as advisory with no filesystem/network isolation', async () => {
+    await fixture.writeProjectConfig('batch:\n  locus: local\n');
+
+    await batchConfigCommand(undefined, {});
+
+    const out = output();
+    expect(out).toContain('isolation');
+    expect(out).toContain('local');
+    expect(out).toContain('Advisory');
+    expect(out).toContain('no filesystem or network isolation');
+    expect(out).toContain('env allowlist');
+  });
+
+  it('renders the docker locus as container isolation with its contract', async () => {
+    await fixture.writeProjectConfig(
+      'batch:\n  locus: docker\n  dockerUser: "1000:1000"\n  dockerMemory: "4g"\n  dockerPidsLimit: 1024\n  network: none\n'
+    );
+
+    await batchConfigCommand(undefined, {});
+
+    const out = output();
+    expect(out).toContain('isolation');
+    expect(out).toContain('docker');
+    expect(out).toContain('Container isolation');
+    expect(out).toContain('uid 1000:1000');
+    expect(out).toContain('memory 4g');
+    expect(out).toContain('pids 1024');
+    expect(out).toContain('network none');
+    expect(out).toContain('Repository mount stays writable by design');
+  });
+
+  it('renders the remote locus as the server boundary', async () => {
+    await fixture.writeProjectConfig(
+      'batch:\n  locus: remote\n  host: example.com\n  port: 443\n'
+    );
+
+    await batchConfigCommand(undefined, {});
+
+    const out = output();
+    expect(out).toContain('isolation');
+    expect(out).toContain('remote');
+    expect(out).toContain("remote server's boundary");
+    expect(out).toContain('not one ratchet enforces');
+  });
+
+  // --- posture-enforcement-rendering.feature ------------------------------
+
+  it('renders an argv-enforced agent (claude) as enforced via flags', async () => {
+    await fixture.writeProjectConfig(
+      'batch:\n  agent: claude\n  permissions:\n    posture: repo-sandboxed-permissive\n'
+    );
+
+    await batchConfigCommand(undefined, {});
+
+    const out = output();
+    expect(out).toContain('permissions');
+    expect(out).toContain('repo-sandboxed-permissive');
+    expect(out).toContain('claude');
+    expect(out).toContain('enforced via flags');
+  });
+
+  it('renders a non-argv-enforced agent (cursor) as NOT ENFORCED', async () => {
+    await fixture.writeProjectConfig(
+      'batch:\n  agent: cursor\n  permissions:\n    posture: repo-sandboxed-permissive\n'
+    );
+
+    await batchConfigCommand(undefined, {});
+
+    const out = output();
+    expect(out).toContain('cursor');
+    expect(out).toContain('NOT ENFORCED — agent defaults apply');
+  });
+
+  it('names the manifest scope for a manifest-sourced posture', async () => {
+    await fixture.writeBatch('b', {
+      settings: { permissions: { posture: 'full-autonomy' } },
+    });
+
+    await batchConfigCommand('b', { allowManifestEscalation: true });
+
+    const out = output();
+    expect(out).toContain('full-autonomy');
+    expect(out).toContain('set by batch manifest — repo-controlled');
+  });
+
+  it('renders one enforcement line per distinct stage-mapped agent', async () => {
+    await fixture.writeProjectConfig(
+      [
+        'batch:',
+        '  permissions:',
+        '    posture: repo-sandboxed-permissive',
+        '  agent:',
+        '    propose: claude',
+        '    apply: cursor',
+        '    verify: claude',
+        '',
+      ].join('\n')
+    );
+
+    await batchConfigCommand(undefined, {});
+
+    const out = output();
+    // claude appears once (deduped across propose+verify), cursor once.
+    expect(out).toContain('claude');
+    expect(out).toContain('cursor');
+    expect(out).toContain('enforced via flags');
+    expect(out).toContain('NOT ENFORCED — agent defaults apply');
+    // Only two distinct agents → two enforce lines.
+    const enforceCount = (out.match(/enforce\s+/g) ?? []).length;
+    expect(enforceCount).toBe(2);
+  });
+
+  // --- JSON output (config-isolation + posture-enforcement JSON) ---------
+
+  it('JSON output carries isolation and per-agent enforcement', async () => {
+    await fixture.writeProjectConfig(
+      'batch:\n  agent: cursor\n  permissions:\n    posture: repo-sandboxed-permissive\n'
+    );
+
+    await batchConfigCommand(undefined, { json: true });
+
+    const parsed = JSON.parse(output()) as {
+      isolation: { locus: string; description: string };
+      enforcement: { agent: string; enforced: boolean; detail: string }[];
+    };
+    expect(parsed.isolation.locus).toBe('local');
+    expect(parsed.isolation.description).toContain('Advisory');
+    expect(parsed.enforcement.length).toBe(1);
+    expect(parsed.enforcement[0].agent).toBe('cursor');
+    expect(parsed.enforcement[0].enforced).toBe(false);
+    expect(parsed.enforcement[0].detail).toContain('NOT ENFORCED');
+  });
+});

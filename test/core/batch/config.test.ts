@@ -351,6 +351,46 @@ describe('validateSetting', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Docker-locus hardening knobs (features/docker-locus-hardening):
+  // `dockerUser`/`dockerMemory`/`network` are non-empty strings (like `image`);
+  // `dockerPidsLimit` is a positive integer (like `port`); `dockerCpus` is a
+  // positive number (fractional ok). Each rejects an empty/invalid value naming
+  // the key, and persists its real typed value so the loader round-trips it.
+  // -------------------------------------------------------------------------
+  it('accepts a non-empty dockerUser/dockerMemory/network and rejects an empty one', () => {
+    expect(validateSetting('dockerUser', '1000:1000').ok).toBe(true);
+    expect(validateSetting('dockerMemory', '2g').ok).toBe(true);
+    expect(validateSetting('network', 'bridge').ok).toBe(true);
+    for (const key of ['dockerUser', 'dockerMemory', 'network'] as const) {
+      const empty = validateSetting(key, '');
+      expect(empty.ok).toBe(false);
+      expect(empty.error).toContain(key);
+      const blank = validateSetting(key, '   ');
+      expect(blank.ok).toBe(false);
+    }
+  });
+
+  it('accepts a positive integer dockerPidsLimit and rejects non-positive/non-integer', () => {
+    expect(validateSetting('dockerPidsLimit', '512').ok).toBe(true);
+    expect(validateSetting('dockerPidsLimit', '1').ok).toBe(true);
+    expect(validateSetting('dockerPidsLimit', '0').ok).toBe(false);
+    expect(validateSetting('dockerPidsLimit', '-5').ok).toBe(false);
+    expect(validateSetting('dockerPidsLimit', '12.5').ok).toBe(false);
+    expect(validateSetting('dockerPidsLimit', 'abc').ok).toBe(false);
+    expect(validateSetting('dockerPidsLimit', '').ok).toBe(false);
+  });
+
+  it('accepts a positive (possibly fractional) dockerCpus and rejects non-positive', () => {
+    expect(validateSetting('dockerCpus', '1').ok).toBe(true);
+    expect(validateSetting('dockerCpus', '1.5').ok).toBe(true);
+    expect(validateSetting('dockerCpus', '0.25').ok).toBe(true);
+    expect(validateSetting('dockerCpus', '0').ok).toBe(false);
+    expect(validateSetting('dockerCpus', '-1').ok).toBe(false);
+    expect(validateSetting('dockerCpus', 'abc').ok).toBe(false);
+    expect(validateSetting('dockerCpus', '').ok).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
   // `agent` write-path validation (write-path-validation.feature): the write
   // path validates through the SAME shared schema the loaders use
   // (AgentSettingSchema's superRefine routes every string position through
@@ -666,5 +706,133 @@ describe('resolveAgentTimeoutMs', () => {
     expect(
       resolveAgentTimeoutMs({ agentTimeoutMs: 1800000 }, { [AGENT_TIMEOUT_ENV_VAR]: 'not-a-num' })
     ).toBe(1800000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Docker-locus hardening knobs (features/docker-locus-hardening): resolution,
+// persistence, and manifest-schema acceptance mirror the remote-locus flat
+// keys. The five keys cascade project ← manifest like every scalar setting.
+// ---------------------------------------------------------------------------
+describe('docker-locus hardening knobs', () => {
+  it('resolves project-level dockerUser/dockerMemory/dockerPidsLimit/dockerCpus/network', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n' +
+        '  locus: docker\n' +
+        '  dockerUser: "1000:1000"\n' +
+        '  dockerMemory: 2g\n' +
+        '  dockerPidsLimit: 256\n' +
+        '  dockerCpus: 1.5\n' +
+        '  network: none\n'
+    );
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.dockerUser).toBe('1000:1000');
+    expect(settings.dockerMemory).toBe('2g');
+    expect(settings.dockerPidsLimit).toBe(256);
+    expect(settings.dockerCpus).toBe(1.5);
+    expect(settings.network).toBe('none');
+    expect(sources.dockerUser).toBe('project');
+    expect(sources.dockerMemory).toBe('project');
+    expect(sources.dockerPidsLimit).toBe('project');
+    expect(sources.dockerCpus).toBe('project');
+    expect(sources.network).toBe('project');
+  });
+
+  it('lets a manifest override the project-level docker knobs', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  dockerMemory: 2g\n  dockerPidsLimit: 256\n'
+    );
+    const manifest = {
+      name: 'q',
+      phases: [],
+      settings: {
+        dockerMemory: '4g',
+        dockerPidsLimit: 512,
+        dockerUser: '1000:1000',
+      },
+    } as unknown as BatchManifest;
+    const { settings, sources } = resolveBatchSettings(projectRoot, manifest);
+    expect(settings.dockerMemory).toBe('4g');
+    expect(settings.dockerPidsLimit).toBe(512);
+    expect(settings.dockerUser).toBe('1000:1000');
+    expect(sources.dockerMemory).toBe('manifest');
+    expect(sources.dockerPidsLimit).toBe('manifest');
+    expect(sources.dockerUser).toBe('manifest');
+  });
+
+  it('leaves the docker knobs unset (default source) when unconfigured', async () => {
+    await writeConfig('schema: ratchet\n');
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.dockerUser).toBeUndefined();
+    expect(settings.dockerMemory).toBeUndefined();
+    expect(settings.dockerPidsLimit).toBeUndefined();
+    expect(settings.dockerCpus).toBeUndefined();
+    expect(settings.network).toBeUndefined();
+    expect(sources.dockerUser).toBe('default');
+    expect(sources.dockerMemory).toBe('default');
+  });
+
+  it('persists valid docker knobs into config.yaml with their real types', async () => {
+    await writeConfig('schema: ratchet\n');
+    expect(setProjectBatchSetting(projectRoot, 'dockerUser', '1000:1000').ok).toBe(true);
+    expect(setProjectBatchSetting(projectRoot, 'dockerMemory', '2g').ok).toBe(true);
+    expect(setProjectBatchSetting(projectRoot, 'dockerPidsLimit', '512').ok).toBe(true);
+    expect(setProjectBatchSetting(projectRoot, 'dockerCpus', '1.5').ok).toBe(true);
+    expect(setProjectBatchSetting(projectRoot, 'network', 'none').ok).toBe(true);
+    const parsed = parseYaml(
+      readFileSync(path.join(projectRoot, '.ratchet', 'config.yaml'), 'utf-8')
+    );
+    expect(parsed.batch.dockerUser).toBe('1000:1000');
+    expect(parsed.batch.dockerMemory).toBe('2g');
+    expect(parsed.batch.dockerPidsLimit).toBe(512);
+    expect(parsed.batch.dockerCpus).toBe(1.5);
+    expect(parsed.batch.network).toBe('none');
+  });
+
+  it('leaves the file unchanged when an invalid docker knob is rejected', async () => {
+    const original = 'schema: ratchet\nbatch:\n  gate: voluntary\n';
+    await writeConfig(original);
+    expect(setProjectBatchSetting(projectRoot, 'dockerMemory', '').ok).toBe(false);
+    expect(setProjectBatchSetting(projectRoot, 'dockerPidsLimit', 'not-a-num').ok).toBe(false);
+    expect(setProjectBatchSetting(projectRoot, 'dockerCpus', '0').ok).toBe(false);
+    const after = readFileSync(
+      path.join(projectRoot, '.ratchet', 'config.yaml'),
+      'utf-8'
+    );
+    expect(after).toBe(original);
+  });
+
+  it('accepts the docker knobs in the manifest settings schema', () => {
+    const result = BatchManifestSchema.safeParse({
+      name: 'b',
+      settings: {
+        locus: 'docker',
+        dockerUser: '1000:1000',
+        dockerMemory: '2g',
+        dockerPidsLimit: 512,
+        dockerCpus: 1.5,
+        network: 'none',
+      },
+      phases: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('stays strict — rejects an unknown docker-ish settings key', () => {
+    const result = BatchManifestSchema.safeParse({
+      name: 'b',
+      settings: { locus: 'docker', dockerDisk: '10g' },
+      phases: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-numeric dockerPidsLimit in the manifest schema', () => {
+    const result = BatchManifestSchema.safeParse({
+      name: 'b',
+      settings: { locus: 'docker', dockerPidsLimit: 'lots' },
+      phases: [],
+    });
+    expect(result.success).toBe(false);
   });
 });

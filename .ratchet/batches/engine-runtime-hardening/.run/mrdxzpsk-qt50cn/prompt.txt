@@ -1,0 +1,32 @@
+You are advancing the ratchet batch "engine-runtime-hardening".
+Perform EXACTLY ONE transition: APPLY for change "harden-docker-locus".
+You MUST finish by running `ratchet batch report engine-runtime-hardening --change harden-docker-locus --complete "<summary>"` — without it this step is treated as unreported and parked.
+
+Active phase: lifecycle-and-isolation
+Phase goal: Reap agents deterministically and make the sandbox/permission story honest: teardown kills the agent, not just the sidecar (#79); the docker locus stops being a root/unbounded/open-network mount (#85); posture output stops naming isolation that isn't there (#86); a repo-committed manifest can't silently escalate to full-autonomy (#87); and `batch config` renders per-agent enforcement truthfully (#88). DECOMPOSE (required): before authoring change intents, the decompose agent MUST `gh issue view` #79, #85, #86, #87, and #88 against the current tree and confirm each is still valid; adjust intents to reality (phase-1 env plumbing may have shifted #86) and record the check. PR: the phase PR MUST link `Closes #N` for every issue it actually fixes.
+Phase success criteria: An overall timeout/teardown kills the agent's process group with no orphaned nohup/docker/remote agents and no leftover sentinel files; the docker locus runs as the host uid with memory/pids/network knobs and a documented isolation contract; `batch config` states the real isolation per locus and per-agent enforcement status; manifest scope can only NARROW permissions (raising posture requires operator-owned config or an explicit opt-in). The phase PR links every issue it fixes.
+Phase proof-of-work (integration): run `npm test -- test/batch-engine/`, passes when exit code 0 — teardown-reaping, docker-hardening, posture-honesty, and manifest-escalation suites green
+Definition of done: The docker locus (`docker_args` in sidecar.py) runs the agent as the host uid/gid (`--user $(id -u):$(id -g)`, overridable for images that need root setup), applies resource limits with sane defaults (`--memory`, `--pids-limit`, optional `--cpus`) overridable via batch settings, and makes network policy configurable (`network: bridge|none|<name>`, default documented); the rw repo mount stays by design. `docs/engine/agent-runtime.md` documents the honest isolation contract (repo writable by design; uid, resources, env, and network per config — what the container does and does not protect). `gh issue view 85` confirmed OPEN and unfixed at decompose (2026-07-09). Fixes #85.
+
+Advance this change by invoking the ratchet apply skill — run:
+  /rct-apply harden-docker-locus Resume APPLY (OpenRouter limit was being raised). Implement harden-docker-locus per plan.md + docker-locus-hardening features (flat settings dockerUser/dockerMemory/dockerPidsLimit/dockerCpus/network threaded as REX_DOCKER_* for docker locus; apply --user/--memory/--pids-limit/--network/--cpus in sidecar.py docker_args; keep rw mount; docs; tests at each layer; run phase proof green), then report --complete.
+It loads the project standards under ".ratchet/standards/" and is the single
+author of the apply lifecycle. Do NOT hand-build or re-describe
+the apply steps yourself — delegate to the skill and let it
+author/advance the change to its canonical definition of done.
+Anything after the change name above is the caller guidance / resume
+context the engine already resolved — pass it to the skill as its
+arguments ($ARGUMENTS); do not treat it as a separate, optional note.
+
+This step was previously parked on a blocker:
+  Question: Agent exited with code 0 without reporting completion or a blocker.
+The resolved answer is attached to the invocation above as an argument —
+incorporate it and continue the transition. Do not start over.
+
+Communicate ONLY by running these shell commands (do not prompt interactively):
+  ratchet batch report engine-runtime-hardening --change harden-docker-locus --status "<progress note>"
+  ratchet batch report engine-runtime-hardening --change harden-docker-locus --blocker "<question you need answered>"
+  ratchet batch report engine-runtime-hardening --change harden-docker-locus --needs-input "<what you need>"
+  ratchet batch report engine-runtime-hardening --change harden-docker-locus --complete "<summary of what you did>"
+Raise a blocker instead of guessing when a decision is required.
+Post a completion ONLY when this single transition is genuinely finished.

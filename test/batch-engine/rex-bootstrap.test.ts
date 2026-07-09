@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import {
   bootstrapRexRuntime,
@@ -9,6 +9,9 @@ import {
   RexBootstrapError,
   SWE_REX_VERSION,
   DEFAULT_DOCKER_IMAGE,
+  DEFAULT_DOCKER_MEMORY,
+  DEFAULT_DOCKER_PIDS_LIMIT,
+  DEFAULT_DOCKER_NETWORK,
   DOCKER_EXTRA,
   type BootstrapDeps,
   type RunResult,
@@ -443,5 +446,152 @@ describe('bootstrapRexRuntime — docker locus', () => {
     expect(launch.env.REX_IMAGE).toBeUndefined();
     expect(launch.env.REX_MOUNT_HOST).toBeUndefined();
     expect(launch.env.REX_MOUNT_CONTAINER).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Docker-locus hardening env (features/docker-locus-hardening): the five
+  // `REX_DOCKER_*` knobs are threaded only for docker, with the documented
+  // defaults applied for memory/pids/network when unset, and the flag OMITTED
+  // for user/cpus when unset (opt-in). Local is untouched.
+  // -------------------------------------------------------------------------
+  it('threads REX_DOCKER_* (configured) into the launch env', () => {
+    const deps = new FakeDeps(dockerHappy);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({
+      cacheHome: CACHE,
+      deps,
+      locus: 'docker',
+      workdir: '/workspace',
+      dockerUser: '1000:1000',
+      dockerMemory: '4g',
+      dockerPidsLimit: 256,
+      dockerCpus: 1.5,
+      network: 'none',
+    });
+    expect(launch.env.REX_DOCKER_USER).toBe('1000:1000');
+    expect(launch.env.REX_DOCKER_MEMORY).toBe('4g');
+    expect(launch.env.REX_DOCKER_PIDS_LIMIT).toBe('256');
+    expect(launch.env.REX_DOCKER_CPUS).toBe('1.5');
+    expect(launch.env.REX_DOCKER_NETWORK).toBe('none');
+  });
+
+  it('applies the documented defaults for memory/pids/network when unset', () => {
+    const deps = new FakeDeps(dockerHappy);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({
+      cacheHome: CACHE,
+      deps,
+      locus: 'docker',
+      workdir: '/workspace',
+    });
+    expect(launch.env.REX_DOCKER_MEMORY).toBe(DEFAULT_DOCKER_MEMORY);
+    expect(launch.env.REX_DOCKER_PIDS_LIMIT).toBe(String(DEFAULT_DOCKER_PIDS_LIMIT));
+    expect(launch.env.REX_DOCKER_NETWORK).toBe(DEFAULT_DOCKER_NETWORK);
+  });
+
+  it('omits REX_DOCKER_USER and REX_DOCKER_CPUS when unset (opt-in)', () => {
+    const deps = new FakeDeps(dockerHappy);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({
+      cacheHome: CACHE,
+      deps,
+      locus: 'docker',
+      workdir: '/workspace',
+    });
+    expect(launch.env.REX_DOCKER_USER).toBeUndefined();
+    expect(launch.env.REX_DOCKER_CPUS).toBeUndefined();
+  });
+
+  it('does not set any REX_DOCKER_* env for local', () => {
+    const deps = new FakeDeps(happyHandler);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'local' });
+    expect(launch.env.REX_DOCKER_USER).toBeUndefined();
+    expect(launch.env.REX_DOCKER_MEMORY).toBeUndefined();
+    expect(launch.env.REX_DOCKER_PIDS_LIMIT).toBeUndefined();
+    expect(launch.env.REX_DOCKER_CPUS).toBeUndefined();
+    expect(launch.env.REX_DOCKER_NETWORK).toBeUndefined();
+  });
+});
+
+/**
+ * Implements: features/agent-env-scoping/sidecar-bootstrap-env.feature
+ *
+ * The sidecar launch env is built from the scoped host environment so a
+ * local-locus agent (which inherits the sidecar's env) cannot see non-allowlisted
+ * host secrets, while the venv wiring and threaded locus vars survive scoping.
+ */
+describe('bootstrapRexRuntime — scoped launch env (sidecar-bootstrap-env.feature)', () => {
+  const SECRET = 'SUPER_SECRET_TOKEN';
+  let savedSecret: string | undefined;
+
+  beforeEach(() => {
+    savedSecret = process.env[SECRET];
+    delete process.env[SECRET];
+  });
+
+  afterEach(() => {
+    if (savedSecret === undefined) delete process.env[SECRET];
+    else process.env[SECRET] = savedSecret;
+  });
+
+  // Scenario: The sidecar launch env excludes a non-allowlisted host secret
+  it('excludes a non-allowlisted host secret while keeping HOME', () => {
+    process.env[SECRET] = 'hunter2';
+    const deps = new FakeDeps(happyHandler);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'local' });
+    expect(launch.env).not.toHaveProperty(SECRET);
+    // HOME is a baseline allowlist var and passes through with its host value.
+    if (process.env.HOME !== undefined) {
+      expect(launch.env.HOME).toBe(process.env.HOME);
+    }
+  });
+
+  // Scenario: The venv wiring survives scoping
+  it('prepends the venv bin to the host PATH and sets VIRTUAL_ENV', () => {
+    const deps = new FakeDeps(happyHandler);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({ cacheHome: CACHE, deps, locus: 'local' });
+    const venvBin = path.join(CACHE, 'ratchet', 'rex', 'venv', 'bin');
+    expect(launch.env.PATH?.startsWith(venvBin + path.delimiter)).toBe(true);
+    // ...followed by the host PATH.
+    const hostPath = process.env.PATH ?? '';
+    if (hostPath) {
+      expect(launch.env.PATH?.endsWith(hostPath)).toBe(true);
+    }
+    expect(launch.env.VIRTUAL_ENV).toBe(path.join(CACHE, 'ratchet', 'rex', 'venv'));
+  });
+
+  // Scenario: Locus threading vars survive scoping
+  it('carries REX_LOCUS, REX_WORKDIR, and REX_IMAGE for the docker locus', () => {
+    // A handler that makes a docker bootstrap succeed end to end.
+    const dockerHappy = (command: string, args: string[], self: FakeDeps): RunResult => {
+      if (command === 'docker' && args[0] === 'info') return ok('Server: ...');
+      if (args.includes('--version')) return ok('Python 3.12.1');
+      if (command === 'uv' && args[0] === 'venv') {
+        self.writeText(VENV_PYTHON, '#!/bin/sh');
+        return ok();
+      }
+      if (args[0] === '-m' && args[1] === 'venv') {
+        self.writeText(VENV_PYTHON, '#!/bin/sh');
+        return ok();
+      }
+      if (command === 'uv' && args[0] === 'pip') return ok();
+      if (args.some((a) => a.includes('import swerex'))) return ok();
+      return ok();
+    };
+    const deps = new FakeDeps(dockerHappy);
+    deps.toolsOnPath.add('uv');
+    const launch = bootstrapRexRuntime({
+      cacheHome: CACHE,
+      deps,
+      locus: 'docker',
+      workdir: '/workspace',
+      image: 'my/image:tag',
+    });
+    expect(launch.env.REX_LOCUS).toBe('docker');
+    expect(launch.env.REX_WORKDIR).toBe('/workspace');
+    expect(launch.env.REX_IMAGE).toBe('my/image:tag');
   });
 });

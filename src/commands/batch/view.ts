@@ -20,6 +20,13 @@ import {
 } from '../../core/batch/status.js';
 import { readRunState, readJournal } from '../../core/batch/journal.js';
 import { resolveBatchName, listBatchNames } from './shared.js';
+import { resolveBatchSettings } from '../../core/batch/config.js';
+import { describeLocusIsolation } from '../../core/batch/runtime/isolation.js';
+import {
+  resolvePostureEnforcement,
+  type PostureEnforcement,
+} from '../../core/batch/runtime/agent-permissions.js';
+import { AGENT_STAGE_KEYS, resolveAgentForStage } from '../../core/batch/agent-setting.js';
 
 export interface BatchViewOptions {
   json?: boolean;
@@ -78,16 +85,88 @@ export async function batchViewCommand(
   // (an all-tasks-checked change with no journaled verify renders awaiting-verify).
   const journal = readJournal(projectRoot, batchName);
   const status = await computeBatchStatus(projectRoot, manifest, runState, journal);
+  // Resolve the batch's runtime settings so the dashboard renders an honest
+  // runtime summary (locus + its real isolation, posture + source + per-agent
+  // enforcement) — the same descriptors `batch config` uses, so the runtime
+  // story can never drift between surfaces (#86 posture-honesty half).
+  const resolved = resolveBatchSettings(projectRoot, manifest);
 
   if (options.json) {
-    console.log(JSON.stringify(status, null, 2));
+    const isolation = describeLocusIsolation(resolved.settings);
+    const enforcement = resolveViewEnforcement(resolved, projectRoot);
+    console.log(
+      JSON.stringify(
+        { ...status, isolation, enforcement, posture: resolved.settings.permissions?.posture },
+        null,
+        2
+      )
+    );
     return;
   }
 
-  renderSingleBatch(status);
+  renderSingleBatch(status, resolved, projectRoot);
 }
 
-function renderSingleBatch(status: BatchStatusInfo): void {
+/**
+ * Render the runtime summary line: the locus and its real isolation, plus the
+ * posture with its source scope and per-agent enforcement status. Reuses the
+ * same descriptors as `batch config` so the wording never drifts. Printed right
+ * under the progress bar so an operator inspecting a batch sees the honest
+ * runtime story before the change list.
+ */
+function renderRuntimeSummary(
+  resolved: ReturnType<typeof resolveBatchSettings>,
+  repoRoot: string
+): void {
+  const isolation = describeLocusIsolation(resolved.settings);
+  console.log(
+    chalk.dim(`  runtime: ${isolation.locus} — ${isolation.description}`)
+  );
+  const policy = resolved.settings.permissions;
+  if (!policy) return;
+  const sourceTag =
+    resolved.sources.permissions === 'manifest'
+      ? ' (set by batch manifest — repo-controlled)'
+      : resolved.sources.permissions === 'project'
+        ? ' [project]'
+        : resolved.sources.permissions === 'user'
+          ? ' [user]'
+          : ' [default]';
+  console.log(chalk.dim(`  posture:  ${policy.posture}${sourceTag}`));
+  const enforcement = resolveViewEnforcement(resolved, repoRoot);
+  for (const e of enforcement) {
+    const tag = e.enforced ? 'enforced' : 'NOT ENFORCED';
+    console.log(chalk.dim(`            ${e.agent}: ${tag}`));
+  }
+}
+
+/** Distinct stage agents → per-agent enforcement entries (mirrors `batch config`). */
+function resolveViewEnforcement(
+  resolved: ReturnType<typeof resolveBatchSettings>,
+  repoRoot: string
+): PostureEnforcement[] {
+  const policy = resolved.settings.permissions;
+  if (!policy) return [];
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const stage of AGENT_STAGE_KEYS) {
+    const spec = resolveAgentForStage(resolved.settings.agent, stage);
+    if (spec === undefined) continue;
+    const agentName = spec.split(':')[0];
+    if (agentName.length === 0) continue;
+    if (!seen.has(agentName)) {
+      seen.add(agentName);
+      ordered.push(agentName);
+    }
+  }
+  return ordered.map((a) => resolvePostureEnforcement(a, policy, repoRoot));
+}
+
+function renderSingleBatch(
+  status: BatchStatusInfo,
+  resolved: ReturnType<typeof resolveBatchSettings>,
+  repoRoot: string
+): void {
   console.log(chalk.bold(`\nBatch: ${status.name}`));
   console.log('═'.repeat(60));
 
@@ -100,6 +179,11 @@ function renderSingleBatch(status: BatchStatusInfo): void {
       `${pct}% · ${status.doneCount}/${status.changeCount} changes done`
     )}`
   );
+
+  // Honest runtime summary: locus + real isolation, posture + source + per-
+  // agent enforcement. Rendered before the change list so an operator sees the
+  // security story first (see view-runtime-summary.feature).
+  renderRuntimeSummary(resolved, repoRoot);
 
   if (status.changeCount === 0) {
     console.log(

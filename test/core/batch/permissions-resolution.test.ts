@@ -53,15 +53,46 @@ describe('permission scope layering (user ← project ← manifest)', () => {
     expect(sources.permissions).toBe('default');
   });
 
-  it('per-change manifest posture wins over project and user (scalar nearest-wins)', async () => {
+  it('per-change manifest posture is CLAMPED when it tries to raise above operator scopes', async () => {
     saveUserBatchPermissions({ posture: 'curated-allowlist' });
     await writeProject('schema: ratchet\nbatch:\n  permissions:\n    posture: repo-sandboxed-permissive\n');
-    const { settings, sources } = resolveBatchSettings(
+    const { settings, sources, suppressedEscalation } = resolveBatchSettings(
       projectRoot,
       manifest({ posture: 'full-autonomy' })
     );
+    // raise refused: posture held at the operator-scope value, source stays 'project'
+    expect(settings.permissions?.posture).toBe('repo-sandboxed-permissive');
+    expect(sources.permissions).toBe('project');
+    expect(suppressedEscalation).toEqual({
+      scope: 'manifest',
+      requested: 'full-autonomy',
+    });
+  });
+
+  it('per-change manifest posture wins when it NARROWS (lowers) below operator scopes', async () => {
+    saveUserBatchPermissions({ posture: 'full-autonomy' });
+    await writeProject('schema: ratchet\nbatch:\n  permissions:\n    posture: full-autonomy\n');
+    const { settings, sources, suppressedEscalation } = resolveBatchSettings(
+      projectRoot,
+      manifest({ posture: 'curated-allowlist' })
+    );
+    // narrowing allowed: manifest posture applies, source becomes 'manifest'
+    expect(settings.permissions?.posture).toBe('curated-allowlist');
+    expect(sources.permissions).toBe('manifest');
+    expect(suppressedEscalation).toBeUndefined();
+  });
+
+  it('per-change manifest posture raise is ALLOWED with allowManifestEscalation opt-in', async () => {
+    saveUserBatchPermissions({ posture: 'curated-allowlist' });
+    await writeProject('schema: ratchet\nbatch:\n  permissions:\n    posture: repo-sandboxed-permissive\n');
+    const { settings, sources, suppressedEscalation } = resolveBatchSettings(
+      projectRoot,
+      manifest({ posture: 'full-autonomy' }),
+      { allowManifestEscalation: true }
+    );
     expect(settings.permissions?.posture).toBe('full-autonomy');
     expect(sources.permissions).toBe('manifest');
+    expect(suppressedEscalation).toBeUndefined();
   });
 
   it('project overrides user when no manifest posture is present', async () => {

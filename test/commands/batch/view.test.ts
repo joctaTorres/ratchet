@@ -88,6 +88,58 @@ describe('batch view and list', () => {
       expect(parsed.name).toBe('b');
       expect(Array.isArray(parsed.phases)).toBe(true);
     });
+
+    // Feature: view-runtime-summary.feature — the dashboard renders an honest
+    // runtime summary (locus + its real isolation, posture + source + per-agent
+    // enforcement) reusing the same descriptors as `batch config`.
+    it('renders a runtime summary naming the locus, isolation, and posture', async () => {
+      await fixture.writeBatch('b', {
+        settings: { agent: 'claude', permissions: { posture: 'repo-sandboxed-permissive' } },
+        phases: [{ changes: [{ name: 'c1' }] }],
+      });
+
+      await batchViewCommand('b', {});
+
+      const out = output();
+      expect(out).toContain('runtime:');
+      expect(out).toContain('local');
+      expect(out).toContain('Advisory');
+      expect(out).toContain('posture:');
+      expect(out).toContain('repo-sandboxed-permissive');
+      expect(out).toContain('claude: enforced');
+    });
+
+    it('renders the NOT-ENFORCED status for a non-argv agent in the summary', async () => {
+      await fixture.writeBatch('b', {
+        settings: { agent: 'cursor', permissions: { posture: 'repo-sandboxed-permissive' } },
+        phases: [{ changes: [{ name: 'c1' }] }],
+      });
+
+      await batchViewCommand('b', {});
+
+      const out = output();
+      expect(out).toContain('cursor: NOT ENFORCED');
+    });
+
+    it('JSON output carries isolation, posture, and enforcement', async () => {
+      await fixture.writeBatch('b', {
+        settings: { agent: 'cursor', permissions: { posture: 'repo-sandboxed-permissive' } },
+        phases: [{ changes: [{ name: 'c1' }] }],
+      });
+
+      await batchViewCommand('b', { json: true });
+
+      const parsed = JSON.parse(output()) as {
+        isolation: { locus: string; description: string };
+        posture: string;
+        enforcement: { agent: string; enforced: boolean; detail: string }[];
+      };
+      expect(parsed.isolation.locus).toBe('local');
+      expect(parsed.isolation.description).toContain('Advisory');
+      expect(parsed.posture).toBe('repo-sandboxed-permissive');
+      expect(parsed.enforcement[0].agent).toBe('cursor');
+      expect(parsed.enforcement[0].enforced).toBe(false);
+    });
   });
 
   describe('batchListCommand', () => {

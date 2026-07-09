@@ -185,9 +185,27 @@ class TailOffsetLoopTests(unittest.TestCase):
 
 class MakeDeploymentTests(unittest.TestCase):
     def setUp(self):
-        for k in ("REX_IMAGE", "REX_MOUNT_HOST", "REX_MOUNT_CONTAINER"):
+        for k in (
+            "REX_IMAGE", "REX_MOUNT_HOST", "REX_MOUNT_CONTAINER",
+            "REX_DOCKER_USER", "REX_DOCKER_MEMORY", "REX_DOCKER_PIDS_LIMIT",
+            "REX_DOCKER_CPUS", "REX_DOCKER_NETWORK",
+        ):
             os.environ.pop(k, None)
         CAPTURED.clear()
+
+    def _expected_default_args(self, mount_host="/host/project", mount_container="/workspace"):
+        """The full default docker_args (mount + hardening defaults).
+
+        ``--user`` defaults to the current host uid:gid (resolved by the sidecar
+        via os.getuid()/os.getgid()), so the expected value is dynamic.
+        """
+        return [
+            "-v", f"{mount_host}:{mount_container}",
+            "--user", f"{os.getuid()}:{os.getgid()}",
+            "--memory", sidecar.DEFAULT_DOCKER_MEMORY,
+            "--pids-limit", sidecar.DEFAULT_DOCKER_PIDS_LIMIT,
+            "--network", sidecar.DEFAULT_DOCKER_NETWORK,
+        ]
 
     def test_docker_builds_the_v_mount_argv_from_mount_env(self):
         os.environ["REX_IMAGE"] = "my/image:tag"
@@ -197,7 +215,7 @@ class MakeDeploymentTests(unittest.TestCase):
         self.assertEqual(CAPTURED["docker"]["image"], "my/image:tag")
         self.assertEqual(
             CAPTURED["docker"]["docker_args"],
-            ["-v", "/host/project:/workspace"],
+            self._expected_default_args(),
         )
 
     def test_docker_defaults_image_and_container_mount(self):
@@ -207,18 +225,317 @@ class MakeDeploymentTests(unittest.TestCase):
         self.assertEqual(CAPTURED["docker"]["image"], sidecar.DEFAULT_DOCKER_IMAGE)
         self.assertEqual(
             CAPTURED["docker"]["docker_args"],
-            ["-v", "/host/project:/workspace"],
+            self._expected_default_args(),
         )
 
-    def test_docker_omits_docker_args_when_mount_host_unset(self):
-        # No REX_MOUNT_HOST -> empty docker_args (no `-v` spliced into the run argv).
+    def test_docker_omits_v_mount_when_mount_host_unset_but_keeps_hardening(self):
+        # No REX_MOUNT_HOST -> no `-v`, but hardening knobs are still applied.
         sidecar._make_deployment("docker")
-        self.assertEqual(CAPTURED["docker"]["docker_args"], [])
+        args = CAPTURED["docker"]["docker_args"]
+        self.assertNotIn("-v", args)
+        self.assertIn("--user", args)
+        self.assertIn("--memory", args)
+        self.assertIn("--pids-limit", args)
+        self.assertIn("--network", args)
+        # cpus is opt-in and unset -> no --cpus flag.
+        self.assertNotIn("--cpus", args)
+
+    def test_docker_all_hardening_knobs_threaded_together(self):
+        os.environ["REX_MOUNT_HOST"] = "/host/project"
+        os.environ["REX_MOUNT_CONTAINER"] = "/workspace"
+        os.environ["REX_DOCKER_USER"] = "2000:2000"
+        os.environ["REX_DOCKER_MEMORY"] = "4g"
+        os.environ["REX_DOCKER_PIDS_LIMIT"] = "1024"
+        os.environ["REX_DOCKER_CPUS"] = "2"
+        os.environ["REX_DOCKER_NETWORK"] = "none"
+        sidecar._make_deployment("docker")
+        args = CAPTURED["docker"]["docker_args"]
+        self.assertEqual(args, [
+            "-v", "/host/project:/workspace",
+            "--user", "2000:2000",
+            "--memory", "4g",
+            "--pids-limit", "1024",
+            "--network", "none",
+            "--cpus", "2",
+        ])
 
     def test_local_uses_local_deployment(self):
         sidecar._make_deployment("local")
         self.assertTrue(CAPTURED.get("local"))
         self.assertNotIn("docker", CAPTURED)
+
+
+class DockerHardeningTests(unittest.TestCase):
+    """Cover the REX_DOCKER_* knobs (features/docker-locus-hardening)."""
+
+    def setUp(self):
+        for k in (
+            "REX_IMAGE", "REX_MOUNT_HOST", "REX_MOUNT_CONTAINER",
+            "REX_DOCKER_USER", "REX_DOCKER_MEMORY", "REX_DOCKER_PIDS_LIMIT",
+            "REX_DOCKER_CPUS", "REX_DOCKER_NETWORK",
+        ):
+            os.environ.pop(k, None)
+        CAPTURED.clear()
+
+    def _args(self):
+        sidecar._make_deployment("docker")
+        return CAPTURED["docker"]["docker_args"]
+
+    def test_user_defaults_to_host_uid_gid(self):
+        args = self._args()
+        i = args.index("--user")
+        self.assertEqual(args[i + 1], f"{os.getuid()}:{os.getgid()}")
+
+    def test_configured_user_overrides_host_default(self):
+        os.environ["REX_DOCKER_USER"] = "0:0"
+        args = self._args()
+        i = args.index("--user")
+        self.assertEqual(args[i + 1], "0:0")
+
+    def test_memory_and_pids_default_applied(self):
+        args = self._args()
+        self.assertIn("--memory", args)
+        self.assertEqual(args[args.index("--memory") + 1], sidecar.DEFAULT_DOCKER_MEMORY)
+        self.assertIn("--pids-limit", args)
+        self.assertEqual(
+            args[args.index("--pids-limit") + 1], sidecar.DEFAULT_DOCKER_PIDS_LIMIT
+        )
+
+    def test_configured_memory_and_pids_override_defaults(self):
+        os.environ["REX_DOCKER_MEMORY"] = "512m"
+        os.environ["REX_DOCKER_PIDS_LIMIT"] = "128"
+        args = self._args()
+        self.assertEqual(args[args.index("--memory") + 1], "512m")
+        self.assertEqual(args[args.index("--pids-limit") + 1], "128")
+
+    def test_cpus_omitted_when_unset(self):
+        args = self._args()
+        self.assertNotIn("--cpus", args)
+
+    def test_configured_cpus_applied(self):
+        os.environ["REX_DOCKER_CPUS"] = "1.5"
+        args = self._args()
+        self.assertEqual(args[args.index("--cpus") + 1], "1.5")
+
+    def test_network_defaults_to_bridge(self):
+        args = self._args()
+        self.assertEqual(args[args.index("--network") + 1], "bridge")
+
+    def test_configured_network_applied(self):
+        os.environ["REX_DOCKER_NETWORK"] = "none"
+        args = self._args()
+        self.assertEqual(args[args.index("--network") + 1], "none")
+
+    def test_repo_mount_stays_read_write(self):
+        os.environ["REX_MOUNT_HOST"] = "/host/project"
+        os.environ["REX_MOUNT_CONTAINER"] = "/workspace"
+        args = self._args()
+        i = args.index("-v")
+        mount = args[i + 1]
+        self.assertEqual(mount, "/host/project:/workspace")
+        self.assertNotIn(":ro", mount)
+
+
+class DockerHardeningValidationTests(unittest.TestCase):
+    """Fail-before-spawn: a malformed REX_DOCKER_* value raises before docker run."""
+
+    def setUp(self):
+        for k in (
+            "REX_IMAGE", "REX_MOUNT_HOST", "REX_MOUNT_CONTAINER",
+            "REX_DOCKER_USER", "REX_DOCKER_MEMORY", "REX_DOCKER_PIDS_LIMIT",
+            "REX_DOCKER_CPUS", "REX_DOCKER_NETWORK",
+        ):
+            os.environ.pop(k, None)
+        CAPTURED.clear()
+
+    def test_non_integer_pids_limit_raises(self):
+        os.environ["REX_DOCKER_PIDS_LIMIT"] = "lots"
+        with self.assertRaises(RuntimeError) as ctx:
+            sidecar._make_deployment("docker")
+        self.assertIn("REX_DOCKER_PIDS_LIMIT", str(ctx.exception))
+
+    def test_non_positive_pids_limit_raises(self):
+        os.environ["REX_DOCKER_PIDS_LIMIT"] = "0"
+        with self.assertRaises(RuntimeError):
+            sidecar._make_deployment("docker")
+
+    def test_non_numeric_cpus_raises(self):
+        os.environ["REX_DOCKER_CPUS"] = "fast"
+        with self.assertRaises(RuntimeError) as ctx:
+            sidecar._make_deployment("docker")
+        self.assertIn("REX_DOCKER_CPUS", str(ctx.exception))
+
+    def test_non_positive_cpus_raises(self):
+        os.environ["REX_DOCKER_CPUS"] = "0"
+        with self.assertRaises(RuntimeError):
+            sidecar._make_deployment("docker")
+
+
+class RunDirAndPidfileTests(unittest.TestCase):
+    """Cover the job-control launcher, run_dir threading, and pidfile tracking
+    added by the reap-agents-on-teardown change."""
+
+    def setUp(self):
+        sidecar.emit = lambda obj: None  # swallow
+        sidecar.POLL_INTERVAL = 0
+
+    def test_run_dir_threads_into_sentinel_paths(self):
+        events, runtime, sc = _drive_run_with_run_dir(
+            ["line\n"], exit_code=0, run_dir="/custom/run"
+        )
+        # The launcher writes the log/done/pid sentinels UNDER run_dir.
+        launchers = [c for c in runtime.commands if c.startswith("nohup ")]
+        self.assertTrue(any("/custom/run/ratchet-rex-" in c for c in launchers))
+        # The pre-launch rm also targets run_dir.
+        rms = [c for c in runtime.commands if c.startswith("rm -f")]
+        self.assertTrue(any("/custom/run/ratchet-rex-" in c for c in rms))
+
+    def test_launcher_uses_job_control_and_writes_pidfile(self):
+        events, runtime, sc = _drive_run_with_run_dir(
+            ["line\n"], exit_code=0, run_dir="/rd"
+        )
+        launchers = [c for c in runtime.commands if c.startswith("nohup ")]
+        self.assertEqual(len(launchers), 1)
+        launcher = launchers[0]
+        # `set -m` makes the backgrounded pipeline its own process-group leader.
+        self.assertIn("set -m", launcher)
+        # The pidfile is written (`echo $! > <pid>`) so shutdown can find the group.
+        self.assertIn("echo $! > ", launcher)
+        self.assertIn(".pid", launcher)
+        # The exit code is collected into the done sentinel.
+        self.assertIn("echo $? > ", launcher)
+        self.assertIn(".done", launcher)
+
+    def test_run_pidfile_cleared_after_run_completes(self):
+        events, runtime, sc = _drive_run_with_run_dir(
+            ["line\n"], exit_code=0, run_dir="/rd"
+        )
+        # After a clean run the pidfile is cleared (the run reaped itself).
+        self.assertIsNone(sc.run_pidfile)
+
+    def test_run_dir_absent_falls_back_to_workdir(self):
+        events, runtime = _drive_run(["line\n"], exit_code=0)
+        launchers = [c for c in runtime.commands if c.startswith("nohup ")]
+        # No run_dir -> sentinels under workdir (/tmp).
+        self.assertTrue(any("/tmp/ratchet-rex-" in c for c in launchers))
+
+
+class ReapAgentGroupTests(unittest.TestCase):
+    """Cover _reap_agent_group: TERM→grace→KILL, idempotency, and edge cases."""
+
+    def setUp(self):
+        sidecar.emit = lambda obj: None
+        sidecar.POLL_INTERVAL = 0
+
+    def _make_sidecar_with_pidfile(self, pgid_response=""):
+        """Build a Sidecar whose runtime scripts `cat <pidfile>` → pgid."""
+        sc = sidecar.Sidecar()
+        sc.workdir = "/tmp"
+        sc.run_pidfile = "/tmp/ratchet-rex-deadbeef.pid"
+        sc._shutdown_grace_s = 0  # no real sleeps in the reap sequence
+        runtime = _ReapFakeRuntime(pgid_response=pgid_response)
+        sc.runtime = runtime
+        return sc, runtime
+
+    def test_term_then_grace_then_kill(self):
+        sc, runtime = self._make_sidecar_with_pidfile(pgid_response="4242")
+        asyncio.run(sc._reap_agent_group())
+        kills = [c for c in runtime.commands if c.startswith("kill ")]
+        # Exactly TERM then KILL, in order, targeting the negative pgid.
+        self.assertEqual(len(kills), 2)
+        self.assertIn("kill -TERM -- -4242", kills[0])
+        self.assertIn("kill -KILL -- -4242", kills[1])
+        # Pidfile claimed (cleared) so a second call is a no-op.
+        self.assertIsNone(sc.run_pidfile)
+
+    def test_idempotent_second_call_is_noop(self):
+        sc, runtime = self._make_sidecar_with_pidfile(pgid_response="4242")
+        asyncio.run(sc._reap_agent_group())
+        n_before = len(runtime.commands)
+        asyncio.run(sc._reap_agent_group())
+        self.assertEqual(len(runtime.commands), n_before)
+
+    def test_missing_pidfile_is_noop(self):
+        sc = sidecar.Sidecar()
+        sc.runtime = _ReapFakeRuntime()
+        sc.run_pidfile = None
+        runtime = sc.runtime
+        asyncio.run(sc._reap_agent_group())
+        self.assertEqual(runtime.commands, [])
+
+    def test_empty_or_nonnumeric_pgid_skips_kill(self):
+        sc, runtime = self._make_sidecar_with_pidfile(pgid_response="")
+        asyncio.run(sc._reap_agent_group())
+        kills = [c for c in runtime.commands if c.startswith("kill ")]
+        self.assertEqual(kills, [])
+
+    def test_sweeps_sentinels_after_reap(self):
+        sc, runtime = self._make_sidecar_with_pidfile(pgid_response="4242")
+        asyncio.run(sc._reap_agent_group())
+        rms = [c for c in runtime.commands if c.startswith("rm -f")]
+        self.assertTrue(len(rms) >= 1)
+        self.assertIn(".pid", rms[0])
+
+
+class ShutdownReapsBeforeStopTests(unittest.TestCase):
+    """shutdown() must reap the agent group BEFORE stopping the deployment."""
+
+    def setUp(self):
+        sidecar.emit = lambda obj: None
+        sidecar.POLL_INTERVAL = 0
+
+    def test_shutdown_reaps_group_then_stops_deployment(self):
+        sc = sidecar.Sidecar()
+        sc.workdir = "/tmp"
+        sc.run_pidfile = "/tmp/ratchet-rex-deadbeef.pid"
+        sc._shutdown_grace_s = 0
+        runtime = _ReapFakeRuntime(pgid_response="4242")
+        sc.runtime = runtime
+        stop_order: list[str] = []
+
+        class FakeDeployment:
+            async def stop(self):
+                stop_order.append("stop")
+
+        sc.deployment = FakeDeployment()
+        emitted: list[dict] = []
+        sidecar.emit = lambda obj: emitted.append(obj)
+        asyncio.run(sc.shutdown())
+        # The reap kill commands appear BEFORE the deployment.stop() call.
+        first_kill_idx = next(
+            (i for i, c in enumerate(runtime.commands) if c.startswith("kill ")), None
+        )
+        self.assertIsNotNone(first_kill_idx)
+        self.assertEqual(stop_order, ["stop"])
+        self.assertIn({"event": "closed"}, emitted)
+
+
+class _ReapFakeRuntime:
+    """A minimal runtime for _reap_agent_group/shutdown tests: records every
+    command and scripts `cat <pidfile>` to return a pgid string."""
+
+    def __init__(self, pgid_response: str = ""):
+        self.commands: list[str] = []
+        self._pgid = pgid_response
+
+    async def execute(self, command):
+        cmd = command.command
+        self.commands.append(cmd)
+        if cmd.startswith("cat ") and ".pid" in cmd:
+            return FakeExecResult(self._pgid + "\n")
+        return FakeExecResult("")
+
+
+def _drive_run_with_run_dir(log_chunks, exit_code, run_dir):
+    """Like _drive_run but passes run_dir; returns (events, runtime, sidecar)."""
+    events: list[dict] = []
+    sidecar.emit = lambda obj: events.append(obj)
+    sidecar.POLL_INTERVAL = 0
+    sc = sidecar.Sidecar()
+    sc.workdir = "/tmp"
+    sc.runtime = FakeRuntime(log_chunks, exit_code)
+    asyncio.run(sc.run(run_id=1, command="agent --go", run_dir=run_dir))
+    return events, sc.runtime, sc
 
 
 if __name__ == "__main__":

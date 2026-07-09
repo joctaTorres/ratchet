@@ -259,12 +259,12 @@ describe('runDoctorChecks', () => {
       expect(c).toHaveProperty('severity');
     }
     const ids = parsed.checks.map((c: { id: string }) => c.id).sort();
-    expect(ids).toEqual(['agent', 'docker', 'runtime']);
+    expect(ids).toEqual(['agent', 'batch-isolation', 'docker', 'runtime']);
   });
 });
 
 describe('renderReport (human output)', () => {
-  it('renders a passing report with a success summary and no remedy arrows', () => {
+  it('renders a passing report with a success summary and no fail glyphs', () => {
     const deps = new FakeDeps(() => ok());
     deps.toolsOnPath.add(CLAUDE_BIN);
     deps.toolsOnPath.add('uv');
@@ -273,8 +273,9 @@ describe('renderReport (human output)', () => {
     expect(out).toContain('Coding-agent CLI');
     expect(out).toContain('SWE-ReX runtime');
     expect(out).toContain('All required checks passed.');
-    // No remedy line (→) when nothing is failing.
-    expect(out).not.toContain('→');
+    // No fail glyph (✗) when no required check is failing. Info nudges may
+    // carry a remedy arrow (→) even on an all-pass report.
+    expect(out).not.toContain('✗');
   });
 
   it('renders a failing check with the fail glyph, its detail, and a remedy line', () => {
@@ -330,7 +331,11 @@ describe('runDoctorChecks — pr-remote conditional row', () => {
 
     const report = runDoctorChecks(deps, projectRoot);
     const ids = report.checks.map((c) => c.id).sort();
-    expect(ids).toEqual(['agent', 'docker', 'runtime']);
+    // pr-remote is absent (no prGrouping); batch-isolation IS present because the
+    // default `repo-sandboxed-permissive` posture on the `local` locus triggers
+    // the advisory nudge (see doctor-local-locus-nudge.feature).
+    expect(ids).toEqual(['agent', 'batch-isolation', 'docker', 'runtime']);
+    expect(report.checks.find((c) => c.id === 'pr-remote')).toBeUndefined();
   });
 
   it('is present under active grouping with no configured remote', async () => {
@@ -349,6 +354,128 @@ describe('runDoctorChecks — pr-remote conditional row', () => {
     expect(pr!.status).toBe('info');
     expect(pr!.severity).toBe('optional');
     // Advisory row never flips the overall verdict.
+    expect(report.ok).toBe(true);
+    expect(exitCodeFor(report)).toBe(0);
+  });
+});
+
+describe('runDoctorChecks — batch-isolation nudge', () => {
+  let projectRoot: string;
+  let userConfigHome: string;
+  let priorXdg: string | undefined;
+
+  beforeEach(async () => {
+    projectRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'doctor-iso-'));
+    await fsp.mkdir(path.join(projectRoot, '.ratchet'), { recursive: true });
+    userConfigHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'doctor-iso-xdg-'));
+    priorXdg = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = userConfigHome;
+  });
+
+  afterEach(async () => {
+    await fsp.rm(projectRoot, { recursive: true, force: true });
+    await fsp.rm(userConfigHome, { recursive: true, force: true });
+    if (priorXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorXdg;
+  });
+
+  const writeConfig = (yaml: string) =>
+    fsp.writeFile(path.join(projectRoot, '.ratchet', 'config.yaml'), yaml, 'utf-8');
+
+  const passing = () =>
+    new FakeDeps((command, args) => {
+      if (AGENT_BINS.includes(command) && args.includes('--version')) {
+        return ok(`${command} 1.0.0`);
+      }
+      return ok();
+    });
+
+  it('full-autonomy on local → info nudge naming the docker locus', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  locus: local\n  permissions:\n    posture: full-autonomy\n'
+    );
+    const deps = passing();
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    deps.toolsOnPath.add('uv');
+
+    const report = runDoctorChecks(deps, projectRoot);
+    const iso = report.checks.find((c) => c.id === 'batch-isolation');
+    expect(iso).toBeDefined();
+    expect(iso!.status).toBe('info');
+    expect(iso!.severity).toBe('optional');
+    expect(iso!.detail).toContain('full-autonomy');
+    expect(iso!.detail).toContain('local');
+    expect(iso!.remedy).toContain('docker');
+    // Advisory → never fails doctor.
+    expect(report.ok).toBe(true);
+    expect(exitCodeFor(report)).toBe(0);
+  });
+
+  it('default permissive posture on local → advisory nudge, not a failure', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  locus: local\n');
+    const deps = passing();
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    deps.toolsOnPath.add('uv');
+
+    const report = runDoctorChecks(deps, projectRoot);
+    const iso = report.checks.find((c) => c.id === 'batch-isolation');
+    expect(iso).toBeDefined();
+    expect(iso!.status).toBe('info');
+    expect(iso!.severity).toBe('optional');
+    expect(iso!.detail).toContain('repo-sandboxed-permissive');
+    expect(iso!.detail).toContain('local');
+    expect(report.ok).toBe(true);
+    expect(exitCodeFor(report)).toBe(0);
+  });
+
+  it('curated-allowlist on local → silent (omitted from report)', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  locus: local\n  permissions:\n    posture: curated-allowlist\n'
+    );
+    const deps = passing();
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    deps.toolsOnPath.add('uv');
+
+    const report = runDoctorChecks(deps, projectRoot);
+    expect(report.checks.find((c) => c.id === 'batch-isolation')).toBeUndefined();
+    expect(report.ok).toBe(true);
+  });
+
+  it('docker locus → silent (already has containment)', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  locus: docker\n  permissions:\n    posture: full-autonomy\n'
+    );
+    const deps = passing();
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    deps.toolsOnPath.add('uv');
+
+    const report = runDoctorChecks(deps, projectRoot);
+    expect(report.checks.find((c) => c.id === 'batch-isolation')).toBeUndefined();
+    expect(report.ok).toBe(true);
+  });
+
+  it('remote locus → silent (server owns the boundary)', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  locus: remote\n  host: example.com\n  port: 443\n  permissions:\n    posture: full-autonomy\n'
+    );
+    const deps = passing();
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    deps.toolsOnPath.add('uv');
+
+    const report = runDoctorChecks(deps, projectRoot);
+    expect(report.checks.find((c) => c.id === 'batch-isolation')).toBeUndefined();
+    expect(report.ok).toBe(true);
+  });
+
+  it('the nudge never fails doctor even with full-autonomy on local', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  locus: local\n  permissions:\n    posture: full-autonomy\n'
+    );
+    const deps = passing();
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    deps.toolsOnPath.add('uv');
+
+    const report = runDoctorChecks(deps, projectRoot);
     expect(report.ok).toBe(true);
     expect(exitCodeFor(report)).toBe(0);
   });

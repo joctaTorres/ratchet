@@ -553,6 +553,7 @@ batchCmd
   .description('Resolve, get, or set batch settings')
   .option('--set <key=value>', 'Set a project-level batch setting')
   .option('--json', 'Output as JSON')
+  .option('--allow-manifest-escalation', 'Let a manifest raise the posture (preview only)')
   .action(async (name: string | undefined, options: BatchConfigOptions) => {
     try {
       await batchConfigCommand(name, options);
@@ -573,7 +574,7 @@ batchCmd
   .option('--complete <message>', 'Signal the step produced its output')
   .option('--answer <message>', 'Record an answer to a parked blocker')
   .option('--reject <message>', 'Reject an awaiting-approval step with feedback')
-  .option('--awaiting-approval', 'Mark a completion as awaiting approval (after-propose gate)')
+  .option('--awaiting-approval', 'Mark a completion as awaiting approval (gate×transition matrix)')
   .option('--json', 'Output as JSON')
   .action(async (name: string | undefined, options: BatchReportOptions) => {
     try {
@@ -604,6 +605,10 @@ batchCmd
   .command('apply [name]')
   .description('Advance the batch by one step via the bundled engine')
   .option('--json', 'Output as JSON')
+  .option(
+    '--allow-manifest-escalation',
+    'Let the repo-committed manifest raise the posture above operator scopes (default: manifest may only narrow)'
+  )
   .action(async (name: string | undefined, options: BatchApplyOptions) => {
     try {
       await batchApplyCommand(name, options);

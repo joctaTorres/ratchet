@@ -19,6 +19,7 @@ import {
   PERMISSION_RAW_AGENTS,
   PermissionsPolicySchema,
   DEFAULT_PERMISSION_POSTURE,
+  POSTURE_PRIVILEGE_RANK,
 } from './permissions-policy.js';
 import type {
   PermissionPosture,
@@ -71,6 +72,32 @@ export const PR_GROUPING_VALUES = ['off', 'whole-batch', 'per-phase', 'per-chang
  */
 export const DEFAULT_DOCKER_IMAGE = 'python:3.12';
 
+/**
+ * Default memory limit for `locus: docker` when no `dockerMemory` is configured.
+ * Docker accepts `2g` (2 gibibytes); a sane, modest default that bounds the
+ * agent without starving typical coding-agent workloads.
+ *
+ * SINGLE TS SOURCE OF TRUTH: the bootstrap threads the resolved value via
+ * `REX_DOCKER_MEMORY`; the Python sidecar keeps its OWN mirror only as a pure
+ * unset-fallback (Node always threads the env). Keep the two in sync.
+ */
+export const DEFAULT_DOCKER_MEMORY = '2g';
+
+/**
+ * Default `--pids-limit` for `locus: docker` when no `dockerPidsLimit` is
+ * configured. 512 bounds fork-bomb-style runaway while leaving headroom for
+ * normal agent tooling. SINGLE TS SOURCE OF TRUTH (see `DEFAULT_DOCKER_MEMORY`).
+ */
+export const DEFAULT_DOCKER_PIDS_LIMIT = 512;
+
+/**
+ * Default `--network` mode for `locus: docker` when no `network` is configured.
+ * `bridge` is Docker's default and means the container HAS outbound network
+ * access (the honest isolation contract documents this explicitly). Operators
+ * who want no network set `network: none`. SINGLE TS SOURCE OF TRUTH.
+ */
+export const DEFAULT_DOCKER_NETWORK = 'bridge';
+
 export type Gate = (typeof GATE_VALUES)[number];
 export type Strategy = (typeof STRATEGY_VALUES)[number];
 export type ProofOfWorkPolicy = (typeof PROOF_OF_WORK_POLICY_VALUES)[number];
@@ -95,6 +122,7 @@ export {
   PERMISSION_RAW_AGENTS,
   PermissionsPolicySchema,
   DEFAULT_PERMISSION_POSTURE,
+  POSTURE_PRIVILEGE_RANK,
 } from './permissions-policy.js';
 export type {
   PermissionPosture,
@@ -190,6 +218,38 @@ export interface BatchSettings {
    * `RATCHET_AGENT_TIMEOUT_MS` env override taking precedence over this key.
    */
   agentTimeoutMs?: number;
+  /**
+   * Run the agent container as this host uid:gid for `locus: docker`. When
+   * unset and locus is `docker`, the runtime resolves the current host
+   * uid:gid (so container writes land as the host user, not root). Ignored
+   * for `local`/`remote`. Free-form string (`"1000:1000"`).
+   */
+  dockerUser?: string;
+  /**
+   * `--memory` limit for `locus: docker` (e.g. `"2g"`). When unset and locus
+   * is `docker`, the runtime uses `DEFAULT_DOCKER_MEMORY`. Ignored for
+   * `local`/`remote`. Free-form string passed verbatim to `docker run`.
+   */
+  dockerMemory?: string;
+  /**
+   * `--pids-limit` for `locus: docker` (positive integer). When unset and
+   * locus is `docker`, the runtime uses `DEFAULT_DOCKER_PIDS_LIMIT`. Ignored
+   * for `local`/`remote`.
+   */
+  dockerPidsLimit?: number;
+  /**
+   * `--cpus` quota for `locus: docker` (positive number, may be fractional).
+   * When unset, NO `--cpus` flag is passed (Docker's default applies).
+   * Ignored for `local`/`remote`.
+   */
+  dockerCpus?: number;
+  /**
+   * `--network` mode for `locus: docker` (e.g. `"bridge"`, `"none"`). When
+   * unset and locus is `docker`, the runtime uses `DEFAULT_DOCKER_NETWORK`
+   * (`bridge` — the container HAS outbound network; set `none` to fully
+   * isolate). Ignored for `local`/`remote`. Free-form string passed verbatim.
+   */
+  network?: string;
 }
 
 /**
@@ -314,6 +374,29 @@ export interface ResolvedBatchSettings {
    * engine's model-failure hint. See {@link resolveAgentStageScopes}.
    */
   agentStageScopes: Partial<Record<AgentStage, SettingSource>>;
+  /**
+   * A manifest layer's request to raise the posture above the operator-owned
+   * scopes that was refused because manifest escalation was not allowed. Set
+   * when the repo-committed manifest tried to raise posture and
+   * {@link ResolveBatchSettingsOptions.allowManifestEscalation} was not set, so
+   * `batch apply` can print a warning naming the requested posture and the
+   * opt-in flag. Absent when no raise was attempted or when escalation was
+   * explicitly allowed.
+   */
+  suppressedEscalation?: SuppressedEscalation;
+}
+
+/** Options for {@link resolveBatchSettings}. */
+export interface ResolveBatchSettingsOptions {
+  /**
+   * Whether a repo-committed manifest layer is allowed to RAISE the posture
+   * above the operator-owned (default/user/project) scopes' accumulated value.
+   * Default `false`: a manifest may only NARROW posture (lower it); its `deny`
+   * additions still union. Pass `true` for the per-invocation opt-in
+   * (`batch apply --allow-manifest-escalation`) to let a manifest raise posture
+   * unchanged. See {@link resolvePermissionsPolicy} for the clamping semantics.
+   */
+  allowManifestEscalation?: boolean;
 }
 
 export const DEFAULT_BATCH_SETTINGS: BatchSettings = {
@@ -337,6 +420,11 @@ const SETTING_KEYS: (keyof BatchSettings)[] = [
   'authToken',
   'insecure',
   'agentTimeoutMs',
+  'dockerUser',
+  'dockerMemory',
+  'dockerPidsLimit',
+  'dockerCpus',
+  'network',
 ];
 
 const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
@@ -352,6 +440,11 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
   authToken: null, // free-form secret string (swerex-remote X-API-Key)
   insecure: ['true', 'false'], // boolean opt-in for plaintext to a non-local host
   agentTimeoutMs: null, // free-form numeric (positive integer ms; like `port`)
+  dockerUser: null, // free-form string (host uid:gid, e.g. "1000:1000")
+  dockerMemory: null, // free-form string (docker --memory, e.g. "2g")
+  dockerPidsLimit: null, // numeric string (positive integer; like `port`)
+  dockerCpus: null, // free-form numeric (positive number, may be fractional)
+  network: null, // free-form string (docker --network mode, e.g. "bridge")
 };
 
 /**
@@ -367,10 +460,22 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
  * nearest-wins, `deny` is the UNION of every scope, `allow` is REPLACED by the
  * nearest scope that defines one, and each agent's `raw` entry is nearest-wins.
  * Permissions always resolve (the no-config default is the built-in posture).
+ *
+ * The repo-committed `manifest` layer is the one repo-author-controlled (not
+ * operator-controlled) scope, so it is the ONLY scope whose posture raise is
+ * clamped: when its posture ranks ABOVE the value accumulated from the
+ * operator-owned (default/user/project) scopes and
+ * {@link ResolveBatchSettingsOptions.allowManifestEscalation} is not set, the
+ * raise is skipped — posture keeps the operator value — and the refusal is
+ * reported via {@link ResolvedBatchSettings.suppressedEscalation} for `batch
+ * apply` to warn about. The manifest's `deny` additions still land. Pass the
+ * per-invocation opt-in (`batch apply --allow-manifest-escalation`) to allow a
+ * manifest raise unchanged.
  */
 export function resolveBatchSettings(
   projectRoot: string,
-  manifest?: BatchManifest | null
+  manifest?: BatchManifest | null,
+  options: ResolveBatchSettingsOptions = {}
 ): ResolvedBatchSettings {
   const settings: BatchSettings = { ...DEFAULT_BATCH_SETTINGS };
   const sources: Record<keyof BatchSettings, SettingSource> = {
@@ -387,6 +492,11 @@ export function resolveBatchSettings(
     permissions: 'default',
     insecure: 'default',
     agentTimeoutMs: 'default',
+    dockerUser: 'default',
+    dockerMemory: 'default',
+    dockerPidsLimit: 'default',
+    dockerCpus: 'default',
+    network: 'default',
   };
 
   const writable = settings as { [K in keyof BatchSettings]: BatchSettings[K] };
@@ -456,11 +566,14 @@ export function resolveBatchSettings(
     { scope: 'project', policy: projectBatch?.permissions },
     { scope: 'manifest', policy: manifestOverrides?.permissions },
   ];
-  const { policy, postureSource } = resolvePermissionsPolicy(permissionLayers);
+  const { policy, postureSource, suppressedEscalation } = resolvePermissionsPolicy(
+    permissionLayers,
+    { allowManifestEscalation: options.allowManifestEscalation }
+  );
   settings.permissions = policy;
   sources.permissions = postureSource;
 
-  return { settings, sources, agentStageScopes };
+  return { settings, sources, agentStageScopes, suppressedEscalation };
 }
 
 /**
@@ -650,16 +763,63 @@ export function resolveAgentTimeoutMs(
 }
 
 /**
+ * A manifest layer's request to raise posture above the operator-owned scopes
+ * (default/user/project) that was refused because {@link
+ * ResolvePermissionsPolicyOptions.allowManifestEscalation} was not set. Callers
+ * surface this so the refusal is visible instead of hidden — `batch apply` prints
+ * a warning naming the requested posture and the opt-in flag.
+ */
+export interface SuppressedEscalation {
+  /** The scope whose posture raise was refused — always `'manifest'`. */
+  scope: 'manifest';
+  /** The posture the refused layer requested. */
+  requested: PermissionPosture;
+}
+
+/** Options for {@link resolvePermissionsPolicy}. */
+export interface ResolvePermissionsPolicyOptions {
+  /**
+   * Whether a manifest layer is allowed to RAISE the posture above the value
+   * accumulated from the operator-owned scopes (default/user/project). Default
+   * `false`: the repo-committed manifest may only NARROW (lower posture); its
+   * `deny` additions still union. When `true`, a manifest posture raise applies
+   * unchanged (the explicit per-invocation opt-in `batch apply
+   * --allow-manifest-escalation`).
+   */
+  allowManifestEscalation?: boolean;
+}
+
+/**
  * Merge a set of permission layers (ordered low→high precedence) into a single
  * resolved policy. Posture nearest-wins; deny union; allow replace-by-nearest;
  * raw per-agent nearest-wins. Returns the source of the winning posture so
  * `batch config` can annotate where the effective policy came from.
+ *
+ * The `manifest` layer is the one repo-author-controlled (not
+ * operator-controlled) scope, so it is the ONLY scope whose posture raise is
+ * clamped: when its posture ranks ABOVE the value accumulated from the
+ * lower-precedence (default/user/project) layers and
+ * `options.allowManifestEscalation` is not set, the raise is skipped — posture
+ * and `postureSource` keep the operator-scope values — and the refusal is
+ * reported via `suppressedEscalation`. A manifest posture at or below the
+ * accumulated rank applies unchanged (narrowing stays allowed, and
+ * `postureSource` becomes `manifest`, keeping `batch config` attribution
+ * truthful). The manifest's `deny` additions still land even when its posture
+ * raise is refused. Operator-owned `user`/`project` scopes keep their existing
+ * raise ability (they are the trust boundary #87 draws).
  */
 export function resolvePermissionsPolicy(
-  layers: { scope: SettingSource; policy: PermissionsPolicy | undefined }[]
-): { policy: ResolvedPermissionsPolicy; postureSource: SettingSource } {
+  layers: { scope: SettingSource; policy: PermissionsPolicy | undefined }[],
+  options: ResolvePermissionsPolicyOptions = {}
+): {
+  policy: ResolvedPermissionsPolicy;
+  postureSource: SettingSource;
+  suppressedEscalation?: SuppressedEscalation;
+} {
+  const allowManifestEscalation = options.allowManifestEscalation ?? false;
   let posture: PermissionPosture = DEFAULT_PERMISSION_POSTURE;
   let postureSource: SettingSource = 'default';
+  let suppressedEscalation: SuppressedEscalation | undefined;
   const denySet = new Set<string>();
   let allow: string[] = [];
   const raw: ResolvedPermissionsPolicy['raw'] = {};
@@ -667,8 +827,21 @@ export function resolvePermissionsPolicy(
   for (const { scope, policy } of layers) {
     if (!policy) continue;
     if (policy.posture !== undefined) {
-      posture = policy.posture;
-      postureSource = scope;
+      if (
+        scope === 'manifest' &&
+        !allowManifestEscalation &&
+        POSTURE_PRIVILEGE_RANK[policy.posture] > POSTURE_PRIVILEGE_RANK[posture]
+      ) {
+        // The repo-committed manifest tried to RAISE posture above the
+        // operator-owned scopes' accumulated value. Clamp it: keep the operator
+        // posture and source, and report the refusal so callers can surface it
+        // instead of hiding it. Deny/allow/raw below still apply (the manifest's
+        // deny additions still land even when its posture raise is refused).
+        suppressedEscalation = { scope: 'manifest', requested: policy.posture };
+      } else {
+        posture = policy.posture;
+        postureSource = scope;
+      }
     }
     // deny: union across every scope (a narrower scope cannot drop a denial).
     if (policy.deny) {
@@ -690,6 +863,7 @@ export function resolvePermissionsPolicy(
   return {
     policy: { posture, allow, deny: [...denySet], raw },
     postureSource,
+    suppressedEscalation,
   };
 }
 
@@ -785,6 +959,53 @@ const SETTING_CODECS: Partial<Record<keyof BatchSettings, SettingCodec>> = {
   // `insecure` is a boolean in the schema, so persist its real type.
   insecure: {
     serialize: (value) => value.trim() === 'true',
+  },
+  // Docker-locus hardening knobs (features/docker-locus-hardening). The string
+  // knobs (`dockerUser`, `dockerMemory`, `network`) must be non-empty — an
+  // empty value is rejected before the config is written, mirroring `image`.
+  dockerUser: {
+    validate: (value, key) =>
+      value.trim().length === 0
+        ? { ok: false, error: `Invalid value for '${key}': it must not be empty.` }
+        : undefined,
+  },
+  dockerMemory: {
+    validate: (value, key) =>
+      value.trim().length === 0
+        ? { ok: false, error: `Invalid value for '${key}': it must not be empty.` }
+        : undefined,
+  },
+  network: {
+    validate: (value, key) =>
+      value.trim().length === 0
+        ? { ok: false, error: `Invalid value for '${key}': it must not be empty.` }
+        : undefined,
+  },
+  // `dockerPidsLimit` is a positive integer (persisted numeric, like `port`).
+  dockerPidsLimit: {
+    validate: (value, key) =>
+      !isValidPort(value)
+        ? {
+            ok: false,
+            error: `Invalid value for '${key}': it must be a positive integer (got '${value}').`,
+          }
+        : undefined,
+    serialize: (value) => Number(value.trim()),
+  },
+  // `dockerCpus` is a positive number (fractional ok, e.g. "1.5"). Persisted
+  // numeric so the loader round-trips it without warning.
+  dockerCpus: {
+    validate: (value, key) => {
+      const n = Number(value.trim());
+      if (value.trim().length === 0 || !Number.isFinite(n) || n <= 0) {
+        return {
+          ok: false,
+          error: `Invalid value for '${key}': it must be a positive number (got '${value}').`,
+        };
+      }
+      return undefined;
+    },
+    serialize: (value) => Number(value.trim()),
   },
   // The `agent` key is validated through the SAME shared schema the loaders use
   // (AgentSettingSchema's superRefine routes every string position through

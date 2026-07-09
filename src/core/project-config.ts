@@ -73,6 +73,13 @@ export const ProjectConfigSchema = z.object({
       // rejected at config load. When unset, the runtime default (600000ms)
       // applies. The RATCHET_AGENT_TIMEOUT_MS env var overrides this key.
       agentTimeoutMs: z.number().int().positive().optional(),
+      // Docker-locus hardening knobs (features/docker-locus-hardening).
+      // Mirrored identically to the manifest override scope.
+      dockerUser: z.string().optional(),
+      dockerMemory: z.string().optional(),
+      dockerPidsLimit: z.number().int().positive().optional(),
+      dockerCpus: z.number().positive().optional(),
+      network: z.string().optional(),
     })
     .partial()
     .optional()

@@ -1,0 +1,7 @@
+schema: ratchet
+created: 2026-07-09
+standards:
+  - delegated-lifecycle
+  - documentation
+  - testing
+  - multi-agent-support

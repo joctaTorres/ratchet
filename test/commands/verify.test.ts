@@ -63,7 +63,7 @@ describe('verifyCommand', () => {
 
   it('advances a happy-path verify via the forced verify transition', async () => {
     await fixture.writeChangeWithTasks('complete', { done: 2, total: 2 });
-    const { spawner, calls } = completingSpawner(fixture.root, 'complete');
+    const { spawner, calls } = completingSpawner(fixture.root, 'complete', 'verify');
 
     await verifyCommand('complete', {}, { projectRoot: () => fixture.root, spawner });
 

@@ -113,6 +113,85 @@ describe('evaluatePassCondition', () => {
     }).not.toThrow();
     expect(r?.passed).toBe(false);
     expect(r?.reason).toBe('pass-condition-unmet');
+    expect(r?.matchedExcerpt).toBeUndefined();
+  });
+
+  // verdict-matched-evidence.feature: the verdict records which condition kind
+  // matched and the matched excerpt, so gate evidence is reviewable.
+  describe('verdict records the matched condition kind and excerpt', () => {
+    it('a contains condition records its kind and the needle as excerpt', () => {
+      const r = evaluatePassCondition('contains:12 passed', {
+        exitCode: 0,
+        stdout: '12 passed, 0 failed',
+        stderr: '',
+      });
+      expect(r.passed).toBe(true);
+      expect(r.conditionKind).toBe('contains');
+      expect(r.matchedExcerpt).toBe('12 passed');
+    });
+
+    it('a regex condition records the actual matched text as excerpt', () => {
+      const r = evaluatePassCondition('regex:PASS-[0-9]+', {
+        exitCode: 0,
+        stdout: 'result: PASS-42 ok',
+        stderr: '',
+      });
+      expect(r.passed).toBe(true);
+      expect(r.conditionKind).toBe('regex');
+      expect(r.matchedExcerpt).toBe('PASS-42'); // actual matched text, not the pattern
+    });
+
+    it('an exit-zero condition records its kind with no excerpt', () => {
+      const r = evaluatePassCondition('exit code 0 — suite green', {
+        exitCode: 0,
+        stdout: 'unrelated\n',
+        stderr: '',
+      });
+      expect(r.passed).toBe(true);
+      expect(r.conditionKind).toBe('exit-zero');
+      expect(r.matchedExcerpt).toBeUndefined();
+    });
+
+    it('a failing condition records its kind without a matched excerpt', () => {
+      const r = evaluatePassCondition('contains:12 passed', {
+        exitCode: 0,
+        stdout: 'something else',
+        stderr: '',
+      });
+      expect(r.passed).toBe(false);
+      expect(r.reason).toBe('pass-condition-unmet');
+      expect(r.conditionKind).toBe('contains');
+      expect(r.matchedExcerpt).toBeUndefined();
+    });
+
+    it('a bare-string (substring) condition records its kind and the needle', () => {
+      const r = evaluatePassCondition('all green', {
+        exitCode: 0,
+        stdout: 'suite is all green now',
+        stderr: '',
+      });
+      expect(r.passed).toBe(true);
+      expect(r.conditionKind).toBe('substring');
+      expect(r.matchedExcerpt).toBe('all green');
+    });
+
+    it('threads conditionKind and matchedExcerpt through runProofOfWork into the result', async () => {
+      const bash: BashRunner = async () => ({
+        exitCode: 0,
+        stdout: 'result: PASS-42 ok',
+        stderr: '',
+      });
+      const result = await runProofOfWork(
+        POW({ run: 'pnpm test', pass: 'regex:PASS-[0-9]+' }),
+        'hard-gate',
+        '/tmp',
+        SUCCESS,
+        { bash }
+      );
+      expect(result.passed).toBe(true);
+      expect(result.conditionKind).toBe('regex');
+      expect(result.matchedExcerpt).toBe('PASS-42');
+    });
   });
 });
 

@@ -7,9 +7,17 @@
  * determine the outcome:
  *
  *   - a `blocker` / `needs-input` entry  -> blocked (park with the question)
- *   - a `completion` entry               -> advanced (or awaiting-approval under
- *                                           an after-propose gate)
- *   - non-zero exit without a completion -> failed (surfaced as blocked)
+ *   - non-zero exit without a completion  -> failed (surfaced as blocked)
+ *   - a `completion` entry, CORROBORATED against the on-disk change state the
+ *     engine already snapshots (`diskEvidence`):
+ *       - corroboration mismatch          -> blocked
+ *         ("Reported complete but disk disagrees: <reason>.")
+ *       - completion + non-zero exit/sig  -> blocked
+ *         ("Agent reported completion but exited <describeExit> — the reported
+ *          work may be incomplete; review and resume.")
+ *       - under an approval gate     -> awaiting-approval (the gate×transition
+ *                                       matrix decides which transitions park)
+ *       - otherwise                       -> advanced
  *   - zero exit without a completion     -> blocked (agent stopped without
  *                                           reporting; needs attention). The
  *                                           captured transcript is attached and,
@@ -18,6 +26,22 @@
  *                                           that progress is surfaced — but the step
  *                                           still parks (we never auto-advance on
  *                                           unreported work).
+ *
+ * Corroboration runs ONLY for `propose | apply | verify` (the per-change
+ * transitions that own a change directory). `decompose` and `pr` step kinds key
+ * off synthetic journal keys with no change directory, so they stay byte-for-byte
+ * today's behavior (advanced on a bare completion); their crash-after-completion
+ * check still applies. The mismatch branch (3) runs BEFORE the approval park
+ * (5), so an uncorroborated propose can no longer park as `awaiting-approval`;
+ * mismatch (3) precedes the crash branch (4) because a disk mismatch is the
+ * more specific, actionable evidence.
+ *
+ * Verify completions must additionally CARRY the verification verdict: the
+ * completion message must match {@link VERIFY_VERDICT_PATTERN} (the canonical
+ * Final Assessment shapes the rct:verify workflow template authors). The pattern
+ * checks verdict PRESENCE, not polarity — gating done on a passing verdict is
+ * out of scope here; a verdict-bearing but failing verify still advances so the
+ * operator sees the verdict (issue #78 point 3).
  */
 
 import type { JournalEntry } from '../journal.js';
@@ -37,6 +61,82 @@ import type { SettingSource } from '../config.js';
 export interface DiskEvidence {
   before: ChangeDiskState;
   after: ChangeDiskState;
+}
+
+/**
+ * Verifies a claimed completion CARRIES the verification verdict — the canonical
+ * Final Assessment shapes the rct:verify workflow template
+ * (`src/core/templates/workflows/verify-change.ts`) canonically emits:
+ *
+ *   - "Ready for archive" (the all-clear and warnings-only final lines)
+ *   - "X critical issue(s) found…" (the critical-issues final line)
+ *
+ * The pattern checks verdict PRESENCE, not polarity: a critical-issue verdict is
+ * still a verdict, and the integrity-gate goal (issue #78 point 3) asks only that
+ * the verify completion CARRY the verdict/evidence, not that it pass. Gating done
+ * on a passing verdict is out of scope. Exported so the instructions layer and
+ * tests can name the contract without re-deriving it.
+ */
+export const VERIFY_VERDICT_PATTERN = /ready for archive|critical issue/i;
+
+/**
+ * The per-change transitions whose completions are corroborated against disk
+ * evidence. `decompose` and `pr` step kinds key off synthetic journal keys with
+ * no change directory, so their bare completions stay byte-for-byte today's
+ * behavior (advanced) — exempt from corroboration.
+ */
+const CORROBORATED_TRANSITIONS: ReadonlySet<StepKind> = new Set([
+  'propose',
+  'apply',
+  'verify',
+]);
+
+/**
+ * Corroborate a claimed `--complete` on a per-change transition against the
+ * on-disk change state the engine already snapshots. Pure: reads only the
+ * pre-computed {@link DiskEvidence} snapshots. Returns `undefined` when the
+ * disk agrees with the completion, or a human-readable mismatch reason when it
+ * does not (the caller parks `blocked` with "Reported complete but disk
+ * disagrees: <reason>.").
+ *
+ * Rules (mirroring the on-disk evidence `describeProgress` already consults, but
+ * judging the absolute after-state for propose/verify and a session delta for
+ * apply so a partially-progressed apply completion is honest work):
+ *
+ *   - `propose` → the after-state has a change directory AND a plan.md. Absolute
+ *     (not a delta), so a resumed propose over an existing directory corroborates.
+ *   - `apply`   → the after-state is fully applied (`after.applied`) OR at least
+ *     one task was checked off this session (`after.tasksComplete >
+ *     before.tasksComplete`).
+ *   - `verify`  → the after-state is applied (`after.applied`) AND the
+ *     completion message carries the verification verdict
+ *     ({@link VERIFY_VERDICT_PATTERN}). Verify produces no disk artifact, so its
+ *     evidence is (a) the change is actually applied and (b) the message carries
+ *     the verdict. An archived after-state reports `applied: true`, so a late
+ *     archival cannot false-block.
+ */
+function corroborateCompletion(
+  transition: StepKind,
+  evidence: DiskEvidence,
+  message: string
+): string | undefined {
+  if (!CORROBORATED_TRANSITIONS.has(transition)) return undefined;
+  const { before, after } = evidence;
+  if (transition === 'propose') {
+    if (after.exists && after.hasPlan) return undefined;
+    return 'no plan.md on disk';
+  }
+  if (transition === 'apply') {
+    const progressed = after.tasksComplete > before.tasksComplete;
+    if (after.applied || progressed) return undefined;
+    return 'no tasks checked off this session';
+  }
+  // verify
+  if (!after.applied) return 'change not applied (unchecked tasks remain)';
+  if (!VERIFY_VERDICT_PATTERN.test(message)) {
+    return 'no verification verdict in the completion';
+  }
+  return undefined;
 }
 
 /**
@@ -230,14 +330,62 @@ export function mapSessionToOutcome(input: MapOutcomeInput): EngineStepOutcome {
   }
 
   if (completion) {
+    // Corroborate the claimed completion against the on-disk change state the
+    // engine already snapshots, BEFORE the approval park. A mismatch fails
+    // closed as blocked (more specific, actionable evidence than the crash
+    // check below). Exempt for decompose/pr step kinds (no change directory).
+    const mismatch = corroborateCompletion(
+      transition,
+      input.diskEvidence,
+      completion.message
+    );
+    if (mismatch) {
+      const blocker = `Reported complete but disk disagrees: ${mismatch}.`;
+      return {
+        state: 'blocked',
+        change,
+        transition,
+        blocker,
+        journalRefs: sessionIndices,
+        message: blocker,
+      };
+    }
+
+    // A corroborated completion followed by a non-zero exit or signal: the agent
+    // reported work done but the session ended abnormally. Fail closed — the
+    // reported work may be incomplete; review and resume. Runs AFTER the
+    // mismatch check so a disk mismatch surfaces as the more specific evidence.
+    const completionCrash = spawn.exitCode !== 0 || spawn.signal !== null;
+    if (completionCrash) {
+      const blocker =
+        `Agent reported completion but exited ${describeExit(spawn)} — the ` +
+        `reported work may be incomplete; review and resume.`;
+      return {
+        state: 'blocked',
+        change,
+        transition,
+        blocker,
+        journalRefs: sessionIndices,
+        message: blocker,
+      };
+    }
+
     if (input.parkForApproval) {
+      const label =
+        transition === 'propose'
+          ? 'Propose'
+          : transition === 'apply'
+            ? 'Apply'
+            : transition === 'verify'
+              ? 'Verify'
+              : capitalize(transition);
       return {
         state: 'awaiting-approval',
         change,
         transition,
         approvalRequest: completion.message,
         journalRefs: sessionIndices,
-        message: `Propose complete; awaiting approval.`,
+        message: `${label} complete; awaiting approval.`,
       };
     }
     return {
@@ -282,4 +430,8 @@ export function mapSessionToOutcome(input: MapOutcomeInput): EngineStepOutcome {
 function describeExit(spawn: AgentSpawnResult): string {
   if (spawn.signal) return `via signal ${spawn.signal}`;
   return `with code ${spawn.exitCode}`;
+}
+
+function capitalize(s: string): string {
+  return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
 }

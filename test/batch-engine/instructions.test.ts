@@ -375,3 +375,37 @@ describe('buildAgentInstructions — spec-form agent resolves the mapped invocat
     expect(text).toContain('/rct-apply add-login-api');
   });
 });
+
+// Verify-only verdict-reporting requirement (features/completion-corroboration/
+// verify-verdict.feature): the verify `--complete` summary MUST carry the
+// verification report's final-assessment verdict; propose/apply do NOT carry it.
+describe('buildAgentInstructions — verify step reports the verdict', () => {
+  it('tells a verify agent the --complete summary MUST include the final-assessment verdict', () => {
+    const text = buildAgentInstructions(context('verify'));
+    expect(text).toMatch(/--complete.*MUST include the verification report/i);
+    expect(text).toMatch(/final-assessment verdict/i);
+    // Names the canonical shapes the verdict pattern recognizes.
+    expect(text).toMatch(/Ready for archive/i);
+    expect(text).toMatch(/critical issue/i);
+  });
+
+  it('does NOT ask a propose agent to report the verdict', () => {
+    const text = buildAgentInstructions(context('propose'));
+    expect(text).not.toMatch(/final-assessment verdict/i);
+    expect(text).not.toMatch(/verification report/i);
+  });
+
+  it('does NOT ask an apply agent to report the verdict', () => {
+    const text = buildAgentInstructions(context('apply'));
+    expect(text).not.toMatch(/final-assessment verdict/i);
+    expect(text).not.toMatch(/verification report/i);
+  });
+
+  it('stays agent-neutral (names no specific coding agent)', () => {
+    const text = buildAgentInstructions(context('verify'));
+    expect(text).not.toMatch(/\bClaude\b/);
+    expect(text).not.toMatch(/\bCursor\b/);
+    expect(text).not.toMatch(/\bCodex\b/);
+    expect(text).not.toMatch(/\bGemini\b/);
+  });
+});

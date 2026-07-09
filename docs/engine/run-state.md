@@ -86,8 +86,17 @@ interface ProofOfWorkRecord {
   policy: ProofOfWorkPolicy; // 'hard-gate' | 'warn'
   reason: string;      // machine-readable pass/fail reason
   detail: string;      // human-readable explanation of the verdict
+  conditionKind?: 'exit-zero' | 'contains' | 'regex' | 'substring'; // which kind matched
+  matchedExcerpt?: string; // the matched excerpt on a pass (needle, or regex's actual matched text)
 }
 ```
+
+`conditionKind` / `matchedExcerpt` are optional: they name which pass-condition
+kind was evaluated and, on a pass, the matched excerpt (the needle for
+`contains`/substring, the actual matched text for `regex`), so gate evidence is
+reviewable instead of a bare pass/fail bit. They are absent for the not-yet-wired
+`llm-judge` kind and on older records written before the fields existed — readers
+ignore absence, no migration.
 
 The entry is keyed (its `change` field) by `proofOfWorkJournalKey(phase)`, which
 returns `proof-of-work:<phase>` — distinct from a decomposition entry's key (the

@@ -138,6 +138,33 @@ describe('registry drift guard', () => {
       expect(withModelArgs).toEqual([...noModelArgs, flag, model]);
     }
   });
+
+  /**
+   * Implements: features/agent-env-scoping/allowlist.feature
+   * Scenario: Every registered adapter declares an env passthrough.
+   *
+   * Every spawnable adapter (BUILTIN_ADAPTERS) declares a non-empty
+   * `envPassthrough` list, so the env allowlist cannot silently omit a newly
+   * added agent. This guards against a future adapter being registered without
+   * a declaration.
+   */
+  it('every spawnable adapter declares a non-empty envPassthrough list', () => {
+    for (const id of Object.keys(AGENT_BINARIES)) {
+      const adapter = resolveAdapter(id);
+      expect(
+        adapter.envPassthrough,
+        `adapter '${id}' must declare envPassthrough`
+      ).toBeDefined();
+      expect(
+        adapter.envPassthrough.length,
+        `adapter '${id}' must declare a non-empty envPassthrough`
+      ).toBeGreaterThan(0);
+      for (const key of adapter.envPassthrough) {
+        expect(typeof key, `adapter '${id}' envPassthrough entries must be strings`).toBe('string');
+        expect(key.length, `adapter '${id}' envPassthrough entries must be non-empty`).toBeGreaterThan(0);
+      }
+    }
+  });
 });
 
 describe('doctor agent check is linked to init and preserved', () => {

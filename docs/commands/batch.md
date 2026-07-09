@@ -63,6 +63,37 @@ Every `change.done` field is required. A change intent whose directory does not
 yet exist under `.ratchet/changes/` is `pending` — this is not an error.
 Changes are created lazily by the engine as the batch progresses.
 
+### Pass conditions
+
+A phase's `proofOfWork.pass` is a declarative condition the engine evaluates
+against the `run` command's exit status and stdout. Recognized shapes:
+
+- `exit 0` / `exit-zero` / `exit code 0` (or a leading exit-zero directive
+  followed by prose, e.g. `exit code 0 — suite green`) — passes when the command
+  exits 0. Gates on the exit status, never stdout.
+- `contains:<needle>` — passes when stdout contains `<needle>` (exit 0 required).
+- `regex:<pattern>` — passes when stdout matches the pattern (exit 0 required).
+- Any other non-empty string — a bare substring match against stdout (exit 0
+  required).
+
+**Load-time validation.** The manifest is rejected at parse (by both
+`ratchet validate` and `batch apply`'s manifest load) when a pass condition is
+degenerate — a hard-gate proof-of-work must never be vacuous by construction:
+
+- an empty or whitespace-only `contains:` needle (`stdout.includes('')` is
+  always true),
+- an empty `regex:` pattern (matches everything),
+- an invalid `regex:` pattern — the RegExp compile error is surfaced in the
+  message,
+- the echo-your-own-pass-phrase shape: the literal needle of a `contains:` or
+  bare-string condition appearing verbatim in the `run` command, so the command
+  can satisfy its own gate.
+
+Exit-zero directives are exempt from the self-satisfying lint (they gate on exit
+status, never stdout); `regex:` patterns are exempt too (a pattern appearing in
+`run` is not the echo shape). Errors are located at `phases.<N>.proofOfWork.pass`.
+
+
 ## `batch new`
 
 Scaffold a new batch manifest from the template.
@@ -126,7 +157,7 @@ Change statuses (the `Symbol` column is the glyph used in `batch status` and
 | `awaiting-verify` | `⧖` | All tasks complete but **no verify completion is journaled yet** — the verify gate has not run, so the change is NOT done. |
 | `done` | `✓` | All tasks complete **and** a verify completion is journaled for the change, or the change is archived. |
 | `blocked` | `✗` | Dependency unmet, OR an agent voluntarily parked the step with a blocker. |
-| `awaiting-approval` | `⏸` | Agent completed propose and parked for approval (after-propose/every-phase gate). |
+| `awaiting-approval` | `⏸` | Agent completed a change transition and parked for approval: `propose` under `after-propose`, or `propose`/`apply`/`verify` under `every-phase`. |
 
 "Done" has a **single journal-aware definition** shared by status derivation,
 step selection, and next-transition computation: a change is done only when its
@@ -191,8 +222,14 @@ formatted terminal dashboard with progress bars (filled/empty block characters),
 phase headings, per-change rows (symbol + name + progress bar + after edges +
 blocked-by), and parked step details. Honors `--no-color` (via `NO_COLOR`).
 
+A **runtime summary** line is rendered after the progress dashboard, stating the
+resolved locus and the effective permission posture with its source. Per-agent
+enforcement lines follow (see [Isolation and enforcement
+rendering](#isolation-and-enforcement-rendering) below).
+
 JSON output is the full `BatchStatusInfo` object — the same fields as `batch
-status --json` without the `gate` field annotation.
+status --json` without the `gate` field annotation — plus `runtime` (locus,
+posture, postureSource, isolation) and `enforcement` (per-agent entries) fields.
 
 ## `batch list`
 
@@ -229,7 +266,7 @@ Resolve, get, or set batch settings.
 ### Synopsis
 
 ```bash
-ratchet batch config [name] [--set <key=value>] [--json]
+ratchet batch config [name] [--set <key=value>] [--json] [--allow-manifest-escalation]
 ```
 
 `[name]` defaults to the current active batch when omitted.
@@ -240,6 +277,7 @@ ratchet batch config [name] [--set <key=value>] [--json]
 |---|---|---|
 | `--set` | `<key=value>` | Write the project-level `batch:` section key. |
 | `--json` | | Output resolved settings as JSON. |
+| `--allow-manifest-escalation` | | Let the repo-committed manifest RAISE the permission posture above the operator-owned (default/user/project) scopes when resolving for display. Default (unset): the manifest may only NARROW (lower) posture; a manifest raise is clamped and the posture is annotated with its real (clamped) source. Mirrors the `batch apply` flag so operators can preview an escalated posture. |
 
 ### Behavior
 
@@ -248,6 +286,11 @@ resolved in this order (nearest wins): manifest overrides ← project config
 (`.ratchet/config.yaml` `batch:` section) ← user config ← built-in defaults.
 Each value is annotated with its source: `[manifest]`, `[project]`, `[user]`,
 or `[default]`. `authToken` is always redacted in output (`***`).
+
+In addition to the resolved scalar settings, the display renders an
+**isolation** block and per-agent **enforcement** lines (see
+[Isolation and enforcement rendering](#isolation-and-enforcement-rendering)
+below).
 
 **With `--set key=value`**: writes the project-level config (`batch:` section)
 only. Invalid enum values are rejected and the file is left unchanged. Secret
@@ -274,6 +317,11 @@ Settable keys:
 | `locus` | `local` \| `docker` \| `remote` | `local` |
 | `agent` | `agent[:model]` spec, or an inline `{propose, apply, verify, pr}` stage-map (validated through the shared schema; rejected without writing when malformed) | (adapter default) |
 | `image` | string | `python:3.12` (docker locus) |
+| `dockerUser` | string (e.g. `"1000:1000"`) | current host `uid:gid` (docker locus) |
+| `dockerMemory` | string (e.g. `"2g"`) | `2g` (docker locus) |
+| `dockerPidsLimit` | positive integer | `512` (docker locus) |
+| `dockerCpus` | positive number (fractional ok) | *(no flag — opt-in)* (docker locus) |
+| `network` | `bridge` \| `none` \| `<custom name>` | `bridge` (docker locus) |
 | `host` | string | (required for remote) |
 | `port` | number | (required for remote) |
 | `authToken` | string | (required for remote) |
@@ -303,9 +351,9 @@ always required. Exactly one kind flag must be provided.
 | `--blocker` | `<message>` | Raise a blocker and park the step as `blocked`. |
 | `--needs-input` | `<message>` | Request input and park the step as `blocked`. |
 | `--complete` | `<message>` | Signal that the step produced its output (appends a `completion` entry). |
-| `--awaiting-approval` | | Combined with `--complete`: parks the step as `awaiting-approval` (after-propose gate). |
+| `--awaiting-approval` | | Combined with `--complete`: parks the step as `awaiting-approval` (the gate×transition matrix decides which transitions park). |
 | `--answer` | `<message>` | Record an answer to a parked blocker; the step remains parked until the next `batch apply`. |
-| `--reject` | `<message>` | Reject an `awaiting-approval` step with feedback; next `batch apply` re-runs propose. |
+| `--reject` | `<message>` | Reject an `awaiting-approval` step with feedback; next `batch apply` re-runs the parked transition. |
 | `--json` | | Output the result as JSON (`{ kind, change, text }`). |
 
 ### Behavior
@@ -322,11 +370,11 @@ an error.
 | `--complete` | `completion` | none (or `awaiting-approval` with `--awaiting-approval`) |
 | `--complete --awaiting-approval` | `completion` | `awaiting-approval` (reason = message) |
 | `--answer` | `answer` | answer stored on the existing `blocked` park; park stays until resume |
-| `--reject` | `reject` | feedback stored on the existing `awaiting-approval` park; next apply re-runs propose |
+| `--reject` | `reject` | feedback stored on the existing `awaiting-approval` park; next apply re-runs the parked transition |
 
 A `blocked` step with a recorded answer (via `--answer`) resumes on the next
 `batch apply`. A rejected `awaiting-approval` step causes the next `batch apply`
-to re-run propose with the feedback in context.
+to re-run the parked transition with the feedback in context.
 
 Journal entries are appended to
 `.ratchet/batches/<batch>/run/journal.jsonl`; parked state is written to
@@ -339,7 +387,7 @@ Advance the batch by one step via the bundled engine.
 ### Synopsis
 
 ```bash
-ratchet batch apply [name] [--json]
+ratchet batch apply [name] [--json] [--allow-manifest-escalation]
 ```
 
 `[name]` defaults to the current active batch when omitted.
@@ -348,7 +396,28 @@ ratchet batch apply [name] [--json]
 
 | Option | Description |
 |---|---|
-| `--json` | Output the structured `StepResult` as JSON. |
+| `--json` | Output the structured `StepResult` as JSON. Suppresses the human-readable posture banner and suppression warning. |
+| `--allow-manifest-escalation` | Let the repo-committed manifest RAISE the permission posture above the operator-owned (default/user/project) scopes. Default (unset): the manifest may only NARROW (lower) posture; a manifest raise is clamped to the operator-scope posture and a warning is printed. |
+
+### Posture banner
+
+Every human-readable `batch apply` run opens with a one-line banner stating the
+effective permission posture and the scope that supplied it:
+
+```
+permissions: repo-sandboxed-permissive (project scope)
+```
+
+When a repo-committed manifest tries to RAISE the posture above the
+operator-owned scopes and `--allow-manifest-escalation` is not set, the raise is
+**clamped** — the run proceeds under the operator-scope posture — and a warning
+is printed naming the requested posture, the `--allow-manifest-escalation` flag,
+and the operator-owned (`user`/`project`) config scopes as the ways to raise the
+posture. The manifest's `deny` additions still take effect under the clamped
+posture. `--json` suppresses both lines (machine consumers read the resolved
+settings they build themselves). See
+[`batch.permissions`](../configuration/config-yaml.md#batchpermissions-object)
+for the merge semantics.
 
 ### Behavior
 
@@ -436,7 +505,7 @@ Execution sequence:
    |---|---|
    | `advanced` | Transition completed; change moves to next step. |
    | `blocked` | Agent raised a blocker; step is parked. |
-   | `awaiting-approval` | Propose completed under an `after-propose`/`every-phase` gate; step is parked for approval. |
+   | `awaiting-approval` | A completed change transition parked under an approval gate; step is parked for approval. |
    | `nothing-ready` | No actionable step found. |
 
 7. **Persist outcome.** Parked state is written to `state.json`; journal entry
@@ -445,12 +514,21 @@ Execution sequence:
 
 **Gate behavior by setting:**
 
-| `gate` | After-propose behavior |
+| `gate` | Transitions parked for approval |
 |---|---|
 | `voluntary` | Agent may voluntarily park as `blocked`; no automatic approval gate. |
-| `after-propose` | Every propose parks as `awaiting-approval` before apply. |
-| `every-phase` | Same as `after-propose` within each phase. |
+| `after-propose` | Every completed `propose` parks as `awaiting-approval` before `apply`. |
+| `every-phase` | Every completed change transition (`propose`, `apply`, `verify`) parks as `awaiting-approval`. Decomposition and PR-open steps never park. |
 | `autonomous` | Agent may park on blockers; no approval gate. |
+
+The decision is made by the pure `parksForApproval(gate, transition)` matrix
+(`src/core/batch/engine/approval-gate.ts`), the single source of truth threaded
+through `shouldParkForApproval` and the decomposition and PR-open step call
+sites — so a decomposition or PR-open step never parks for approval under any
+gate (a decomposition's authored intents are reviewed when each change's
+propose parks; a PR is itself the human checkpoint). The awaiting-approval
+park message names the transition that completed (e.g. "Apply complete;
+awaiting approval.").
 
 **JSON output**: the raw `StepResult` object (`state`, `change`, `transition`,
 `blocker?`, `approvalRequest?`, `journalRefs?`, `message?`). `transition` is
@@ -582,6 +660,53 @@ place. Re-running is safe: already-archived changes are skipped.
 
 **JSON output**: `{ batchName, archivedChanges, skippedArchived, skippedPending,
 archivePath?, aborted? }`.
+
+## Isolation and enforcement rendering
+
+`batch config` and `batch view` render an honest picture of how the resolved
+batch settings translate into runtime isolation and per-agent enforcement. This
+is descriptive only — it reports the real posture; it does not change it.
+
+### Isolation block
+
+A single line describes the real isolation boundary imposed by the resolved
+locus, independent of the permission posture:
+
+| Locus | Rendered isolation |
+|---|---|
+| `local` | `advisory — no process boundary; permission posture is the only gate` |
+| `docker` | `container (image <image>, memory <m>, pids <p>, network <net>, user <uid:gid>)` with the resolved docker contract values, and a note that full autonomy still needs the container hardened (see [#85](https://github.com/anomaly-ai/ratchet/issues/85)) |
+| `remote` | `server boundary — agent runs on the remote host; local ratchet only streams` |
+
+The docker contract line states the documented host `uid:gid` fallback when no
+`dockerUser` is set rather than probing the live process.
+
+### Per-agent enforcement lines
+
+For every distinct agent assigned across the batch's stages, one line states
+whether that agent's permission flags are actually enforced at spawn:
+
+- **Enforced**: the agent's binary is on the supported list and its permission
+  flags are injected into the spawn argv (e.g. `claude: enforced via flags`).
+- **Not enforced**: the agent defaults apply unchanged — the agent is either not
+  on the supported list or its permission mapper is a no-op for this posture
+  (e.g. `cursor: NOT ENFORCED — agent defaults apply`).
+
+The enforcement verdict is derived from the same per-agent mappers the spawn
+path uses (`resolvePostureFlags`), so it can never drift from the real argv.
+
+### Posture source annotation
+
+When the resolved permission posture was raised by the repo-committed manifest
+above the operator-owned scope and `--allow-manifest-escalation` is set, the
+posture line names the escalation source, e.g.:
+
+```
+posture: full-autonomy (set by batch manifest — repo-controlled)
+```
+
+Without `--allow-manifest-escalation`, a manifest raise is clamped to the
+operator-owned posture and the line names the clamped (real) source instead.
 
 ## Name resolution
 

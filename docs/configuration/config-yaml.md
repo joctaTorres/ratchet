@@ -63,7 +63,7 @@ section loads warning-free and value-identical. Unknown keys are ignored
 
 | Key | Type | Default | Accepted values | Description |
 |---|---|---|---|---|
-| `gate` | string | `voluntary` | `voluntary` `after-propose` `every-phase` `autonomous` | Controls when the batch engine pauses for human approval between phases. `voluntary` never interrupts; `after-propose` gates after the propose phase; `every-phase` gates after every phase; `autonomous` runs all phases without interruption. |
+| `gate` | string | `voluntary` | `voluntary` `after-propose` `every-phase` `autonomous` | Controls when the batch engine parks a completed change transition for human approval. `voluntary` never parks; `after-propose` parks after each completed `propose` transition; `every-phase` parks after every completed change transition (`propose`, `apply`, `verify`) — decomposition and PR-open steps never park; `autonomous` never parks (agent blockers still park). |
 | `strategy` | string | `vertical-slice` | `vertical-slice` `feature` | Slice strategy used when the batch manifest is generated. |
 | `proofOfWork` | string | `hard-gate` | `hard-gate` `warn` | What happens when an agent does not produce required proof-of-work. `hard-gate` blocks the phase; `warn` logs a warning and continues. |
 | `prGrouping` | string | `off` | `off` `whole-batch` `per-phase` `per-change` | Whether a completed batch opens a pull request, and how work is grouped into PRs. `off` opens no PR (behavior unchanged). `whole-batch` groups the whole batch's work into a single PR opened by a dedicated `pr`-stage agent at completion. `per-phase` opens one stacked PR per completed phase and `per-change` one stacked PR per change — `batch apply` drives one stacked PR per group boundary, one group per apply in boundary order, idempotently per group (group 0 targets the batch base branch, group N targets group N-1's branch). |
@@ -75,6 +75,11 @@ section loads warning-free and value-identical. Unknown keys are ignored
 | `locus` | string | `local` | `local` `docker` `remote` | Where the agent runs. `local` drives the in-process ReX sidecar. `docker` runs the step inside a container via ReX `DockerDeployment` with the project root bind-mounted. `remote` drives a `swerex-remote` server over its REST API. |
 | `agent` | string \| map | — | an `agent[:model]` spec, or a `{propose, apply, verify, pr, decompose}` stage-map of spec values | Coding agent(s) to spawn. A scalar spec applies to every lifecycle stage; a partial per-stage map assigns a spec to each stage (see [Per-stage agent map](#per-stage-agent-map)). Each spec is an agent name optionally followed by `:model` (e.g. `claude`, `claude:fable`, `opencode:zai/glm-5.2`) — see [Agent `[:model]` spec](#agent-model-spec). When unset, the engine uses the agent configured at init time. |
 | `image` | string | — | free-form | Container image reference for `locus: docker`. Must be non-empty when set. When unset and `locus` is `docker`, the runtime falls back to `python:3.12`. |
+| `dockerUser` | string | current host `uid:gid` | free-form, e.g. `"1000:1000"` | `docker run --user` for `locus: docker`. When unset the sidecar resolves the current host `uid:gid` so container writes land as the host user, not root. Ignored for `local`/`remote`. |
+| `dockerMemory` | string | `2g` | free-form, e.g. `"2g"`, `"512m"` | `docker run --memory` for `locus: docker`. Ignored for `local`/`remote`. |
+| `dockerPidsLimit` | number | `512` | positive integer | `docker run --pids-limit` for `locus: docker`. Bounds fork-bomb-style runaway. Ignored for `local`/`remote`. |
+| `dockerCpus` | number | — | positive number (fractional ok, e.g. `1.5`) | `docker run --cpus` for `locus: docker`. Opt-in: no flag is passed when unset (Docker's default applies). Ignored for `local`/`remote`. |
+| `network` | string | `bridge` | `bridge` `none` `<custom name>` | `docker run --network` for `locus: docker`. `bridge` (default) means the container **HAS** outbound network; `none` fully isolates. Ignored for `local`/`remote`. See the [honest isolation contract](../engine/agent-runtime.md#honest-isolation-contract). |
 
 #### Per-stage agent map
 
@@ -231,15 +236,30 @@ These keys are required when `locus: remote` and ignored for `local` and `docker
 ### `batch.permissions` object
 
 Agent-agnostic permission policy. Merged across user/global, project, and
-per-change manifest scopes: `posture` is nearest-wins; `deny` is the union of all
+per-change manifest scopes: `posture` is nearest-wins **across the
+operator-owned scopes** (default/user/project); the **repo-committed manifest
+scope is narrow-only** — it may only LOWER the posture (it cannot raise it
+above the operator-owned scopes' accumulated value); `deny` is the union of all
 scopes; `allow` is replaced by the nearest scope that defines it; each agent's
 `raw` entry is nearest-wins per agent.
 
+Posture privilege ranking (least → most privileged):
+`curated-allowlist` < `repo-sandboxed-permissive` < `full-autonomy`. A manifest
+layer that requests a posture ranking ABOVE the operator-owned scopes'
+accumulated value has its raise **clamped** — posture and its source stay at the
+operator-scope values, the refusal is surfaced as a warning on `batch apply`
+naming the requested posture, the `--allow-manifest-escalation` flag, and the
+operator-owned config scopes, and the manifest's `deny` additions still land.
+Pass `--allow-manifest-escalation` to `ratchet batch apply` to let a
+manifest-raised posture take effect as a per-invocation opt-in. Operator-owned
+`user`/`project` scopes keep their existing raise ability (they are the trust
+boundary — see `#87`).
+
 | Key | Type | Default | Accepted values | Description |
 |---|---|---|---|---|
-| `posture` | string | `repo-sandboxed-permissive` | `repo-sandboxed-permissive` `curated-allowlist` `full-autonomy` | Agent-agnostic permission posture. `repo-sandboxed-permissive`: edits and ordinary build/test commands run unprompted, scoped to the repo, with a denylist blocking destructive operations. `curated-allowlist`: nothing runs unprompted outside an explicit allow list. `full-autonomy`: all permission checks bypassed. |
+| `posture` | string | `repo-sandboxed-permissive` | `repo-sandboxed-permissive` `curated-allowlist` `full-autonomy` | Agent-agnostic permission posture. `repo-sandboxed-permissive`: edits and ordinary build/test commands run unprompted, scoped to the repo, with a denylist blocking destructive operations. `curated-allowlist`: nothing runs unprompted outside an explicit allow list. `full-autonomy`: all permission checks bypassed. The manifest scope may only NARROW (lower) this; a manifest raise is clamped unless `--allow-manifest-escalation` is passed. |
 | `allow` | string[] | `[]` | tool-pattern strings | Allowlist of tool-name patterns. Injected as native permission flags for each agent. Replaced (not merged) by the nearest scope that defines the key. |
-| `deny` | string[] | `[]` | tool-pattern strings | Denylist of tool-name patterns. Unioned across all scopes; a narrower scope cannot remove a denial set by a wider scope. |
+| `deny` | string[] | `[]` | tool-pattern strings | Denylist of tool-name patterns. Unioned across all scopes; a narrower scope cannot remove a denial set by a wider scope. The manifest's `deny` additions land even when its posture raise is clamped. |
 | `raw` | object | `{}` | per-agent map | Per-agent raw argv fragment override (escape hatch). Recognized agents: `claude`, `codex`, `gemini`, `cursor`. Each entry is a string array of flags appended verbatim to the agent invocation. Nearest-wins per agent. |
 
 #### Example `batch.permissions` block

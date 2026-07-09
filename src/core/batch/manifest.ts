@@ -20,6 +20,142 @@ import { PermissionsPolicySchema } from './permissions-policy.js';
 import { AgentSettingSchema } from './agent-setting.js';
 
 // -----------------------------------------------------------------------------
+// Pass-condition vocabulary (single source of truth)
+// -----------------------------------------------------------------------------
+
+/**
+ * Recognized proof-of-work pass-condition shapes. Authored once here — the
+ * manifest schema is the authority on the pass-condition vocabulary — and
+ * consumed by BOTH the load-time validator ({@link validatePassCondition},
+ * run as a `superRefine` on {@link ProofOfWorkSchema}) AND the runtime
+ * evaluator (`evaluatePassCondition` in the engine). Sharing one classifier is
+ * what makes a degenerate shape the same shape rejected at load and evaluated at
+ * run, with no drift between the two.
+ */
+export type PassConditionKind = 'exit-zero' | 'contains' | 'regex' | 'substring';
+
+export interface ClassifiedPassCondition {
+  kind: PassConditionKind;
+  /** `contains:` / bare-string (substring) literal needle. */
+  needle?: string;
+  /** `regex:` pattern body (the text after the `regex:` prefix). */
+  pattern?: string;
+}
+
+/**
+ * Matches a pass condition that *begins* with an exit-zero directive: `exit`,
+ * an optional `code` and `-`/space separators, then `0` or `zero`, terminated by
+ * end-of-string or a non-alphanumeric boundary (whitespace or punctuation such
+ * as `—`, `:`, `,`). Recognizes `exit 0`, `exit-zero`, `exit code 0`, and prose
+ * forms like `Exit 0, then ...` or `EXIT CODE 0 — everything passes`. An
+ * exit-zero directive gates on the exit status and is NOT substring-matched
+ * against stdout, so it can never be self-satisfying via the `run` command.
+ */
+export const EXIT_ZERO_DIRECTIVE = /^exit(?:[- ]?code)?[- ]?(?:0|zero)(?![a-z0-9_])/i;
+
+/**
+ * Classify a pass-condition string into its recognized shape. The empty string
+ * (an absent/blank pass) is treated as exit-zero so the classifier is total; the
+ * schema's own `min(1)` rejects a truly empty `pass` before this runs.
+ */
+export function classifyPassCondition(pass: string): ClassifiedPassCondition {
+  const condition = pass.trim();
+  if (condition === '' || EXIT_ZERO_DIRECTIVE.test(condition)) {
+    return { kind: 'exit-zero' };
+  }
+  if (condition.startsWith('contains:')) {
+    return { kind: 'contains', needle: condition.slice('contains:'.length) };
+  }
+  if (condition.startsWith('regex:')) {
+    return { kind: 'regex', pattern: condition.slice('regex:'.length) };
+  }
+  return { kind: 'substring', needle: condition };
+}
+
+/**
+ * Reject degenerate proof-of-work pass conditions at manifest load so a
+ * hard-gate proof-of-work can never be vacuous by construction. Runs as a
+ * `superRefine` on {@link ProofOfWorkSchema}; every issue carries the `pass`
+ * zod path, so {@link formatManifestIssues} locates it (`phases.N.proofOfWork.pass`)
+ * with no change to the error-reporting seam — both `ratchet validate` and
+ * `loadBatchManifest` (the `batch apply` load) route through this parser and
+ * reject identically.
+ *
+ * Rejected shapes:
+ *   - an empty or whitespace-only `contains:` needle (`stdout.includes('')` is
+ *     always true),
+ *   - an empty `regex:` pattern (matches everything),
+ *   - an invalid `regex:` pattern (the RegExp compile error is surfaced),
+ *   - the echo-your-own-pass-phrase shape: the literal needle of a `contains:`
+ *     or bare-string (substring) condition appearing verbatim in the `run`
+ *     command, so the command can satisfy its own gate.
+ *
+ * Exit-zero directives are exempt (they gate on exit status, never stdout).
+ * `regex:` patterns are exempt from the self-satisfying lint (a pattern
+ * appearing in `run` is not the echo shape).
+ */
+function validatePassCondition(run: string, pass: string, ctx: z.RefinementCtx): void {
+  const classified = classifyPassCondition(pass);
+  switch (classified.kind) {
+    case 'exit-zero':
+      return;
+    case 'contains': {
+      const needle = classified.needle!;
+      if (needle.trim() === '') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pass'],
+          message:
+            'proof-of-work pass `contains:` needle is empty; a hard-gate must be satisfiable only by real output',
+        });
+        return;
+      }
+      if (run.includes(needle)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pass'],
+          message: `proof-of-work pass condition is self-satisfying: the \`contains:\` needle ${JSON.stringify(needle)} appears verbatim in the \`run\` command, so the command can satisfy its own gate`,
+        });
+      }
+      return;
+    }
+    case 'regex': {
+      const pattern = classified.pattern!;
+      if (pattern === '') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pass'],
+          message:
+            'proof-of-work pass `regex:` pattern is empty; an empty pattern matches everything',
+        });
+        return;
+      }
+      try {
+        new RegExp(pattern);
+      } catch (err) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pass'],
+          message: `proof-of-work pass \`regex:\` pattern is invalid: ${(err as Error).message}`,
+        });
+      }
+      return;
+    }
+    case 'substring': {
+      const needle = classified.needle!;
+      if (run.includes(needle)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['pass'],
+          message: `proof-of-work pass condition is self-satisfying: the pass needle ${JSON.stringify(needle)} appears verbatim in the \`run\` command, so the command can satisfy its own gate`,
+        });
+      }
+      return;
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Zod schema
 // -----------------------------------------------------------------------------
 
@@ -27,13 +163,17 @@ import { AgentSettingSchema } from './agent-setting.js';
 export const PROOF_OF_WORK_KINDS = ['integration', 'blackbox', 'llm-judge'] as const;
 export type ProofOfWorkKind = (typeof PROOF_OF_WORK_KINDS)[number];
 
-export const ProofOfWorkSchema = z.object({
-  kind: z.enum(PROOF_OF_WORK_KINDS, {
-    error: `proof-of-work kind must be one of: ${PROOF_OF_WORK_KINDS.join(', ')}`,
-  }),
-  run: z.string().min(1, { error: 'proof-of-work run command is required' }),
-  pass: z.string().min(1, { error: 'proof-of-work pass condition is required' }),
-});
+export const ProofOfWorkSchema = z
+  .object({
+    kind: z.enum(PROOF_OF_WORK_KINDS, {
+      error: `proof-of-work kind must be one of: ${PROOF_OF_WORK_KINDS.join(', ')}`,
+    }),
+    run: z.string().min(1, { error: 'proof-of-work run command is required' }),
+    pass: z.string().min(1, { error: 'proof-of-work pass condition is required' }),
+  })
+  .superRefine((pow, ctx) => {
+    validatePassCondition(pow.run, pow.pass, ctx);
+  });
 
 export const ChangeIntentSchema = z.object({
   name: z.string().min(1, { error: 'change intent name is required' }),
@@ -81,6 +221,14 @@ export const BatchSettingsOverrideSchema = z
     // config key for this batch (and is itself overridden by the
     // RATCHET_AGENT_TIMEOUT_MS env var at resolution time).
     agentTimeoutMs: z.number().int().positive().optional(),
+    // Docker-locus hardening knobs (features/docker-locus-hardening). Mirrored
+    // identically to the project-config scope; the enclosing object stays
+    // `.strict()` — these are known keys.
+    dockerUser: z.string().optional(),
+    dockerMemory: z.string().optional(),
+    dockerPidsLimit: z.number().int().positive().optional(),
+    dockerCpus: z.number().positive().optional(),
+    network: z.string().optional(),
   })
   .strict();
 

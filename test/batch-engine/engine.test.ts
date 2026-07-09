@@ -71,11 +71,35 @@ function engineWith(behavior: Parameters<typeof fakeAgent>[0]) {
   return { engine, calls };
 }
 
+/**
+ * Write the on-disk artifact that corroborates a `--complete` on the given
+ * transition, mirroring what a genuine agent leaves behind. The corroboration
+ * gate (outcome.ts) checks this evidence before advancing a reported completion.
+ */
+function corroborate(root: string, change: string, transition: 'propose' | 'apply' | 'verify'): void {
+  const dir = path.join(root, '.ratchet', 'changes', change);
+  if (transition === 'propose') {
+    fsSync.mkdirSync(dir, { recursive: true });
+    fsSync.writeFileSync(path.join(dir, 'plan.md'), '## Tasks\n- [ ] do it\n');
+  } else if (transition === 'apply') {
+    // The change dir + plan already exist; check the task off so after.applied.
+    const planPath = path.join(dir, 'plan.md');
+    if (!fsSync.existsSync(planPath)) {
+      fsSync.mkdirSync(dir, { recursive: true });
+      fsSync.writeFileSync(planPath, '## Tasks\n- [ ] do it\n');
+    }
+    fsSync.writeFileSync(planPath, '## Tasks\n- [x] do it\n');
+  }
+  // verify: no disk artifact; the verdict rides in the completion message.
+}
+
 describe('RatchetBatchEngine.runStep', () => {
   it('advances when the agent reports completion', async () => {
     const { engine } = engineWith({
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroborate(root, change, 'propose');
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
     });
     const result = await engine.runStep(context());
     expect(result.state).toBe('advanced');
@@ -102,8 +126,10 @@ describe('RatchetBatchEngine.runStep', () => {
 
   it('parks for approval after propose under an after-propose gate', async () => {
     const { engine } = engineWith({
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'draft ready', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroborate(root, change, 'propose');
+        appendJournal(root, batch, { change, kind: 'completion', message: 'draft ready', transition: 'propose' });
+      },
     });
     const result = await engine.runStep(context({ settings: settings({ gate: 'after-propose' }) }));
     expect(result.state).toBe('awaiting-approval');
@@ -124,8 +150,10 @@ describe('RatchetBatchEngine.runStep', () => {
 
   it('resumes a blocked step once an answer is recorded, re-spawning the agent with answer in context', async () => {
     const { engine, calls } = engineWith({
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'done', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroborate(root, change, 'propose');
+        appendJournal(root, batch, { change, kind: 'completion', message: 'done', transition: 'propose' });
+      },
     });
     const result = await engine.runStep(
       context({ resume: { kind: 'blocked', reason: 'which provider?', answer: 'use OAuth' } })
@@ -153,8 +181,10 @@ describe('RatchetBatchEngine.runStep', () => {
 
   it('autonomous gate advances through propose without an approval pause', async () => {
     const { engine } = engineWith({
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'done', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroborate(root, change, 'propose');
+        appendJournal(root, batch, { change, kind: 'completion', message: 'done', transition: 'propose' });
+      },
     });
     const result = await engine.runStep(context({ settings: settings({ gate: 'autonomous' }) }));
     expect(result.state).toBe('advanced');

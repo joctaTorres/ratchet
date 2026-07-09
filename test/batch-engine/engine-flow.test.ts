@@ -152,15 +152,23 @@ describe('RatchetBatchEngine.runStep — success with real on-disk work', () => 
     expect(r1.state).toBe('advanced');
 
     // Step 2: with a plan + open tasks on disk, the engine derives `apply`
-    // (computeNextTransition), regardless of the coarse context hint.
+    // (computeNextTransition), regardless of the coarse context hint. The apply
+    // stub checks the task off so the completion is corroborated against disk.
     const step2 = engineWith({
-      effect: async (root) =>
+      effect: async (root) => {
+        // Corroborate the apply completion: check the plan's task off.
+        await fs.writeFile(
+          path.join(root, '.ratchet', 'changes', 'add-login-api', 'plan.md'),
+          '## Tasks\n- [x] build the slice\n',
+          'utf-8'
+        );
         appendJournal(root, 'b', {
           change: 'add-login-api',
           kind: 'completion',
           message: 'implemented the tasks',
           transition: 'apply',
-        }),
+        });
+      },
     });
     const r2 = await step2.engine.runStep(context({ transition: 'propose' }));
     expect(r2.transition).toBe('apply');

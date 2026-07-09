@@ -119,4 +119,42 @@ describe('proof-of-work journal record', () => {
     // proof reader never picks up a decomposition completion (or vice versa).
     expect(proofOfWorkJournalKey('p1')).not.toBe(decompositionJournalKey('p1'));
   });
+
+  // verdict-matched-evidence.feature: the durable record persists the condition
+  // kind and matched excerpt, and older records without those fields stay
+  // readable (fields optional, no migration).
+  it('persists the condition kind and matched excerpt in the durable record', () => {
+    recordProofOfWork(
+      projectRoot,
+      BATCH,
+      'p1',
+      record({
+        conditionKind: 'contains',
+        matchedExcerpt: '12 passed',
+      })
+    );
+    const got = readLatestProofOfWork(projectRoot, BATCH, 'p1');
+    expect(got).toBeDefined();
+    expect(got).toMatchObject({
+      conditionKind: 'contains',
+      matchedExcerpt: '12 passed',
+    });
+  });
+
+  it('reads back older records that lack the new fields (no migration)', () => {
+    // A record written before the fields existed carries no conditionKind/excerpt;
+    // the reader returns it unchanged (absence is ignored).
+    recordProofOfWork(
+      projectRoot,
+      BATCH,
+      'p1',
+      // Deliberately omit the new optional fields.
+      record({ conditionKind: undefined, matchedExcerpt: undefined })
+    );
+    const got = readLatestProofOfWork(projectRoot, BATCH, 'p1');
+    expect(got).toBeDefined();
+    expect(got!.conditionKind).toBeUndefined();
+    expect(got!.matchedExcerpt).toBeUndefined();
+    expect(got!.passed).toBe(true);
+  });
 });

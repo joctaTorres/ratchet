@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { promises as fs, existsSync } from 'fs';
+import { promises as fs, existsSync, mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { appendJournal } from 'ratchet-ai';
@@ -84,6 +84,11 @@ function recordingRuntime(): {
     state.sawCommandFile = existsSync(
       path.join(req.cwd, '.claude', 'commands', 'rct', 'apply.md')
     );
+    // Corroborate the apply completion: leave a plan with the task checked so
+    // the corroboration gate (outcome.ts) advances the reported completion.
+    const dir = path.join(projectRoot, '.ratchet', 'changes', 'add-login-api');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'plan.md'), '## Tasks\n- [x] do it\n');
     appendJournal(projectRoot, 'b', {
       change: 'add-login-api',
       kind: 'completion',

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
+import * as fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import { appendJournal } from 'ratchet-ai';
@@ -86,13 +87,26 @@ function fakeRuntime(behavior: {
   return { runtime, calls };
 }
 
+/**
+ * Corroborate a propose completion by writing the change dir + plan.md, mirroring
+ * what a genuine propose agent leaves behind. The corroboration gate (outcome.ts)
+ * checks this evidence before advancing a reported completion.
+ */
+function corroboratePropose(root: string, change: string): void {
+  const dir = path.join(root, '.ratchet', 'changes', change);
+  fsSync.mkdirSync(dir, { recursive: true });
+  fsSync.writeFileSync(path.join(dir, 'plan.md'), '## Tasks\n- [ ] do it\n');
+}
+
 describe('RatchetBatchEngine — routing through the AgentRuntime seam', () => {
   it('prints each stdout line live and advances on a completion report', async () => {
     const printed: string[] = [];
     const { runtime, calls } = fakeRuntime({
       lines: ['line one', 'line two', 'line three'],
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
     });
     const engine = new RatchetBatchEngine({
       runtime,
@@ -114,8 +128,10 @@ describe('RatchetBatchEngine — routing through the AgentRuntime seam', () => {
     const printed: string[] = [];
     const { runtime, calls } = fakeRuntime({
       lines: ['stub output'],
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'done', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'done', transition: 'propose' });
+      },
     });
     const engine = new RatchetBatchEngine({
       runtime,
@@ -136,8 +152,10 @@ describe('RatchetBatchEngine — routing through the AgentRuntime seam', () => {
   it('treats a blank override as unset (configured adapter builds the request) but still streams', async () => {
     process.env[ENV] = '   ';
     const { runtime, calls } = fakeRuntime({
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'done', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'done', transition: 'propose' });
+      },
     });
     const engine = new RatchetBatchEngine({
       runtime,
@@ -169,6 +187,7 @@ describe('RatchetBatchEngine — routing through the AgentRuntime seam', () => {
     const runtime: AgentRuntime = async (_req, onEvent) => {
       started = true;
       onEvent({ kind: 'exit', exitCode: 0 });
+      corroboratePropose(projectRoot, 'add-login-api');
       appendJournal(projectRoot, 'b', { change: 'add-login-api', kind: 'completion', message: 'ok', transition: 'propose' });
       return { exitCode: 0, signal: null, stdout: '', stderr: '' };
     };
@@ -196,8 +215,10 @@ describe('RatchetBatchEngine — stream-json capability routing', () => {
     const printed: string[] = [];
     const { runtime } = fakeRuntime({
       lines: NDJSON,
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
     });
     const engine = new RatchetBatchEngine({
       runtime,
@@ -225,8 +246,10 @@ describe('RatchetBatchEngine — stream-json capability routing', () => {
     const printed: string[] = [];
     const { runtime } = fakeRuntime({
       lines: NDJSON,
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
     });
     const engine = new RatchetBatchEngine({
       runtime,
@@ -242,8 +265,10 @@ describe('RatchetBatchEngine — stream-json capability routing', () => {
   });
 
   it('renders display-only: the accumulated transcript is byte-identical with and without rendering', async () => {
-    const report = (root: string, batch: string, change: string) =>
+    const report = (root: string, batch: string, change: string) => {
+      corroboratePropose(root, change);
       appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+    };
 
     // A runtime that captures the EXACT `AgentSpawnResult.stdout` it returns to
     // the engine (the value that flows into mapSessionToOutcome), so we can prove

@@ -175,12 +175,21 @@ function resumeGuidance(context: ChangeStepContext): string {
     ].join('\n');
   }
   if (resume.kind === 'awaiting-approval' && resume.feedback?.trim()) {
+    const transitionName = context.transition;
+    const gerund =
+      transitionName === 'propose'
+        ? 'proposal'
+        : transitionName === 'apply'
+          ? 'apply work'
+          : transitionName === 'verify'
+            ? 'verify pass'
+            : transitionName;
     return [
-      'The prior proposal was REJECTED with feedback. Re-run propose against the',
-      'existing draft (do NOT start over and do NOT roll back other work):',
-      `  Prior proposal: ${resume.reason}`,
+      `The prior ${gerund} was REJECTED with feedback. Re-run ${transitionName} against the`,
+      'existing work (do NOT start over and do NOT roll back other work):',
+      `  Prior ${gerund}: ${resume.reason}`,
       'The reviewer feedback is attached to the invocation above as an argument —',
-      'revise the draft to address it.',
+      `revise the ${gerund} to address it.`,
     ].join('\n');
   }
   return '';
@@ -203,6 +212,23 @@ export function buildAgentInstructions(context: ChangeStepContext): string {
   ];
 
   sections.push('', transitionGuidance(context));
+
+  // Verify-only reporting requirement: the verify `--complete` summary MUST
+  // carry the verification report's final-assessment verdict. The mapper
+  // corroborates a verify completion against the verdict (VERIFY_VERDICT_PATTERN
+  // in outcome.ts), so telling the agent the contract here is the
+  // transition-level reporting requirement (the delegated rct:verify lifecycle
+  // authors the verdict; the engine instruction only adds the requirement to
+  // surface it in `--complete`). Agent-neutral wording (multi-agent-support).
+  if (context.transition === 'verify') {
+    sections.push(
+      '',
+      'When you `--complete` the verify step, the summary MUST include the ' +
+        'verification report\'s final-assessment verdict (the "Ready for archive" ' +
+        'or "N critical issue(s) found" line). The engine corroborates a verify ' +
+        'completion against that verdict and parks a verdict-free completion.'
+    );
+  }
 
   const strategy = strategyGuidance(context);
   if (strategy) sections.push('', strategy);

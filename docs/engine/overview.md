@@ -374,12 +374,20 @@ config) controls when the engine parks for human approval:
 |---|---|
 | `voluntary` | Never parks for approval automatically. |
 | `after-propose` | Parks for approval after each completed `propose` transition, before `apply`. |
-| `every-phase` | Same as `after-propose`. |
+| `every-phase` | Parks for approval after **every** completed change transition (`propose`, `apply`, and `verify`). Decomposition and PR-open steps never park for approval under any gate. |
 | `autonomous` | Never parks for approval; agent blockers still park. |
 
-Under `after-propose` and `every-phase`, a completed `propose` transition causes
-`runStep` / `runChangeStep` to return `awaiting-approval` instead of `advanced`.
-The step does not re-run until the park is cleared.
+Under `after-propose`, a completed `propose` transition causes `runStep` /
+`runChangeStep` to return `awaiting-approval` instead of `advanced`. Under
+`every-phase`, every completed change transition (propose, apply, and verify)
+parks the same way. The step does not re-run until the park is cleared.
+`voluntary` and `autonomous` never park for approval (autonomous still parks on
+agent blockers). The decision is made by the pure `parksForApproval(gate,
+transition)` matrix (`src/core/batch/engine/approval-gate.ts`), the single
+source of truth threaded through `shouldParkForApproval` and the decomposition
+and PR-open step call sites — so a decomposition or PR-open step never parks
+for approval under any gate (a decomposition's authored intents are reviewed
+when each change's propose parks; a PR is itself the human checkpoint).
 
 ### Proof-of-work
 
@@ -521,9 +529,9 @@ interface StepResult {
 
 | State | Meaning |
 |---|---|
-| `advanced` | The transition completed; the agent reported a `completion` journal entry. |
-| `blocked` | The step requires attention: the agent raised a blocker, the agent crashed, or an internal `failed` state was mapped here (see below). The step is resumable. |
-| `awaiting-approval` | `propose` completed under an `after-propose` / `every-phase` gate; parked until approved or feedback is recorded. |
+| `advanced` | The transition completed; the agent reported a `completion` journal entry CORROBORATED against the on-disk change state (see [Session-to-outcome mapping](#session-to-outcome-mapping)). |
+| `blocked` | The step requires attention: the agent raised a blocker, the agent crashed, an internal `failed` state was mapped here, or a claimed `--complete` did not corroborate against disk (see below). The step is resumable. |
+| `awaiting-approval` | A completed change transition (corroborated) parked under an approval gate: `propose` under `after-propose`, or `propose`/`apply`/`verify` under `every-phase`. Parked until approved or feedback is recorded; the park message names the transition that completed. |
 | `phase-gated` | The selected change's phase is gated by an incomplete prior phase. |
 | `nothing-ready` | No runnable step exists (all done, all gated, or all blocked/parked). |
 
@@ -538,12 +546,12 @@ a clean advance.
 ### Session-to-outcome mapping
 
 `mapSessionToOutcome` (`src/core/batch/engine/outcome.ts`) examines the journal
-entries the agent wrote during the session and the process exit status:
+entries the agent wrote during the session, the process exit status, AND the
+on-disk change state it already snapshots (`diskEvidence: { before, after }`)
+to corroborate a claimed completion:
 
 1. A `blocker` or `needs-input` journal entry → `blocked`.
-2. A `completion` journal entry under an `after-propose` gate → `awaiting-approval`.
-3. A `completion` journal entry → `advanced`.
-4. Non-zero exit without a `completion` → `failed` (surfaces as `blocked`).
+2. Non-zero exit without a `completion` → `failed` (surfaces as `blocked`).
    When the transition's (or batch-driven pr / phase-decomposition step's)
    resolved spec explicitly named a model AND the agent wrote zero journal
    entries during the session (the argv-rejection signature) AND the spawn
@@ -571,9 +579,48 @@ entries the agent wrote during the session and the process exit status:
    agent, no model), a scope-less (standalone) path, or a failure after
    journal progress surfaces byte-for-byte today's output — only the
    argv-rejection attribution branch changes.
-5. Zero exit without a `completion` → `blocked`; on-disk evidence (plan.md
+3. A `completion` journal entry, CORROBORATED against `diskEvidence` before
+   advancing (only `propose | apply | verify` are corroborated; `decompose`
+   and `pr` step kinds key off synthetic journal keys with no change directory
+   and stay byte-for-byte today's behavior):
+   - **Mismatch** — the disk disagrees with the claim → `blocked`, blocker
+     `Reported complete but disk disagrees: <reason>.`
+     - `propose` → after-state must have the change directory AND a plan.md
+       (`after.exists && after.hasPlan`; absolute, so a resumed propose over
+       an existing directory corroborates).
+     - `apply` → after-state is fully applied (`after.applied`) OR at least
+       one task was checked off this session (`after.tasksComplete >
+       before.tasksComplete`).
+     - `verify` → after-state is applied AND the completion message carries
+       the verification verdict (matches the exported
+       `VERIFY_VERDICT_PATTERN`, the canonical Final Assessment shapes the
+       rct:verify workflow template authors: "Ready for archive" or "N
+       critical issue(s) found…"). The pattern checks verdict PRESENCE, not
+       polarity — a critical-issue verdict is still a verdict; gating done on
+       a passing verdict is out of scope. Verify produces no disk artifact,
+       so its evidence is (a) the change is actually applied and (b) the
+       message carries the verdict. An archived after-state reports
+       `applied: true`, so a late archival cannot false-block.
+   - **Completion + non-zero exit/signal** → `blocked`, blocker
+     `Agent reported completion but exited <describeExit> — the reported work
+     may be incomplete; review and resume.` (fail-closed; the manifest allows
+     "at least warned, arguably blocked" — this engine picks blocked).
+    - **Under an approval gate** → `awaiting-approval` (the gate×transition
+      matrix decides which transitions park: `propose` under `after-propose`;
+      `propose`/`apply`/`verify` under `every-phase`; only a CORROBORATED
+      completion parks here — a mismatch blocks first; the park message names
+      the transition that completed, e.g. "Apply complete; awaiting approval.").
+   - **Otherwise** → `advanced`.
+4. Zero exit without a `completion` → `blocked`; on-disk evidence (plan.md
    appeared, task checkboxes advanced) is surfaced in the message but the step
    **never auto-advances** on unreported work.
+
+The branch order in the completion path is: reported blocker (1) → non-zero
+exit without completion (2) → corroboration mismatch (3.a) → completion +
+crash (3.b) → approval park (3.c) → advanced (3.d) → zero-exit no-report
+blocked (4). The mismatch precedes the crash check (a disk mismatch is the
+more specific, actionable evidence) and both precede the approval park so an
+uncorroborated propose can no longer park as `awaiting-approval`.
 
 ## Journal, run-state, and lock
 

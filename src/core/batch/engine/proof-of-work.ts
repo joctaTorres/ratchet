@@ -27,7 +27,11 @@
  */
 
 import { spawn } from 'node:child_process';
-import type { ProofOfWork } from '../manifest.js';
+import {
+  classifyPassCondition,
+  type PassConditionKind,
+  type ProofOfWork,
+} from '../manifest.js';
 import type { ProofOfWorkPolicy } from '../config.js';
 
 export interface BashResult {
@@ -82,6 +86,19 @@ export interface ProofOfWorkResult {
   policy: ProofOfWorkPolicy;
   reason: ProofOfWorkPassReason | ProofOfWorkFailReason;
   detail: string;
+  /**
+   * Which pass-condition kind was evaluated (`exit-zero` | `contains` | `regex`
+   * | `substring`). Absent for the not-yet-wired `llm-judge` kind, which does
+   * not run a bash pass condition.
+   */
+  conditionKind?: PassConditionKind;
+  /**
+   * The matched excerpt on a pass: the needle for `contains`/`substring`, the
+   * actual matched text for `regex`. Absent on a fail and for exit-zero (which
+   * matches no stdout text). Persisted into the durable {@link ProofOfWorkRecord}
+   * so gate evidence is reviewable instead of a bare pass/fail bit.
+   */
+  matchedExcerpt?: string;
 }
 
 /**
@@ -99,59 +116,88 @@ export interface ProofOfWorkResult {
  * Anything else (a bare string that is not an exit-code directive) is treated as
  * substring-in-stdout, with exit 0 still required.
  */
-type PassEvaluation = { passed: boolean; reason: ProofOfWorkPassReason | ProofOfWorkFailReason };
+type PassEvaluation = {
+  passed: boolean;
+  reason: ProofOfWorkPassReason | ProofOfWorkFailReason;
+  conditionKind: PassConditionKind;
+  /** Matched excerpt on a pass; undefined on a fail or for exit-zero. */
+  matchedExcerpt?: string;
+};
 
 /**
- * Matches a pass condition that *begins* with an exit-zero directive: `exit`,
- * an optional `code` and `-`/space separators, then `0` or `zero`, terminated by
- * end-of-string or a non-alphanumeric boundary (whitespace or punctuation such
- * as `—`, `:`, `,`). Recognizes `exit 0`, `exit-zero`, `exit code 0`, and prose
- * forms like `Exit 0, then ...` or `EXIT CODE 0 — everything passes`.
+ * Pass when exit 0; otherwise fail as nonzero-exit.
  */
-const EXIT_ZERO_DIRECTIVE = /^exit(?:[- ]?code)?[- ]?(?:0|zero)(?![a-z0-9_])/i;
-
-/** Pass when exit 0; otherwise fail as nonzero-exit. */
 function exitZeroHandler(exitedZero: boolean): PassEvaluation {
   return exitedZero
-    ? { passed: true, reason: 'pass-condition-met' }
-    : { passed: false, reason: 'nonzero-exit' };
+    ? { passed: true, reason: 'pass-condition-met', conditionKind: 'exit-zero' }
+    : { passed: false, reason: 'nonzero-exit', conditionKind: 'exit-zero' };
 }
 
 /**
  * Pass when exit 0 AND `match` holds against stdout. A failed match while exit 0
  * is `pass-condition-unmet`; a nonzero exit is `nonzero-exit`.
  */
-function outputHandler(exitedZero: boolean, match: boolean): PassEvaluation {
+function outputHandler(
+  exitedZero: boolean,
+  match: boolean,
+  conditionKind: PassConditionKind,
+  excerpt?: string
+): PassEvaluation {
   return exitedZero && match
-    ? { passed: true, reason: 'pass-condition-met' }
-    : { passed: false, reason: exitedZero ? 'pass-condition-unmet' : 'nonzero-exit' };
+    ? { passed: true, reason: 'pass-condition-met', conditionKind, matchedExcerpt: excerpt }
+    : {
+        passed: false,
+        reason: exitedZero ? 'pass-condition-unmet' : 'nonzero-exit',
+        conditionKind,
+      };
 }
 
-function regexMatch(pattern: string, stdout: string): boolean {
+function regexExec(pattern: string, stdout: string): RegExpExecArray | null {
   try {
-    return new RegExp(pattern).test(stdout);
+    return new RegExp(pattern).exec(stdout);
   } catch {
-    return false;
+    return null;
   }
 }
 
 export function evaluatePassCondition(pass: string, result: BashResult): PassEvaluation {
   const exitedZero = result.exitCode === 0;
-  const condition = pass.trim();
+  const classified = classifyPassCondition(pass);
 
-  if (condition === '' || EXIT_ZERO_DIRECTIVE.test(condition)) {
-    return exitZeroHandler(exitedZero);
+  switch (classified.kind) {
+    case 'exit-zero':
+      return exitZeroHandler(exitedZero);
+    case 'contains': {
+      const needle = classified.needle!;
+      const match = result.stdout.includes(needle);
+      return outputHandler(
+        exitedZero,
+        match,
+        'contains',
+        exitedZero && match ? needle : undefined
+      );
+    }
+    case 'regex': {
+      const pattern = classified.pattern!;
+      const exec = regexExec(pattern, result.stdout);
+      return outputHandler(
+        exitedZero,
+        exec !== null,
+        'regex',
+        exitedZero && exec !== null ? exec[0] : undefined
+      );
+    }
+    case 'substring': {
+      const needle = classified.needle!;
+      const match = result.stdout.includes(needle);
+      return outputHandler(
+        exitedZero,
+        match,
+        'substring',
+        exitedZero && match ? needle : undefined
+      );
+    }
   }
-  if (condition.startsWith('contains:')) {
-    const needle = condition.slice('contains:'.length);
-    return outputHandler(exitedZero, result.stdout.includes(needle));
-  }
-  if (condition.startsWith('regex:')) {
-    const pattern = condition.slice('regex:'.length);
-    return outputHandler(exitedZero, regexMatch(pattern, result.stdout));
-  }
-  // Default: substring match in stdout, exit 0 required.
-  return outputHandler(exitedZero, result.stdout.includes(condition));
 }
 
 function applyPolicy(
@@ -266,6 +312,8 @@ export async function runProofOfWork(
     ...applyPolicy(evaluation.passed, policy),
     policy,
     reason: evaluation.reason,
+    conditionKind: evaluation.conditionKind,
+    matchedExcerpt: evaluation.matchedExcerpt,
     detail: evaluation.passed
       ? `Proof-of-work passed (${proofOfWork.pass}).`
       : `Proof-of-work failed: ${describeFail(evaluation.reason, result)}`,

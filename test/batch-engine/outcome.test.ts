@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest';
 import type { JournalEntry } from 'ratchet-ai';
 import {
   mapSessionToOutcome,
+  VERIFY_VERDICT_PATTERN,
   type MapOutcomeInput,
   type ModelAttribution,
 } from '../../src/core/batch/engine/outcome.js';
@@ -469,5 +470,394 @@ describe('mapSessionToOutcome — signal-kill hint gate', () => {
     expect(gated).toEqual(today);
     expect(gated.blocker).toMatch(/via signal SIGKILL/);
     expect(gated.blocker).not.toMatch(/if this model id is invalid/i);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Completion corroboration (features/completion-corroboration/*.feature).
+// A claimed `--complete` on propose/apply/verify is corroborated against the
+// disk evidence the engine already snapshots; a mismatch fails closed as
+// blocked ("reported complete but disk disagrees"), and a completion followed
+// by a non-zero exit / signal is blocked. Corroboration runs BEFORE the
+// after-propose approval park. decompose/pr step kinds stay exempt.
+// -----------------------------------------------------------------------------
+function completion(message: string, transition: 'propose' | 'apply' | 'verify' = 'apply'): JournalEntry {
+  return { at: '', kind: 'completion', message, change: 'add-login-api', transition };
+}
+
+describe('mapSessionToOutcome — propose completion corroboration', () => {
+  it('a propose completion with no change dir and no plan.md is blocked', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'propose',
+        sessionEntries: [completion('proposed', 'propose')],
+        sessionIndices: [0],
+        diskEvidence: { before: disk(), after: disk() },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.state).not.toBe('advanced');
+    expect(outcome.blocker ?? '').toMatch(/reported complete but disk disagrees/i);
+    expect(outcome.blocker ?? '').toMatch(/no plan\.md on disk/i);
+  });
+
+  it('a propose completion with a change dir but no plan.md is blocked', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'propose',
+        sessionEntries: [completion('proposed', 'propose')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk(),
+          after: disk({ exists: true, hasPlan: false }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.blocker ?? '').toMatch(/reported complete but disk disagrees/i);
+  });
+
+  it('a propose completion with a change dir and plan.md advances (byte-for-byte message)', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'propose',
+        sessionEntries: [completion('proposed the thin slice', 'propose')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk(),
+          after: disk({ exists: true, hasPlan: true }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('advanced');
+    expect(outcome.message).toBe('proposed the thin slice');
+  });
+
+  it('a corroboration mismatch outcome carries the session journalRefs', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'propose',
+        sessionEntries: [completion('proposed', 'propose')],
+        sessionIndices: [3],
+        diskEvidence: { before: disk(), after: disk() },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.journalRefs).toEqual([3]);
+    expect(outcome.message ?? '').toMatch(/reported complete but disk disagrees/i);
+  });
+});
+
+describe('mapSessionToOutcome — apply completion corroboration', () => {
+  it('an apply completion with no task progress and unchanged checkbox count is blocked', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        sessionEntries: [completion('implemented')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 1 }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 1 }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.blocker ?? '').toMatch(/reported complete but disk disagrees/i);
+    expect(outcome.blocker ?? '').toMatch(/no tasks checked off this session/i);
+  });
+
+  it('an apply completion that progressed tasks this session advances', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        sessionEntries: [completion('implemented')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 1 }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 3 }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('advanced');
+  });
+
+  it('an apply completion on an already fully-checked plan advances', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        sessionEntries: [completion('implemented')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 4, applied: true }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 4, applied: true }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('advanced');
+  });
+
+  it('an apply completion with a plain (verdict-free) summary is NOT held to the verdict pattern', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        sessionEntries: [completion('implemented the slice, no verdict wording')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 1 }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 3 }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('advanced');
+  });
+});
+
+describe('mapSessionToOutcome — verify completion verdict contract', () => {
+  it('a verify completion on an applied change carrying "Ready for archive" advances', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'verify',
+        sessionEntries: [completion('All scenarios satisfied. Ready for archive.', 'verify')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 4, applied: true }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 4, applied: true }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('advanced');
+  });
+
+  it('a verify completion on an applied change carrying "critical issues found" advances (presence, not polarity)', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'verify',
+        sessionEntries: [completion('2 critical issues found. Fix before archiving.', 'verify')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 4, applied: true }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 4, applied: true }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('advanced');
+  });
+
+  it('a verify completion with a verdict-free "done" message is blocked', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'verify',
+        sessionEntries: [completion('done', 'verify')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 4, applied: true }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 4, applied: true }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.blocker ?? '').toMatch(/reported complete but disk disagrees/i);
+    expect(outcome.blocker ?? '').toMatch(/no verification verdict in the completion/i);
+  });
+
+  it('a verify completion on an unapplied change is blocked even with a verdict', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'verify',
+        sessionEntries: [completion('Ready for archive', 'verify')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 2 }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 2 }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.blocker ?? '').toMatch(/reported complete but disk disagrees/i);
+  });
+
+  it('an archived after-state does not false-block a verified change', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'verify',
+        sessionEntries: [completion('Ready for archive', 'verify')],
+        sessionIndices: [0],
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 4, applied: true }),
+          after: disk({ archived: true, applied: true }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('advanced');
+  });
+
+  it('VERIFY_VERDICT_PATTERN matches the canonical final-assessment shapes', () => {
+    expect(VERIFY_VERDICT_PATTERN.test('All scenarios satisfied and all tasks checked. Ready for archive.')).toBe(true);
+    expect(VERIFY_VERDICT_PATTERN.test('No critical issues. 1 warning(s) to consider. Ready for archive (with noted improvements).')).toBe(true);
+    expect(VERIFY_VERDICT_PATTERN.test('2 critical issue(s) found. Fix before archiving.')).toBe(true);
+    expect(VERIFY_VERDICT_PATTERN.test('done')).toBe(false);
+    expect(VERIFY_VERDICT_PATTERN.test('')).toBe(false);
+  });
+});
+
+describe('mapSessionToOutcome — completion followed by a crash', () => {
+  it('a corroborated completion followed by a non-zero exit is blocked, not advanced', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        sessionEntries: [completion('implemented')],
+        sessionIndices: [0],
+        spawn: spawn({ exitCode: 1, stderr: 'late crash' }),
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 1 }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 3 }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.state).not.toBe('advanced');
+    expect(outcome.blocker ?? '').toMatch(/reported completion but.*exited/i);
+    expect(outcome.blocker ?? '').toMatch(/code 1/i);
+  });
+
+  it('a corroborated completion followed by a signal kill is blocked', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'propose',
+        sessionEntries: [completion('proposed', 'propose')],
+        sessionIndices: [0],
+        spawn: spawn({ exitCode: null, signal: 'SIGKILL' }),
+        diskEvidence: {
+          before: disk(),
+          after: disk({ exists: true, hasPlan: true }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.blocker ?? '').toMatch(/reported completion but.*exited/i);
+    expect(outcome.blocker ?? '').toMatch(/SIGKILL/i);
+  });
+
+  it('a corroboration mismatch beats a non-zero exit (more specific evidence first)', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        sessionEntries: [completion('implemented')],
+        sessionIndices: [0],
+        spawn: spawn({ exitCode: 1, stderr: 'boom' }),
+        diskEvidence: {
+          before: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 1 }),
+          after: disk({ exists: true, hasPlan: true, tasksTotal: 4, tasksComplete: 1 }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.blocker ?? '').toMatch(/reported complete but disk disagrees/i);
+    expect(outcome.blocker ?? '').not.toMatch(/exited/i);
+  });
+});
+
+describe('mapSessionToOutcome — corroboration vs the approval gate', () => {
+  it('a corroboration mismatch blocks even under an after-propose approval gate', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'propose',
+        sessionEntries: [completion('proposed', 'propose')],
+        sessionIndices: [0],
+        parkForApproval: true,
+        diskEvidence: { before: disk(), after: disk() },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.state).not.toBe('awaiting-approval');
+    expect(outcome.blocker ?? '').toMatch(/reported complete but disk disagrees/i);
+  });
+
+  it('a corroborated propose completion under the approval gate still parks awaiting-approval', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'propose',
+        sessionEntries: [completion('proposed the thin slice', 'propose')],
+        sessionIndices: [0],
+        parkForApproval: true,
+        diskEvidence: {
+          before: disk(),
+          after: disk({ exists: true, hasPlan: true }),
+        },
+      })
+    );
+    expect(outcome.state).toBe('awaiting-approval');
+    expect(outcome.approvalRequest).toBe('proposed the thin slice');
+  });
+});
+
+describe('mapSessionToOutcome — decompose/pr completions are exempt', () => {
+  it('a decompose completion is exempt from disk corroboration and advances', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'decompose',
+        sessionEntries: [completion('decomposed the phase', 'decompose')],
+        sessionIndices: [0],
+        diskEvidence: { before: disk(), after: disk() },
+      })
+    );
+    expect(outcome.state).toBe('advanced');
+    expect(outcome.message).toBe('decomposed the phase');
+  });
+
+  it('a pr completion is exempt from disk corroboration and advances', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'pr',
+        sessionEntries: [completion('opened the PR', 'pr')],
+        sessionIndices: [0],
+        diskEvidence: { before: disk(), after: disk() },
+      })
+    );
+    expect(outcome.state).toBe('advanced');
+    expect(outcome.message).toBe('opened the PR');
+  });
+
+  it('a decompose completion followed by a non-zero exit is still blocked (crash check applies)', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'decompose',
+        sessionEntries: [completion('decomposed', 'decompose')],
+        sessionIndices: [0],
+        spawn: spawn({ exitCode: 2, stderr: 'late crash' }),
+        diskEvidence: { before: disk(), after: disk() },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.blocker ?? '').toMatch(/reported completion but.*exited/i);
+  });
+});
+
+describe('mapSessionToOutcome — a reported blocker still wins over corroboration', () => {
+  it('a session with a blocker and a completion parks on the blocker, byte-for-byte today', () => {
+    const blockerEntry: JournalEntry = {
+      at: '',
+      kind: 'blocker',
+      message: 'need an answer',
+      change: 'add-login-api',
+      transition: 'propose',
+    };
+    const completionEntry: JournalEntry = {
+      at: '',
+      kind: 'completion',
+      message: 'proposed',
+      change: 'add-login-api',
+      transition: 'propose',
+    };
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'propose',
+        sessionEntries: [blockerEntry, completionEntry],
+        sessionIndices: [0, 1],
+        diskEvidence: { before: disk(), after: disk() },
+      })
+    );
+    expect(outcome.state).toBe('blocked');
+    expect(outcome.blocker).toBe('need an answer');
   });
 });

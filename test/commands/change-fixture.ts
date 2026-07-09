@@ -10,10 +10,11 @@
  * it by `process.chdir(fixture.root)`.
  */
 
-import { promises as fs } from 'fs';
+import { promises as fs, mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { appendJournalForLocus } from '../../src/core/batch/journal.js';
+import type { Transition } from '../../src/core/batch/engine/contract.js';
 import type { Spawner } from '../../src/core/batch/engine/agent.js';
 
 /**
@@ -21,18 +22,40 @@ import type { Spawner } from '../../src/core/batch/engine/agent.js';
  * each invocation (so a test can assert "exactly one step runs") and reports a
  * `completion` into the change-local journal so the engine maps the outcome to
  * `advanced`. No real agent is ever spawned.
+ *
+ * When `transition` is given, the seam ALSO writes the on-disk artifact that
+ * corroborates that transition's completion (mirroring what a genuine agent
+ * leaves behind), so the corroboration gate (outcome.ts) advances the reported
+ * completion:
+ *   - propose → change dir + plan.md
+ *   - apply   → plan.md with every task checked (after.applied)
+ *   - verify  → the completion message carries the verification verdict
  */
 export function completingSpawner(
   root: string,
-  change: string
+  change: string,
+  transition: Transition = 'propose'
 ): { spawner: Spawner; calls: () => number } {
   let calls = 0;
   const spawner: Spawner = async () => {
     calls += 1;
+    const dir = path.join(root, '.ratchet', 'changes', change);
+    if (transition === 'propose') {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, 'plan.md'), '## Tasks\n- [ ] do it\n', 'utf-8');
+    } else if (transition === 'apply') {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, 'plan.md'), '## Tasks\n- [x] do it\n', 'utf-8');
+    }
+    const message =
+      transition === 'verify'
+        ? 'All scenarios satisfied and all tasks checked. Ready for archive.'
+        : `${change} step complete`;
     appendJournalForLocus(root, { change }, {
       change,
       kind: 'completion',
-      message: `${change} step complete`,
+      message,
+      transition,
     });
     return { exitCode: 0, signal: null, stdout: '', stderr: '' };
   };

@@ -143,12 +143,12 @@ async function applyEffect(root: string): Promise<void> {
   });
 }
 
-/** verify: report a verify completion — this is the gate the done-rule requires. */
+/** verify: report a verify completion carrying the verdict — the done-rule gate. */
 async function verifyEffect(root: string): Promise<void> {
   appendJournal(root, BATCH, {
     change: CHANGE,
     kind: 'completion',
-    message: 'verified the slice',
+    message: 'All scenarios satisfied and all tasks checked. Ready for archive.',
     transition: 'verify',
   });
 }

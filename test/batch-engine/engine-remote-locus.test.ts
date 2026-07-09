@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { promises as fs } from 'fs';
+import { promises as fs, mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { appendJournal } from 'ratchet-ai';
@@ -119,14 +119,19 @@ describe('engine — locus: remote selects the RexRemoteRuntime (over REST)', ()
   it('routes a remote step through REST end-to-end and advances on completion', async () => {
     // The stub agent "runs" server-side: when the runtime launches it, it reports
     // completion DURING the session (so the engine's session-entry slice sees it).
-    const server = installFakeServer('tok', 'remote line one', 0, () =>
+    const server = installFakeServer('tok', 'remote line one', 0, () => {
+      // Corroborate the propose completion: write the change dir + plan.md so
+      // the corroboration gate (outcome.ts) advances the reported completion.
+      const dir = path.join(projectRoot, '.ratchet', 'changes', 'add-login-api');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, 'plan.md'), '## Tasks\n- [ ] do it\n');
       appendJournal(projectRoot, 'b', {
         change: 'add-login-api',
         kind: 'completion',
         message: 'proposed remotely',
         transition: 'propose',
-      })
-    );
+      });
+    });
     const printed: string[] = [];
     const engine = new RatchetBatchEngine({
       adapters: { fake: adapter },

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { promises as fs } from 'fs';
+import { promises as fs, mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { appendJournal } from 'ratchet-ai';
@@ -101,6 +101,13 @@ function engineWith(behavior: Parameters<typeof fakeAgent>[0]) {
   return { engine, calls };
 }
 
+/** Corroborate a propose completion by writing the change dir + plan.md. */
+function corroboratePropose(root: string, change: string): void {
+  const dir = path.join(root, '.ratchet', 'changes', change);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'plan.md'), '## Tasks\n- [ ] do it\n');
+}
+
 describe('RatchetBatchEngine.runChangeStep', () => {
   it('spawns exactly one agent for the forced transition and returns a matching StepResult', async () => {
     const { engine, calls } = engineWith({
@@ -150,13 +157,15 @@ describe('RatchetBatchEngine.runChangeStep', () => {
 
   it('maps a clean, completed session to an advanced result pointing at its journal entries', async () => {
     const { engine } = engineWith({
-      report: (root, batch, change) =>
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
         appendJournal(root, batch, {
           change,
           kind: 'completion',
           message: 'proposed',
           transition: 'propose',
-        }),
+        });
+      },
     });
 
     const result = await engine.runChangeStep(context({ transition: 'propose' }));

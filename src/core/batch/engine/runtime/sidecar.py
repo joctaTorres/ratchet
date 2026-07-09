@@ -7,7 +7,7 @@ Node side launches it (via the resolved command from ``rex-bootstrap.ts``) and
 talks to it one JSON object per line:
 
   Node -> sidecar (stdin):
-    {"op":"run","id":N,"command":"<shell command>"}   launch + stream a command
+    {"op":"run","id":N,"command":"<shell command>","run_dir":"<dir>"?}  launch + stream
     {"op":"shutdown"}                                   stop the deployment, exit 0
 
   sidecar -> Node (stdout):
@@ -37,6 +37,15 @@ Docker locus (env contract, set by the Node side via rex-bootstrap.ts):
                                    exist inside the container), so logfile
                                    writes land on the writable bind mount and
                                    journal writes propagate back to the host.
+  REX_DOCKER_USER=<uid:gid>        `docker run --user` (host uid:gid; when unset
+                                   the sidecar resolves the current host uid:gid
+                                   so container writes land as the host user).
+  REX_DOCKER_MEMORY=<2g>           `docker run --memory` (fallback: "2g").
+  REX_DOCKER_PIDS_LIMIT=<512>      `docker run --pids-limit` (fallback: 512).
+  REX_DOCKER_CPUS=<1.5>            `docker run --cpus` (opt-in; no flag when unset).
+  REX_DOCKER_NETWORK=<bridge|none> `docker run --network` (fallback: "bridge" —
+                                   the container HAS outbound network; set "none"
+                                   to fully isolate).
 
 The repo bind mount is expressed via ``DockerDeploymentConfig.docker_args``
 (``["-v", f"{host}:{container}"]``) because swe-rex (1.4.0) has NO dedicated
@@ -93,6 +102,15 @@ def _exception_detail(exc: BaseException) -> object:
 # the two in sync if the default image ever changes.
 DEFAULT_DOCKER_IMAGE = "python:3.12"
 
+# Cross-language fallbacks for the docker hardening knobs. These MUST match the
+# TS constants in config.ts (the single source of truth). They are PURE
+# UNSET-FALLBACKS: the Node side always threads the resolved value via the
+# matching `REX_DOCKER_*` env var, so these are only reached if that env is
+# missing. Keep the two languages in sync if any default ever changes.
+DEFAULT_DOCKER_MEMORY = "2g"
+DEFAULT_DOCKER_PIDS_LIMIT = "512"
+DEFAULT_DOCKER_NETWORK = "bridge"
+
 
 def _make_deployment(locus: str):
     """Construct a deployment for the requested locus. Docker is imported lazily
@@ -102,6 +120,11 @@ def _make_deployment(locus: str):
     ``python:3.12``) and the project root is bind-mounted via ``docker_args``
     (``-v REX_MOUNT_HOST:REX_MOUNT_CONTAINER``) — swe-rex 1.4.0 has no dedicated
     ``volumes`` field; ``start()`` splices ``docker_args`` into the run argv.
+
+    Docker hardening knobs (``REX_DOCKER_*``) are appended to ``docker_args``
+    conditionally on env presence, so an unset knob never emits a flag (Docker's
+    own default then applies). The ``--user`` knob defaults to the current host
+    uid:gid so container writes land as the host user rather than root.
     """
     if locus == "docker":
         from swerex.deployment.docker import DockerDeployment
@@ -113,7 +136,53 @@ def _make_deployment(locus: str):
         )
         docker_args: list = []
         if mount_host:
-            docker_args = ["-v", f"{mount_host}:{mount_container}"]
+            docker_args += ["-v", f"{mount_host}:{mount_container}"]
+
+        # `--user`: default to the current host uid:gid so container file writes
+        # land as the host user (not root). An explicit `REX_DOCKER_USER` wins.
+        docker_user = os.environ.get("REX_DOCKER_USER", "").strip()
+        if not docker_user:
+            docker_user = f"{os.getuid()}:{os.getgid()}"
+        docker_args += ["--user", docker_user]
+
+        # `--memory`: always applied (sane default bounds the container).
+        docker_memory = os.environ.get("REX_DOCKER_MEMORY", "").strip() or DEFAULT_DOCKER_MEMORY
+        docker_args += ["--memory", docker_memory]
+
+        # `--pids-limit`: always applied (bounds fork-bomb-style runaway).
+        docker_pids = os.environ.get("REX_DOCKER_PIDS_LIMIT", "").strip() or DEFAULT_DOCKER_PIDS_LIMIT
+        # Fail before spawn: a non-integer or non-positive pids limit would
+        # otherwise surface as a cryptic docker error. Node validates upstream,
+        # but the sidecar is the last gate before `docker run`.
+        try:
+            if int(docker_pids) <= 0:
+                raise ValueError
+        except ValueError:
+            raise RuntimeError(
+                f"REX_DOCKER_PIDS_LIMIT must be a positive integer (got '{docker_pids}')."
+            )
+        docker_args += ["--pids-limit", docker_pids]
+
+        # `--network`: always applied. `bridge` (default) means the container
+        # HAS outbound network; `none` fully isolates. The honest isolation
+        # contract documents this explicitly.
+        docker_network = os.environ.get("REX_DOCKER_NETWORK", "").strip() or DEFAULT_DOCKER_NETWORK
+        docker_args += ["--network", docker_network]
+
+        # `--cpus`: opt-in (no default → no flag when unset, Docker's default).
+        docker_cpus = os.environ.get("REX_DOCKER_CPUS", "").strip()
+        if docker_cpus:
+            # Fail before spawn: a non-numeric or non-positive cpus value would
+            # otherwise surface as a cryptic docker error.
+            try:
+                if float(docker_cpus) <= 0:
+                    raise ValueError
+            except ValueError:
+                raise RuntimeError(
+                    f"REX_DOCKER_CPUS must be a positive number (got '{docker_cpus}')."
+                )
+            docker_args += ["--cpus", docker_cpus]
+
         return DockerDeployment(image=image, docker_args=docker_args)
     # Default / "local".
     from swerex.deployment.local import LocalDeployment
@@ -128,6 +197,13 @@ class Sidecar:
         self.session = "ratchet-rex"
         self.deployment = None
         self.runtime = None
+        # pidfile of the in-flight run's process group (pgid == pid under
+        # `set -m`), so `shutdown` can reap the whole tree even when the Node
+        # parent SIGKILLs us instead of speaking the protocol. None when no run
+        # is in flight (or the run already reaped itself).
+        self.run_pidfile: str | None = None
+        # Grace (s) between SIGTERM and SIGKILL when reaping the agent group.
+        self._shutdown_grace_s = 1.0
 
     async def start(self) -> None:
         from swerex.runtime.abstract import CreateBashSessionRequest
@@ -166,21 +242,39 @@ class Sidecar:
             Command(command=command, shell=True, check=False)
         )
 
-    async def run(self, run_id, command: str) -> None:
+    async def run(self, run_id, command, run_dir: str | None = None) -> None:
         """Launch ``command`` detached to a logfile and stream its stdout lines,
-        then report the exit code exactly once."""
-        token = uuid.uuid4().hex
-        log = f"{self.workdir.rstrip('/')}/ratchet-rex-{token}.log"
-        done = f"{self.workdir.rstrip('/')}/ratchet-rex-{token}.done"
+        then report the exit code exactly once.
 
-        # Clear any prior sentinels, then launch detached, recording the exit
-        # code to a sentinel file when the command finishes.
-        await self._exec(f"rm -f {log} {done}")
-        launcher = (
-            f"nohup bash -c {_shquote(command)} > {log} 2>&1; "
-            f"echo $? > {done}"
+        ``run_dir`` (optional, from the run op) is the directory the sidecar
+        writes its per-run sentinels (``ratchet-rex-<token>.log/.done``) and the
+        new pidfile into — typically ``.ratchet/batches/<batch>/.run/<id>/`` on
+        the host, or its in-container translation for docker. Absent → fall back
+        to the workdir (the prior behaviour, so the op protocol is a pure
+        extension)."""
+        sentinel_dir = run_dir if run_dir else self.workdir
+        token = uuid.uuid4().hex
+        log = f"{sentinel_dir.rstrip('/')}/ratchet-rex-{token}.log"
+        done = f"{sentinel_dir.rstrip('/')}/ratchet-rex-{token}.done"
+        pid = f"{sentinel_dir.rstrip('/')}/ratchet-rex-{token}.pid"
+
+        # Clear any prior sentinels, then launch detached under job control so the
+        # backgrounded pipeline becomes its OWN process-group leader (pgid ==
+        # pid). One `kill -- -<pid>` then reaps the whole tree (agent + `cat`),
+        # which a lone-pid kill would strand. The inner `bash -c <cmd>` runs the
+        # agent pipeline; `$!` is its pid (== pgid under `set -m`), recorded to
+        # the pidfile so `shutdown` can find the group; `wait` collects the exit
+        # code into the done sentinel. macOS ships no `setsid` binary, so `set
+        # -m` (POSIX job control) is used — works in bash and POSIX sh on both
+        # macOS (local) and Linux (docker/remote).
+        await self._exec(f"rm -f {log} {done} {pid}")
+        self.run_pidfile = pid
+        inner = (
+            f"set -m; bash -c {_shquote(command)} > {log} 2>&1 & "
+            f"echo $! > {pid}; wait $!; echo $? > {done}"
         )
-        await self._exec(f"nohup bash -c {_shquote(launcher)} >/dev/null 2>&1 &")
+        launcher = f"nohup bash -c {_shquote(inner)} >/dev/null 2>&1 &"
+        await self._exec(launcher)
 
         offset = 0
         while True:
@@ -231,12 +325,49 @@ class Sidecar:
                 except (ValueError, IndexError):
                     exit_code = -1
                 emit({"event": "exit", "id": run_id, "exit_code": exit_code})
-                await self._exec(f"rm -f {log} {done}")
+                await self._exec(f"rm -f {log} {done} {pid}")
+                if self.run_pidfile == pid:
+                    self.run_pidfile = None
                 return
 
             await asyncio.sleep(POLL_INTERVAL)
 
+    async def _reap_agent_group(self) -> None:
+        """Reap the in-flight run's process group: TERM → short grace → KILL,
+        then remove its log/done/pid sentinels. Best-effort — a missing pidfile
+        or an already-dead group is a no-op. Idempotent (safe to call from both
+        the `shutdown` op and the SIGTERM handler)."""
+        pidfile = self.run_pidfile
+        if not pidfile:
+            return
+        self.run_pidfile = None  # claim it; idempotent across concurrent calls
+        try:
+            res = await self._exec(f"cat {pidfile} 2>/dev/null")
+            pgid = (res.stdout or "").strip()
+            if not pgid or not pgid.lstrip("-").isdigit():
+                return
+            # TERM the whole group (negative pid = pgid), short grace, then KILL.
+            await self._exec(f"kill -TERM -- -{pgid} 2>/dev/null || true")
+            await asyncio.sleep(self._shutdown_grace_s)
+            await self._exec(f"kill -KILL -- -{pgid} 2>/dev/null || true")
+        except Exception:  # noqa: BLE001 — reaping must never raise
+            pass
+        finally:
+            # Sweep the sentinels/pidfile so nothing litters the run dir. The log
+            # basename pattern is shared (same token) but we don't track the
+            # exact paths here — `rm -f` the pidfile and any ratchet-rex-* in the
+            # same dir is over-broad, so derive the log/done from the pidfile's
+            # token by best-effort globbing of the recorded names.
+            try:
+                await self._exec(f"rm -f {pidfile} {pidfile[:-4]}.log {pidfile[:-4]}.done 2>/dev/null || true")
+            except Exception:  # noqa: BLE001
+                pass
+
     async def shutdown(self) -> None:
+        # Reap the agent process group BEFORE stopping the deployment so the
+        # agent (and its `cat` sibling) can't outlive the sidecar — the prior
+        # behaviour orphaned them on teardown.
+        await self._reap_agent_group()
         if self.deployment is not None:
             try:
                 await self.deployment.stop()
@@ -248,6 +379,21 @@ class Sidecar:
     async def serve(self) -> int:
         await self.start()
         loop = asyncio.get_event_loop()
+        # Register a SIGTERM handler that funnels into the same teardown as the
+        # `shutdown` op and stdin-EOF: the Node parent SIGKILLing us (instead of
+        # speaking the protocol) still reaps the agent group and stops the
+        # docker container before we die. `loop.add_signal_handler` is POSIX-
+        # only; on the unsupported platform (Windows) we skip — the op/EOF paths
+        # still tear down cleanly there. After teardown the process exits 0
+        # (SystemExit from the coroutine propagates through asyncio.run).
+        async def _on_sigterm():
+            await self.shutdown()
+            raise SystemExit(0)
+
+        try:
+            loop.add_signal_handler(asyncio.SIGTERM, lambda: asyncio.ensure_future(_on_sigterm()))
+        except (NotImplementedError, RuntimeError):
+            pass
         while True:
             line = await loop.run_in_executor(None, sys.stdin.readline)
             if line == "":
@@ -277,8 +423,11 @@ class Sidecar:
             if op == "run":
                 run_id = msg.get("id")
                 command = msg.get("command", "")
+                run_dir = msg.get("run_dir")
+                if not isinstance(run_dir, str) or not run_dir.strip():
+                    run_dir = None
                 try:
-                    await self.run(run_id, command)
+                    await self.run(run_id, command, run_dir)
                 except Exception as exc:  # noqa: BLE001 — surface, don't crash
                     emit(
                         {

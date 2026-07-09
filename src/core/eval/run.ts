@@ -82,6 +82,14 @@ export interface EvalRun {
    * "not evaluated".
    */
   invariantGate?: InvariantGateResult;
+  /**
+   * Provenance marker stamped on the run record when `RATCHET_EVAL_AGENT_CMD`
+   * was active for the run. The eval stamp keys on the var being ACTIVE for
+   * the run (deterministic, documented), not on whether a given case happened
+   * to spawn — a run executed with the seam armed is synthetic evidence
+   * regardless of which contributors fired. Absent on override-free runs.
+   */
+  via?: 'env-override';
   cases: CaseSnapshot[];
   verdicts: Record<string, CaseRecord>;
 }

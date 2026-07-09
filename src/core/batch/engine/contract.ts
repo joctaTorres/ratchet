@@ -245,4 +245,11 @@ export interface StepResult {
   /** Pointer to journal entries this step produced (indices or ids). */
   journalRefs?: number[];
   message?: string;
+  /**
+   * Present (true) when this step's spawn ran under an active agent-cmd
+   * override (`RATCHET_BATCH_AGENT_CMD`). `--json` carries the field verbatim;
+   * the text renderer prints the one-line override notice. Absent when no
+   * override was active — byte-identical output for override-free runs.
+   */
+  agentOverride?: true;
 }

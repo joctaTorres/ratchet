@@ -63,6 +63,199 @@ newline-joined, exitCode from the exit event). A bootstrap failure or sidecar
 no new outcome states — so the engine maps it to blocked/failed and the step
 remains resumable.
 
+## Per-step environment (`AgentSpawnRequest.env`)
+
+The engine builds a per-step `AgentSpawnRequest.env` for every transition (see
+`buildSpawnRequest` → `agent.ts`). Both rex runtimes **export that env before
+launching the agent** so it is actually in effect inside the spawned command —
+honoring the spawn contract this runtime layer presents. Env serialization
+lives in one shared helper (`runtime/spawn-command.ts`: `shquote` +
+`buildEnvExports`), consumed by both runtimes, so the two cannot drift apart in
+how they apply env.
+
+**Merge semantics are overlay, not replace.** The runtimes prefix the agent
+launch command with `export NAME='value'; ` statements (single-quoted via
+`shquote`), which run on top of the runtime session's base environment:
+
+- A request value **wins on collision** with a session base variable.
+- A base variable **absent from the request env remains visible** to the agent.
+
+A shell-session runtime cannot sanely replace the whole environment (`env -i`
+would strip the session `PATH` the agent needs for command resolution on
+docker/remote loci), so exports-on-top is the deterministic, documentable
+contract. The legacy in-process `realSpawner` (`agent.ts`) replaces the child
+env wholesale instead — that path spawns the agent binary directly as a Node
+child, not through a shell session, so it controls env by passing it to the
+spawn call rather than exporting it.
+
+**Serialization safety.** `buildEnvExports` single-quotes every value so
+metacharacters (`$`, spaces, quotes, newlines, backticks) survive byte-for-byte
+and are not interpreted by the shell. Entries whose name is not a valid shell
+identifier (`/^[A-Za-z_][A-Za-z0-9_]*$/` — unreachable in shell and would break
+`export`) and entries with `undefined` values are skipped; an empty/absent env
+yields an empty prefix.
+
+**No protocol change.** Env rides inside the command string:
+
+- **Sidecar** — the run-op `command` becomes `cd <cwd>; <exports> cat <promptfile> | <agent argv>`.
+  The run-op shape (`{op, id, command}`) and `sidecar.py` are untouched; the
+  command is JSON-encoded on the wire and the sidecar re-wraps it via its own
+  `_shquote`, which preserves single-quote escaping byte-for-byte.
+- **Remote** — `buildRemoteRunCommand` emits `<exports> cat <serverPromptPath> | <agent argv>`,
+  and the existing nohup/log/exit-sentinel launcher wraps that unchanged; the
+  exports sit inside its `( … )` subshell, so they apply to the agent pipeline
+  without touching the REST protocol.
+
+> **What the engine places in `AgentSpawnRequest.env` is scoped, not the raw
+> host env.** Every spawn site builds the request env from
+> `scopeAgentEnv(process.env)` (see [Agent environment allowlist](#agent-environment-allowlist))
+> overlaying `RATCHET_BATCH_NAME`, so non-allowlisted host secrets do not reach
+> the agent session. The sidecar bootstrap independently scopes its own launch
+> env the same way.
+
+## Agent environment allowlist
+
+Defined in `src/core/batch/engine/agent-env.ts` (`scopeAgentEnv`,
+`buildAgentEnvAllowlist`, `adapterEnvPassthroughKeys`, `AGENT_ENV_ALLOW_VAR`).
+
+Every spawn site — the engine's change-transition, decompose, and PR spawns
+(`engine.ts`) and the ReX sidecar bootstrap (`runtime/rex-bootstrap.ts`) —
+builds the environment it hands to the agent from `scopeAgentEnv(hostEnv)` rather
+than from the raw host environment. A non-allowlisted host variable is dropped
+before it can reach an agent session, so a secret the operator holds in their
+shell (`AWS_SECRET_ACCESS_KEY`, a personal `GITHUB_TOKEN`, etc.) cannot leak into
+a spawned agent regardless of locus.
+
+```mermaid
+flowchart TD
+  A["⚙️ host process.env"] --> B["🔐 scopeAgentEnv(hostEnv)"]
+  B --> C{"name in allowlist?"}
+  C -- "yes (exact or prefix match)" --> D["✅ kept"]
+  C -- "no" --> E["❌ dropped"]
+  D --> F["📨 AgentSpawnRequest.env"]
+  B --> G["➕ RATCHET_BATCH_NAME overlay"]
+  G --> F
+
+  classDef input  fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+  classDef proc   fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+  classDef keep   fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+  classDef drop   fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+  classDef out    fill:#FFEFD5,stroke:#333,stroke-width:2px,color:darkslategray
+  class A input
+  class B,G proc
+  class C proc
+  class D keep
+  class E drop
+  class F out
+```
+
+### Allowlist composition
+
+`buildAgentEnvAllowlist(hostEnv)` returns `{ exact: Set<string>, prefixes: string[] }`.
+A host variable passes through when its name is in `exact` OR starts with one of
+the `prefixes` (a prefix entry ending in `_` matches any var beginning with it).
+
+| Source | Exact names | Prefix patterns |
+| --- | --- | --- |
+| Baseline process vars | `PATH`, `HOME`, `TMPDIR`, `LANG`, `TERM`, `SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `USERPROFILE`, `TEMP`, `TMP`, `APPDATA`, `LOCALAPPDATA`, `PROGRAMDATA` | `LC_` |
+| Proxy | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `http_proxy`, `https_proxy`, `no_proxy` | — |
+| Forge auth | `GH_TOKEN`, `GITHUB_TOKEN` | — |
+| Ratchet control | — | `RATCHET_` |
+| Adapter passthrough | the union of every registered adapter's `envPassthrough` (see below) | adapter `PREFIX_*` entries |
+
+`RATCHET_*` control variables pass through as a prefix so engine/runtime knobs
+(e.g. `RATCHET_BATCH_AGENT_CMD`, `RATCHET_BATCH_NAME`) ride through. The ReX
+sidecar's own `REX_*` threading vars (`REX_LOCUS`, `REX_WORKDIR`, `REX_IMAGE`,
+…) are NOT in the baseline allowlist; the bootstrap sets them explicitly AFTER
+scoping, so they survive by construction rather than by allowlist entry.
+
+### Adapter `envPassthrough`
+
+Every `AgentAdapter` declares `readonly envPassthrough: readonly string[]` — the
+provider/auth variables that adapter's agent needs. `scopeAgentEnv` takes the
+union across all registered adapters (`adapterEnvPassthroughKeys`), so an
+agent's own credentials reach it without any agent being special-cased in a
+shared path. An entry may be an exact name (`ANTHROPIC_API_KEY`) or a `PREFIX_*`
+glob (`CLAUDE_CODE_*` matches any var starting with `CLAUDE_CODE_`).
+
+The builtin adapter declarations:
+
+| Adapter | `envPassthrough` |
+| --- | --- |
+| claude | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_*` |
+| codex | `OPENAI_API_KEY`, `CODEX_HOME` |
+| gemini | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| cursor | `CURSOR_API_KEY`, `CURSOR_*` |
+| opencode | `OPENCODE_*` |
+
+A drift guard in `test/core/batch/agent-init-link.test.ts` asserts every
+spawnable adapter declares a non-empty `envPassthrough`, so a newly added agent
+cannot silently widen or narrow the allowlist.
+
+### Operator escape hatch
+
+`RATCHET_AGENT_ENV_ALLOW` (exported as `AGENT_ENV_ALLOW_VAR`) is a
+comma-separated list of extra host env names read from the host environment at
+spawn time. Each named var is added to the `exact` allowlist for that spawn
+only. It is intended for operator-supplied site credentials that are not a
+known provider key; it is read from the host env and never committed to a
+repo's batch manifest.
+
+### Where scoping is applied
+
+| Site | File | Overlay |
+| --- | --- | --- |
+| Change-transition spawn | `engine.ts` (`runStep`) | `RATCHET_BATCH_NAME` (when a batch is active) |
+| Decompose spawn | `engine.ts` (`runDecompositionStep`) | `RATCHET_BATCH_NAME` |
+| PR spawn | `engine.ts` (`runPrStep`) | `RATCHET_BATCH_NAME` |
+| ReX sidecar bootstrap | `runtime/rex-bootstrap.ts` (`bootstrapRexRuntime`) | `PATH` (venv bin prepended), `VIRTUAL_ENV`, `REX_*` threading vars |
+
+The per-step request env is then serialized into the agent command by
+`buildEnvExports` (see [Per-step environment](#per-step-environment-agentspawnrequestenv))
+as exports-on-top of the session base; a var dropped by scoping is absent from
+the request env and so is never exported.
+
+## Agent-cmd override seam
+
+`RATCHET_BATCH_AGENT_CMD` (and `RATCHET_EVAL_AGENT_CMD` on the eval side) stand
+in for the configured coding-agent binary when set: the engine launches
+`bash -c <override>` (instructions on stdin) instead of resolving the adapter.
+This is the deterministic spawn path the e2e/eval harnesses exercise the
+orchestration through without a real agent. An active override is **loud and
+auditable** — a leftover value (from an eval session, CI, a `.envrc`) can never
+silently replace the configured agent:
+
+- **One-line notice (text output).** `ratchet batch apply` prints
+  `⚠ agent overridden by RATCHET_BATCH_AGENT_CMD` as the first line of the
+  rendered step result; `ratchet eval run` prints the matching
+  `⚠ agent overridden by RATCHET_EVAL_AGENT_CMD` atop the scorecard. The notice
+  rides the result, not a side-channel print — it appears exactly when a spawn
+  ran under the override. Pre-spawn parks print no notice (nothing was
+  spawned).
+- **`agentOverride: true` (`--json`).** `batch apply --json` carries
+  `agentOverride: true` on the step-result JSON; `eval run --json` carries it
+  at the top level. Absent when no override is active — byte-identical output
+  for override-free runs.
+- **`via: env-override` provenance.** Every journal entry and eval run record
+  produced under an active override is stamped `via: "env-override"`:
+  - the engine stamps the transition-outcome journal entry it appends;
+  - `batch report` stamps every entry it appends from its own process env (the
+    spawned stand-in inherits `RATCHET_BATCH_AGENT_CMD`, so a stub-reported
+    completion/blocker/progress/needs-input is auditable even though the engine
+    never sees that append);
+  - `eval run` stamps `via` on the persisted run record.
+  The field is optional and only ever `'env-override'` today; readers ignore
+  it, so override-free entries/runs carry no `via` and need no migration.
+
+The override gate and spawn-request construction live in **one shared helper**
+(`buildAgentSpawnRequest` in `src/core/batch/engine/agent.ts`): the batch
+engine's `buildSpawnRequest`, the eval judge's `buildVoteRequest`, and the
+mutation harness's `buildSeedRequest` all delegate their override branch to it,
+so the three spawn seams cannot drift apart. The helper owns only the shared
+override semantics (the trim check, the `bash -c <override>` request shape, the
+`agentOverride` flag); each call site's `buildAdapterRequest` closure owns its
+own adapter resolution, so genuinely different adapter paths are not flattened.
+
 ## SWE-ReX sidecar
 
 For the `local` and `docker` loci, ratchet bootstraps an isolated Python sidecar
@@ -118,6 +311,11 @@ Environment variables threaded to the sidecar:
 | `REX_IMAGE` | docker only | configured image, or `DEFAULT_DOCKER_IMAGE` (`python:3.12`) |
 | `REX_MOUNT_HOST` | docker only | project root (host path bind-mounted into the container) |
 | `REX_MOUNT_CONTAINER` | docker only | `/workspace` (in-container mount point) |
+| `REX_DOCKER_USER` | docker only, when `dockerUser` is set | host `uid:gid` for `docker run --user`; when unset the sidecar resolves the current host uid:gid |
+| `REX_DOCKER_MEMORY` | docker only | configured `dockerMemory`, or `DEFAULT_DOCKER_MEMORY` (`2g`) |
+| `REX_DOCKER_PIDS_LIMIT` | docker only | configured `dockerPidsLimit`, or `DEFAULT_DOCKER_PIDS_LIMIT` (`512`) |
+| `REX_DOCKER_CPUS` | docker only, when `dockerCpus` is set | configured `dockerCpus` (e.g. `1.5`); no flag when unset |
+| `REX_DOCKER_NETWORK` | docker only | configured `network`, or `DEFAULT_DOCKER_NETWORK` (`bridge`) |
 
 ### Sidecar process (`sidecar.py`)
 
@@ -158,6 +356,29 @@ before emitting the `exit` event.
 The `locus` setting selects the runtime implementation. The default locus is
 `local`.
 
+### Threat model per locus
+
+The resolved `locus` determines what **real isolation** backs a run. `ratchet
+batch config` and `ratchet batch view` render this honestly (see
+[isolation rendering](../commands/batch.md#isolation-and-enforcement-rendering)),
+and `ratchet doctor` nudges toward the docker locus when a permissive posture
+runs on local (see [doctor](../commands/doctor.md#batch-isolation-check)).
+
+| Locus | Real isolation | Threat model |
+|---|---|---|
+| `local` | **Advisory — none.** The agent runs as a direct child of the operator's shell session. No filesystem or network isolation; the argv denylist (`REPO_SANDBOX_DENY_PATTERNS`) is best-effort damage reduction, not containment. Env is scoped to the [allowlist](#agent-environment-allowlist) so non-allowlisted host secrets are dropped, but that is scoping, not isolation. | A full-autonomy (or even permissive) agent on `local` can do anything the launching user can — read any file the user can read, reach any network the user can reach, write anywhere the user can write. The posture flags are the only gate, and for cursor/opencode even those are a no-op (agent defaults apply). **This is the right locus for trusted, operator-supervised runs.** |
+| `docker` | **Partial container isolation.** The agent runs in a Docker container with a read-write bind mount of the project root at `/workspace`. Resource bounds (memory, pids, optional cpus) and a `--user` mapping keep runaway and file-ownership in check. See the [honest isolation contract](#honest-isolation-contract) below for what is and is NOT bounded. | The container shares the host kernel (no VM boundary) and has outbound network by default (`network: bridge`). The repo bind mount is read-write by design so the agent can edit files and the engine can read the journal back. The docker locus bounds resource runaway and ensures file ownership — it is **not** a hardened sandbox for untrusted agents, but it is real containment where `local` has none. |
+| `remote` | **Server's boundary.** The agent runs on an external `swerex-remote` server over REST; ratchet's process never touches the agent's filesystem or process tree. | The isolation boundary is whatever the server operator configures — ratchet does not own it. The transport is authenticated (`X-API-Key`) and scheme-selected (loopback → http, non-local → https unless `insecure`). This is the locus for shared/CI runners and hardened remote sandboxes. |
+
+> **The argv denylist is not containment.** `REPO_SANDBOX_DENY_PATTERNS` (the
+> `deny` list merged for `repo-sandboxed-permissive` and `curated-allowlist`)
+> blocks a handful of destructively-shaped shell commands at the agent's own
+> permission layer. It is best-effort damage reduction — an agent that can run
+> arbitrary shell can trivially evade a pattern denylist. **Real containment is
+> the docker locus** (resource bounds, filesystem ownership, optional network
+> isolation via `network: none`). The denylist exists to catch accidental
+> foot-guns on the `local` locus, not to stop a determined agent.
+
 ### `local` — `RexSidecarRuntime` (`rex-sidecar-runtime.ts`)
 
 The local runtime bootstraps the SWE-ReX sidecar, spawns it as a child process,
@@ -165,14 +386,17 @@ and drives the JSON-lines protocol described above.
 
 Prompt delivery: the agent's instructions are written to a temporary prompt file
 at `.ratchet/batches/<batch>/.run/<id>/prompt.txt` on the host. The run command
-sent to the sidecar is `cd <cwd>; cat <promptfile> | <agent argv>`. The prompt
-file is removed after the run (in a `finally` block).
+sent to the sidecar is `cd <cwd>; export NAME='value'; …; cat <promptfile> | <agent argv>`
+— the per-step `AgentSpawnRequest.env` is exported before the pipeline (after the
+`cd` prefix) via the shared `buildEnvExports` helper. The prompt file is removed
+after the run (in a `finally` block).
 
 The overall run timeout defaults to `600000` ms (10 minutes) and is configurable
 via `batch.agentTimeoutMs` or the `RATCHET_AGENT_TIMEOUT_MS` environment variable
 (see [Per-agent timeout](#per-agent-timeout) below). On completion or timeout the
-sidecar receives `SIGTERM` followed (after a 2 s grace) by `SIGKILL` if it has not
-exited.
+sidecar is torn down via the [process-group reaping sequence](#agent-process-group-reaping-on-teardown)
+— a shutdown op first, then a group `SIGKILL` after a short grace — so the agent
+process is never left alive.
 
 ### `docker` — `RexSidecarRuntime` with `DockerDeployment`
 
@@ -194,6 +418,48 @@ Additional behavior specific to the docker locus:
    translated to the in-container equivalent before it is passed to the sidecar.
 4. `REX_IMAGE` is set to the configured `image`, or `DEFAULT_DOCKER_IMAGE`
    (`python:3.12`) when none is configured.
+5. **Docker hardening knobs** are threaded as `REX_DOCKER_*` env vars and
+   spliced into `docker run` argv by the sidecar:
+
+   | Knob | Flag | Default when unset | Source of truth |
+   |---|---|---|---|
+   | `dockerUser` | `--user` | current host `uid:gid` (resolved by the sidecar) | `REX_DOCKER_USER` (Node); sidecar fallback resolves `os.getuid():os.getgid()` |
+   | `dockerMemory` | `--memory` | `2g` (`DEFAULT_DOCKER_MEMORY`) | `config.ts` / `sidecar.py` mirror |
+   | `dockerPidsLimit` | `--pids-limit` | `512` (`DEFAULT_DOCKER_PIDS_LIMIT`) | `config.ts` / `sidecar.py` mirror |
+   | `dockerCpus` | `--cpus` | *(no flag — opt-in only)* | `REX_DOCKER_CPUS` only when set |
+   | `network` | `--network` | `bridge` (`DEFAULT_DOCKER_NETWORK`) | `config.ts` / `sidecar.py` mirror |
+
+   The `--user` default ensures container file writes land as the **host user**,
+   not root, so journal writes on the bind mount are owned by the operator. Each
+   knob is overridable via the nearest-wins settings cascade (project config ←
+   per-change manifest), exactly like `image`/`locus`.
+
+#### Honest isolation contract
+
+The docker locus is a **partial isolation** boundary, not a security sandbox.
+Operators should understand what it does and does NOT contain:
+
+**What is bounded:**
+- **File writes** — land on the host bind mount (the project root, mounted
+  read-write at `/workspace`) as the host `uid:gid` (via `--user`), not as root.
+- **Memory** — capped at `dockerMemory` (default `2g`) via `--memory`.
+- **Process count** — capped at `dockerPidsLimit` (default `512`) via
+  `--pids-limit`, bounding fork-bomb-style runaway.
+- **CPU** — optionally capped via `dockerCpus` (`--cpus`); no cap by default.
+
+**What is NOT bounded (by default):**
+- **Network** — the default `network: bridge` means the container **HAS outbound
+  network access**. To fully isolate, set `network: none`. A custom network name
+  is also accepted (passed verbatim to `docker run --network`).
+- **Root filesystem** — the container's own rootfs is Docker's default (not
+  read-only); only the bind mount is shared with the host.
+- **Kernel surface** — the container shares the host kernel (no VM boundary).
+
+The repo bind mount stays **read-write by design** so the agent can edit files
+and the engine can read the journal back over the mount. This is the documented
+contract: the docker locus bounds resource runaway and ensures file ownership,
+but it is **not** a substitute for a hardened sandbox when running untrusted
+agents.
 
 ### `remote` — `RexRemoteRuntime` (`rex-remote-runtime.ts`)
 
@@ -209,8 +475,12 @@ Transport scheme selection:
 - A bare loopback host (`localhost`, `127.x.x.x`, `::1`) defaults to `http`.
 - A bare non-local host defaults to `https`.
 - An explicit `https://` prefix is honored.
-- An explicit `http://` prefix to a non-local host is refused unless `insecure:
-  true` is set in the settings.
+- An explicit `http://` prefix to a non-local host is refused unless
+  `allowInsecure` is set. The settings key is `insecure` (a boolean under the
+  resolved `batch:` / remote scope); the engine maps `insecure: true` to the
+  runtime option `allowInsecure` (`rex-remote-runtime.ts`, threaded at
+  `engine.ts`). The two names refer to the same opt-in — the settings schema
+  names it `insecure`, the runtime surface names it `allowInsecure`.
 
 The remote runtime reproduces the sidecar's tail-poll streaming over REST:
 
@@ -222,6 +492,11 @@ The remote runtime reproduces the sidecar's tail-poll streaming over REST:
    advance a byte cursor; emit `stdout` events as complete lines arrive.
 6. Read the exit sentinel. Drain final bytes, emit `exit`, then close the session
    and runtime (`POST /close_session`, `POST /close`).
+7. **Teardown reaps the agent group before close.** After the run completes, the
+   runtime kills the agent's process group (TERM → 1 s grace → KILL on the
+   negative pgid recorded in `agent.pid`) BEFORE `rm -rf` of the run dir and the
+   `/close_session` + `/close` calls, so a detached agent is never left alive on
+   the server. See [Agent process-group reaping on teardown](#agent-process-group-reaping-on-teardown).
 
 The overall run timeout defaults to `600000` ms (10 minutes) and is configurable
 via `batch.agentTimeoutMs` or the `RATCHET_AGENT_TIMEOUT_MS` environment variable
@@ -273,7 +548,60 @@ flowchart TD
   class resolved out;
 ```
 
-## Agent adapters
+## Agent process-group reaping on teardown
+
+Every runtime now deterministically reaps the spawned agent's **process group**
+on teardown, so a detached agent can never outlive the runtime that launched it.
+This fixes the leak where `nohup`-style launchers (remote) and SWE-ReX's own
+`execute()` (sidecar) left the agent alive after the runtime session closed.
+
+### Launch (job control)
+
+Each runtime launches the agent under **job control** (`set -m`) so the agent
+pipeline becomes its own process-group leader, and records that group's pid to a
+**pidfile** so teardown can target the whole group:
+
+- **Sidecar (`sidecar.py`)** — the run-op shell command is wrapped as
+  `set -m; bash -c '<cmd> >log 2>&1 & echo $! >pid; wait; echo $? >done`. The
+  backgrounded pipeline's pid is written to `<run_dir>/agent.pid`; the sidecar
+  tracks it via `self.run_pidfile`. The `run_dir` is threaded from the Node side
+  (host runDir for `local`, the in-container equivalent for `docker`), falling
+  back to the sidecar workdir when absent.
+- **Remote (`rex-remote-runtime.ts`)** — `buildRemoteRunCommand` emits
+  `set -m; nohup … & echo $! ><runDir>/agent.pid` inside its existing
+  `( … )` subshell, so the detached agent's pid is recorded on the server.
+- **Legacy in-process (`agent.ts:makeRealSpawner`)** — spawns the agent with
+  `detached: true` (POSIX) so the child is its own group leader; `reapGroup`
+  targets the negative pid.
+
+### Teardown (group reap before close)
+
+Teardown never just closes the session and leaves — it reaps the group **first**:
+
+1. **Sidecar** — `teardownChild` sends `{op:"shutdown"}` so the sidecar stops its
+   SWE-ReX deployment and reaps the agent group (`_reap_agent_group`: TERM →
+   grace → KILL on the negative pgid from the pidfile) as part of shutdown. Only
+   after the grace does the Node side `killGroup(SIGKILL)` the sidecar's own
+   process group if it has not exited. No `SIGTERM` is sent to the sidecar
+   directly — that would kill it before it could reap the agent.
+2. **Remote** — `teardown()` kills the group (`kill -TERM -- -$(cat agent.pid)` →
+   sleep 1 → `kill -KILL -- -$(cat agent.pid)`) BEFORE `rm -rf` of the run dir and
+   the `POST /close_session` + `POST /close` calls.
+3. **Legacy in-process** — on overall timeout, `reapGroup` sends TERM → grace →
+   KILL to the negative pid.
+
+The sidecar's SIGTERM handler raises `SystemExit(0)` after shutdown, so a
+ SIGTERM sent to the sidecar process itself still reaps the agent group and
+ exits cleanly rather than dying mid-teardown.
+
+### Idempotency
+
+`_reap_agent_group` claims the pidfile (sets `self.run_pidfile = None`) on entry,
+so a concurrent shutdown + SIGTERM is safe — only one call performs the kill;
+the second is a no-op. Missing, empty, or non-numeric pidfiles skip the kill
+(best-effort, never throws).
+
+
 
 An adapter knows how to build the spawn request for one coding agent. The engine
 resolves the adapter by name from the resolved settings before any spawn, and
@@ -814,10 +1142,14 @@ The default posture is `repo-sandboxed-permissive`.
   in `allow` or any shell step will stall headless.
 - **`full-autonomy`**: all permission checks are bypassed.
 
-### Baseline deny patterns (`repo-sandboxed-permissive`)
+### Baseline deny patterns (best-effort damage reduction)
 
 The following patterns are merged into the effective denylist for the sandboxed
-and curated postures (not for `full-autonomy`):
+and curated postures (not for `full-autonomy`). They block a handful of
+destructively-shaped shell commands at the agent's own permission layer — this is
+**best-effort damage reduction, not containment** (see the
+[threat model per locus](#threat-model-per-locus) above). Real containment is the
+docker locus; the denylist catches accidental foot-guns on `local`:
 
 ```
 Bash(rm -rf *)
@@ -917,9 +1249,12 @@ built-in default ← user/global ← project config (.ratchet/config.yaml batch:
 
 Scalar settings (including `locus`, `agent`, `image`, `host`, `port`,
 `authToken`, `insecure`) are nearest-wins. Permissions use per-field merge
-semantics: posture nearest-wins, `deny` is the union of all scopes, `allow` is
-replaced by the nearest defining scope, and each agent's `raw` entry is
-nearest-wins.
+semantics: posture nearest-wins **across the operator-owned scopes**
+(default/user/project); the **manifest scope is narrow-only** — it may only
+LOWER the posture, never raise it above the operator-owned scopes' accumulated
+value (a raise is clamped unless `batch apply --allow-manifest-escalation` is
+passed); `deny` is the union of all scopes; `allow` is replaced by the nearest
+defining scope, and each agent's `raw` entry is nearest-wins.
 
 Built-in defaults:
 

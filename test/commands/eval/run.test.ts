@@ -219,4 +219,72 @@ describe('evalRunCommand', () => {
     // The enabled set is persisted on the run, in display order.
     expect(run.gate).toEqual(['llm-judge']);
   });
+
+  /**
+   * Implements: features/agent-cmd-override/override-notice.feature and
+   * features/agent-cmd-override/override-provenance.feature (eval side).
+   *
+   * An active RATCHET_EVAL_AGENT_CMD prints the one-line notice (text), emits
+   * `agentOverride: true` (--json), and stamps `via: 'env-override'` on the
+   * persisted run record. The stamp keys on the var being ACTIVE for the run
+   * (deterministic), not on whether a case happened to spawn — exercised over
+   * an unbound case so no real agent is spawned. Override-free runs stay
+   * unstamped and carry no `agentOverride`.
+   */
+  describe('agent-cmd override (override-notice.feature, override-provenance.feature)', () => {
+    const ENV = 'RATCHET_EVAL_AGENT_CMD';
+    let saved: string | undefined;
+
+    beforeEach(() => {
+      saved = process.env[ENV];
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env[ENV];
+      else process.env[ENV] = saved;
+    });
+
+    it('stamps `via: env-override` on the persisted run record under an active override', async () => {
+      process.env[ENV] = 'echo stub-judge';
+      await evalRunCommand({ json: true });
+      const parsed = JSON.parse(output());
+
+      const run = JSON.parse(
+        await fs.readFile(
+          path.join(fixture.root, '.ratchet', 'evals', 'runs', `${parsed.runId}.json`),
+          'utf-8'
+        )
+      );
+      expect(run.via).toBe('env-override');
+    });
+
+    it('emits agentOverride: true in --json under an active override', async () => {
+      process.env[ENV] = 'echo stub-judge';
+      await evalRunCommand({ json: true });
+      const parsed = JSON.parse(output());
+      expect(parsed.agentOverride).toBe(true);
+    });
+
+    it('prints the one-line override notice atop the text scorecard under an active override', async () => {
+      process.env[ENV] = 'echo stub-judge';
+      await evalRunCommand({});
+      const text = output();
+      expect(text).toContain('⚠ agent overridden by RATCHET_EVAL_AGENT_CMD');
+      // The notice precedes the scorecard header.
+      expect(text.indexOf('⚠ agent overridden')).toBeLessThan(text.indexOf('Eval run'));
+    });
+
+    it('leaves the run record unstamped and omits agentOverride when no override is active', async () => {
+      delete process.env[ENV];
+      await evalRunCommand({ json: true });
+      const parsed = JSON.parse(output());
+      expect(parsed.agentOverride).toBeUndefined();
+      const run = JSON.parse(
+        await fs.readFile(
+          path.join(fixture.root, '.ratchet', 'evals', 'runs', `${parsed.runId}.json`),
+          'utf-8'
+        )
+      );
+      expect(run.via).toBeUndefined();
+    });
+  });
 });

@@ -67,6 +67,88 @@ export interface AgentSpawnRequest {
   env: NodeJS.ProcessEnv;
 }
 
+/**
+ * Provenance marker stamped on journal entries and eval run records produced
+ * under an active agent-cmd override, so synthetic runs are distinguishable from
+ * real agent work after the fact. A string-literal union left open to widen
+ * later; today `via` is only ever this value (or absent).
+ */
+export type EnvOverrideProvenance = 'env-override';
+export const ENV_OVERRIDE_PROVENANCE: EnvOverrideProvenance = 'env-override';
+
+/**
+ * The env var that overrides the batch engine's coding-agent spawn. Declared
+ * once here so the engine, the override notice, and the report-time provenance
+ * stamp all reference the same literal.
+ */
+export const BATCH_AGENT_CMD_ENV = 'RATCHET_BATCH_AGENT_CMD';
+
+/**
+ * Return the active agent-cmd override for `envVar` read from `env`, or
+ * `undefined` when unset / whitespace-only. The single gate every spawn seam
+ * delegates to: a whitespace-only value is treated as inactive so a leftover
+ * blank (e.g. an empty `.envrc` line) can never silently replace the configured
+ * agent.
+ */
+export function activeAgentCmdOverride(
+  envVar: string,
+  env: NodeJS.ProcessEnv
+): string | undefined {
+  const raw = env[envVar];
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * The one-line override notice printed (text output) when a spawn ran under an
+ * active agent-cmd override. Mirrors the `RATCHET_EVAL_AGENT_CMD` notice on the
+ * eval side.
+ */
+export function agentOverrideNotice(envVar: string): string {
+  return `⚠ agent overridden by ${envVar}`;
+}
+
+/**
+ * Build an override-aware agent spawn request through the single shared gate.
+ *
+ * When `activeAgentCmdOverride(overrideEnvVar, env)` is active, the override
+ * command stands in for the coding-agent binary as `bash -c <override>`
+ * (instructions on stdin, NOT stream-json-capable) and `agentOverride` is
+ * `true`. Otherwise the supplied `buildAdapterRequest` closure builds the
+ * configured-adapter request and `agentOverride` is `false`. The closure owns
+ * site-specific adapter resolution (the engine's stage-map/spec logic, the eval
+ * side's bare `resolveAdapter`), so this helper owns ONLY the shared override
+ * semantics (trim check, `bash -c` request shape, flag) — the gate exists in
+ * exactly one place without flattening genuinely different adapter paths.
+ *
+ * Coordinates with the #67 triplication: the batch engine's `buildSpawnRequest`,
+ * the eval judge's `buildVoteRequest`, and the mutation harness's
+ * `buildSeedRequest` all delegate their override branch here.
+ */
+export function buildAgentSpawnRequest(args: {
+  overrideEnvVar: string;
+  instructions: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  buildAdapterRequest: () => AgentSpawnRequest;
+}): { request: AgentSpawnRequest; agentOverride: boolean } {
+  const override = activeAgentCmdOverride(args.overrideEnvVar, args.env);
+  if (override !== undefined) {
+    return {
+      request: {
+        command: 'bash',
+        args: ['-c', override],
+        instructions: args.instructions,
+        cwd: args.cwd,
+        env: args.env,
+      },
+      agentOverride: true,
+    };
+  }
+  return { request: args.buildAdapterRequest(), agentOverride: false };
+}
+
 /** The injectable process-spawn seam. */
 export type Spawner = (request: AgentSpawnRequest) => Promise<AgentSpawnResult>;
 
@@ -102,6 +184,16 @@ export interface AgentAdapter {
     cwd: string,
     env: NodeJS.ProcessEnv
   ): AgentSpawnRequest;
+  /**
+   * Environment variable names (or `PREFIX_*` glob patterns) this adapter needs
+   * from the host environment to function (API keys, config dirs, etc.). The
+   * engine's env allowlist passes these through alongside the baseline process
+   * vars and `RATCHET_*` control vars. A `PREFIX_*` entry matches any var whose
+   * name starts with `PREFIX_` (the trailing `_*` is the glob). Required on
+   * every built-in adapter so the registry drift guard can assert one exists
+   * per agent — a newly added agent cannot silently ship without a declaration.
+   */
+  readonly envPassthrough: readonly string[];
 }
 
 /**
@@ -122,7 +214,13 @@ class CommandAgentAdapter implements AgentAdapter {
      * to the base argv the adapter already owns, not in a separate model-flag
      * registry, so `AI_TOOLS` stays about init/binaries.
      */
-    readonly modelFlag: string
+    readonly modelFlag: string,
+    /**
+     * Environment variable names (or `PREFIX_*` glob patterns) this adapter
+     * needs from the host env. Threaded to the env allowlist so the agent's
+     * own secrets reach it without leaking everything else in `process.env`.
+     */
+    readonly envPassthrough: readonly string[]
   ) {}
 
   buildRequest(
@@ -190,26 +288,55 @@ const BUILTIN_ADAPTERS: Record<string, AgentAdapter> = {
     () => ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
     true,
     true,
-    '--model'
+    '--model',
+    ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_*']
   ),
   // codex uses `-m` to name a model.
-  codex: new CommandAgentAdapter('codex', agentBinaryFor('codex'), () => ['exec', '-'], true, false, '-m'),
+  codex: new CommandAgentAdapter(
+    'codex',
+    agentBinaryFor('codex'),
+    () => ['exec', '-'],
+    true,
+    false,
+    '-m',
+    ['OPENAI_API_KEY', 'CODEX_HOME']
+  ),
   // gemini uses `-m` to name a model.
-  gemini: new CommandAgentAdapter('gemini', agentBinaryFor('gemini'), () => ['-p'], true, false, '-m'),
+  gemini: new CommandAgentAdapter(
+    'gemini',
+    agentBinaryFor('gemini'),
+    () => ['-p'],
+    true,
+    false,
+    '-m',
+    ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
+  ),
   // cursor uses `--model` to name a model.
-  cursor: new CommandAgentAdapter('cursor', agentBinaryFor('cursor'), () => ['-p'], true, false, '--model'),
+  cursor: new CommandAgentAdapter(
+    'cursor',
+    agentBinaryFor('cursor'),
+    () => ['-p'],
+    true,
+    false,
+    '--model',
+    ['CURSOR_API_KEY', 'CURSOR_*']
+  ),
   // opencode emits structured stream-json NDJSON (one event per line) with
   // `run --format json`, reading the prompt from stdin. Its event schema
   // (step_start/text/step_finish) differs from claude's, so the renderer parses
   // both — gated on `emitsStreamJson`, never the agent name. `--model` is
-  // opencode's model flag.
+  // opencode's model flag. opencode is multi-provider: it can drive any of the
+  // other agents' provider keys, but those are covered by the UNION of all
+  // adapter declarations (claude/codex/gemini/cursor), so opencode only
+  // declares its own namespaced config vars here.
   opencode: new CommandAgentAdapter(
     'opencode',
     agentBinaryFor('opencode'),
     () => ['run', '--format', 'json'],
     true,
     true,
-    '--model'
+    '--model',
+    ['OPENCODE_*']
   ),
 };
 
@@ -280,31 +407,99 @@ export function resolveAdapter(
 /**
  * The real spawner: runs the agent binary, feeds instructions on stdin when
  * present, and captures stdout/stderr and exit status.
+ *
+ * On POSIX the child is spawned `detached: true` so it leads its own process
+ * group (pgid == pid); a hung agent is reaped by escalating TERM → grace → KILL
+ * on the whole group (so grandchildren like `cat prompt | agent` are reaped
+ * too, not just the recorded pid), resolving with a timeout message in stderr
+ * instead of hanging forever. On Windows process groups aren't a thing — it
+ * falls back to a bare `child.kill(sig)`.
+ *
+ * Use {@link makeRealSpawner} to tune `timeoutMs`/`killGraceMs`; the exported
+ * `realSpawner` is built from the factory with defaults so the eval judge and
+ * mutation harness inherit the timeout/kill semantics unchanged.
  */
-export const realSpawner: Spawner = (request) =>
-  new Promise<AgentSpawnResult>((resolve, reject) => {
-    const child = spawn(request.command, request.args, {
-      cwd: request.cwd,
-      env: request.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+export function makeRealSpawner(
+  opts: { timeoutMs?: number; killGraceMs?: number } = {}
+): Spawner {
+  const timeoutMs = opts.timeoutMs ?? 10 * 60 * 1000;
+  const killGraceMs = opts.killGraceMs ?? 2000;
+  const isPosix = process.platform !== 'win32';
 
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (d: Buffer) => {
-      stdout += d.toString();
-    });
-    child.stderr?.on('data', (d: Buffer) => {
-      stderr += d.toString();
-    });
+  return (request: AgentSpawnRequest) =>
+    new Promise<AgentSpawnResult>((resolve, reject) => {
+      const child = spawn(request.command, request.args, {
+        cwd: request.cwd,
+        env: request.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: isPosix, // own process group on POSIX; harmless on Windows
+      });
 
-    child.on('error', (err) => reject(err));
-    child.on('close', (exitCode, signal) => {
-      resolve({ exitCode, signal, stdout, stderr });
-    });
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
 
-    if (request.instructions && child.stdin) {
-      child.stdin.write(request.instructions);
-      child.stdin.end();
-    }
-  });
+      const reapGroup = (signal: NodeJS.Signals) => {
+        const pid = child.pid;
+        if (pid !== undefined && isPosix) {
+          try {
+            process.kill(-pid, signal);
+            return;
+          } catch {
+            /* group gone — fall through */
+          }
+        }
+        try {
+          child.kill(signal);
+        } catch {
+          /* already gone */
+        }
+      };
+
+      child.stdout?.on('data', (d: Buffer) => {
+        stdout += d.toString();
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        stderr += d.toString();
+      });
+
+      const overall = setTimeout(() => {
+        if (settled) return;
+        const msg = `Agent timed out after ${timeoutMs}ms`;
+        stderr += (stderr ? '\n' : '') + msg;
+        onTimeout();
+      }, timeoutMs);
+
+      const onTimeout = () => {
+        // TERM the whole group, short grace, then KILL; resolve with a timeout
+        // result (non-zero exit) instead of hanging.
+        reapGroup('SIGTERM');
+        killTimer = setTimeout(() => reapGroup('SIGKILL'), killGraceMs);
+      };
+
+      const finish = (result: AgentSpawnResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(overall);
+        if (killTimer) clearTimeout(killTimer);
+        resolve(result);
+      };
+
+      child.on('error', (err) => {
+        if (settled) return;
+        clearTimeout(overall);
+        reject(err);
+      });
+      child.on('close', (exitCode, signal) => {
+        finish({ exitCode, signal, stdout, stderr });
+      });
+
+      if (request.instructions && child.stdin) {
+        child.stdin.write(request.instructions);
+        child.stdin.end();
+      }
+    });
+}
+
+export const realSpawner: Spawner = makeRealSpawner();

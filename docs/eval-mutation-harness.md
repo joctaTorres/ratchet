@@ -122,14 +122,21 @@ export async function runMutationHarness(
    caught: it propagates to the caller as "could not run at all", distinct from
    "ran and was red".
 3. **Seed** — for each of up to `invariant.budget` attempts, the harness
-   builds a spawn request the same way `judge.ts`'s `buildVoteRequest` does:
-   `RATCHET_EVAL_AGENT_CMD`, when set, stands in for the agent binary
-   (deterministic e2e testing); otherwise `resolveAdapter(deps.agentName)`
-   resolves the configured coding agent's adapter and `buildRequest` builds
-   the request, which `deps.spawner` (default `realSpawner`) runs. The
-   instructions (`buildSeedInstructions`) ask the agent to make exactly one
-   small, discrete edit to a non-test source file and to not run the test
-   suite itself.
+    builds a spawn request the same way `judge.ts`'s `buildVoteRequest` does:
+    `RATCHET_EVAL_AGENT_CMD`, when set, stands in for the agent binary
+    (deterministic e2e testing); otherwise `resolveAdapter(deps.agentName)`
+    resolves the configured coding agent's adapter and `buildRequest` builds
+    the request, which `deps.spawner` (default `realSpawner`) runs. The
+    override gate and spawn-request construction live in one shared helper
+    (`buildAgentSpawnRequest` in `src/core/batch/engine/agent.ts`), shared with
+    the batch engine and the judge, so the three spawn seams cannot drift
+    apart. An active `RATCHET_EVAL_AGENT_CMD` is loud and auditable:
+    `eval run` prints the one-line notice `⚠ agent overridden by
+    RATCHET_EVAL_AGENT_CMD` atop the scorecard, emits `agentOverride: true` in
+    `--json`, and stamps `via: "env-override"` on the persisted run record. The
+    instructions (`buildSeedInstructions`) ask the agent to make exactly one
+    small, discrete edit to a non-test source file and to not run the test
+    suite itself.
 4. **Detect** — `git add -A` (stages tracked and untracked changes, so a new
    file the agent created is not silently invisible) followed by
    `git diff --cached` captures the fault as a unified diff. An **empty
@@ -227,8 +234,11 @@ stays independently testable in isolation from that reduction.
 ## Agent-neutrality
 
 Every seed request is built through `resolveAdapter(deps.agentName).buildRequest(...)`
-(or the `RATCHET_EVAL_AGENT_CMD` test override) — the same adapter registry
-and spawn seam `judge.ts`'s `llm-judge` binding uses. There is no
-agent-specific branch anywhere in this module: `runMutationHarness` never
+(or the `RATCHET_EVAL_AGENT_CMD` test override, gated through the single shared
+`buildAgentSpawnRequest` helper) — the same adapter registry and spawn seam
+`judge.ts`'s `llm-judge` binding uses. An active override prints the one-line
+`⚠ agent overridden by RATCHET_EVAL_AGENT_CMD` notice, emits `agentOverride:
+true` in `--json`, and stamps `via: "env-override"` on the run record. There is
+no agent-specific branch anywhere in this module: `runMutationHarness` never
 checks which coding agent is configured before seeding, satisfying the
 `multi-agent-support` standard by construction.

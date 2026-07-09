@@ -40,6 +40,7 @@ import {
   type BootstrapOptions,
   type ResolvedLaunch,
 } from './rex-bootstrap.js';
+import { shquote, buildEnvExports } from './spawn-command.js';
 
 /** The minimal child-process surface the runtime drives (a `ChildProcess` subset). */
 export interface SidecarChild {
@@ -58,6 +59,8 @@ export interface SidecarChild {
   on(event: 'error', listener: (err: Error) => void): void;
   on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
   kill(signal?: NodeJS.Signals): void;
+  /** The child's OS pid (for `killGroup`); `null` if unavailable. */
+  pid?: number | null;
 }
 
 /** Injectable side-effect seams (spawn / fs / clock) for testability. */
@@ -72,6 +75,16 @@ export interface SidecarDeps {
   /** Schedule a callback after `ms` (defaults to setTimeout); returns a handle. */
   setTimer(fn: () => void, ms: number): ReturnType<typeof setTimeout>;
   clearTimer(handle: ReturnType<typeof setTimeout>): void;
+  /**
+   * Signal the sidecar child's whole PROCESS GROUP (`kill -- -<pid>`). The child
+   * is spawned `detached: true` so it leads its own group (pgid == pid); one
+   * `killGroup(pid, sig)` reaps the sidecar AND any agent it launched that
+   * survived a protocol teardown. Guarded to POSIX (the default implementation
+   * falls back to a bare `child.kill(sig)` on Windows, where process groups are
+   * not a thing). Injected so unit tests observe the escalation without real
+   * processes.
+   */
+  killGroup(pid: number, signal: NodeJS.Signals): void;
 }
 
 /**
@@ -92,6 +105,17 @@ export interface RexSidecarRuntimeOptions {
    * bootstrap applies `DEFAULT_DOCKER_IMAGE`.
    */
   image?: string;
+  /**
+   * Docker hardening knobs (docker locus only; ignored for `local`). Each maps
+   * 1:1 to a `REX_DOCKER_*` env var threaded into the bootstrap. See
+   * {@link BootstrapOptions} for semantics; defaults are resolved in the
+   * bootstrap (the single source of truth) when these are unset.
+   */
+  dockerUser?: string;
+  dockerMemory?: string;
+  dockerPidsLimit?: number;
+  dockerCpus?: number;
+  network?: string;
   /** Overall guard against a hung child (ms). Default 10 minutes. */
   timeoutMs?: number;
   /** Grace before escalating SIGTERM → SIGKILL on teardown (ms). Default 2s. */
@@ -105,9 +129,14 @@ const DEFAULT_KILL_GRACE_MS = 2000;
 
 const defaultDeps: SidecarDeps = {
   spawn(launch) {
+    // `detached: true` puts the sidecar in its OWN process group (pgid == pid)
+    // so teardown can reap the whole tree (sidecar + agent it launched) with one
+    // `process.kill(-pid, sig)`. On Windows process groups aren't a thing;
+    // `detached` there just creates a new console, which is harmless.
     return spawn(launch.command, launch.args, {
       env: launch.env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
     }) as unknown as SidecarChild;
   },
   bootstrap: (options) => bootstrapRexRuntime(options),
@@ -120,12 +149,22 @@ const defaultDeps: SidecarDeps = {
   },
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (handle) => clearTimeout(handle),
+  killGroup(pid, signal) {
+    if (process.platform !== 'win32') {
+      try {
+        process.kill(-pid, signal);
+        return;
+      } catch {
+        /* group already gone — fall through to bare kill */
+      }
+    }
+    try {
+      process.kill(pid, signal);
+    } catch {
+      /* already gone */
+    }
+  },
 };
-
-/** Single-quote a string for safe embedding in a bash `-c` argument. */
-function shquote(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
-}
 
 /**
  * Build the agent shell command the sidecar will run: `cat <promptfile> | <argv>`.
@@ -140,6 +179,12 @@ function shquote(s: string): string {
  * IN-CONTAINER path (the host `req.cwd` may not exist inside the container — see
  * the docker caller, which translates it onto the bind mount). When omitted the
  * agent inherits the ReX session cwd (REX_WORKDIR), preserving prior behaviour.
+ *
+ * `AgentSpawnRequest.env` is exported before the pipeline (after the cwd prefix)
+ * via the shared {@link buildEnvExports} helper, overlaying the ReX session's
+ * base environment: request values win on collision, base vars absent from the
+ * request remain visible. The run-op shape (`{op, id, command}`) is unchanged —
+ * env rides inside the command string, so no `sidecar.py` protocol change.
  */
 export function buildRunCommand(
   promptFile: string,
@@ -148,7 +193,8 @@ export function buildRunCommand(
 ): string {
   const argv = [request.command, ...request.args].map(shquote).join(' ');
   const prefix = cwd ? `cd ${shquote(cwd)}; ` : '';
-  return `${prefix}cat ${shquote(promptFile)} | ${argv}`;
+  const exports = buildEnvExports(request.env);
+  return `${prefix}${exports}cat ${shquote(promptFile)} | ${argv}`;
 }
 
 /**
@@ -196,6 +242,15 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
         : req.cwd
       : undefined;
 
+    // The run directory is where the sidecar writes its per-run sentinels
+    // (ratchet-rex-<token>.log/.done) and the new pidfile. For `local` it is the
+    // host runDir verbatim; for `docker` the sidecar runs IN the container, so
+    // translate the host runDir onto the bind mount (the host path does not
+    // exist inside the container) — same swap as the prompt file.
+    const runDirForSidecar = isDocker
+      ? hostToContainerPath(runDir, options.projectRoot, DOCKER_MOUNT_CONTAINER)
+      : runDir;
+
     // Resolve the launch descriptor (lazy/cached bootstrap). A missing Python or
     // (for docker) a missing daemon throws RexBootstrapError → surface as a
     // failed result (non-zero exit + message in stderr) so the engine maps it to
@@ -212,6 +267,11 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
               image: options.image,
               mountHost: options.projectRoot,
               mountContainer: DOCKER_MOUNT_CONTAINER,
+              dockerUser: options.dockerUser,
+              dockerMemory: options.dockerMemory,
+              dockerPidsLimit: options.dockerPidsLimit,
+              dockerCpus: options.dockerCpus,
+              network: options.network,
             }
           : {
               locus,
@@ -263,23 +323,35 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
       };
 
       const teardownChild = () => {
-        // End stdin and ask the child to stop; escalate to SIGKILL after a grace
-        // window so no sidecar is orphaned.
+        // Teardown ordering: ask the sidecar to shut down FIRST (it reaps the
+        // agent group + stops the docker container + emits `closed`, which
+        // settles the run cleanly). Only if it does NOT exit within the grace
+        // window do we SIGKILL the sidecar's whole process group — this is the
+        // fix for the orphan: the prior code SIGTERM'd the sidecar immediately,
+        // killing it before it could reap the agent it launched. Sending
+        // `shutdown` is idempotent: the clean path already sent it and received
+        // `closed` (so the child is gone and the kill timer is a harmless
+        // no-op); the timeout/error path sends it here for the first time.
+        send({ op: 'shutdown' });
         try {
           child.stdin?.end();
         } catch {
           /* already closed */
         }
-        try {
-          child.kill('SIGTERM');
-        } catch {
-          /* already gone */
-        }
+        const pid = child.pid;
         killHandle = deps.setTimer(() => {
-          try {
-            child.kill('SIGKILL');
-          } catch {
-            /* already gone */
+          if (pid !== undefined && pid !== null) {
+            try {
+              deps.killGroup(pid, 'SIGKILL');
+            } catch {
+              /* already gone */
+            }
+          } else {
+            try {
+              child.kill('SIGKILL');
+            } catch {
+              /* already gone */
+            }
           }
         }, killGraceMs);
       };
@@ -315,6 +387,7 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
               op: 'run',
               id: 1,
               command: buildRunCommand(promptFileInContainer, req, cwdForSidecar),
+              run_dir: runDirForSidecar,
             });
             return;
           case 'stdout': {

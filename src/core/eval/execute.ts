@@ -31,6 +31,18 @@ import {
   type EvalRun,
   type CaseRecord,
 } from './run.js';
+import {
+  activeAgentCmdOverride,
+  ENV_OVERRIDE_PROVENANCE,
+} from '../batch/engine/agent.js';
+
+/**
+ * The env var that overrides the eval agent spawn. Declared here so the run
+ * record stamp is self-documenting; the override GATE itself lives in the
+ * shared `buildAgentSpawnRequest` helper (used by the judge and mutation
+ * harness). The run-level stamp keys on the var being ACTIVE for the run.
+ */
+const EVAL_AGENT_CMD_ENV = 'RATCHET_EVAL_AGENT_CMD';
 
 export interface RunOptions {
   scope: EvalScope;
@@ -135,6 +147,12 @@ export async function executeRun(projectRoot: string, options: RunOptions): Prom
     createdAt: (options.now ?? new Date()).toISOString(),
     scope: { kind: options.scope.kind, target: options.scope.target },
     gate: ALL_CONTRIBUTOR_IDS.filter((id) => options.gate.has(id)),
+    // Stamp `via: env-override` when the eval agent-cmd override is active for
+    // the run — a run executed with the seam armed is synthetic evidence
+    // regardless of which contributors fired. Absent when inactive.
+    ...(activeAgentCmdOverride(EVAL_AGENT_CMD_ENV, process.env) !== undefined
+      ? { via: ENV_OVERRIDE_PROVENANCE }
+      : {}),
     cases: [],
     verdicts: {},
   };

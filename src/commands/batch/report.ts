@@ -16,6 +16,11 @@ import {
   recordAnswer,
   recordReject,
 } from '../../core/batch/journal.js';
+import {
+  activeAgentCmdOverride,
+  BATCH_AGENT_CMD_ENV,
+  ENV_OVERRIDE_PROVENANCE,
+} from '../../core/batch/engine/agent.js';
 
 export interface BatchReportOptions {
   change?: string;
@@ -71,6 +76,21 @@ export async function batchReportCommand(
   console.log(result.text);
 }
 
+/**
+ * The `via` provenance stamped on every entry `batch report` appends when its
+ * own process environment carries an active `RATCHET_BATCH_AGENT_CMD`. The
+ * spawned stand-in inherits the var (the engine builds env from `process.env`),
+ * so a stub-reported completion/blocker/progress/needs-input entry is stamped
+ * even though the engine never sees that append — closing the #78 audit hole.
+ * Absent (no stamp) when the override is inactive, so override-free runs are
+ * byte-identical.
+ */
+function overrideProvenance(): { via?: 'env-override' } {
+  return activeAgentCmdOverride(BATCH_AGENT_CMD_ENV, process.env) !== undefined
+    ? { via: ENV_OVERRIDE_PROVENANCE }
+    : {};
+}
+
 function applyReport(
   projectRoot: string,
   batch: string,
@@ -81,11 +101,11 @@ function applyReport(
 ): { kind: string; change: string; text: string } {
   switch (kind) {
     case 'status':
-      appendJournal(projectRoot, batch, { change, kind: 'progress', message });
+      appendJournal(projectRoot, batch, { change, kind: 'progress', message, ...overrideProvenance() });
       return { kind, change, text: chalk.dim(`Recorded progress for ${change}: ${message}`) };
 
     case 'blocker':
-      appendJournal(projectRoot, batch, { change, kind: 'blocker', message });
+      appendJournal(projectRoot, batch, { change, kind: 'blocker', message, ...overrideProvenance() });
       parkStep(projectRoot, batch, { change, kind: 'blocked', reason: message });
       return {
         kind,
@@ -94,7 +114,7 @@ function applyReport(
       };
 
     case 'needs-input':
-      appendJournal(projectRoot, batch, { change, kind: 'needs-input', message });
+      appendJournal(projectRoot, batch, { change, kind: 'needs-input', message, ...overrideProvenance() });
       parkStep(projectRoot, batch, { change, kind: 'blocked', reason: message });
       return {
         kind,
@@ -103,7 +123,7 @@ function applyReport(
       };
 
     case 'complete':
-      appendJournal(projectRoot, batch, { change, kind: 'completion', message });
+      appendJournal(projectRoot, batch, { change, kind: 'completion', message, ...overrideProvenance() });
       // Under an after-propose gate, a finished propose parks for approval.
       if (options.awaitingApproval) {
         parkStep(projectRoot, batch, {

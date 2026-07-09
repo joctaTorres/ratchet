@@ -42,6 +42,7 @@
 
 import type { AgentSpawnRequest, AgentSpawnResult } from '../agent.js';
 import type { AgentEvent, AgentRuntime } from './contract.js';
+import { shquote, buildEnvExports } from './spawn-command.js';
 
 /** A minimal `fetch` surface (the Node global `fetch` is assignable to this). */
 export type FetchLike = (
@@ -111,19 +112,22 @@ const defaultDeps: RemoteDeps = {
   now: () => Date.now(),
 };
 
-/** Single-quote a string for safe embedding in a `sh -c` argument. */
-function shquote(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
-}
-
 /**
  * Build the agent shell command the server will run: `cat <promptfile> | <argv>`.
  * Identical in spirit to the sidecar's `buildRunCommand`, but the prompt path is
  * a SERVER path (the prompt is written to the server via /write_file).
+ *
+ * `AgentSpawnRequest.env` is exported before the pipeline via the shared
+ * {@link buildEnvExports} helper, overlaying the server bash session's base
+ * environment (request wins on collision; base vars absent from the request
+ * remain visible). The caller wraps this in the existing nohup/log/exit-sentinel
+ * launcher unchanged — the exports sit inside that launcher's `( … )` subshell,
+ * so they apply to the agent pipeline without touching the REST protocol.
  */
 export function buildRemoteRunCommand(serverPromptPath: string, request: AgentSpawnRequest): string {
   const argv = [request.command, ...request.args].map(shquote).join(' ');
-  return `cat ${shquote(serverPromptPath)} | ${argv}`;
+  const exports = buildEnvExports(request.env);
+  return `${exports}cat ${shquote(serverPromptPath)} | ${argv}`;
 }
 
 /** Raised internally to short-circuit to the error-result path with a clean message. */
@@ -304,6 +308,10 @@ export function makeRexRemoteRuntime(options: RexRemoteRuntimeOptions): AgentRun
     const promptPath = `${runDir}/prompt.txt`;
     const logPath = `${runDir}/agent.log`;
     const exitPath = `${runDir}/exit.code`;
+    // The agent's process-group id (== pid under `set -m`) recorded to a pidfile
+    // so teardown can reap the whole tree (agent + `cat`) before the session is
+    // torn down. Lives in the per-run dir, swept with it on `rm -rf`.
+    const pidPath = `${runDir}/agent.pid`;
 
     let stdout = '';
     let stderr = '';
@@ -330,12 +338,18 @@ export function makeRexRemoteRuntime(options: RexRemoteRuntimeOptions): AgentRun
       await call('/write_file', { path: promptPath, content: req.instructions ?? '' });
 
       // 4. Non-blocking launch: background the agent to a logfile + an exit
-      //    sentinel so /execute returns immediately while the agent keeps running.
+      //    sentinel so /execute returns immediately while the agent keeps
+      //    running. `set -m` (POSIX job control) makes the backgrounded pipeline
+      //    its OWN process-group leader (pgid == `$!`), so teardown can reap the
+      //    whole tree with one `kill -- -<pgid>`; macOS ships no `setsid` binary,
+      //    so `set -m` is used (works in bash/POSIX sh on macOS + Linux). The
+      //    pid is recorded to a pidfile so teardown finds the group even after
+      //    the launch subshell exits.
       const agentCmd = buildRemoteRunCommand(promptPath, req);
       const cwd = req.cwd ? `cd ${shquote(req.cwd)}; ` : '';
       const launch =
-        `${cwd}( ${agentCmd} ) >${shquote(logPath)} 2>&1; ` +
-        `echo $? >${shquote(exitPath)}`;
+        `set -m; ${cwd}( ${agentCmd} ) >${shquote(logPath)} 2>&1 & ` +
+        `echo $! >${shquote(pidPath)}; wait $!; echo $? >${shquote(exitPath)}`;
       // Detach so the foreground /execute returns at once; nohup keeps it alive.
       await execShell(`nohup sh -c ${shquote(launch)} >/dev/null 2>&1 &`);
 
@@ -389,7 +403,21 @@ export function makeRexRemoteRuntime(options: RexRemoteRuntimeOptions): AgentRun
     };
 
     // Best-effort session/runtime teardown — failures must not mask the result.
+    // ORDERING MATTERS: reap the launched agent's process group BEFORE removing
+    // the run dir / closing the session — the pidfile lives in runDir and the
+    // session must still be alive for the kill to run. TERM then KILL the whole
+    // group (negative pid), best-effort; a missing pidfile or already-dead group
+    // is a no-op. This is the remote-path fix for the orphan: the prior code
+    // closed the session leaving the nohup'd agent alive on the server.
     const teardown = async (): Promise<void> => {
+      try {
+        await execShell(
+          `test -f ${shquote(pidPath)} && { kill -TERM -- -$(cat ${shquote(pidPath)}) 2>/dev/null; ` +
+            `sleep 1; kill -KILL -- -$(cat ${shquote(pidPath)}) 2>/dev/null; } || true`
+        );
+      } catch {
+        /* best-effort */
+      }
       try {
         await execShell(`rm -rf ${shquote(runDir)}`);
       } catch {

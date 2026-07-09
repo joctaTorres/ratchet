@@ -30,6 +30,13 @@ export interface EngineStepOutcome {
   detail?: string;
   message?: string;
   journalRefs?: number[];
+  /**
+   * Present (true) when this step's spawn ran under an active agent-cmd
+   * override. Carried to {@link StepResult.agentOverride} so `--json` emits the
+   * field and the text renderer prints the override notice. Absent when no
+   * override was active — byte-identical to override-free runs.
+   */
+  agentOverride?: true;
 }
 
 /**
@@ -53,6 +60,7 @@ export function toStepResult(outcome: EngineStepOutcome): StepResult {
       detail: outcome.detail,
       journalRefs: outcome.journalRefs,
       message: outcome.message ?? outcome.detail,
+      ...(outcome.agentOverride ? { agentOverride: true } : {}),
     };
   }
   return {
@@ -64,6 +72,7 @@ export function toStepResult(outcome: EngineStepOutcome): StepResult {
     detail: outcome.detail,
     journalRefs: outcome.journalRefs,
     message: outcome.message,
+    ...(outcome.agentOverride ? { agentOverride: true } : {}),
   };
 }
 

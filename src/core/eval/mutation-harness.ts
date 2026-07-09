@@ -48,6 +48,7 @@ import {
   realBashRunner,
   realSpawner,
   resolveAdapter,
+  buildAgentSpawnRequest,
   type BashRunner,
   type BashResult,
   type Spawner,
@@ -143,20 +144,32 @@ function seedContext(invariant: MutationInvariant): AgentRequestContext {
 }
 
 /**
- * Build the spawn request for one seed attempt. When `RATCHET_EVAL_AGENT_CMD`
- * is set, that command stands in for the coding-agent binary (used by e2e
- * tests to exercise the agent path deterministically without a real agent).
- * Otherwise the configured adapter is resolved as usual — mirrors `judge.ts`'s
- * `buildVoteRequest` exactly, so there is no agent-specific branch here.
+ * The env var that overrides the mutation seeder's coding-agent spawn. Declared
+ * locally so the seeder's override seam is self-documenting; the override GATE
+ * itself lives in the shared `buildAgentSpawnRequest` helper so the engine, the
+ * judge, and the mutation harness share one override seam (the #67
+ * triplication), mirroring `judge.ts`'s `buildVoteRequest` exactly.
+ */
+const EVAL_AGENT_CMD_ENV = 'RATCHET_EVAL_AGENT_CMD';
+
+/**
+ * Build the spawn request for one seed attempt through the shared override-aware
+ * helper. When `RATCHET_EVAL_AGENT_CMD` is active, that command stands in for
+ * the coding-agent binary (deterministic e2e testing); otherwise the configured
+ * adapter is resolved as usual. The override gate exists in exactly one place
+ * (`buildAgentSpawnRequest`); the closure here owns only the seeder's
+ * site-specific adapter resolution.
  */
 function buildSeedRequest(invariant: MutationInvariant, cwd: string, agentName?: string): AgentSpawnRequest {
   const instructions = buildSeedInstructions(invariant);
-  const override = process.env.RATCHET_EVAL_AGENT_CMD;
-  if (override && override.trim().length > 0) {
-    return { command: 'bash', args: ['-c', override], instructions, cwd, env: process.env };
-  }
-  const adapter = resolveAdapter(agentName);
-  return adapter.buildRequest(seedContext(invariant), instructions, cwd, process.env);
+  const { request } = buildAgentSpawnRequest({
+    overrideEnvVar: EVAL_AGENT_CMD_ENV,
+    instructions,
+    cwd,
+    env: process.env,
+    buildAdapterRequest: () => resolveAdapter(agentName).buildRequest(seedContext(invariant), instructions, cwd, process.env),
+  });
+  return request;
 }
 
 /**

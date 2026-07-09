@@ -1,0 +1,266 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# A batch coordinates related changes across ordered phases. It references
+# changes by NAME and never owns them: changes live under .ratchet/changes/
+# like any other change and can be inspected, validated, and archived on their
+# own. Status is derived live from change state on disk — never stored here.
+#
+# Phases ship functional software behind an executable proof-of-work, so errors
+# surface early. A later phase is blocked until the prior phase's proof-of-work
+# passes. Changes are created lazily as the batch progresses: an entry with no
+# change directory yet is simply "pending", not an error.
+
+name: per-stage-agents-and-prs
+created: 2026-07-03
+
+# Project defaults are acceptable for this batch, so the settings block is
+# omitted. (Notably we do NOT set a stage-map `agent` here — that union is the
+# feature Phase 1 builds; this batch itself runs on the default agent.)
+
+phases:
+  # ---------------------------------------------------------------------------
+  # Phase 1 — Per-stage agent routing. Built first, so its proof is concrete.
+  # ---------------------------------------------------------------------------
+  - name: per-stage-agent-routing
+    goal: >-
+      Let a batch assign a different coding agent to each stage
+      (propose / apply / verify) through the existing `agent` setting, so a user
+      can, for example, have claude propose while opencode applies and verifies.
+      The transition kind is already in scope where the engine picks the adapter;
+      this phase adds the config shape and the stage axis to resolution.
+    success: >-
+      With `agent: {propose: X, apply: Y, verify: Z}` configured at any scope,
+      each transition spawns the agent mapped to its stage; a scalar `agent`
+      string and an unset `agent` behave exactly as before (default agent for all
+      stages); unknown agent names and invalid stage keys are rejected before any
+      spawn.
+    proofOfWork:
+      kind: integration
+      run: pnpm test test/batch-engine/agent-stage-routing.test.ts
+      pass: exit code 0 — per-stage adapter resolution suite green
+    changes:
+      - name: agent-stage-map-schema
+        done: >-
+          The `agent` batch setting accepts and validates either a scalar string
+          or a partial `{propose, apply, verify}` stage-map at both project-config
+          and manifest scope; invalid stage keys and non-string agent values are
+          rejected by the schema.
+      - name: agent-stage-resolution
+        after: [agent-stage-map-schema]
+        done: >-
+          Agent resolution gains a stage axis — partial stage-maps merge
+          nearest-wins per stage over the scalar/default — and the engine's
+          buildSpawnRequest resolves the adapter for the running transition's
+          stage, falling back to the scalar `agent` then DEFAULT_AGENT.
+
+  # ---------------------------------------------------------------------------
+  # Phase 2 — Whole-batch PR opening via a spawned, instruction-driven PR agent.
+  # Describes software that does not exist yet: proof is described, refined at
+  # entry with Phase 1's shipped resolution in hand.
+  # ---------------------------------------------------------------------------
+  - name: whole-batch-pr-opening
+    goal: >-
+      When PR grouping is enabled, spawn a dedicated instruction-following PR
+      agent at batch completion that commits the accumulated uncommitted work of
+      the prior stage agents (reading `git log` to match the repo's commit-message
+      style, defaulting to semantic / Conventional Commits) and opens a single PR
+      from the work branch to its base branch. No forge-specific code lives in
+      ratchet: the agent uses whatever forge CLI (gh / glab / other) the user's
+      environment and config provide, driven by a self-contained ratchet PR
+      instruction. Adds `pr` as a fourth routable stage in the Phase 1 agent map.
+    success: >-
+      With `prGrouping: whole-batch`, a completed batch results in exactly one PR
+      opened by the spawned PR agent whose commits follow the repo's git-log style
+      (semantic by default); with `prGrouping: off` (the default) no PR agent is
+      ever spawned and behavior is unchanged; re-running the loop never
+      double-opens (PR state recorded in run-state); a commit/push/PR-open failure
+      surfaces as a reported step failure; doctor warns when `prGrouping` is active
+      but the repo has no configured git remote.
+    proofOfWork:
+      kind: blackbox
+      # Refined at phase entry: drive a batch with prGrouping=whole-batch against
+      # the fake agent-spawn seam and assert exactly one PR-open action with a
+      # semantic-style commit message, and that off/unset spawns no PR agent.
+      run: pnpm test test/cli-e2e/batch-pr-whole-batch.test.ts
+      pass: exit code 0 — whole-batch PR-opening e2e green
+    changes:
+      # Config foundation: the `prGrouping` mode and the fourth routable agent
+      # stage. Mirrors Phase 1's schema-first slice — validated shape only,
+      # spawned nowhere yet. Root of the phase DAG.
+      - name: pr-grouping-config
+        done: >-
+          The `prGrouping` batch setting accepts and validates `off` (the
+          default) or `whole-batch` at both project-config and manifest scope,
+          and the shared `agent` stage-map accepts `pr` as a fourth routable
+          stage alongside propose/apply/verify; invalid mode values and unknown
+          stage keys are rejected by the schema, and the new key is documented.
+      # The single, forge-agnostic PR lifecycle instruction, authored once in the
+      # shared command layer and rendered per agent (multi-agent-support) — the
+      # canonical skill the engine will delegate to (delegated-lifecycle). No
+      # forge-specific code; the agent uses whatever forge CLI is present.
+      - name: pr-open-instruction
+        done: >-
+          A shared, forge-agnostic PR-open command exists in the shared
+          command/workflow layer with its own command id, renders for every
+          registered agent, and is guaranteed in the spawn locus by the
+          render-or-fail skill-locus path; its body instructs the agent to read
+          `git log` for the repo's commit style (semantic/Conventional default),
+          commit the accumulated uncommitted work, push the work branch, and open
+          exactly one PR to its base branch via the environment's forge CLI.
+      # Engine orchestration: spawn one PR agent at batch completion under
+      # whole-batch, delegating to the shared instruction, routed via the `pr`
+      # stage. Records PR state so a resumed loop never double-opens; failures
+      # surface as reported step failures.
+      - name: pr-spawn-at-completion
+        after: [pr-grouping-config, pr-open-instruction]
+        done: >-
+          At batch completion under `prGrouping: whole-batch` the engine spawns
+          exactly one PR agent that delegates to the shared PR command, resolving
+          the adapter for the `pr` stage of the agent map; the PR-open outcome is
+          recorded in run-state so a resumed run never double-opens, a
+          commit/push/PR-open failure surfaces as a reported step failure, and no
+          PR agent is spawned when `prGrouping` is off or unset.
+      # CLI wiring: `batch apply` surfaces the completion PR step and routes it to
+      # the engine, idempotently, so the user-visible loop opens the PR exactly
+      # once and is unchanged when grouping is off.
+      - name: pr-step-apply-wiring
+        after: [pr-spawn-at-completion]
+        done: >-
+          `batch apply` surfaces the completion PR step as a new apply target and
+          routes it to the engine so a completed `prGrouping: whole-batch` batch
+          drives the PR step exactly once (idempotent on re-run via the recorded
+          state) and an `off`/unset batch drives no PR step, leaving existing
+          apply behavior unchanged.
+      # Doctor guardrail: warn when grouping is active but the repo cannot push.
+      - name: doctor-pr-remote-warning
+        after: [pr-grouping-config]
+        done: >-
+          `ratchet doctor` emits a non-required warning when `prGrouping` is
+          active but the repo has no configured git remote, and stays silent when
+          `prGrouping` is off or a remote is configured.
+      # Phase proof + cross-cutting docs: the blackbox e2e plus the Reference
+      # overview (with a Mermaid diagram) for the whole-batch PR flow.
+      - name: whole-batch-pr-e2e-and-docs
+        after: [pr-step-apply-wiring, doctor-pr-remote-warning]
+        done: >-
+          `pnpm test test/cli-e2e/batch-pr-whole-batch.test.ts` passes (exit 0),
+          driving a `prGrouping: whole-batch` batch to completion against the
+          fake spawn seam and asserting exactly one PR-open action with a
+          semantic-style commit message and none when off/unset; the `docs/`
+          Reference and `README.md` document `prGrouping`, the `pr` stage, and
+          carry a high-contrast vertical Mermaid overview of the PR flow.
+
+  # ---------------------------------------------------------------------------
+  # Phase 3 — Per-phase / per-change grouping with stacked branches. Described
+  # proof, refined at entry on Phase 2's shipped PR machinery.
+  # ---------------------------------------------------------------------------
+  - name: stacked-pr-grouping-modes
+    goal: >-
+      Extend PR grouping from whole-batch to `per-phase` and `per-change` using
+      stacked branches: the engine detects the grouping boundary (a phase's last
+      change, or each change) and spawns the PR agent with the correct
+      stacked-branch base context — group N branches on group N-1 and its PR
+      targets N-1 — so each PR's diff stays scoped to its unit and dependent code
+      still compiles.
+    success: >-
+      With `prGrouping: per-phase`, each completed phase yields one PR whose base
+      is the previous phase's branch; with `prGrouping: per-change`, each change
+      yields one stacked PR; boundary detection, stacked base selection, and
+      run-state idempotency hold across a resumed loop.
+    proofOfWork:
+      kind: blackbox
+      # Refined at phase entry: drive batches in per-phase and per-change modes
+      # and assert one stacked PR per unit with the expected base branch, and
+      # that a resumed loop opens no duplicates.
+      run: pnpm test test/cli-e2e/batch-pr-grouping-modes.test.ts
+      pass: exit code 0 — stacked grouping-mode e2e green
+    changes:
+      # Config foundation: widen the Phase 2 `prGrouping` enum to the two stacked
+      # modes and keep the shared "grouping active" predicate honest so the engine,
+      # apply wiring, and doctor warning all fold the new modes in. Schema-first
+      # slice mirroring Phase 2's pr-grouping-config; spawns nowhere yet. Root of
+      # the phase DAG.
+      - name: grouping-mode-schema
+        done: >-
+          The `prGrouping` batch setting additionally accepts and validates
+          `per-phase` and `per-change` alongside the existing `off`/`whole-batch`
+          at both project-config and manifest scope; invalid mode values are still
+          rejected, the shared "grouping is active" predicate returns true for the
+          two new modes (so doctor's remote warning already covers them), and the
+          new modes are documented.
+      # Pure boundary policy: given batch state and the resolved grouping mode,
+      # decide whether the just-completed unit is a group boundary and name the
+      # group — per-phase fires on a phase's last completed change, per-change on
+      # every completed change, whole-batch only at batch completion, off never.
+      # Deterministic, unit-tested, spawns nothing.
+      - name: boundary-detection
+        after: [grouping-mode-schema]
+        done: >-
+          A pure boundary-detection function maps (batch state, grouping mode) to
+          the ordered list of PR group boundaries and each boundary's group
+          identity — per-phase = each phase's last change, per-change = every
+          change, whole-batch = batch completion only, off = none — proven by unit
+          tests with no filesystem or spawn.
+      # Pure stacked-base policy: for group N in the detected ordering, compute the
+      # branch it stacks on — group N-1's branch, targeting N-1's PR — falling back
+      # to the batch base branch for the first group. Deterministic, unit-tested.
+      - name: stacked-base-selection
+        after: [boundary-detection]
+        done: >-
+          A pure function computes each group's stacked base from the ordered
+          boundaries — group N bases on group N-1's branch (the first group bases on
+          the batch's base branch) so each PR's diff stays scoped to its unit —
+          proven by unit tests over in-memory group orderings.
+      # Instruction-fed base: the shared PR-open command already opens one PR to
+      # "its base branch"; make that base a resolved value carried in the
+      # instructions payload (per instruction-fed-config) rather than the work
+      # branch's implicit base, so the engine can supply the computed stacked base
+      # without the skill reading config. Stays agent-neutral and render-or-fail.
+      - name: pr-instruction-stacked-base
+        after: [stacked-base-selection]
+        done: >-
+          The `ratchet instructions` payload for the PR-open command carries the
+          resolved base branch as data, and the shared command body opens its single
+          PR against that supplied base rather than an implicit one; the command
+          still renders for every registered agent and is guaranteed by the
+          render-or-fail skill-locus path, with no inline config read added to the
+          skill.
+      # Engine orchestration: spawn a PR agent at every detected boundary (not only
+      # batch completion), resolving the `pr` stage adapter, injecting the computed
+      # stacked base into the delegated payload, and recording each group's PR
+      # outcome in run-state keyed by group so a resumed loop never double-opens any
+      # group; a commit/push/PR-open failure surfaces as a reported step failure.
+      - name: engine-spawn-at-boundaries
+        after: [boundary-detection, stacked-base-selection, pr-instruction-stacked-base]
+        done: >-
+          Under `per-phase`/`per-change` the engine spawns exactly one PR agent at
+          each detected boundary, delegating to the shared PR command with the
+          resolved stacked base injected via the payload and the `pr`-stage adapter;
+          each group's PR outcome is recorded in run-state keyed by group so a
+          resumed run never double-opens a group, and a commit/push/PR-open failure
+          surfaces as a reported step failure.
+      # CLI wiring: `batch apply` surfaces a PR step at each group boundary and
+      # routes it to the engine, idempotently per group, so per-phase drives one PR
+      # per completed phase and per-change one per change, with off/whole-batch
+      # behavior unchanged.
+      - name: apply-boundary-pr-wiring
+        after: [engine-spawn-at-boundaries]
+        done: >-
+          `batch apply` surfaces the per-boundary PR step as an apply target and
+          routes it to the engine so a `per-phase` batch drives one PR per completed
+          phase and a `per-change` batch one PR per change, each idempotent on re-run
+          via the per-group recorded state, while `off` and `whole-batch` behavior is
+          left unchanged.
+      # Phase proof + cross-cutting docs: the blackbox stacked grouping-mode e2e
+      # plus the Reference/README updates and a vertical Mermaid overview of stacked
+      # base selection across groups.
+      - name: grouping-modes-e2e-and-docs
+        after: [apply-boundary-pr-wiring]
+        done: >-
+          `pnpm test test/cli-e2e/batch-pr-grouping-modes.test.ts` passes (exit 0),
+          driving `per-phase` and `per-change` batches to completion against the fake
+          spawn seam and asserting one stacked PR per unit with the expected stacked
+          base branch and no duplicates on a resumed loop; the `docs/` Reference and
+          `README.md` document `per-phase`/`per-change` and the stacked-branch base
+          rule and carry a high-contrast vertical Mermaid overview of stacked
+          grouping.

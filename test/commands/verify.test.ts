@@ -72,4 +72,29 @@ describe('verifyCommand', () => {
     expect(printed).toContain('Verified: complete (verify)');
     expect(printed).toContain('change verified');
   });
+
+  /**
+   * Implements: features/standalone-agent-flag/fail-before-spawn.feature
+   * Scenario Outline: a malformed --agent value fails the standalone verb
+   * naming the value with no spawn.
+   *
+   * A malformed `--agent` value (`claude:`) is rejected by settings resolution
+   * with an actionable error naming the offending value BEFORE any spawn,
+   * matching the src/commands/apply.ts "actionable error" contract. The
+   * injected spawn seam is never invoked.
+   */
+  it('rejects a malformed --agent "claude:" with an actionable error naming the value BEFORE any spawn', async () => {
+    await fixture.writeChangeWithTasks('complete', { done: 2, total: 2 });
+    const spawner = vi.fn<Parameters<Spawner>, ReturnType<Spawner>>();
+
+    await expect(
+      verifyCommand(
+        'complete',
+        { agent: 'claude:' },
+        { projectRoot: () => fixture.root, spawner }
+      )
+    ).rejects.toThrow(/claude:/);
+
+    expect(spawner).not.toHaveBeenCalled();
+  });
 });

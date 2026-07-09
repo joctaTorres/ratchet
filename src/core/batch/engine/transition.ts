@@ -116,6 +116,51 @@ export function hasJournaledVerify(journal: JournalEntry[] = []): boolean {
 }
 
 /**
+ * The single home of the whole-batch PR-open done rule, mirroring
+ * {@link hasJournaledVerify}: the completion PR step is done iff the batch run
+ * journal carries a `completion` entry whose `transition` is `pr`. Every consumer
+ * — the engine's resume precondition in `runPrStep` and the later CLI step
+ * selection — consults THIS predicate, so "the whole-batch PR was already opened"
+ * lives in exactly one place (delegated-lifecycle: "'Done' has one definition").
+ *
+ * Only a genuinely successful PR-open journals that `completion` (the agent
+ * reported `--complete`, exit 0); a commit/push/PR-open FAILURE records a
+ * `blocker` (not a `completion`), so it leaves this flag UNSET and a subsequent
+ * run is free to retry the PR step. A `verify` completion or a `pr` blocker never
+ * satisfies it.
+ */
+export function hasJournaledPr(journal: JournalEntry[] = []): boolean {
+  return journal.some((e) => e.kind === 'completion' && e.transition === 'pr');
+}
+
+/**
+ * The single home of the PER-GROUP PR-open done rule under a stacked grouping mode
+ * (`per-phase`/`per-change`), the group-scoped counterpart of {@link hasJournaledPr}:
+ * this group's PR is open iff the batch run journal carries a `completion` entry
+ * whose `transition` is `pr` AND whose `change` equals the group's resolved key
+ * (`prJournalKey(batch, boundary)`). `runPrStepLocked` consults THIS predicate
+ * against the resolved per-group key, so a resumed run never re-opens a recorded
+ * group while distinct groups — keyed `pr:<batch>:<groupId>` — are guarded
+ * independently.
+ *
+ * Because a whole-batch entry is keyed `pr:<batch>`, the same predicate covers the
+ * whole-batch group (key `pr:<batch>`) and every stacked group, so there is exactly
+ * ONE done-rule for "this group's PR is open" (delegated-lifecycle: "'Done' has one
+ * definition"). Only a genuinely successful PR-open journals the `completion`; a
+ * commit/push/PR-open FAILURE records a `blocker`, leaving this UNSET so the group
+ * stays retryable. A non-`pr`/non-`completion` entry, or one keyed to another
+ * group, never satisfies it.
+ */
+export function hasJournaledPrForGroup(
+  journal: JournalEntry[] = [],
+  key: string
+): boolean {
+  return journal.some(
+    (e) => e.kind === 'completion' && e.transition === 'pr' && e.change === key
+  );
+}
+
+/**
  * THE one journal-aware definition of done, consumed by status derivation, step
  * selection, and `computeNextTransition` alike — none re-derive done on their
  * own. A change is done iff it is archived, OR its plan tasks are all checked

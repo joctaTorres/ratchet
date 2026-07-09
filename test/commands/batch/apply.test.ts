@@ -16,30 +16,46 @@ import { makeBatchFixture, type BatchFixture } from './batch-fixture.js';
 const {
   runStepMock,
   runDecompositionStepMock,
+  runPrStepMock,
   runProofOfWorkMock,
   computeNextTransitionMock,
+  readJournalTolerantMock,
   resolvePlanningHomeMock,
 } = vi.hoisted(() => ({
   runStepMock: vi.fn(),
   runDecompositionStepMock: vi.fn(),
+  runPrStepMock: vi.fn(),
   runProofOfWorkMock: vi.fn(),
   computeNextTransitionMock: vi.fn(),
+  readJournalTolerantMock: vi.fn(),
   resolvePlanningHomeMock: vi.fn(),
 }));
 
 // The engine is bundled into this package; mock it so `runStep` /
-// `runDecompositionStep` are controllable fakes (no real agent is spawned) and
-// the no-advance scenarios can prove the engine is never reached. The
-// decomposition-key and boundary proof-of-work seams `batch apply` imports from
-// the same module are mocked here too so the decompose and proof paths can be
-// exercised without shelling out.
+// `runDecompositionStep` / `runPrStep` are controllable fakes (no real agent is
+// spawned) and the no-advance scenarios can prove the engine is never reached. The
+// decomposition-key, boundary proof-of-work, and PR-step seams `batch apply`
+// imports from the same module are mocked here too so the decompose, proof, and PR
+// paths can be exercised without shelling out. `prJournalKey` / `hasJournaledPr`
+// keep their real (pure) logic — including the per-group `pr:<batch>:<groupId>`
+// key a stacked boundary resolves to — so the PR park keys and the already-opened
+// gates are honest; `readJournalTolerant` is a controllable fake so a test can
+// pre-seed PR completions for the idempotent-resume cases. The two pure stacked
+// policies (`detectPrGroupBoundaries`, `selectStackedBases`) are NOT touched:
+// `batch apply` imports them from their own modules, so their real logic runs.
 vi.mock('../../../src/core/batch/engine/index.js', () => ({
   RatchetBatchEngine: class {
     runStep = runStepMock;
     runDecompositionStep = runDecompositionStepMock;
+    runPrStep = runPrStepMock;
   },
   computeNextTransition: computeNextTransitionMock,
   decompositionJournalKey: (phase: string) => phase,
+  prJournalKey: (batch: string, boundary?: { kind: string; groupId: string }) =>
+    !boundary || boundary.kind === 'batch' ? `pr:${batch}` : `pr:${batch}:${boundary.groupId}`,
+  hasJournaledPr: (journal: { kind: string; transition?: string }[] = []) =>
+    journal.some((e) => e.kind === 'completion' && e.transition === 'pr'),
+  readJournalTolerant: readJournalTolerantMock,
   runProofOfWork: runProofOfWorkMock,
 }));
 
@@ -60,6 +76,9 @@ describe('batchApplyCommand', () => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     resolvePlanningHomeMock.mockReturnValue({ root: fixture.root });
     computeNextTransitionMock.mockReturnValue('propose');
+    // Default: no PR-open completion journaled, so `alreadyOpened` is false unless a
+    // scenario pre-seeds one.
+    readJournalTolerantMock.mockReturnValue([]);
   });
 
   afterEach(async () => {
@@ -274,5 +293,244 @@ describe('batchApplyCommand', () => {
     expect(context.priorResults).toHaveLength(1);
     expect(context.priorResults[0].phase).toBe('p1');
     expect(output()).toMatch(/advanced/);
+  });
+
+  // ---- Completion PR step (whole-batch PR opening) ----
+
+  /** Fake branch resolution injected via the `branches` seam — no git shell-out. */
+  const fakeBranches = () => ({ workBranch: 'feat/x', baseBranch: 'main' });
+
+  /** Write a completed single-phase batch with the given prGrouping setting. */
+  async function completedBatch(settings?: Record<string, unknown>): Promise<void> {
+    await fixture.writeBatch('b', {
+      ...(settings ? { settings } : {}),
+      phases: [{ ...PHASE, changes: [{ name: 'c1' }] }],
+    });
+    await fixture.writeChangeWithTasks('c1', { done: 1, total: 1 });
+    fixture.completeVerify('b', 'c1');
+    fixture.passProof('b', 'p1');
+  }
+
+  it('routes a completed whole-batch batch to runPrStep exactly once with the resolved branches', async () => {
+    await completedBatch({ prGrouping: 'whole-batch' });
+    runPrStepMock.mockResolvedValue({
+      state: 'advanced',
+      change: 'pr:b',
+      transition: 'pr',
+      message: 'opened the whole-batch PR',
+    } satisfies StepResult);
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches });
+
+    expect(runPrStepMock).toHaveBeenCalledTimes(1);
+    expect(runStepMock).not.toHaveBeenCalled();
+    const ctx = runPrStepMock.mock.calls[0][0];
+    expect(ctx.batch).toBe('b');
+    expect(ctx.workBranch).toBe('feat/x');
+    expect(ctx.baseBranch).toBe('main');
+    expect(ctx.phase.name).toBe('p1');
+    expect(ctx.settings.prGrouping).toBe('whole-batch');
+    // The whole-batch completion PR carries NO group boundary: it keeps the
+    // boundary-less context (and so the batch-level `pr:<batch>` key) unchanged.
+    expect(ctx.boundary).toBeUndefined();
+    expect(output()).toMatch(/advanced/);
+  });
+
+  it('prints the unchanged nothing-to-do message and never calls runPrStep when grouping is off', async () => {
+    await completedBatch({ prGrouping: 'off' });
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches });
+
+    expect(output()).toContain('Nothing to do — all changes are done.');
+    expect(runPrStepMock).not.toHaveBeenCalled();
+  });
+
+  it('prints the unchanged nothing-to-do message and never calls runPrStep when grouping is unset', async () => {
+    await completedBatch(); // no settings → prGrouping defaults to off
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches });
+
+    expect(output()).toContain('Nothing to do — all changes are done.');
+    expect(runPrStepMock).not.toHaveBeenCalled();
+  });
+
+  it('never re-opens the PR: a pre-seeded PR completion prints the done message and skips runPrStep', async () => {
+    await completedBatch({ prGrouping: 'whole-batch' });
+    // A PR-open completion already recorded → `hasJournaledPr` is true → no target.
+    readJournalTolerantMock.mockReturnValue([
+      { change: 'pr:b', kind: 'completion', transition: 'pr', message: 'opened' },
+    ]);
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches });
+
+    expect(output()).toContain('Nothing to do — all changes are done.');
+    expect(runPrStepMock).not.toHaveBeenCalled();
+  });
+
+  it('parks a blocked PR step under the PR journal key and renders a reported failure', async () => {
+    await completedBatch({ prGrouping: 'whole-batch' });
+    runPrStepMock.mockResolvedValue({
+      state: 'blocked',
+      change: 'pr:b',
+      transition: 'pr',
+      blocker: 'git push was rejected',
+    } satisfies StepResult);
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches });
+
+    expect(runPrStepMock).toHaveBeenCalledTimes(1);
+    const parked = getParkedStep(fixture.root, 'b', 'pr:b');
+    expect(parked?.kind).toBe('blocked');
+    expect(parked?.reason).toBe('git push was rejected');
+    expect(output()).toMatch(/blocked/);
+  });
+
+  // ---- Stacked per-boundary PR steps (per-phase / per-change) ----
+
+  /** Fake group-branch naming injected via the `groupBranch` seam — no git shell-out. */
+  const fakeGroupBranch = (b: { groupId: string }) => `branch/${b.groupId}`;
+
+  /** Write a completed TWO-phase batch (c1 in p1, c2 in p2) with the given settings. */
+  async function completedTwoPhaseBatch(settings: Record<string, unknown>): Promise<void> {
+    await fixture.writeBatch('b', {
+      settings,
+      phases: [
+        { name: 'p1', changes: [{ name: 'c1' }] },
+        { name: 'p2', changes: [{ name: 'c2' }] },
+      ],
+    });
+    for (const change of ['c1', 'c2']) {
+      await fixture.writeChangeWithTasks(change, { done: 1, total: 1 });
+      fixture.completeVerify('b', change);
+    }
+    fixture.passProof('b', 'p1');
+    fixture.passProof('b', 'p2');
+  }
+
+  /** A journaled PR-open completion for a per-group key (pre-seeded resume state). */
+  const prCompletion = (key: string) => ({
+    change: key,
+    kind: 'completion',
+    transition: 'pr',
+    message: 'opened',
+  });
+
+  it('routes a completed per-phase batch to runPrStep once with the first boundary based on the batch base', async () => {
+    await completedTwoPhaseBatch({ prGrouping: 'per-phase' });
+    runPrStepMock.mockResolvedValue({
+      state: 'advanced',
+      change: 'pr:b:p1',
+      transition: 'pr',
+      message: 'opened the p1 group PR',
+    } satisfies StepResult);
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches, groupBranch: fakeGroupBranch });
+
+    expect(runPrStepMock).toHaveBeenCalledTimes(1);
+    expect(runStepMock).not.toHaveBeenCalled();
+    const ctx = runPrStepMock.mock.calls[0][0];
+    expect(ctx.boundary).toMatchObject({ index: 0, kind: 'phase', groupId: 'p1' });
+    // Group 0 stacks on the BATCH base branch and opens from its own group branch.
+    expect(ctx.baseBranch).toBe('main');
+    expect(ctx.workBranch).toBe('branch/p1');
+    expect(ctx.phase.name).toBe('p1');
+    expect(ctx.settings.prGrouping).toBe('per-phase');
+    expect(output()).toMatch(/advanced/);
+  });
+
+  it('skips a pre-seeded group and selects the next boundary stacked on the previous group branch', async () => {
+    await completedTwoPhaseBatch({ prGrouping: 'per-phase' });
+    // p1's group PR is already recorded → the next apply selects p2's boundary.
+    readJournalTolerantMock.mockReturnValue([prCompletion('pr:b:p1')]);
+    runPrStepMock.mockResolvedValue({
+      state: 'advanced',
+      change: 'pr:b:p2',
+      transition: 'pr',
+      message: 'opened the p2 group PR',
+    } satisfies StepResult);
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches, groupBranch: fakeGroupBranch });
+
+    expect(runPrStepMock).toHaveBeenCalledTimes(1);
+    const ctx = runPrStepMock.mock.calls[0][0];
+    expect(ctx.boundary).toMatchObject({ index: 1, kind: 'phase', groupId: 'p2' });
+    // Group N stacks on group N-1's own branch — never the batch base.
+    expect(ctx.baseBranch).toBe('branch/p1');
+    expect(ctx.workBranch).toBe('branch/p2');
+    expect(ctx.phase.name).toBe('p2');
+  });
+
+  it('prints the unchanged done message and never calls runPrStep once every group is recorded', async () => {
+    await completedTwoPhaseBatch({ prGrouping: 'per-phase' });
+    readJournalTolerantMock.mockReturnValue([
+      prCompletion('pr:b:p1'),
+      prCompletion('pr:b:p2'),
+    ]);
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches, groupBranch: fakeGroupBranch });
+
+    expect(output()).toContain('Nothing to do — all changes are done.');
+    expect(runPrStepMock).not.toHaveBeenCalled();
+    expect(runStepMock).not.toHaveBeenCalled();
+  });
+
+  it('drives one stacked PR per change under per-change, in order, as completions accrue', async () => {
+    await completedTwoPhaseBatch({ prGrouping: 'per-change' });
+    runPrStepMock.mockImplementation(async (ctx: { boundary: { groupId: string } }) => ({
+      state: 'advanced',
+      change: `pr:b:${ctx.boundary.groupId}`,
+      transition: 'pr',
+      message: `opened the ${ctx.boundary.groupId} PR`,
+    }));
+
+    // First apply: c1's boundary, based on the batch base.
+    await batchApplyCommand('b', {}, { branches: fakeBranches, groupBranch: fakeGroupBranch });
+    // Second apply (c1 recorded): c2's boundary, stacked on c1's branch.
+    readJournalTolerantMock.mockReturnValue([prCompletion('pr:b:c1')]);
+    await batchApplyCommand('b', {}, { branches: fakeBranches, groupBranch: fakeGroupBranch });
+    // Third apply (both recorded): nothing left to do.
+    readJournalTolerantMock.mockReturnValue([prCompletion('pr:b:c1'), prCompletion('pr:b:c2')]);
+    await batchApplyCommand('b', {}, { branches: fakeBranches, groupBranch: fakeGroupBranch });
+
+    expect(runPrStepMock).toHaveBeenCalledTimes(2);
+    const [first, second] = runPrStepMock.mock.calls.map((call) => call[0]);
+    expect(first.boundary).toMatchObject({ index: 0, kind: 'change', groupId: 'c1' });
+    expect(first.baseBranch).toBe('main');
+    expect(first.workBranch).toBe('branch/c1');
+    expect(second.boundary).toMatchObject({ index: 1, kind: 'change', groupId: 'c2' });
+    expect(second.baseBranch).toBe('branch/c1');
+    expect(second.workBranch).toBe('branch/c2');
+    expect(runStepMock).not.toHaveBeenCalled();
+    expect(output()).toContain('Nothing to do — all changes are done.');
+  });
+
+  it('parks a blocked stacked PR step under its per-group key and renders a reported failure', async () => {
+    await completedTwoPhaseBatch({ prGrouping: 'per-change' });
+    runPrStepMock.mockResolvedValue({
+      state: 'blocked',
+      change: 'pr:b:c1',
+      transition: 'pr',
+      blocker: 'no forge CLI is authenticated',
+    } satisfies StepResult);
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches, groupBranch: fakeGroupBranch });
+
+    expect(runPrStepMock).toHaveBeenCalledTimes(1);
+    const parked = getParkedStep(fixture.root, 'b', 'pr:b:c1');
+    expect(parked?.kind).toBe('blocked');
+    expect(parked?.reason).toBe('no forge CLI is authenticated');
+    expect(output()).toMatch(/blocked/);
+    // No completion was journaled for the group (the engine records a blocker on
+    // failure), so a subsequent apply RE-SURFACES the same first boundary.
+    expect(getParkedStep(fixture.root, 'b', 'pr:b:c2')).toBeUndefined();
+  });
+
+  it('leaves off/unset behavior unchanged on a completed multi-phase batch', async () => {
+    await completedTwoPhaseBatch({ prGrouping: 'off' });
+
+    await batchApplyCommand('b', {}, { branches: fakeBranches, groupBranch: fakeGroupBranch });
+
+    expect(output()).toContain('Nothing to do — all changes are done.');
+    expect(runPrStepMock).not.toHaveBeenCalled();
   });
 });

@@ -38,6 +38,16 @@ export interface AgentRequestContext {
   settings?: {
     permissions?: ResolvedPermissionsPolicy;
   };
+  /**
+   * The model part of a resolved `agent[:model]` spec, threaded from the engine's
+   * single `parseAgentSpec` call per transition. Present only when the user named
+   * a model; a bare agent name carries no `model` key so the adapter emits no
+   * model flag and the agent uses its harness-configured default model. The
+   * adapter owns its flag ({@link AgentAdapter.modelFlag}); this is just the
+   * value the engine handed it, so `AgentRequestContext` stays the narrow,
+   * structural slice adapters may read.
+   */
+  model?: string;
 }
 
 export interface AgentSpawnResult {
@@ -73,6 +83,16 @@ export interface AgentAdapter {
    */
   readonly emitsStreamJson?: boolean;
   /**
+   * The flag this adapter uses to name a model on its spawn argv
+   * (`--model` for claude/opencode/cursor, `-m` for codex/gemini). Required on
+   * `CommandAgentAdapter` so every spawnable agent declares its flag and the
+   * drift guard can assert non-empty; optional on the interface so a non-command
+   * (synthetic) adapter still satisfies it. `buildRequest` appends
+   * `[modelFlag, model]` only when `context.model` is set — a bare agent name
+   * emits no flag so the agent uses its harness-configured default model.
+   */
+  readonly modelFlag?: string;
+  /**
    * Build the spawn request for a transition. Pure: turns context+instructions
    * into a command + args so it is unit-testable without spawning.
    */
@@ -94,7 +114,15 @@ class CommandAgentAdapter implements AgentAdapter {
     private readonly command: string,
     private readonly argv: (instructions: string) => string[],
     private readonly passOnStdin: boolean,
-    readonly emitsStreamJson: boolean = false
+    readonly emitsStreamJson: boolean = false,
+    /**
+     * The flag this adapter uses to name a model on its spawn argv. Required so
+     * every spawnable agent declares its flag — the registry drift guard asserts
+     * non-empty — and so `buildRequest` has the exact string to emit. Lives next
+     * to the base argv the adapter already owns, not in a separate model-flag
+     * registry, so `AI_TOOLS` stays about init/binaries.
+     */
+    readonly modelFlag: string
   ) {}
 
   buildRequest(
@@ -110,9 +138,15 @@ class CommandAgentAdapter implements AgentAdapter {
     const permissionFlags = context.settings?.permissions
       ? resolvePermissionFlags(this.name, context.settings.permissions, cwd)
       : [];
+    // The model pair sits BETWEEN the base argv and the permission flags so the
+    // base argv shape is preserved for parsers of leading flags and the
+    // permission flags remain the trailing block they are today. Appended only
+    // when `context.model` is set — a bare agent name touches nothing, keeping
+    // today's argv byte-for-byte (the success criterion).
+    const modelFlags = context.model ? [this.modelFlag, context.model] : [];
     return {
       command: this.command,
-      args: [...this.argv(instructions), ...permissionFlags],
+      args: [...this.argv(instructions), ...modelFlags, ...permissionFlags],
       instructions: this.passOnStdin ? instructions : '',
       cwd,
       env,
@@ -149,26 +183,33 @@ const BUILTIN_ADAPTERS: Record<string, AgentAdapter> = {
   // claude emits structured stream-json (one NDJSON event per line) with partial
   // message deltas, so the engine renders it richly. `--verbose` is required for
   // stream-json with `-p`; `--include-partial-messages` streams text deltas live.
+  // `--model` is claude's model flag, appended only when a model is named.
   claude: new CommandAgentAdapter(
     'claude',
     agentBinaryFor('claude'),
     () => ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'],
     true,
-    true
+    true,
+    '--model'
   ),
-  codex: new CommandAgentAdapter('codex', agentBinaryFor('codex'), () => ['exec', '-'], true),
-  gemini: new CommandAgentAdapter('gemini', agentBinaryFor('gemini'), () => ['-p'], true),
-  cursor: new CommandAgentAdapter('cursor', agentBinaryFor('cursor'), () => ['-p'], true),
+  // codex uses `-m` to name a model.
+  codex: new CommandAgentAdapter('codex', agentBinaryFor('codex'), () => ['exec', '-'], true, false, '-m'),
+  // gemini uses `-m` to name a model.
+  gemini: new CommandAgentAdapter('gemini', agentBinaryFor('gemini'), () => ['-p'], true, false, '-m'),
+  // cursor uses `--model` to name a model.
+  cursor: new CommandAgentAdapter('cursor', agentBinaryFor('cursor'), () => ['-p'], true, false, '--model'),
   // opencode emits structured stream-json NDJSON (one event per line) with
   // `run --format json`, reading the prompt from stdin. Its event schema
   // (step_start/text/step_finish) differs from claude's, so the renderer parses
-  // both — gated on `emitsStreamJson`, never the agent name.
+  // both — gated on `emitsStreamJson`, never the agent name. `--model` is
+  // opencode's model flag.
   opencode: new CommandAgentAdapter(
     'opencode',
     agentBinaryFor('opencode'),
     () => ['run', '--format', 'json'],
     true,
-    true
+    true,
+    '--model'
   ),
 };
 

@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { promises as fsp } from 'fs';
+import path from 'path';
+import os from 'os';
 import {
   runDoctorChecks,
   type DoctorReport,
@@ -284,6 +287,70 @@ describe('renderReport (human output)', () => {
     expect(out).toContain('→'); // remedy arrow
     expect(out).toMatch(/No supported coding-agent CLI/);
     expect(out).toContain('required check'); // failure summary
+  });
+});
+
+describe('runDoctorChecks — pr-remote conditional row', () => {
+  let projectRoot: string;
+  let userConfigHome: string;
+  let priorXdg: string | undefined;
+
+  beforeEach(async () => {
+    projectRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'doctor-prrow-'));
+    await fsp.mkdir(path.join(projectRoot, '.ratchet'), { recursive: true });
+    userConfigHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'doctor-prrow-xdg-'));
+    priorXdg = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = userConfigHome;
+  });
+
+  afterEach(async () => {
+    await fsp.rm(projectRoot, { recursive: true, force: true });
+    await fsp.rm(userConfigHome, { recursive: true, force: true });
+    if (priorXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = priorXdg;
+  });
+
+  const passing = () =>
+    new FakeDeps((command, args) => {
+      if (AGENT_BINS.includes(command) && args.includes('--version')) {
+        return ok(`${command} 1.0.0`);
+      }
+      return ok(); // docker + `git remote` (empty stdout) both ok
+    });
+
+  it('is absent by default (no batch config → prGrouping off) — behavior unchanged', async () => {
+    await fsp.writeFile(
+      path.join(projectRoot, '.ratchet', 'config.yaml'),
+      'schema: ratchet\n',
+      'utf-8'
+    );
+    const deps = passing();
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    deps.toolsOnPath.add('uv');
+
+    const report = runDoctorChecks(deps, projectRoot);
+    const ids = report.checks.map((c) => c.id).sort();
+    expect(ids).toEqual(['agent', 'docker', 'runtime']);
+  });
+
+  it('is present under active grouping with no configured remote', async () => {
+    await fsp.writeFile(
+      path.join(projectRoot, '.ratchet', 'config.yaml'),
+      'schema: ratchet\nbatch:\n  prGrouping: whole-batch\n',
+      'utf-8'
+    );
+    const deps = passing();
+    deps.toolsOnPath.add(CLAUDE_BIN);
+    deps.toolsOnPath.add('uv');
+
+    const report = runDoctorChecks(deps, projectRoot);
+    const pr = report.checks.find((c) => c.id === 'pr-remote');
+    expect(pr).toBeDefined();
+    expect(pr!.status).toBe('info');
+    expect(pr!.severity).toBe('optional');
+    // Advisory row never flips the overall verdict.
+    expect(report.ok).toBe(true);
+    expect(exitCodeFor(report)).toBe(0);
   });
 });
 

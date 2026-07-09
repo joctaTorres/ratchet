@@ -14,6 +14,7 @@ import {
   getArchiveBatchSkillTemplate,
   getProposeBatchSkillTemplate,
   getDecomposePhaseSkillTemplate,
+  getOpenPrSkillTemplate,
   getBrainstormSkillTemplate,
   getEvalSkillTemplate,
   getRctApplyCommandTemplate,
@@ -25,6 +26,7 @@ import {
   getRctArchiveBatchCommandTemplate,
   getRctProposeBatchCommandTemplate,
   getRctDecomposePhaseCommandTemplate,
+  getRctOpenPrCommandTemplate,
   getRctBrainstormCommandTemplate,
   getRctEvalCommandTemplate,
   type SkillTemplate,
@@ -66,6 +68,7 @@ export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemp
     { template: getArchiveBatchSkillTemplate(), dirName: 'ratchet-archive-batch', workflowId: 'archive-batch' },
     { template: getProposeBatchSkillTemplate(), dirName: 'ratchet-propose-batch', workflowId: 'propose-batch' },
     { template: getDecomposePhaseSkillTemplate(), dirName: 'ratchet-decompose-phase', workflowId: 'decompose-phase' },
+    { template: getOpenPrSkillTemplate(), dirName: 'ratchet-open-pr', workflowId: 'open-pr' },
     { template: getBrainstormSkillTemplate(), dirName: 'ratchet-brainstorm', workflowId: 'brainstorm' },
     { template: getEvalSkillTemplate(), dirName: 'ratchet-eval', workflowId: 'eval' },
   ];
@@ -93,6 +96,7 @@ export function getCommandTemplates(workflowFilter?: readonly string[]): Command
     { template: getRctArchiveBatchCommandTemplate(), id: 'archive-batch' },
     { template: getRctProposeBatchCommandTemplate(), id: 'propose-batch' },
     { template: getRctDecomposePhaseCommandTemplate(), id: 'decompose-phase' },
+    { template: getRctOpenPrCommandTemplate(), id: 'open-pr' },
     { template: getRctBrainstormCommandTemplate(), id: 'brainstorm' },
     { template: getRctEvalCommandTemplate(), id: 'eval' },
   ];

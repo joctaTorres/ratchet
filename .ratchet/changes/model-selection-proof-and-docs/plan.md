@@ -1,0 +1,35 @@
+# model-selection-proof-and-docs
+
+## Why
+
+The two sibling changes shipped the `agent[:model]` spec (`agent-spec-syntax`) and threaded the model to each adapter's spawn argv (`model-flag-threading`), but the phase's proof-of-work — `pnpm test test/batch-engine/agent-model-selection.test.ts` — does not exist yet, so nothing proves the config-to-argv path end to end and the per-stage-model-selection phase cannot pass its gate. The README also still describes the `agent` setting as bare-name-only, so the shipped syntax is undocumented on the primary user surface.
+
+## What Changes
+
+- New integration suite `test/batch-engine/agent-model-selection.test.ts` (the phase proof-of-work) proving config-to-argv end to end: per-stage and scalar specs emit each agent's model flag with the exact model string (`--model` for claude/opencode, `-m` for codex), a bare agent name emits no model flag and its argv is byte-for-byte identical to an unset agent's, cross-scope nearest-wins merge moves agent+model atomically, and malformed specs (`claude:`, `:fable`) fail config/manifest load naming the offending value. Implements `features/model-selection-proof-and-docs/config-to-argv-proof.feature`.
+- `README.md`: the `agent` setting description (Supported tools paragraph, `README.md:211`) widens from "a single agent name or a partial per-stage map" to the `agent[:model]` spec — first-colon split, bare-name harness-default behavior, pass-through model validation — linking to the existing `docs/configuration/config-yaml.md#agent-model-spec` Reference section. Implements `features/model-selection-proof-and-docs/spec-syntax-docs.feature`.
+- `docs/configuration/config-yaml.md`: verified against the shipped behavior (the "Agent `[:model]` spec" section and the `agent` table row were written by the sibling changes); corrected only if a statement no longer matches the code. Implements `features/model-selection-proof-and-docs/spec-syntax-docs.feature`.
+- No production-code change: parser, schema, engine threading, and adapter flags are already shipped by the sibling changes. This change is the phase's proof and its user-facing documentation.
+
+## Design
+
+**Test at the integration layer, real adapters, fake spawner.** The suite lives in `test/batch-engine/` and drives the engine's step entry points (as `test/batch-engine/agent-stage-routing.test.ts` does) but — unlike the routing suite's fake adapters — resolves the REAL builtin adapters, injecting only the fake `Spawner` seam, so the captured `AgentSpawnRequest.args` carries the genuine `--model`/`-m` flags. That is the one thing the unit suites cannot prove: `parse-agent-spec` unit tests prove the parser, `model-flag-argv` unit tests prove `buildRequest`, and this suite proves the config value a user writes reaches the spawned argv through resolution → engine parse → adapter. Per the testing standard, nothing already provable at the unit level is re-tested here — the suite asserts on argv only, never parser internals.
+
+**Config scopes exercised through the real resolution seam.** Cross-scope scenarios build a tmpdir fixture (`fs.mkdtemp`, minimal `.ratchet/` tree, removed in `afterEach` — the fixture isolation pattern from the testing standard) with a project `.ratchet/config.yaml` and/or a manifest settings block, and resolve through `resolveBatchSettings` (`src/core/batch/config.ts:358`) so nearest-wins merge over whole spec strings is proven where it lives, not simulated. Malformed-spec scenarios assert config/manifest load failure with the parser's message naming the offending value.
+
+**Byte-for-byte regression check by comparison, not snapshot.** The bare-name scenario captures argv twice — once with `agent: claude`, once with no agent setting — and asserts deep equality, so the "current argv unchanged" success criterion is proven without hardcoding the base argv (which would rot when a sibling change legitimately alters it).
+
+**Multi-agent support.** The suite covers both model-flag spellings end to end (claude/opencode `--model`, codex `-m`) and never special-cases one agent in assertions beyond naming which adapter a stage resolved; the per-adapter flag-declaration invariant across ALL registered agents is already enforced by the drift guard in `test/core/batch/agent-init-link.test.ts`. Documentation stays agent-neutral: the README describes the spec once for every agent and lists each adapter's flag, never privileging one agent.
+
+**Documentation (per the `documentation` standard — mandatory, blocking).** The README is the user-facing surface this phase altered, so it must describe the spec in the same change that proves it. The `docs/` Reference entry already exists (`docs/configuration/config-yaml.md`, "Agent `[:model]` spec"); this change's doc task verifies it against shipped behavior and fixes drift rather than duplicating it. No new Mermaid diagram: the change adds no new component or flow — it documents a value syntax inside the existing settings reference, where a diagram would merely restate adjacent prose.
+
+**Test header traceability.** The suite's file header names `features/model-selection-proof-and-docs/config-to-argv-proof.feature`, matching the `Implements:` convention used across `test/`.
+
+## Tasks
+
+- [x] 1.1 Write `test/batch-engine/agent-model-selection.test.ts` spawn scenarios: per-stage map (`propose: claude:fable`, `apply: opencode:zai/glm-5.2`, `verify: opencode:qwen/qwen-3.7`) asserts each transition's captured argv carries that agent's model flag with the exact model string; scalar `claude:fable` covers every stage; scalar `codex:gpt-5.2-codex` proves the `-m` spelling end to end (`config-to-argv-proof.feature`, tmpdir fixture + fake Spawner + real adapters, feature named in the header)
+- [x] 1.2 Add the bare-name scenario: `agent: claude` argv contains no `--model` and deep-equals the argv captured with no agent setting configured
+- [x] 1.3 Add the cross-scope scenario through `resolveBatchSettings`: project-config scalar `claude:fable` + manifest `apply: opencode:zai/glm-5.2` → propose spawns claude `--model fable`, apply spawns opencode `--model zai/glm-5.2` with no trace of `fable` (agent+model move atomically)
+- [x] 1.4 Add the malformed-spec load scenarios: `claude:` in project config and `:fable` in a manifest each fail load before any spawn with a message naming the offending value
+- [x] 2.1 Documentation (per the `documentation` standard): update `README.md` — widen the `agent` setting description to the `agent[:model]` spec (first-colon rule, bare-name harness-default, pass-through model validation, link to `docs/configuration/config-yaml.md#agent-model-spec`) — and verify the existing "Agent `[:model]` spec" section plus the `agent` table row in `docs/configuration/config-yaml.md` match the shipped behavior, correcting any drift (`spec-syntax-docs.feature`)
+- [x] 3.1 Run the phase proof-of-work `pnpm test test/batch-engine/agent-model-selection.test.ts` to exit 0, then the full suite to confirm the coverage gate stays green

@@ -1,44 +1,44 @@
 import { describe, it, expect } from 'vitest';
 import {
-  getPrOpenSkillTemplate,
-  getRctPrOpenCommandTemplate,
-} from '../../../../src/core/templates/workflows/pr-open.js';
+  getOpenPrSkillTemplate,
+  getRctOpenPrCommandTemplate,
+} from '../../../../src/core/templates/workflows/open-pr.js';
 import { CommandAdapterRegistry } from '../../../../src/core/command-generation/registry.js';
 import { generateCommand } from '../../../../src/core/command-generation/generator.js';
 import type { CommandContent } from '../../../../src/core/command-generation/types.js';
 
 /**
- * Unit tests for the shared PR-open workflow templates.
+ * Unit tests for the shared open-pr workflow templates.
  *
- * Implements `features/pr-open-instruction/shared-command.feature`: the shared,
- * forge-agnostic PR-open command authored once in the command/workflow layer, with
- * its own command id (`pr-open`) and paired skill (`ratchet-pr-open`), whose body
- * instructs the spawned PR agent to read `git log` for the repo's commit style,
- * commit the accumulated work, push the work branch, and open exactly one
+ * Implements `features/open-pr-command/rename.feature`: the shared,
+ * forge-agnostic open-pr command authored once in the command/workflow layer,
+ * with its own command id (`open-pr`) and paired skill (`ratchet-open-pr`), whose
+ * body instructs the spawned PR agent to read `git log` for the repo's commit
+ * style, commit the accumulated work, push the work branch, and open exactly one
  * forge-agnostic PR to its base branch.
  */
 
-describe('pr-open workflow templates', () => {
+describe('open-pr workflow templates', () => {
   it('exposes a skill template with the canonical identity', () => {
-    const skill = getPrOpenSkillTemplate();
+    const skill = getOpenPrSkillTemplate();
 
-    expect(skill.name).toBe('ratchet-pr-open');
+    expect(skill.name).toBe('ratchet-open-pr');
     expect(skill.description).toBeTruthy();
     expect(skill.instructions).toBeTruthy();
   });
 
   it('exposes a command template sharing the SAME shared body as the skill', () => {
-    const command = getRctPrOpenCommandTemplate();
+    const command = getRctOpenPrCommandTemplate();
 
     expect(command.name).toBeTruthy();
     expect(command.category).toBe('Workflow');
     expect(command.tags).toEqual(['workflow', 'batch', 'experimental']);
     // One author of the lifecycle instructions: the command body IS the skill body.
-    expect(command.content).toBe(getPrOpenSkillTemplate().instructions);
+    expect(command.content).toBe(getOpenPrSkillTemplate().instructions);
   });
 
   describe('the shared body instructs the whole PR-open lifecycle', () => {
-    const body = getPrOpenSkillTemplate().instructions;
+    const body = getOpenPrSkillTemplate().instructions;
 
     it('directs reading git log for the commit style with a semantic/Conventional default', () => {
       expect(body).toContain('git log');
@@ -96,9 +96,9 @@ describe('pr-open workflow templates', () => {
     // registered tool's command file via its adapter. Render it through EVERY
     // adapter and assert the core lifecycle instructions survive each tool's
     // formatting (frontmatter/path differ; body must not) — no agent special-cased.
-    const cmd = getRctPrOpenCommandTemplate();
+    const cmd = getRctOpenPrCommandTemplate();
     const content: CommandContent = {
-      id: 'pr-open',
+      id: 'open-pr',
       name: cmd.name,
       description: cmd.description,
       category: cmd.category,

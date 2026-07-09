@@ -7,7 +7,7 @@
  * fake-adapter + `Spawner` seam `agent-stage-routing.test.ts` uses, and asserts
  * the engine-layer guarantees independent of any CLI wiring:
  *   - `prGrouping: whole-batch`, no prior PR journal → EXACTLY ONE spawn that
- *     delegates to `/rct:pr-open` carrying the resolved work/base branch, and a
+ *     delegates to `/rct:open-pr` carrying the resolved work/base branch, and a
  *     `completion` entry with `transition: 'pr'` recorded at the batch locus;
  *   - the `pr` stage routes the spawn (mapped / scalar / default agent) and the
  *     invocation token uses that agent's own command syntax;
@@ -150,21 +150,21 @@ function prCtx(over: Partial<PrStepContext> = {}): PrStepContext {
 }
 
 describe('pr-spawn-at-completion — whole-batch grouping spawns one delegating PR agent', () => {
-  it('spawns exactly one PR agent delegating to /rct:pr-open with branch data, and journals a pr completion', async () => {
+  it('spawns exactly one PR agent delegating to /rct:open-pr with branch data, and journals a pr completion', async () => {
     const result = await engine({ spawner: completingSpawner }).runPrStep(prCtx());
 
     // Exactly one agent, spawned as the default agent (unset `agent`).
     expect(calls).toHaveLength(1);
     expect(calls[0].command).toBe(DEFAULT_AGENT);
 
-    // Its instructions delegate to the shared /rct:pr-open command (the default
+    // Its instructions delegate to the shared /rct:open-pr command (the default
     // agent's own invocation token), not an inline engine-authored PR prompt.
     const instr = calls[0].instructions;
     expect(instr).toContain(
-      CommandAdapterRegistry.get(DEFAULT_AGENT)!.getInvocation('pr-open')
+      CommandAdapterRegistry.get(DEFAULT_AGENT)!.getInvocation('open-pr')
     );
     expect(instr).toMatch(/Do NOT hand-build|delegate to the skill/);
-    // The resolved work/base branch ride in the prompt as the pr-open Input data.
+    // The resolved work/base branch ride in the prompt as the open-pr Input data.
     expect(instr).toContain(WORK);
     expect(instr).toContain(BASE);
     // It reports under the PR journal key, not a change name.
@@ -190,7 +190,7 @@ describe('pr-spawn-at-completion — the pr stage routes the spawn', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].command).toBe('opencode');
     expect(calls[0].instructions).toContain(
-      CommandAdapterRegistry.get('opencode')!.getInvocation('pr-open')
+      CommandAdapterRegistry.get('opencode')!.getInvocation('open-pr')
     );
   });
 
@@ -201,7 +201,7 @@ describe('pr-spawn-at-completion — the pr stage routes the spawn', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].command).toBe('gemini');
     expect(calls[0].instructions).toContain(
-      CommandAdapterRegistry.get('gemini')!.getInvocation('pr-open')
+      CommandAdapterRegistry.get('gemini')!.getInvocation('open-pr')
     );
   });
 
@@ -287,7 +287,7 @@ describe('pr-spawn-at-completion — failures surface and keep retry possible', 
     expect(calls).toHaveLength(0); // no spawn
     expect(result.state).toBe('blocked'); // failed → blocked, resumable
     const surfaced = (result.message ?? '') + '\n' + printed.join('\n');
-    expect(surfaced).toContain('pr-open'); // names the missing command
+    expect(surfaced).toContain('open-pr'); // names the missing command
     expect(surfaced).toContain('remote'); // names the locus
     // A locus failure records no pr completion, so retry stays possible.
     expect(hasJournaledPr(readJournalTolerant(projectRoot, BATCH))).toBe(false);

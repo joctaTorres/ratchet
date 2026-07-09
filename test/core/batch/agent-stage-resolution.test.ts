@@ -107,12 +107,14 @@ describe('resolveBatchSettings — per-stage cross-scope merge for agent', () =>
     expect(resolveAgentForStage(settings.agent, 'verify')).toBe('claude');
     expect(sources.agent).toBe('manifest');
     // Materialized full map so the scalar fallback is preserved per stage
-    // (including the `pr` stage, which the scalar base also covers).
+    // (including the `pr` and `decompose` stages, which the scalar base also
+    // covers).
     expect(settings.agent).toEqual({
       propose: 'claude',
       apply: 'opencode',
       verify: 'claude',
       pr: 'claude',
+      decompose: 'claude',
     });
   });
 

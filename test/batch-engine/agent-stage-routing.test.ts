@@ -12,7 +12,9 @@
  *   - a full/partial stage-map spawns the agent mapped to each stage, and the
  *     invocation is rendered with that agent's command adapter;
  *   - an unknown mapped agent fails before any spawn;
- *   - the phase-decomposition step (not a lifecycle stage) ignores the stage-map.
+ *   - the phase-decomposition step routes through the `decompose` stage exactly
+ *     as a change step routes its transition (scalar covers it; map entry routes
+ *     it; unmapped → default).
  *
  * Also covers `engine-spec-parsing.feature` spawn scenarios: a spec-form value
  * resolves the adapter by its agent part and threads the model into the captured
@@ -216,7 +218,7 @@ describe('per-stage adapter resolution — rejection before spawn', () => {
   }
 });
 
-describe('per-stage adapter resolution — decomposition ignores the stage-map', () => {
+describe('per-stage adapter resolution — the decompose stage routes the spawn', () => {
   function decompCtx(agent: BatchSettings['agent']): DecompositionStepContext {
     return {
       batch: BATCH,
@@ -226,12 +228,44 @@ describe('per-stage adapter resolution — decomposition ignores the stage-map',
     };
   }
 
-  it('spawns the default agent even when a stage-map maps apply elsewhere', async () => {
+  it('a decompose entry in a stage-map routes the decompose spawn to that agent', async () => {
+    await engine().runDecompositionStep(decompCtx({ decompose: 'opencode' }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('opencode');
+    // The rendered decompose invocation uses that agent's own command syntax.
+    expect(calls[0].instructions).toContain(
+      CommandAdapterRegistry.get('opencode')!.getInvocation('decompose-phase')
+    );
+  });
+
+  it('a scalar agent covers the decompose stage', async () => {
+    await engine().runDecompositionStep(decompCtx('opencode'));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('opencode');
+  });
+
+  it('an unmapped decompose under a per-stage map falls to the default agent with no model flag', async () => {
     await engine().runDecompositionStep(decompCtx({ apply: 'opencode' }));
     expect(calls).toHaveLength(1);
-    // The decomposition is not a lifecycle stage: the map's `apply` entry does not
-    // reach it, so it falls back through the scalar (none) to the default agent.
+    // The map names `apply` but not `decompose`, so the decompose spawn falls
+    // back to DEFAULT_AGENT — byte-for-byte the pre-routing argv (no model flag).
     expect(calls[0].command).toBe(DEFAULT_AGENT);
+    expect(calls[0].args).toEqual([]);
+  });
+
+  it('a spec-form decompose entry routes the agent and threads the model flag', async () => {
+    const opencode = capturingAdapter('opencode');
+    const eng = new RatchetBatchEngine({
+      spawner,
+      adapters: { opencode: opencode.adapter },
+      projectRoot: () => projectRoot,
+      skillLocusDeps: { exists: () => true, writeText: () => {} },
+    });
+    await eng.runDecompositionStep(decompCtx({ decompose: 'opencode:zai/glm-5.2' }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('opencode');
+    expect(opencode.captured[0].model).toBe('zai/glm-5.2');
+    expect(calls[0].args).toEqual(['--model', 'zai/glm-5.2']);
   });
 });
 

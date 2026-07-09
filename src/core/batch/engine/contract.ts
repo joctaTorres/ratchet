@@ -144,13 +144,13 @@ export interface DecompositionStepContext {
   /**
    * Per-stage supplying scope for the resolved `agent` setting, threaded from
    * {@link resolveBatchSettings} (via `batchApplyCommand`). The decomposition
-   * spawn resolves via `scalarAgent` — a stage map never routes it — so its
-   * supplying scope is the uniform scope across every stage
-   * ({@link uniformAgentScope}). When present and the parsed spec names a
-   * model, the engine builds a model-failure attribution naming that scope so a
-   * fast-failing decompose spawn under an explicit scalar model surfaces the
-   * same attributed hint a change step gets. Left undefined by the standalone
-   * paths (no scope present → the mapper's gate keeps today's failure surface).
+   * spawn routes via the `decompose` stage (exactly as a change step routes its
+   * transition and the PR step routes `pr`), so its supplying scope is the
+   * `decompose` entry here. When present and the parsed spec names a model, the
+   * engine builds a model-failure attribution naming that scope so a
+   * fast-failing decompose spawn under an explicit model surfaces the same
+   * attributed hint a change step gets. Left undefined by the standalone paths
+   * (no scope present → the mapper's gate keeps today's failure surface).
    */
   agentStageScopes?: Partial<Record<AgentStage, SettingSource>>;
   /**
@@ -165,13 +165,13 @@ export interface DecompositionStepContext {
 /**
  * The batch-scoped subset the engine needs to drive ONE whole-batch PR-open step
  * for a completed batch. Like a decomposition step it carries NO `change` and NO
- * `transition`: the spawned PR agent delegates to the canonical `/rct:pr-open`
+ * `transition`: the spawned PR agent delegates to the canonical `/rct:open-pr`
  * command to commit the prior stage agents' accumulated work in the repo's
  * git-log style and open EXACTLY ONE pull request from the work branch to its base
  * branch. The engine never re-authors those commit/push/PR-open steps itself.
  *
  * `baseBranch`/`workBranch` are RESOLVED UPSTREAM (the CLI's job when it assembles
- * this context) and delivered here as DATA the `pr-open` body consumes as its
+ * this context) and delivered here as DATA the `open-pr` body consumes as its
  * "Input" — mirroring how `DecompositionStepContext.priorResults` hands the
  * decomposition skill its grounding context rather than having the engine read it
  * (`instruction-fed-config`). The engine method stays pure and unit-testable over

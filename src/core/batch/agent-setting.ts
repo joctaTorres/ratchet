@@ -25,15 +25,18 @@ import { z } from 'zod';
 
 /**
  * The lifecycle stages a batch `agent` map may route independently:
- * `propose | apply | verify | pr`. The first three mirror the `Transition`
- * lifecycle the engine already models (`engine/contract.ts`); `pr` is the fourth
- * routable stage for the dedicated PR agent that opens a whole-batch PR at
- * completion. `Transition` stays a strict subset of these keys, so schema-only:
- * no current transition maps to `pr` (nothing spawns a PR agent here — that
- * arrives with the spawn-at-completion change). Kept as a local constant to stay
- * schema-only; the resolution consumers key off the same list.
+ * `propose | apply | verify | pr | decompose`. The first three mirror the
+ * `Transition` lifecycle the engine already models (`engine/contract.ts`); `pr`
+ * is the fourth routable stage for the dedicated PR agent that opens a
+ * whole-batch PR at completion. `decompose` is the fifth routable stage for the
+ * phase-decomposition agent that authors a reachable phase's concrete change
+ * intents into `batch.yaml` from prior phases' shipped results. `Transition`
+ * stays a strict subset of these keys, so schema-only: no current transition
+ * maps to `pr` or `decompose` (nothing spawns those agents here — those arrive
+ * with the spawn-at-completion / decomposition changes). Kept as a local
+ * constant to stay schema-only; the resolution consumers key off the same list.
  */
-export const AGENT_STAGE_KEYS = ['propose', 'apply', 'verify', 'pr'] as const;
+export const AGENT_STAGE_KEYS = ['propose', 'apply', 'verify', 'pr', 'decompose'] as const;
 export type AgentStage = (typeof AGENT_STAGE_KEYS)[number];
 
 /**

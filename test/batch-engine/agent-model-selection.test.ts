@@ -21,12 +21,15 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
+import { DEFAULT_AGENT } from '../../src/core/batch/engine/agent.js';
+import { CommandAdapterRegistry } from '../../src/core/command-generation/index.js';
 import type {
   AgentSpawnRequest,
   Spawner,
 } from '../../src/core/batch/engine/agent.js';
 import type {
   ChangeStepContext,
+  DecompositionStepContext,
   Transition,
 } from '../../src/core/batch/engine/contract.js';
 import type {
@@ -248,6 +251,7 @@ describe('nearest-wins per-stage merge moves agent and model atomically across s
       apply: 'opencode:zai/glm-5.2',
       verify: 'claude:fable',
       pr: 'claude:fable',
+      decompose: 'claude:fable',
     });
 
     // Propose spawns claude with --model fable.
@@ -404,5 +408,124 @@ describe('valid standalone --agent values behave byte-for-byte unchanged (fail-b
     expect(calls).toHaveLength(1);
     expect(calls[0].command).toBe('claude');
     expectModelFlag(calls[0].args, '--model', 'fable');
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Scenario: the decompose stage routes config→argv end to end
+// (features/decompose-stage/routing.feature — proof-of-work)
+//
+// Drives the REAL builtin adapters through the engine's decomposition entry point
+// over a tmpdir fixture with an injected fake Spawner. Proves the one thing the
+// unit suites cannot: that a `decompose` spec a user writes in config (project
+// or manifest) demonstrably lands on the spawned agent's argv through
+// resolveBatchSettings → engine parse → adapter, mirroring the change-step
+// config-to-argv proof above.
+// -----------------------------------------------------------------------------
+function decompCtx(
+  agent: BatchSettings['agent'],
+  override?: Partial<DecompositionStepContext>
+): DecompositionStepContext {
+  return {
+    batch: BATCH,
+    phase: { name: 'p1', goal: 'g', success: 's', proofOfWork: POW },
+    priorResults: [],
+    settings: settings(agent),
+    ...override,
+  };
+}
+
+describe('decompose stage routes config→argv end to end (decompose-stage/routing.feature)', () => {
+  it('a decompose entry in project config routes the decompose spawn with the model flag', async () => {
+    const ratchetDir = path.join(projectRoot, '.ratchet');
+    await fs.mkdir(ratchetDir, { recursive: true });
+    await fs.writeFile(
+      path.join(ratchetDir, 'config.yaml'),
+      'schema: ratchet\nbatch:\n  agent:\n    decompose: opencode:zai/glm-5.2\n'
+    );
+    const { settings: resolved, agentStageScopes } = resolveBatchSettings(projectRoot);
+    await engine().runDecompositionStep(
+      decompCtx(resolved.agent, { agentStageScopes })
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('opencode');
+    expectModelFlag(calls[0].args, '--model', 'zai/glm-5.2');
+  });
+
+  it('a decompose entry in the batch manifest routes the decompose spawn with the model flag', async () => {
+    const manifest: BatchManifest = {
+      name: BATCH,
+      phases: [],
+      settings: { agent: { decompose: 'opencode:qwen/qwen-3.7' } },
+    } as unknown as BatchManifest;
+    const { settings: resolved, agentStageScopes } = resolveBatchSettings(projectRoot, manifest);
+    await engine().runDecompositionStep(
+      decompCtx(resolved.agent, { agentStageScopes })
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('opencode');
+    expectModelFlag(calls[0].args, '--model', 'qwen/qwen-3.7');
+  });
+
+  it('the manifest decompose entry wins over project config nearest-wins', async () => {
+    const ratchetDir = path.join(projectRoot, '.ratchet');
+    await fs.mkdir(ratchetDir, { recursive: true });
+    await fs.writeFile(
+      path.join(ratchetDir, 'config.yaml'),
+      'schema: ratchet\nbatch:\n  agent:\n    decompose: opencode:zai/glm-5.2\n'
+    );
+    const manifest: BatchManifest = {
+      name: BATCH,
+      phases: [],
+      settings: { agent: { decompose: 'claude:fable' } },
+    } as unknown as BatchManifest;
+    const { settings: resolved, agentStageScopes } = resolveBatchSettings(projectRoot, manifest);
+    await engine().runDecompositionStep(
+      decompCtx(resolved.agent, { agentStageScopes })
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('claude');
+    expectModelFlag(calls[0].args, '--model', 'fable');
+    // The project-config decompose entry does not apply (manifest won).
+    expect(calls[0].args).not.toContain('zai/glm-5.2');
+  });
+
+  it('a scalar agent setting covers the decompose step with the model flag', async () => {
+    await engine().runDecompositionStep(decompCtx('opencode:zai/glm-5.2'));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('opencode');
+    expectModelFlag(calls[0].args, '--model', 'zai/glm-5.2');
+  });
+
+  it('an unmapped decompose under a per-stage map falls to the default agent with no model flag, argv byte-for-byte', async () => {
+    // A per-stage map naming apply/verify but not decompose: decompose is
+    // unmapped → DEFAULT_AGENT with no model flag, byte-for-byte the argv
+    // produced before decompose was routable (no agent set at all).
+    const stageMap = { apply: 'opencode', verify: 'opencode' } as const;
+    await engine().runDecompositionStep(decompCtx({ ...stageMap }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe(DEFAULT_AGENT);
+    expectNoModelFlag(calls[0].args, '--model');
+    const mappedArgs = [...calls[0].args];
+
+    // Capture the pre-routing argv: no agent set → DEFAULT_AGENT, no model flag.
+    calls = [];
+    await engine().runDecompositionStep(decompCtx(undefined));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe(DEFAULT_AGENT);
+    expectNoModelFlag(calls[0].args, '--model');
+    // Byte-for-byte identical — unmapped decompose changes nothing.
+    expect(calls[0].args).toEqual(mappedArgs);
+  });
+
+  it('the rendered decompose command and invocation match the routed agent', async () => {
+    await engine().runDecompositionStep(decompCtx({ decompose: 'opencode' }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('opencode');
+    // The instruction delegates via the opencode adapter's own invocation syntax
+    // for the decompose-phase command — not the default agent's.
+    expect(calls[0].instructions).toContain(
+      CommandAdapterRegistry.get('opencode')!.getInvocation('decompose-phase')
+    );
   });
 });

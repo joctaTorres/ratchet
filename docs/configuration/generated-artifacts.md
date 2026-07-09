@@ -92,21 +92,24 @@ The `core` profile (the default) installs eleven workflows. The `eval` workflow 
 | `archive-batch` | `ratchet-archive-batch` | `archive-batch` |
 | `propose-batch` | `ratchet-propose-batch` | `propose-batch` |
 | `decompose-phase` | `ratchet-decompose-phase` | `decompose-phase` |
-| `pr-open` | `ratchet-pr-open` | `pr-open` |
+| `open-pr` | `ratchet-open-pr` | `open-pr` |
 
-The `pr-open` command is also the artifact the batch engine renders into the spawn
+The `open-pr` command is also the artifact the batch engine renders into the spawn
 locus for the whole-batch PR step: at batch completion the engine spawns a PR agent
-that delegates to `/rct:pr-open` to commit the accumulated work in the repo's
+that delegates to `/rct:open-pr` to commit the accumulated work in the repo's
 `git log` commit style, push the work branch, and open exactly one forge-agnostic PR
 to its base branch. Like every command it is generated for every tool above at the
-tool's command path (e.g. claude `.claude/commands/rct/pr-open.md`, cursor
-`.cursor/commands/rct-pr-open.md`).
+tool's command path (e.g. claude `.claude/commands/rct/open-pr.md`, cursor
+`.cursor/commands/rct-open-pr.md`).
 
 The `decompose-phase` command is also the artifact the batch engine renders into
 the spawn locus when `batch apply` drives a phase decomposition (it delegates to
 `/rct:decompose-phase <phase>` to author a reachable empty phase's change intents
-into `batch.yaml`). Like every command it is generated for every tool above at the
-tool's command path (e.g. claude `.claude/commands/rct/decompose-phase.md`, cursor
+into `batch.yaml`). The decomposition spawn routes through the `decompose` agent
+stage — so `agent.decompose` (or a scalar `agent`) selects which agent runs it,
+exactly as the `pr` stage selects the PR agent. Like every command it is
+generated for every tool above at the tool's command path (e.g. claude
+`.claude/commands/rct/decompose-phase.md`, cursor
 `.cursor/commands/rct-decompose-phase.md`).
 
 **Opt-in workflow** (custom profile only):

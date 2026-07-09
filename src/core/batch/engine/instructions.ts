@@ -11,7 +11,7 @@
 import { CommandAdapterRegistry } from '../../command-generation/index.js';
 import { rctCommandIdForTransition, DECOMPOSE_COMMAND_ID, PR_OPEN_COMMAND_ID } from './skill-locus.js';
 import { DEFAULT_AGENT } from './agent.js';
-import { scalarAgent, resolveAgentForStage, parseAgentSpec } from '../agent-setting.js';
+import { resolveAgentForStage, parseAgentSpec } from '../agent-setting.js';
 import type { ChangeStepContext, DecompositionStepContext, PrStepContext } from './contract.js';
 import type { PrGroupBoundary } from './boundary.js';
 
@@ -242,10 +242,14 @@ export function decompositionJournalKey(phase: string): string {
  * adapter rather than an inline string.
  */
 function rctDecomposeInvocation(context: DecompositionStepContext): string {
-  // The resolved value is a whole `agent[:model]` spec string; the invocation
-  // token keys on the AGENT PART alone, so a spec-form value routes exactly like
-  // its bare name — never the default agent's syntax for a spec-form setting.
-  const resolved = scalarAgent(context.settings.agent);
+  // Resolve the invocation token for the SAME per-stage agent the engine spawns
+  // for the decompose step, so a stage routed to a non-default agent is handed
+  // that agent's invocation syntax (not the default agent's). Falls back to
+  // `DEFAULT_AGENT` for an unmapped stage / unset agent exactly as before. The
+  // resolved value is a whole `agent[:model]` spec string; the invocation token
+  // keys on the AGENT PART alone, so a spec-form value routes exactly like its
+  // bare name — never the default agent's syntax for a spec-form setting.
+  const resolved = resolveAgentForStage(context.settings.agent, 'decompose');
   const agentId =
     (resolved !== undefined ? parseAgentSpec(resolved).agent : undefined) ?? DEFAULT_AGENT;
   const adapter =
@@ -422,7 +426,7 @@ export function prJournalKey(batch: string, boundary?: PrGroupBoundary): string 
 }
 
 /**
- * Resolve the `/rct:pr-open` skill-invocation token the spawned PR agent should
+ * Resolve the `/rct:open-pr` skill-invocation token the spawned PR agent should
  * run. The command id is the single-source {@link PR_OPEN_COMMAND_ID} the
  * spawn-locus guarantee also renders, and the invocation TOKEN is resolved through
  * the agent the `pr` STAGE maps to (`resolveAgentForStage(settings.agent, 'pr')`) —
@@ -430,9 +434,9 @@ export function prJournalKey(batch: string, boundary?: PrGroupBoundary): string 
  * stage routed to a non-default agent is handed that agent's own invocation syntax
  * (`multi-agent-support`). Falls back to `DEFAULT_AGENT`'s adapter for an
  * unmapped/unset agent (or a synthetic spawn stand-in with no adapter), exactly as
- * {@link rctDecomposeInvocation} does. The `pr-open` command takes no positional
+ * {@link rctDecomposeInvocation} does. The `open-pr` command takes no positional
  * argument — the work/base branch ride in the prompt as Input data, not the
- * invocation — so the token stays the bare `/rct:pr-open`.
+ * invocation — so the token stays the bare `/rct:open-pr`.
  */
 function rctPrOpenInvocation(context: PrStepContext): string {
   // The `pr` stage value is a whole `agent[:model]` spec string; the invocation
@@ -448,7 +452,7 @@ function rctPrOpenInvocation(context: PrStepContext): string {
 
 /**
  * The resolved work/base branch delivered to the PR agent as the "Input" data the
- * `pr-open` body expects (`instruction-fed-config`): the static skill body says the
+ * `open-pr` body expects (`instruction-fed-config`): the static skill body says the
  * surrounding instructions supply the work and base branch, and this supplies
  * exactly that. The base is a GENERAL supplied value passed through VERBATIM —
  * whatever the `PrStepContext` carries: the repository's default branch for a
@@ -462,7 +466,7 @@ function rctPrOpenInvocation(context: PrStepContext): string {
  */
 function prInputContext(context: PrStepContext): string {
   return [
-    'Input for the pr-open command (the branches are already resolved for you):',
+    'Input for the open-pr command (the branches are already resolved for you):',
     `  Work branch: ${context.workBranch}`,
     `  Base branch: ${context.baseBranch}`,
     `Open EXACTLY ONE pull request FROM the work branch "${context.workBranch}" TO`,
@@ -473,7 +477,7 @@ function prInputContext(context: PrStepContext): string {
 }
 
 /**
- * Delegate the whole-batch PR-open step to the canonical `/rct:pr-open` skill
+ * Delegate the whole-batch PR-open step to the canonical `/rct:open-pr` skill
  * rather than re-authoring the commit/push/PR-open steps inline
  * (`delegated-lifecycle`: the engine orchestrates the spawn; the shared skill
  * authors the PR steps). The prose is agent-neutral (names no coding agent and no
@@ -483,7 +487,7 @@ function prInputContext(context: PrStepContext): string {
 function prDelegationGuidance(context: PrStepContext): string {
   const invocation = `  ${rctPrOpenInvocation(context)}`;
   return [
-    'Open the pull request by invoking the ratchet pr-open skill — run:',
+    'Open the pull request by invoking the ratchet open-pr skill — run:',
     invocation,
     'It loads the project standards under ".ratchet/standards/" and is the single',
     "author of the PR-open steps: read `git log` for the repository's commit style",
@@ -510,7 +514,7 @@ function prScopeDescription(boundary?: PrGroupBoundary): string {
  * Build the spawned agent's instructions for ONE PR-open step. Unlike
  * {@link buildAgentInstructions} (a per-change transition) it directs the agent to
  * commit the accumulated work and open a single pull request by delegating to the
- * canonical `/rct:pr-open` skill. The terminal phase framing and the resolved
+ * canonical `/rct:open-pr` skill. The terminal phase framing and the resolved
  * work/base branch are injected as the delegation's Input, so the delegation is
  * context-preserving and never a bare, context-free skill call
  * (`delegated-lifecycle` / `instruction-fed-config`).

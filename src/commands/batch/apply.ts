@@ -797,8 +797,9 @@ async function runDecomposition(
     priorResults: priorPhaseResults(status, phase.name),
     settings,
     // Thread the per-stage supplying scopes so a fast-failing decompose spawn
-    // under an explicit scalar model can attribute its uniform supplying scope
-    // (project config vs batch manifest). The standalone paths thread no scopes.
+    // under an explicit model can attribute its own `decompose` stage entry's
+    // supplying scope (project config vs batch manifest). The standalone paths
+    // thread no scopes.
     agentStageScopes,
     // Thread the resolved resume answer/feedback exactly as a change step does
     // (W1): a parked decomposition that the user answered must carry that answer
@@ -821,7 +822,7 @@ async function runDecomposition(
 /**
  * Resolve the git branch names the completion PR step opens between — branch
  * resolution is the CLI's job (`instruction-fed-config`, `generalizable-defaults`),
- * delivered to the engine as `PrStepContext` data the `/rct:pr-open` body consumes
+ * delivered to the engine as `PrStepContext` data the `/rct:open-pr` body consumes
  * as its "Input": `workBranch` from the current branch (`git rev-parse
  * --abbrev-ref HEAD`), `baseBranch` from the repo's default branch (`git
  * symbolic-ref --short refs/remotes/origin/HEAD`, stripped of its `origin/`
@@ -858,7 +859,7 @@ export function resolveBranches(projectRoot: string): ResolvedBranches {
  * So a blocked/failed PR step parks under the PR key and renders as a reported
  * step failure with no new failure logic, and an advanced PR step clears the park.
  * `runPr` never re-authors the commit/push/PR-open steps (they live once in the
- * `/rct:pr-open` body) and adds no journal writes beyond the shared park state.
+ * `/rct:open-pr` body) and adds no journal writes beyond the shared park state.
  */
 async function runPr(
   projectRoot: string,

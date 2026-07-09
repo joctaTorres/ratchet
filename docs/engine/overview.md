@@ -558,9 +558,8 @@ entries the agent wrote during the session and the process exit status:
    parked-step reason shown on resume, the journal entry message recorded for
    the transition, and the standalone change-step renderer. The `pr` stage
    spawn is attributed via its `pr` stage entry's supplying scope; the
-   phase-decomposition spawn (which resolves via the scalar `agent` setting,
-   never a stage map) is attributed via the uniform supplying scope across
-   every stage. The hint never interprets stderr content and never diagnoses.
+   phase-decomposition spawn is likewise attributed via its own `decompose`
+   stage entry's supplying scope. The hint never interprets stderr content and never diagnoses.
    A signal-killed spawn (e.g. a `timeout` SIGKILL, OOM kill — `exitCode:
    null, signal: 'SIGKILL'`) under a valid explicit model is NOT a real exit
    code, so the hint is suppressed there even with zero journal entries; the

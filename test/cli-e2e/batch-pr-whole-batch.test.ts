@@ -114,7 +114,7 @@ async function prepareCompletedRepo(
 /**
  * The forge-agnostic fake PR agent, as a POSIX shell stand-in fed through
  * `RATCHET_BATCH_AGENT_CMD`. It reads the step instructions on stdin and acts ONLY
- * on the `/rct:pr-open` step (any other spawn is a no-op, so it cannot inflate the
+ * on the `/rct:open-pr` step (any other spawn is a no-op, so it cannot inflate the
  * "spawned exactly once" count). For the PR step it derives the commit style from
  * `git log` (defaulting to semantic / Conventional Commits), authors one commit on
  * the work branch, appends one line to the PR-open sentinel capturing the work/base
@@ -125,7 +125,7 @@ function prAgentOverride(sentinel: string): string {
   return [
     'instr="$(cat)"',
     'case "$instr" in',
-    '  */rct:pr-open*)',
+    '  */rct:open-pr*)',
     // Parse the work/base branch from the instruction "Input" the CLI delivered.
     '    work="$(printf %s "$instr" | sed -n "s/.*Work branch: \\([^ ]*\\).*/\\1/p" | head -n1)";',
     '    base="$(printf %s "$instr" | sed -n "s/.*Base branch: \\([^ ]*\\).*/\\1/p" | head -n1)";',
@@ -151,7 +151,7 @@ function failingPrAgentOverride(): string {
   return [
     'instr="$(cat)"',
     'case "$instr" in',
-    '  */rct:pr-open*) echo "simulated commit/push failure" >&2; exit 1 ;;',
+    '  */rct:open-pr*) echo "simulated commit/push failure" >&2; exit 1 ;;',
     '  *) : ;;',
     'esac',
   ].join('\n');
@@ -190,7 +190,7 @@ describe('whole-batch PR opening — batch apply e2e against the fake spawn seam
 
     // Exactly one PR-open action was recorded, capturing the resolved branches —
     // proof the PR agent was spawned exactly once for the `pr` stage and its
-    // instructions carried the work/base branch (it acts only on /rct:pr-open).
+    // instructions carried the work/base branch (it acts only on /rct:open-pr).
     const actions = prOpenActions(sentinel);
     expect(actions).toHaveLength(1);
     expect(actions[0]).toContain(`work=${WORK_BRANCH}`);

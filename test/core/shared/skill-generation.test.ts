@@ -36,7 +36,7 @@ describe('skill-generation', () => {
       expect(dirNames).toContain('ratchet-apply-batch');
       expect(dirNames).toContain('ratchet-archive-batch');
       expect(dirNames).toContain('ratchet-propose-batch');
-      expect(dirNames).toContain('ratchet-pr-open');
+      expect(dirNames).toContain('ratchet-open-pr');
       expect(dirNames).toContain('ratchet-eval');
       // explore is internal-only and is never generated
       expect(dirNames).not.toContain('ratchet-explore');
@@ -125,20 +125,20 @@ describe('skill-generation', () => {
       }
     });
 
-    it('renders the ratchet-pr-open skill for every supported agent', () => {
-      const entry = getSkillTemplates(['pr-open']);
+    it('renders the ratchet-open-pr skill for every supported agent', () => {
+      const entry = getSkillTemplates(['open-pr']);
       expect(entry).toHaveLength(1);
-      expect(entry[0].dirName).toBe('ratchet-pr-open');
+      expect(entry[0].dirName).toBe('ratchet-open-pr');
 
       // Iterate the supported-tools registry rather than hard-coding one agent:
-      // ratchet init writes `<tool.skillsDir>/skills/ratchet-pr-open/SKILL.md`
+      // ratchet init writes `<tool.skillsDir>/skills/ratchet-open-pr/SKILL.md`
       // for each registered agent, so the forge-agnostic PR-open body must render
       // for all of them.
       const agents = AI_TOOLS.filter((t) => t.skillsDir);
       expect(agents.length).toBeGreaterThanOrEqual(5);
       for (const tool of agents) {
         const content = generateSkillContent(entry[0].template, '0.0.0-test');
-        expect(content).toContain('name: ratchet-pr-open');
+        expect(content).toContain('name: ratchet-open-pr');
         // Encodes the PR-open lifecycle: git-log commit style, exactly one PR,
         // whichever forge CLI the environment provides.
         expect(content).toContain('git log');
@@ -147,16 +147,16 @@ describe('skill-generation', () => {
         // Agent-neutral: never names a single agent's tooling.
         expect(content).not.toContain('AskUserQuestion');
         // The target path is derived from the tool's skillsDir.
-        expect(`${tool.skillsDir}/skills/ratchet-pr-open/SKILL.md`).toContain('ratchet-pr-open');
+        expect(`${tool.skillsDir}/skills/ratchet-open-pr/SKILL.md`).toContain('ratchet-open-pr');
       }
     });
 
-    it('renders the pr-open command through every registered command adapter', () => {
+    it('renders the open-pr command through every registered command adapter', () => {
       // The command surface renders per agent via the adapter registry — no agent
-      // is special-cased. Render the shared `pr-open` content through EVERY adapter
+      // is special-cased. Render the shared `open-pr` content through EVERY adapter
       // and assert every one produces a command file whose body carries the shared
       // PR-open instructions.
-      const content = getCommandContents(['pr-open']).find((c) => c.id === 'pr-open')!;
+      const content = getCommandContents(['open-pr']).find((c) => c.id === 'open-pr')!;
       expect(content).toBeTruthy();
 
       const adapters = CommandAdapterRegistry.getAll();
@@ -250,7 +250,7 @@ describe('skill-generation', () => {
       expect(ids).toContain('apply-batch');
       expect(ids).toContain('archive-batch');
       expect(ids).toContain('propose-batch');
-      expect(ids).toContain('pr-open');
+      expect(ids).toContain('open-pr');
       expect(ids).toContain('eval');
       // explore is internal-only and is never generated
       expect(ids).not.toContain('explore');

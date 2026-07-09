@@ -149,7 +149,7 @@ function ctx(
 
 function stageScopes(
   scope: SettingSource,
-  stages: AgentStage[] = ['propose', 'apply', 'verify', 'pr']
+  stages: AgentStage[] = ['propose', 'apply', 'verify', 'pr', 'decompose']
 ): Partial<Record<AgentStage, SettingSource>> {
   const out: Partial<Record<AgentStage, SettingSource>> = {};
   for (const s of stages) out[s] = scope;
@@ -601,10 +601,11 @@ describe('pr-step attribution — explicit per-stage model carries the hint', ()
 // -----------------------------------------------------------------------------
 // Decompose-step attribution (decompose-stage-attribution.feature)
 //
-// The decomposition spawn resolves via `scalarAgent` (a stage map never routes
-// it), so its supplying scope is the uniform scope across every stage. A
-// fast-failing decompose spawn under an explicit scalar model surfaces the same
-// hint on every surface and in the journal entry under the decomposition key.
+// The decomposition spawn routes via the `decompose` stage (exactly as a change
+// step routes its transition and the PR step routes `pr`), so its supplying
+// scope is `agentStageScopes.decompose`. A fast-failing decompose spawn under an
+// explicit model surfaces the same hint on every surface and in the journal entry
+// under the decomposition key.
 // -----------------------------------------------------------------------------
 const DECOMPOSE_HINT =
   'The "decompose" stage ran the "opencode" agent with model "zai/glm-5.2" ' +
@@ -771,8 +772,8 @@ describe('pr/decompose unchanged shapes render byte-for-byte today with no hint'
 
   it('a stage-map-driven decompose failure (default agent, no model) renders byte-for-byte today', async () => {
     spawnerBehavior = 'fail-fast';
-    // A stage map never routes the decompose spawn (scalarAgent returns
-    // undefined for a map), so the spawn falls to DEFAULT_AGENT with no model
+    // A stage map that names `apply` but not `decompose` leaves the decompose
+    // stage unmapped → the spawn falls to DEFAULT_AGENT with no model
     // → no attribution can arise, even with threaded scopes.
     const stageMapAgent = { apply: 'opencode:zai/glm-5.2' } as BatchSettings['agent'];
     const attributed = await engine().runDecompositionStep(

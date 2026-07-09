@@ -68,7 +68,7 @@ export const DECOMPOSE_COMMAND_ID = 'decompose-phase';
 /**
  * The canonical rct command id for the whole-batch PR-open step, kept in the SAME
  * single-source style as {@link DECOMPOSE_COMMAND_ID} so the spawn-locus guarantee
- * (`ensureCommandInSpawnLocus`) and the agent invocation token (`/rct:pr-open`)
+ * (`ensureCommandInSpawnLocus`) and the agent invocation token (`/rct:open-pr`)
  * resolve the id from one place and cannot drift. This is the COMMAND id (what
  * instruction the PR agent runs), deliberately distinct from the `pr` routable
  * agent stage (which agent runs the PR step): the stage selects the binary, this
@@ -78,7 +78,7 @@ export const DECOMPOSE_COMMAND_ID = 'decompose-phase';
  * change to `ensureCommandInSpawnLocus` is needed, since it already render-or-fails
  * for ANY command id and already accepts the `pr` stage.
  */
-export const PR_OPEN_COMMAND_ID = 'pr-open';
+export const PR_OPEN_COMMAND_ID = 'open-pr';
 
 /**
  * An actionable bootstrap failure: the engine could not guarantee the rct

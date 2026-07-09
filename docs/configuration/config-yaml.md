@@ -73,15 +73,16 @@ section loads warning-free and value-identical. Unknown keys are ignored
 | Key | Type | Default | Accepted values | Description |
 |---|---|---|---|---|
 | `locus` | string | `local` | `local` `docker` `remote` | Where the agent runs. `local` drives the in-process ReX sidecar. `docker` runs the step inside a container via ReX `DockerDeployment` with the project root bind-mounted. `remote` drives a `swerex-remote` server over its REST API. |
-| `agent` | string \| map | — | an `agent[:model]` spec, or a `{propose, apply, verify, pr}` stage-map of spec values | Coding agent(s) to spawn. A scalar spec applies to every lifecycle stage; a partial per-stage map assigns a spec to each stage (see [Per-stage agent map](#per-stage-agent-map)). Each spec is an agent name optionally followed by `:model` (e.g. `claude`, `claude:fable`, `opencode:zai/glm-5.2`) — see [Agent `[:model]` spec](#agent-model-spec). When unset, the engine uses the agent configured at init time. |
+| `agent` | string \| map | — | an `agent[:model]` spec, or a `{propose, apply, verify, pr, decompose}` stage-map of spec values | Coding agent(s) to spawn. A scalar spec applies to every lifecycle stage; a partial per-stage map assigns a spec to each stage (see [Per-stage agent map](#per-stage-agent-map)). Each spec is an agent name optionally followed by `:model` (e.g. `claude`, `claude:fable`, `opencode:zai/glm-5.2`) — see [Agent `[:model]` spec](#agent-model-spec). When unset, the engine uses the agent configured at init time. |
 | `image` | string | — | free-form | Container image reference for `locus: docker`. Must be non-empty when set. When unset and `locus` is `docker`, the runtime falls back to `python:3.12`. |
 
 #### Per-stage agent map
 
 `agent` accepts **either** a single agent name **or** a map that names a coding
-agent per lifecycle stage — `propose`, `apply`, `verify`, and `pr` (the
+agent per lifecycle stage — `propose`, `apply`, `verify`, `pr` (the
 whole-batch PR-opening stage, spawned only when [`prGrouping`](#gate-and-orchestration)
-is active):
+is active), and `decompose` (the phase-decomposition stage, spawned when a batch
+has a reachable empty phase to author into `batch.yaml`):
 
 ```yaml
 batch:
@@ -89,16 +90,19 @@ batch:
     propose: claude
     apply: opencode
     verify: opencode
+    decompose: claude
 ```
 
 Each lifecycle transition spawns the agent its stage maps to — so the example
-above has `claude` propose while `opencode` applies and verifies. The map is
-**partial**: any subset of the four stages may be given. Stage resolution falls
-back in order **mapped stage → scalar → default agent**: a stage the map names
-uses that agent; a stage it omits uses a scalar `agent` if one is in effect,
-otherwise the init-time default. A scalar name is therefore equivalent to naming
-the same agent for every stage, and an unset `agent` keeps the init-time default
-for every stage — both behave exactly as before.
+above has `claude` propose and decompose while `opencode` applies and verifies.
+The map is **partial**: any subset of the five stages may be given. Stage
+resolution falls back in order **mapped stage → scalar → default agent**: a stage
+the map names uses that agent; a stage it omits uses a scalar `agent` if one is
+in effect, otherwise the init-time default. A scalar name is therefore
+equivalent to naming the same agent for every stage, and an unset `agent` keeps
+the init-time default for every stage — both behave exactly as before. An
+unmapped `decompose` (or `pr`) falls to the default agent with no model flag, so
+a config that does not name `decompose` behaves byte-for-byte as before.
 
 **Cross-scope merge (nearest-wins per stage).** When `agent` is set at more than
 one scope (project config `batch:` ← manifest `settings:`), the values merge one
@@ -130,7 +134,7 @@ rather than reverse-engineer the merge.
 
 The same shape is validated at both the project-config `batch:` scope and a batch
 manifest's `settings:` scope. Validation rejects an **unknown stage key** (any key
-other than `propose`, `apply`, `verify`, or `pr`), a **non-string agent value**,
+other than `propose`, `apply`, `verify`, `pr`, or `decompose`), a **non-string agent value**,
 and a **malformed `agent[:model]` spec** (empty agent part or empty model part,
 e.g. `claude:`, `:fable`, `:`) — naming the offending value — at config load,
 before any agent is spawned; an **unknown agent name** (scalar or mapped) is

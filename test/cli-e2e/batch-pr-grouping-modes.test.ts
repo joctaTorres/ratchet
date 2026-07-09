@@ -21,13 +21,13 @@
  * production seam): `runCLI` forwards `env`, the engine routes every spawn through
  * `bash -c "$RATCHET_BATCH_AGENT_CMD"` feeding the step instructions on stdin, and
  * the bundled ReX-local runtime executes it. The fake PR agent is forge-agnostic —
- * it acts ONLY on instructions that delegate to `/rct:pr-open`, parses the handed
+ * it acts ONLY on instructions that delegate to `/rct:open-pr`, parses the handed
  * `Work branch:` / `Base branch:` Input lines and the per-group report key from
  * the `ratchet batch report … --change pr:<batch>:<groupId>` line, appends one
  * sentinel line (`pr-open group=<key> work=… base=…`) — proving the delegation,
  * the injected stacked base, and the per-group completion channel in one
  * observable artifact — and reports completion through that exact key. It invokes
- * no `gh`/`glab` and hard-codes no forge, mirroring the real `/rct:pr-open`
+ * no `gh`/`glab` and hard-codes no forge, mirroring the real `/rct:open-pr`
  * body's ecosystem-neutrality.
  */
 
@@ -151,7 +151,7 @@ async function prepareCompletedRepo(
 /**
  * The forge-agnostic fake PR agent, as a POSIX shell stand-in fed through
  * `RATCHET_BATCH_AGENT_CMD`. It reads the step instructions on stdin and acts
- * ONLY on a `/rct:pr-open` delegation (any other spawn is a no-op, so it cannot
+ * ONLY on a `/rct:open-pr` delegation (any other spawn is a no-op, so it cannot
  * inflate spawn counts). It parses the `Work branch:` / `Base branch:` Input
  * lines and the per-group report key (`pr:<batch>:<groupId>`) from the
  * `ratchet batch report … --change <key>` line the instructions carry, appends
@@ -162,7 +162,7 @@ function prAgentOverride(sentinel: string): string {
   return [
     'instr="$(cat)"',
     'case "$instr" in',
-    '  */rct:pr-open*)',
+    '  */rct:open-pr*)',
     // Parse the work/base branch from the instruction "Input" the CLI delivered
     // and the per-group report key from the report-channel line.
     '    work="$(printf %s "$instr" | sed -n "s/.*Work branch: \\([^ ]*\\).*/\\1/p" | head -n1)";',
@@ -234,7 +234,7 @@ describe('stacked PR grouping modes — batch apply e2e against the fake spawn s
     // Exactly two PR-open actions, in boundary order, each carrying the stacked
     // base rule: group 0 (`p1`) targets the batch base branch `main`, group 1
     // (`p2`) targets group 0's own branch `p1`. The sentinel line's values are
-    // parsed from the delegated `/rct:pr-open` instructions (Input lines + the
+    // parsed from the delegated `/rct:open-pr` instructions (Input lines + the
     // per-group report channel), so it also proves the delegation and the
     // `pr:b:<groupId>` completion channel in one artifact.
     expect(prOpenActions(sentinel)).toEqual([

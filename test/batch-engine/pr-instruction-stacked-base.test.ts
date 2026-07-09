@@ -7,7 +7,7 @@
  * (`buildPrInstructions` → `prInputContext`) must carry whatever base branch the
  * `PrStepContext` supplies — including an arbitrary stacked sibling branch that is
  * NOT the repository's default — verbatim as the sole PR target, deriving nothing
- * from git. The shared, forge-agnostic `PR_OPEN_BODY` must direct opening exactly
+ * from git. The shared, forge-agnostic `OPEN_PR_BODY` must direct opening exactly
  * one PR against that supplied base and must not invent, infer, or re-derive it,
  * nor read any ratchet config to resolve it. The base flows identically for every
  * registered agent (only the invocation token differs), and the render-or-fail
@@ -30,9 +30,9 @@ import type { PrStepContext } from '../../src/core/batch/engine/contract.js';
 import type { BatchSettings, ProofOfWork } from '../../src/core/batch/config.js';
 import { CommandAdapterRegistry } from '../../src/core/command-generation/index.js';
 import {
-  getPrOpenSkillTemplate,
-  getRctPrOpenCommandTemplate,
-} from '../../src/core/templates/workflows/pr-open.js';
+  getOpenPrSkillTemplate,
+  getRctOpenPrCommandTemplate,
+} from '../../src/core/templates/workflows/open-pr.js';
 
 const BATCH = 'stack-batch';
 const POW: ProofOfWork = { kind: 'integration', run: 'echo ok', pass: 'exit 0' };
@@ -110,11 +110,11 @@ describe('buildPrInstructions — carries an arbitrary supplied base verbatim', 
 
 // --- 2.2: the shared body opens against the supplied base only ---------------
 
-describe('PR_OPEN_BODY — the shared body opens against the supplied base only', () => {
-  const body = getPrOpenSkillTemplate().instructions;
+describe('OPEN_PR_BODY — the shared body opens against the supplied base only', () => {
+  const body = getOpenPrSkillTemplate().instructions;
 
   it('the command body IS the skill body (one shared, byte-for-byte author)', () => {
-    expect(getRctPrOpenCommandTemplate().content).toBe(body);
+    expect(getRctOpenPrCommandTemplate().content).toBe(body);
   });
 
   it('directs opening EXACTLY ONE pull request against the supplied base', () => {
@@ -180,7 +180,7 @@ describe('buildPrInstructions — the supplied base flows for every registered a
       expect(n).toBe(normalized[0]);
     }
     // Guard the normalization actually removed a token per agent (distinct tokens
-    // across agents — claude `/rct:pr-open` vs the others' `/rct-pr-open`).
+    // across agents — claude `/rct:open-pr` vs the others' `/rct-open-pr`).
     const tokens = new Set(adapters.map((a) => a.getInvocation(PR_OPEN_COMMAND_ID)));
     expect(tokens.size).toBeGreaterThan(1);
   });
@@ -208,10 +208,10 @@ function fakeDeps(initial: Record<string, string> = {}): {
 const ROOT = '/tmp/pr-instruction-stacked-base-project';
 
 describe('render-or-fail — the PR-open command guarantee is unchanged by carrying the base as data', () => {
-  it('renders the pr-open command from the shared definition when absent', () => {
+  it('renders the open-pr command from the shared definition when absent', () => {
     const { deps, writes } = fakeDeps();
     ensureCommandInSpawnLocus(PR_OPEN_COMMAND_ID, settings({ agent: 'claude' }), ROOT, deps, 'pr');
-    // Exactly one file written — the pr-open command at claude's adapter path.
+    // Exactly one file written — the open-pr command at claude's adapter path.
     expect(writes.size).toBe(1);
   });
 
@@ -231,7 +231,7 @@ describe('render-or-fail — the PR-open command guarantee is unchanged by carry
     }
     expect(thrown).toBeInstanceOf(SkillLocusError);
     const msg = (thrown as Error).message;
-    expect(msg).toContain('pr-open'); // names the missing command
+    expect(msg).toContain('open-pr'); // names the missing command
     expect(msg).toContain('remote'); // names the locus
     expect(writes.size).toBe(0); // no agent spawned against a base it cannot run
   });

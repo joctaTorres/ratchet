@@ -58,8 +58,8 @@ const scopes: { name: string; parse: (agent: unknown) => ReturnType<typeof Agent
 ];
 
 describe('AGENT_STAGE_KEYS', () => {
-  it('is exactly the propose/apply/verify/pr lifecycle', () => {
-    expect(AGENT_STAGE_KEYS).toEqual(['propose', 'apply', 'verify', 'pr']);
+  it('is exactly the propose/apply/verify/pr/decompose lifecycle', () => {
+    expect(AGENT_STAGE_KEYS).toEqual(['propose', 'apply', 'verify', 'pr', 'decompose']);
   });
 });
 
@@ -253,6 +253,15 @@ describe.each(scopes)('agent[:model] spec at $name scope', ({ parse }) => {
     if (!result.success) {
       const message = result.error.issues.map((i) => i.message).join('\n');
       expect(message).toContain(':fable');
+    }
+  });
+
+  it('rejects a malformed decompose stage-map value naming the offending value', () => {
+    const result = parse({ decompose: 'claude:' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = result.error.issues.map((i) => i.message).join('\n');
+      expect(message).toContain('claude:');
     }
   });
 

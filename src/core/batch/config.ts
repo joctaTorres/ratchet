@@ -614,41 +614,6 @@ export function resolveAgentStageScopes(
   return result;
 }
 
-/**
- * Derive the single uniform supplying scope for a stage-less spawn (the
- * decomposition spawn, which resolves via `scalarAgent` — a stage map never
- * routes it). Returns the scope only when EVERY {@link AGENT_STAGE_KEYS} entry
- * is present AND identical; otherwise `undefined`.
- *
- * The invariant this encodes: whenever the decompose spawn carries an explicit
- * model, `settings.agent` is a scalar, and {@link resolveAgentStageScopes}
- * materialized every stage to that scalar's scope — so a uniform map is the
- * honest supplying scope for the stage-less scalar resolution. A mixed, partial,
- * or empty map cannot arise from a scalar setting under an explicit model, so
- * it resolves to no scope (the engine gates this behind
- * `spec?.model !== undefined`, so a coincidentally-uniform map that resolves no
- * scalar spec can never produce a false attribution).
- *
- * Pure: no filesystem, no spawn, no I/O — unit-testable over an in-memory map.
- * Sibling of {@link resolveAgentStageScopes}; consumes spec strings opaquely.
- */
-export function uniformAgentScope(
-  scopes: Partial<Record<AgentStage, SettingSource>> | undefined
-): SettingSource | undefined {
-  if (scopes === undefined) return undefined;
-  let uniform: SettingSource | undefined;
-  for (const stage of AGENT_STAGE_KEYS) {
-    const scope = scopes[stage];
-    if (scope === undefined) return undefined;
-    if (uniform === undefined) {
-      uniform = scope;
-    } else if (scope !== uniform) {
-      return undefined;
-    }
-  }
-  return uniform;
-}
-
 /** Environment variable that overrides the per-agent ReX timeout. */
 export const AGENT_TIMEOUT_ENV_VAR = 'RATCHET_AGENT_TIMEOUT_MS';
 

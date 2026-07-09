@@ -469,9 +469,8 @@ resume, and the journal entry message recorded for the transition all name the
 exact model string and its supplying scope as "if this model id is invalid…"
 guidance (the `detail` field still opens with the hint above the captured stderr
 tail for `--json` consumers). The `pr` stage spawn is attributed via its `pr`
-stage entry's supplying scope; the phase-decomposition spawn (which resolves via
-the scalar `agent` setting, never a stage map) is attributed via the uniform
-supplying scope across every stage. A signal-killed spawn (e.g. a `timeout`
+stage entry's supplying scope; the phase-decomposition spawn is likewise
+attributed via its own `decompose` stage entry's supplying scope. A signal-killed spawn (e.g. a `timeout`
 SIGKILL, OOM kill — `exitCode: null, signal: 'SIGKILL'`) under a valid explicit
 model is NOT a real exit code, so the hint is suppressed there even with zero
 journal progress; the bare-failure fallback names the signal (`via signal

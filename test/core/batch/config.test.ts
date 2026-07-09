@@ -186,13 +186,14 @@ describe('resolveBatchSettings', () => {
     const { settings, sources } = resolveBatchSettings(projectRoot, manifest);
     // Per-stage cross-scope merge: the manifest's partial map overrides `apply`,
     // and the project scalar base covers the stages it does not name (propose,
-    // verify, and pr) — so the value materializes to a full map preserving the
-    // scalar fallback per stage.
+    // verify, pr, and decompose) — so the value materializes to a full map
+    // preserving the scalar fallback per stage.
     expect(settings.agent).toEqual({
       propose: 'claude',
       apply: 'opencode',
       verify: 'claude',
       pr: 'claude',
+      decompose: 'claude',
     });
     expect(sources.agent).toBe('manifest');
   });
@@ -214,6 +215,7 @@ describe('resolveBatchSettings', () => {
       apply: 'project',
       verify: 'project',
       pr: 'project',
+      decompose: 'project',
     });
   });
 
@@ -232,6 +234,7 @@ describe('resolveBatchSettings', () => {
       apply: 'manifest',
       verify: 'manifest',
       pr: 'manifest',
+      decompose: 'manifest',
     });
   });
 
@@ -262,6 +265,7 @@ describe('resolveBatchSettings', () => {
       apply: 'opencode:zai/glm-5.2',
       verify: 'claude',
       pr: 'claude',
+      decompose: 'claude',
     });
     expect(sources.agent).toBe('manifest');
     // Attribution mirrors the merge: `apply` → manifest (the nearer map named
@@ -271,6 +275,7 @@ describe('resolveBatchSettings', () => {
       apply: 'manifest',
       verify: 'project',
       pr: 'project',
+      decompose: 'project',
     });
   });
 

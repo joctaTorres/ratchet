@@ -1,7 +1,7 @@
 /**
- * PR-open guided workflow skill + command templates.
+ * open-pr guided workflow skill + command templates.
  *
- * `/rct:pr-open` is the instruction a spawned PR agent follows to open ONE pull
+ * `/rct:open-pr` is the instruction a spawned PR agent follows to open ONE pull
  * request for the work on its branch. It is authored ONCE here as a shared body
  * constant that both the skill and command templates return — the exact "one
  * shared body" pattern `decompose-phase.ts` uses for an engine-spawned command.
@@ -23,7 +23,7 @@
  * This is the instruction-authoring slice: the engine will later (in
  * `pr-spawn-at-completion`) orchestrate the PR step — select it, spawn one agent,
  * journal the outcome — but must never re-author these steps inline. It delegates
- * to `/rct:pr-open` (the shared command guaranteed into the spawn locus by the
+ * to `/rct:open-pr` (the shared command guaranteed into the spawn locus by the
  * render-or-fail skill-locus path), never a parallel engine-local prompt.
  *
  * The body is forge-agnostic and toolchain-agnostic: it names no single forge CLI
@@ -33,7 +33,7 @@
  */
 import type { SkillTemplate, CommandTemplate } from '../types.js';
 
-const PR_OPEN_BODY = `Open the single pull request for the work on this branch. The prior stage agents
+const OPEN_PR_BODY = `Open the single pull request for the work on this branch. The prior stage agents
 have left their work uncommitted on the current work branch; your job is to commit
 that work in the repository's own commit style, push the branch, and open EXACTLY
 ONE pull request from the work branch to the base branch the surrounding
@@ -113,25 +113,25 @@ After opening the PR, summarize:
 - If no forge CLI is available, stop and report — never silently substitute a
   ratchet command.`;
 
-export function getPrOpenSkillTemplate(): SkillTemplate {
+export function getOpenPrSkillTemplate(): SkillTemplate {
   return {
-    name: 'ratchet-pr-open',
+    name: 'ratchet-open-pr',
     description:
       "Open the single whole-batch pull request at batch completion: read `git log` for the repo's commit style (semantic default), commit the prior stage agents' accumulated work, push the work branch, and open exactly one PR to its base branch via whichever forge CLI the environment provides.",
-    instructions: PR_OPEN_BODY,
+    instructions: OPEN_PR_BODY,
     license: 'MIT',
     compatibility: 'Requires the ratchet CLI; pairs with the batch workflow.',
     metadata: { author: 'ratchet', version: '1.0' },
   };
 }
 
-export function getRctPrOpenCommandTemplate(): CommandTemplate {
+export function getRctOpenPrCommandTemplate(): CommandTemplate {
   return {
     name: 'RCT: Open PR',
     description:
       "Open the single whole-batch pull request at batch completion — commit the accumulated work in the repo's git-log style and open exactly one forge-agnostic PR (Experimental)",
     category: 'Workflow',
     tags: ['workflow', 'batch', 'experimental'],
-    content: PR_OPEN_BODY,
+    content: OPEN_PR_BODY,
   };
 }

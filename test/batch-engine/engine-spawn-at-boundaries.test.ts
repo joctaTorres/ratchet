@@ -11,7 +11,7 @@
  * `selectStackedBases`) so the engine consumes their output exactly as production
  * would. It asserts the engine-layer guarantees for `per-phase`/`per-change`
  * independent of any CLI wiring:
- *   - EXACTLY ONE spawn per fired group, delegating to `/rct:pr-open`, with the
+ *   - EXACTLY ONE spawn per fired group, delegating to `/rct:open-pr`, with the
  *     group's resolved STACKED base/work branch in the payload (group 0 → batch
  *     base, group N → group N-1's branch);
  *   - the `pr` stage routes the spawn over the fake adapter registry, special-casing
@@ -191,9 +191,9 @@ describe('engine-spawn-at-boundaries — per-phase boundary spawns one stacked P
     expect(calls[0].command).toBe(DEFAULT_AGENT);
 
     const instr = calls[0].instructions;
-    // Delegates to the shared /rct:pr-open command, not an inline prompt.
+    // Delegates to the shared /rct:open-pr command, not an inline prompt.
     expect(instr).toContain(
-      CommandAdapterRegistry.get(DEFAULT_AGENT)!.getInvocation('pr-open')
+      CommandAdapterRegistry.get(DEFAULT_AGENT)!.getInvocation('open-pr')
     );
     expect(instr).toMatch(/Do NOT hand-build|delegate to the skill/);
     // Base = the FIRST phase group's branch; work = the second phase's own branch.
@@ -250,7 +250,7 @@ describe('engine-spawn-at-boundaries — the pr stage routes the spawn', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].command).toBe('opencode');
     expect(calls[0].instructions).toContain(
-      CommandAdapterRegistry.get('opencode')!.getInvocation('pr-open')
+      CommandAdapterRegistry.get('opencode')!.getInvocation('open-pr')
     );
   });
 
@@ -262,7 +262,7 @@ describe('engine-spawn-at-boundaries — the pr stage routes the spawn', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0].command).toBe(agent);
       expect(calls[0].instructions).toContain(
-        CommandAdapterRegistry.get(agent)!.getInvocation('pr-open')
+        CommandAdapterRegistry.get(agent)!.getInvocation('open-pr')
       );
     }
   });

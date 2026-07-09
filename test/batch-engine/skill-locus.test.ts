@@ -183,17 +183,17 @@ describe('ensureSkillInSpawnLocus — a locus the engine cannot render into fail
 });
 
 describe('PR_OPEN_COMMAND_ID — the whole-batch PR-open command id lives in one place', () => {
-  it('is the single-source `pr-open` constant', () => {
-    expect(PR_OPEN_COMMAND_ID).toBe('pr-open');
+  it('is the single-source `open-pr` constant', () => {
+    expect(PR_OPEN_COMMAND_ID).toBe('open-pr');
   });
 });
 
-describe('ensureCommandInSpawnLocus — guarantees the pr-open command for the `pr` stage', () => {
+describe('ensureCommandInSpawnLocus — guarantees the open-pr command for the `pr` stage', () => {
   for (const agent of SPAWNABLE_AGENTS) {
-    it(`renders pr-open at ${agent}'s adapter path from the shared command content`, () => {
+    it(`renders open-pr at ${agent}'s adapter path from the shared command content`, () => {
       const { deps, writes } = fakeDeps();
       // The `pr` stage selects which agent runs the PR step; the command id
-      // selects the instruction it runs. Guarantee the `pr-open` command for the
+      // selects the instruction it runs. Guarantee the `open-pr` command for the
       // agent the `pr` stage resolves to.
       ensureCommandInSpawnLocus(PR_OPEN_COMMAND_ID, settings({ agent }), ROOT, deps, 'pr');
 
@@ -207,7 +207,7 @@ describe('ensureCommandInSpawnLocus — guarantees the pr-open command for the `
     });
   }
 
-  it('never hard-codes a single agent path — each agent renders pr-open at its own adapter path', () => {
+  it('never hard-codes a single agent path — each agent renders open-pr at its own adapter path', () => {
     const targets = new Set<string>();
     for (const agent of SPAWNABLE_AGENTS) {
       const { deps, writes } = fakeDeps();
@@ -219,7 +219,7 @@ describe('ensureCommandInSpawnLocus — guarantees the pr-open command for the `
     expect(targets.size).toBe(SPAWNABLE_AGENTS.length);
   });
 
-  it('leaves an already-present pr-open command file untouched', () => {
+  it('leaves an already-present open-pr command file untouched', () => {
     const agent = 'claude';
     const target = expectedPath(agent, PR_OPEN_COMMAND_ID);
     const { deps, writes } = fakeDeps({ [target]: 'PRE-EXISTING CONTENT' });
@@ -227,7 +227,7 @@ describe('ensureCommandInSpawnLocus — guarantees the pr-open command for the `
     expect(writes.get(target)).toBe('PRE-EXISTING CONTENT');
   });
 
-  it('throws an actionable SkillLocusError naming pr-open for a remote locus', () => {
+  it('throws an actionable SkillLocusError naming open-pr for a remote locus', () => {
     const { deps, writes } = fakeDeps();
     let thrown: unknown;
     try {
@@ -243,7 +243,7 @@ describe('ensureCommandInSpawnLocus — guarantees the pr-open command for the `
     }
     expect(thrown).toBeInstanceOf(SkillLocusError);
     const msg = (thrown as Error).message;
-    expect(msg).toContain('pr-open'); // names the command
+    expect(msg).toContain('open-pr'); // names the command
     expect(msg).toContain('remote'); // names the locus
     expect(msg).toMatch(/local|docker|render/i); // states a remedy
     expect(writes.size).toBe(0); // nothing rendered

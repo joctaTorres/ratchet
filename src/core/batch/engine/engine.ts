@@ -46,7 +46,7 @@ import {
 import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
 import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
 import { makeRexRemoteRuntime } from './runtime/rex-remote-runtime.js';
-import { validateRemoteSettings, resolveAgentTimeoutMs, isPrGroupingActive, uniformAgentScope } from '../config.js';
+import { validateRemoteSettings, resolveAgentTimeoutMs, isPrGroupingActive } from '../config.js';
 import { makeStreamJsonRenderer } from './runtime/stream-json-renderer.js';
 import {
   buildAgentInstructions,
@@ -449,7 +449,8 @@ export class RatchetBatchEngine {
         DECOMPOSE_COMMAND_ID,
         context.settings,
         projectRoot,
-        this.skillLocusDeps
+        this.skillLocusDeps,
+        'decompose'
       );
     } catch (err) {
       if (err instanceof SkillLocusError) {
@@ -475,7 +476,8 @@ export class RatchetBatchEngine {
         { batch, change: key, settings: context.settings },
         instructions,
         projectRoot,
-        env
+        env,
+        'decompose'
       );
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
@@ -494,13 +496,13 @@ export class RatchetBatchEngine {
     }
 
     // Build model-failure attribution only when the parsed spec explicitly named
-    // a model AND the context carries a uniform supplying scope across every
-    // stage. The decomposition spawn resolves via `scalarAgent` (a stage map
-    // never routes it), so its supplying scope is the single scope every stage
-    // agrees on (`uniformAgentScope`) — absent for a stage-map agent setting
-    // (which falls to the default agent with no model) and for scope-less
-    // standalone paths, so the mapper's gate keeps today's failure surface there.
-    const decomposeScope = uniformAgentScope(context.agentStageScopes);
+    // a model AND the context carries a supplying scope for the `decompose`
+    // stage. The decomposition spawn routes via the `decompose` stage (exactly as
+    // a change step routes its transition and the PR step routes `pr`), so its
+    // supplying scope is `agentStageScopes.decompose` — absent for a bare-name
+    // spec, a stage-map that does not name `decompose`, and scope-less standalone
+    // paths, so the mapper's gate keeps today's failure surface there.
+    const decomposeScope = context.agentStageScopes?.decompose;
     const modelAttribution: ModelAttribution | undefined =
       spec?.model !== undefined && decomposeScope !== undefined
         ? { stage: 'decompose', agent: spec.agent, model: spec.model, scope: decomposeScope }
@@ -536,7 +538,7 @@ export class RatchetBatchEngine {
 
   /**
    * Drive ONE PR-open step for a fired group boundary: spawn EXACTLY ONE PR agent
-   * that delegates to the canonical `/rct:pr-open` command to commit the prior
+    * that delegates to the canonical `/rct:open-pr` command to commit the prior
    * stage agents' accumulated work in the repo's git-log style and open a single
    * pull request from the group's work branch to its resolved (stacked) base
    * branch. It is the exact structural twin of {@link runDecompositionStep} — it
@@ -608,9 +610,9 @@ export class RatchetBatchEngine {
       });
     }
 
-    // Guarantee the canonical pr-open command is present in the spawn locus BEFORE
+    // Guarantee the canonical open-pr command is present in the spawn locus BEFORE
     // building the request or selecting a runtime — the agent is told to invoke
-    // `/rct:pr-open`, so it must exist where the agent runs. The `pr` stage
+    // `/rct:open-pr`, so it must exist where the agent runs. The `pr` stage
     // argument resolves the SAME agent the spawn uses, so the rendered command
     // matches the spawned binary. A locus the engine cannot render into (e.g.
     // remote) short-circuits to a failed step carrying the actionable bootstrap
@@ -841,12 +843,12 @@ export class RatchetBatchEngine {
         emitsStreamJson: false,
       };
     }
-    // Resolve the spawn agent for the running transition's STAGE when one is given
-    // (propose/apply/verify) — a stage-map routes each stage independently; a
-    // scalar/unset agent resolves the same for every stage. The stage-less
-    // decomposition call site keeps the scalar/default resolution. Either way
-    // `resolveAdapter` maps an unmapped-stage/unset name to `DEFAULT_AGENT` and
-    // rejects an unknown name (`UnknownAgentError`) before any spawn.
+    // Resolve the spawn agent for the running transition's STAGE when one is
+    // given (propose/apply/verify/decompose/pr) — a stage-map routes each stage
+    // independently; a scalar/unset agent resolves the same for every stage.
+    // Either way `resolveAdapter` maps an unmapped-stage/unset name to
+    // `DEFAULT_AGENT` and rejects an unknown name (`UnknownAgentError`) before
+    // any spawn.
     const resolved = stage
       ? resolveAgentForStage(context.settings.agent, stage)
       : scalarAgent(context.settings.agent);

@@ -33,6 +33,7 @@ import {
   realBashRunner,
   realSpawner,
   resolveAdapter,
+  buildAgentSpawnRequest,
   type BashRunner,
   type Spawner,
   type AgentRequestContext,
@@ -264,19 +265,33 @@ function judgeContext(c: EvalCase): AgentRequestContext {
 }
 
 /**
- * Build the spawn request for one judge vote. When `RATCHET_EVAL_AGENT_CMD` is
- * set, that command stands in for the coding-agent binary (used by e2e tests to
- * exercise the agent path deterministically without a real agent). Otherwise the
- * configured adapter is resolved as usual.
+ * The env var that overrides the eval judge's coding-agent spawn. Declared
+ * locally so the judge's override seam is self-documenting; the override GATE
+ * itself lives in the shared `buildAgentSpawnRequest` helper so the engine, the
+ * judge, and the mutation harness share one override seam (the #67
+ * triplication).
+ */
+const EVAL_AGENT_CMD_ENV = 'RATCHET_EVAL_AGENT_CMD';
+
+/**
+ * Build the spawn request for one judge vote through the shared override-aware
+ * helper. When `RATCHET_EVAL_AGENT_CMD` is active, that command stands in for
+ * the coding-agent binary (used by e2e tests to exercise the agent path
+ * deterministically without a real agent). Otherwise the configured adapter is
+ * resolved as usual. The override gate exists in exactly one place
+ * (`buildAgentSpawnRequest`); the closure here owns only the judge's
+ * site-specific adapter resolution.
  */
 function buildVoteRequest(c: EvalCase, binding: LlmJudgeBinding, cwd: string, agentName?: string) {
   const instructions = buildJudgeInstructions(c, binding);
-  const override = process.env.RATCHET_EVAL_AGENT_CMD;
-  if (override && override.trim().length > 0) {
-    return { command: 'bash', args: ['-c', override], instructions, cwd, env: process.env };
-  }
-  const adapter = resolveAdapter(agentName);
-  return adapter.buildRequest(judgeContext(c), instructions, cwd, process.env);
+  const { request } = buildAgentSpawnRequest({
+    overrideEnvVar: EVAL_AGENT_CMD_ENV,
+    instructions,
+    cwd,
+    env: process.env,
+    buildAdapterRequest: () => resolveAdapter(agentName).buildRequest(judgeContext(c), instructions, cwd, process.env),
+  });
+  return request;
 }
 
 async function castVote(

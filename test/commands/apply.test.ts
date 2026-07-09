@@ -63,7 +63,7 @@ describe('applyCommand', () => {
 
   it('advances a happy-path apply via the forced apply transition', async () => {
     await fixture.writeChangeWithTasks('ready', { done: 0, total: 2 });
-    const { spawner, calls } = completingSpawner(fixture.root, 'ready');
+    const { spawner, calls } = completingSpawner(fixture.root, 'ready', 'apply');
 
     await applyCommand('ready', {}, { projectRoot: () => fixture.root, spawner });
 

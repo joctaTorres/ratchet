@@ -38,11 +38,15 @@ import type { AgentStage, AgentSpec } from '../agent-setting.js';
 import {
   resolveAdapter,
   UnknownAgentError,
+  buildAgentSpawnRequest,
+  BATCH_AGENT_CMD_ENV,
+  ENV_OVERRIDE_PROVENANCE,
   type AgentAdapter,
   type AgentSpawnRequest,
   type AgentSpawnResult,
   type Spawner,
 } from './agent.js';
+import { scopeAgentEnv } from './agent-env.js';
 import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
 import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
 import { makeRexRemoteRuntime } from './runtime/rex-remote-runtime.js';
@@ -64,6 +68,7 @@ import {
   type SkillLocusDeps,
 } from './skill-locus.js';
 import { mapSessionToOutcome, type ModelAttribution } from './outcome.js';
+import { parksForApproval } from './approval-gate.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
 import {
   computeNextTransition,
@@ -187,7 +192,9 @@ export class RatchetBatchEngine {
    * is the ONLY place that branches on locus: `local` drives the ReX sidecar
    * with `REX_LOCUS=local` and `REX_WORKDIR=projectRoot`; `docker` drives the
    * SAME sidecar runtime with `REX_LOCUS=docker` plus the resolved `image`
-   * (the project root is bind-mounted by the runtime/sidecar); `remote` drives
+   * and docker hardening knobs (`dockerUser`/`dockerMemory`/`dockerPidsLimit`/
+   * `dockerCpus`/`network`, threaded as `REX_DOCKER_*` env vars by the
+   * bootstrap; the project root is bind-mounted by the runtime/sidecar); `remote` drives
    * the native-Node `RexRemoteRuntime` over the swerex-remote REST API with the
    * resolved host/port/authToken (no local Python). The engine, renderer, and
    * event channel are otherwise locus-agnostic — streaming and rendering are
@@ -222,7 +229,16 @@ export class RatchetBatchEngine {
     return makeRexSidecarRuntime({
       locus,
       projectRoot,
-      ...(locus === 'docker' ? { image: settings.image } : {}),
+      ...(locus === 'docker'
+        ? {
+            image: settings.image,
+            dockerUser: settings.dockerUser,
+            dockerMemory: settings.dockerMemory,
+            dockerPidsLimit: settings.dockerPidsLimit,
+            dockerCpus: settings.dockerCpus,
+            network: settings.network,
+          }
+        : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
   }
@@ -330,16 +346,18 @@ export class RatchetBatchEngine {
     // prompt file under `.ratchet/batches/<batch>/.run/<id>/`. With no batch the
     // runtime falls back to the change-local `.run/`, so the var is omitted.
     const env: NodeJS.ProcessEnv = batch
-      ? { ...process.env, RATCHET_BATCH_NAME: batch }
-      : { ...process.env };
+      ? { ...scopeAgentEnv(process.env), RATCHET_BATCH_NAME: batch }
+      : { ...scopeAgentEnv(process.env) };
     let request;
     let emitsStreamJson = false;
     let spec: AgentSpec | undefined;
+    let agentOverride = false;
     try {
       const built = this.buildSpawnRequest(ctx, instructions, projectRoot, env, transition);
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
       spec = built.spec;
+      agentOverride = built.agentOverride;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -383,6 +401,7 @@ export class RatchetBatchEngine {
       transition,
       parkForApproval: this.shouldParkForApproval(ctx, transition),
       modelAttribution,
+      agentOverride,
       before,
       diskBefore,
       diskAfter: () => {
@@ -467,10 +486,11 @@ export class RatchetBatchEngine {
     }
 
     const instructions = buildDecompositionInstructions(context);
-    const env: NodeJS.ProcessEnv = { ...process.env, RATCHET_BATCH_NAME: batch };
+    const env: NodeJS.ProcessEnv = { ...scopeAgentEnv(process.env), RATCHET_BATCH_NAME: batch };
     let request;
     let emitsStreamJson = false;
     let spec: AgentSpec | undefined;
+    let agentOverride = false;
     try {
       const built = this.buildSpawnRequest(
         { batch, change: key, settings: context.settings },
@@ -482,6 +502,7 @@ export class RatchetBatchEngine {
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
       spec = built.spec;
+      agentOverride = built.agentOverride;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -519,7 +540,11 @@ export class RatchetBatchEngine {
     // Same spawn→stream→map→journal tail as the change core. The decomposition
     // artifact is the `batch.yaml` edit the agent makes — there is no change
     // directory to stamp or measure — so disk evidence is a no-op snapshot
-    // (before === after) and there is never an approval park.
+    // (before === after) and, per the gate matrix, a decomposition step never
+    // parks for approval under any gate (a PR is itself the checkpoint; a
+    // decomposition's authored intents are reviewed when each change's propose
+    // parks). Routed through the same `parksForApproval` matrix so the policy
+    // has one author.
     return this.spawnAndMap({
       request,
       emitsStreamJson,
@@ -528,8 +553,9 @@ export class RatchetBatchEngine {
       locus,
       change: key,
       transition: 'decompose',
-      parkForApproval: false,
+      parkForApproval: parksForApproval(context.settings.gate, 'decompose'),
       modelAttribution,
+      agentOverride,
       before,
       diskBefore: diskState,
       diskAfter: () => diskState,
@@ -640,10 +666,11 @@ export class RatchetBatchEngine {
     }
 
     const instructions = buildPrInstructions(context);
-    const env: NodeJS.ProcessEnv = { ...process.env, RATCHET_BATCH_NAME: batch };
+    const env: NodeJS.ProcessEnv = { ...scopeAgentEnv(process.env), RATCHET_BATCH_NAME: batch };
     let request;
     let emitsStreamJson = false;
     let spec: AgentSpec | undefined;
+    let agentOverride = false;
     try {
       // Route the PR step through the `pr` STAGE of the agent map, exactly as a
       // change step routes propose/apply/verify: a stage-map spawns the mapped
@@ -660,6 +687,7 @@ export class RatchetBatchEngine {
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
       spec = built.spec;
+      agentOverride = built.agentOverride;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -688,7 +716,9 @@ export class RatchetBatchEngine {
     // Snapshot the PR journal (keyed by batch) so we can isolate this session's
     // entries. There is no change directory for a PR step, so — like the
     // decomposition path — disk evidence is a no-op snapshot (before === after)
-    // and there is never an approval park.
+    // and, per the gate matrix, a PR-open step never parks for approval under
+    // any gate (the PR is itself the human checkpoint). Routed through the same
+    // `parksForApproval` matrix so the policy has one author.
     const locus: RunLocus = { batch };
     const before = readChangeJournalTolerantForLocus(projectRoot, locus, key).length;
     const diskState = readChangeDiskState(projectRoot, key);
@@ -701,8 +731,9 @@ export class RatchetBatchEngine {
       locus,
       change: key,
       transition: 'pr',
-      parkForApproval: false,
+      parkForApproval: parksForApproval(context.settings.gate, 'pr'),
       modelAttribution,
+      agentOverride,
       before,
       diskBefore: diskState,
       diskAfter: () => diskState,
@@ -735,6 +766,7 @@ export class RatchetBatchEngine {
     transition: StepKind;
     parkForApproval: boolean;
     modelAttribution?: ModelAttribution;
+    agentOverride?: boolean;
     before: number;
     diskBefore: ChangeDiskState;
     diskAfter: () => ChangeDiskState;
@@ -749,6 +781,7 @@ export class RatchetBatchEngine {
       transition,
       parkForApproval,
       modelAttribution,
+      agentOverride,
       before,
       diskBefore,
       diskAfter,
@@ -801,6 +834,12 @@ export class RatchetBatchEngine {
       modelAttribution,
     });
 
+    // An active agent-cmd override marks the outcome so the rendered result
+    // carries `agentOverride: true` (--json carries it verbatim; the text
+    // renderer prints the one-line notice), and stamps `via: env-override`
+    // provenance on the transition-outcome journal entry produced below.
+    if (agentOverride) outcome.agentOverride = true;
+
     // Record a journal entry for the transition outcome (the agent may not have
     // reported one, e.g. on failure), so resume sees this step. Written at the
     // resolved locus — the batch run dir, or the change-local `.run/`.
@@ -812,6 +851,7 @@ export class RatchetBatchEngine {
         outcome.blocker ??
         `${transition} ${outcome.state}`,
       transition,
+      ...(agentOverride ? { via: ENV_OVERRIDE_PROVENANCE } : {}),
     });
 
     return toStepResult(outcome);
@@ -831,47 +871,55 @@ export class RatchetBatchEngine {
     projectRoot: string,
     env: NodeJS.ProcessEnv,
     stage?: AgentStage
-  ): { request: AgentSpawnRequest; emitsStreamJson: boolean; spec?: AgentSpec } {
-    const override = process.env.RATCHET_BATCH_AGENT_CMD;
-    if (override && override.trim().length > 0) {
-      // The `bash -c` override stands in for the agent binary and is NOT
-      // stream-json-capable (keeps e2e/eval deterministic) → raw streaming. It
-      // bypasses spec parsing, so no `AgentSpec` is returned — the override
-      // path carries no model attribution by construction.
-      return {
-        request: { command: 'bash', args: ['-c', override], instructions, cwd: projectRoot, env },
-        emitsStreamJson: false,
-      };
-    }
-    // Resolve the spawn agent for the running transition's STAGE when one is
-    // given (propose/apply/verify/decompose/pr) — a stage-map routes each stage
-    // independently; a scalar/unset agent resolves the same for every stage.
-    // Either way `resolveAdapter` maps an unmapped-stage/unset name to
-    // `DEFAULT_AGENT` and rejects an unknown name (`UnknownAgentError`) before
-    // any spawn.
-    const resolved = stage
-      ? resolveAgentForStage(context.settings.agent, stage)
-      : scalarAgent(context.settings.agent);
-    // Parse the resolved spec ONCE per transition: the stored value is a whole
-    // `agent[:model]` spec string (config load already rejected malformed specs,
-    // so this parse cannot throw on validated config). The adapter is resolved by
-    // the AGENT PART — an unknown agent part still throws `UnknownAgentError`
-    // before any spawn, naming `rex` not `rex:some-model`; the model part is
-    // threaded to the adapter via `AgentRequestContext.model` so the adapter
-    // emits its own flag. A bare agent name (no `:`) parses to `{ agent }` with
-    // no `model` key, so the adapter emits no flag and the agent uses its
-    // harness-configured default model — byte-for-byte today's argv.
-    const spec = resolved !== undefined ? parseAgentSpec(resolved) : undefined;
-    const adapter = resolveAdapter(spec?.agent, this.adapters);
+  ): { request: AgentSpawnRequest; emitsStreamJson: boolean; spec?: AgentSpec; agentOverride: boolean } {
+    // The override gate lives in the shared helper (`buildAgentSpawnRequest`) so
+    // the engine, the eval judge, and the mutation harness share one override
+    // seam (the #67 triplication). The adapter-resolution closure owns the
+    // site-specific stage-map/spec logic; the helper owns only the shared
+    // `bash -c <override>` shape and the `agentOverride` flag.
+    let spec: AgentSpec | undefined;
+    let emitsStreamJson = false;
+    const built = buildAgentSpawnRequest({
+      overrideEnvVar: BATCH_AGENT_CMD_ENV,
+      instructions,
+      cwd: projectRoot,
+      env,
+      buildAdapterRequest: () => {
+        // Resolve the spawn agent for the running transition's STAGE when one
+        // is given (propose/apply/verify/decompose/pr) — a stage-map routes
+        // each stage independently; a scalar/unset agent resolves the same for
+        // every stage. Either way `resolveAdapter` maps an unmapped-stage/unset
+        // name to `DEFAULT_AGENT` and rejects an unknown name
+        // (`UnknownAgentError`) before any spawn.
+        const resolved = stage
+          ? resolveAgentForStage(context.settings.agent, stage)
+          : scalarAgent(context.settings.agent);
+        // Parse the resolved spec ONCE per transition: the stored value is a
+        // whole `agent[:model]` spec string (config load already rejected
+        // malformed specs, so this parse cannot throw on validated config). The
+        // adapter is resolved by the AGENT PART — an unknown agent part still
+        // throws `UnknownAgentError` before any spawn, naming `rex` not
+        // `rex:some-model`; the model part is threaded to the adapter via
+        // `AgentRequestContext.model` so the adapter emits its own flag. A bare
+        // agent name (no `:`) parses to `{ agent }` with no `model` key, so the
+        // adapter emits no flag and the agent uses its harness-configured
+        // default model — byte-for-byte today's argv.
+        spec = resolved !== undefined ? parseAgentSpec(resolved) : undefined;
+        const adapter = resolveAdapter(spec?.agent, this.adapters);
+        emitsStreamJson = adapter.emitsStreamJson === true;
+        return adapter.buildRequest(
+          { ...context, model: spec?.model },
+          instructions,
+          projectRoot,
+          env
+        );
+      },
+    });
     return {
-      request: adapter.buildRequest(
-        { ...context, model: spec?.model },
-        instructions,
-        projectRoot,
-        env
-      ),
-      emitsStreamJson: adapter.emitsStreamJson === true,
-      spec,
+      request: built.request,
+      emitsStreamJson: built.agentOverride ? false : emitsStreamJson,
+      spec: built.agentOverride ? undefined : spec,
+      agentOverride: built.agentOverride,
     };
   }
 
@@ -912,19 +960,22 @@ export class RatchetBatchEngine {
   }
 
   /**
-   * Under `after-propose` (and `every-phase`) gates, a completed propose parks
-   * for approval before apply. `voluntary` and `autonomous` never park for
-   * approval (autonomous still parks on agent blockers, handled in mapping).
+   * Under the configured `gate`, which completed transitions park for approval?
+   * Delegates the gate×transition decision to the pure
+   * {@link parksForApproval} matrix (the single source of truth) so the policy
+   * has one author: `voluntary`/`autonomous` park nothing; `after-propose`
+   * parks `propose` only; `every-phase` parks every completed change transition
+   * (propose/apply/verify). A resume that already carries an answer/feedback
+   * means the user acted on THIS transition, so it does not re-park (an
+   * approved/rejected re-run of the SAME transition advances).
    */
   private shouldParkForApproval(
     context: ChangeStepContext,
     transition: Transition
   ): boolean {
-    if (transition !== 'propose') return false;
     // A resume that already carries an answer/feedback means the user acted; do
     // not re-park for approval.
     if (context.resume?.answer || context.resume?.feedback) return false;
-    const gate = context.settings.gate;
-    return gate === 'after-propose' || gate === 'every-phase';
+    return parksForApproval(context.settings.gate, transition);
   }
 }

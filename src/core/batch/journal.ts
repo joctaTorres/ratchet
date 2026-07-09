@@ -16,6 +16,7 @@ import path from 'path';
 import { getBatchDir } from './manifest.js';
 import { RATCHET_DIR_NAME } from '../config.js';
 import type { ProofOfWorkPolicy } from './config.js';
+import type { PassConditionKind } from './manifest.js';
 
 export type JournalEntryKind =
   | 'progress'
@@ -50,6 +51,20 @@ export interface ProofOfWorkRecord {
   reason: string;
   /** Human-readable explanation of the verdict. */
   detail: string;
+  /**
+   * Which pass-condition kind was evaluated (`exit-zero` | `contains` | `regex`
+   * | `substring`). Absent for the not-yet-wired `llm-judge` kind and on older
+   * records written before this field existed — readers ignore absence, no
+   * migration.
+   */
+  conditionKind?: PassConditionKind;
+  /**
+   * The matched excerpt on a pass: the needle for `contains`/`substring`, the
+   * actual matched text for `regex`. Absent on a fail, for exit-zero, and on
+   * older records — readers ignore absence. Persisted so gate evidence is
+   * reviewable instead of a bare pass/fail bit.
+   */
+  matchedExcerpt?: string;
 }
 
 export interface JournalEntry {
@@ -62,6 +77,15 @@ export interface JournalEntry {
   transition?: string;
   /** Present only on `proof-of-work` entries: the recorded verdict. */
   proof?: ProofOfWorkRecord;
+  /**
+   * Provenance marker stamped on entries produced under an active agent-cmd
+   * override (`RATCHET_BATCH_AGENT_CMD`). The engine stamps the
+   * transition-outcome entry it appends; `batch report` stamps the entries it
+   * appends from its own process env (the spawned stand-in inherits the var).
+   * Absent on override-free work — readers ignore it, so no migration. Today
+   * the only value is `'env-override'`; the union is open to widen later.
+   */
+  via?: 'env-override';
 }
 
 export type ParkedKind = 'blocked' | 'awaiting-approval';

@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { resolveAdapter, type AgentRequestContext } from '../../src/core/batch/engine/agent.js';
+import {
+  resolveAdapter,
+  activeAgentCmdOverride,
+  buildAgentSpawnRequest,
+  agentOverrideNotice,
+  ENV_OVERRIDE_PROVENANCE,
+  makeRealSpawner,
+  realSpawner,
+  type AgentRequestContext,
+  type AgentSpawnRequest,
+} from '../../src/core/batch/engine/agent.js';
 
 /**
  * Adapter capability + argv assertions for `capability-gating.feature` scenarios
@@ -133,5 +143,153 @@ describe('CommandAgentAdapter — model flag argv (model-flag-argv.feature)', ()
     expect(req.args.slice(base.length, base.length + 2)).toEqual(['--model', 'm-1']);
     // The permission flags remain the trailing block (e.g. `--permission-mode`).
     expect(req.args.slice(base.length + 2)).toContain('--permission-mode');
+  });
+});
+
+/**
+ * Implements: features/agent-cmd-override/shared-spawn-helper.feature
+ *
+ * The shared override-aware spawn-request helper: `activeAgentCmdOverride` is the
+ * single gate (active / whitespace-only / unset), `buildAgentSpawnRequest`
+ * returns the `bash -c <override>` request with `agentOverride: true` when
+ * active (carrying instructions/cwd/env) or delegates to the adapter closure
+ * (invoked exactly once) with `agentOverride: false` when inactive, and
+ * `agentOverrideNotice` renders the per-var notice line.
+ */
+describe('buildAgentSpawnRequest — override gate (shared-spawn-helper.feature)', () => {
+  const ENV = 'RATCHET_BATCH_AGENT_CMD';
+  const INSTRUCTIONS = 'do the thing';
+  const CWD = '/proj';
+  const ENV_OBJ: NodeJS.ProcessEnv = { [ENV]: 'echo stub-agent', OTHER: 'x' };
+
+  /** A buildAdapterRequest closure that records its invocations. */
+  function adapterClosure(calls: number[]) {
+    return (): AgentSpawnRequest => {
+      calls[0] += 1;
+      return { command: 'fake-agent', args: ['-p'], instructions: INSTRUCTIONS, cwd: CWD, env: ENV_OBJ };
+    };
+  }
+
+  // Scenario: an active override produces the `bash -c <override>` request and
+  // reports the agent was overridden.
+  it('an active override yields a `bash -c <override>` request with agentOverride=true', () => {
+    const calls = [0];
+    const { request, agentOverride } = buildAgentSpawnRequest({
+      overrideEnvVar: ENV,
+      instructions: INSTRUCTIONS,
+      cwd: CWD,
+      env: { [ENV]: 'echo stub-agent' },
+      buildAdapterRequest: adapterClosure(calls),
+    });
+    expect(agentOverride).toBe(true);
+    expect(request).toEqual({
+      command: 'bash',
+      args: ['-c', 'echo stub-agent'],
+      instructions: INSTRUCTIONS,
+      cwd: CWD,
+      env: { [ENV]: 'echo stub-agent' },
+    });
+    // The adapter closure is NOT consulted when the override is active.
+    expect(calls[0]).toBe(0);
+  });
+
+  // Scenario: a whitespace-only override is inactive (configured adapter used).
+  it('a whitespace-only override is inactive and the adapter closure is used', () => {
+    const calls = [0];
+    const { request, agentOverride } = buildAgentSpawnRequest({
+      overrideEnvVar: ENV,
+      instructions: INSTRUCTIONS,
+      cwd: CWD,
+      env: { [ENV]: '   ' },
+      buildAdapterRequest: adapterClosure(calls),
+    });
+    expect(agentOverride).toBe(false);
+    expect(request.command).toBe('fake-agent');
+    // The adapter closure is invoked EXACTLY ONCE.
+    expect(calls[0]).toBe(1);
+  });
+
+  // Scenario: an unset override is inactive (configured adapter used).
+  it('an unset override is inactive and the adapter closure is used exactly once', () => {
+    const calls = [0];
+    const { request, agentOverride } = buildAgentSpawnRequest({
+      overrideEnvVar: ENV,
+      instructions: INSTRUCTIONS,
+      cwd: CWD,
+      env: {},
+      buildAdapterRequest: adapterClosure(calls),
+    });
+    expect(agentOverride).toBe(false);
+    expect(request.command).toBe('fake-agent');
+    expect(calls[0]).toBe(1);
+  });
+
+  // Scenario: the override request threads instructions/cwd/env like any request.
+  it('the override request carries instructions, cwd, and env verbatim', () => {
+    const { request } = buildAgentSpawnRequest({
+      overrideEnvVar: ENV,
+      instructions: 'PROMPT',
+      cwd: '/the/cwd',
+      env: { [ENV]: 'cmd', RATCHET_STEP_VAR: 'from-engine' },
+      buildAdapterRequest: adapterClosure([0]),
+    });
+    expect(request.instructions).toBe('PROMPT');
+    expect(request.cwd).toBe('/the/cwd');
+    expect(request.env).toEqual({ [ENV]: 'cmd', RATCHET_STEP_VAR: 'from-engine' });
+  });
+
+  it('activeAgentCmdOverride trims, treats whitespace-only as inactive, and undefined as inactive', () => {
+    expect(activeAgentCmdOverride(ENV, { [ENV]: '  echo x  ' })).toBe('echo x');
+    expect(activeAgentCmdOverride(ENV, { [ENV]: '   ' })).toBeUndefined();
+    expect(activeAgentCmdOverride(ENV, { [ENV]: '' })).toBeUndefined();
+    expect(activeAgentCmdOverride(ENV, {})).toBeUndefined();
+  });
+
+  it('agentOverrideNotice names the env var and ENV_OVERRIDE_PROVENANCE is env-override', () => {
+    expect(agentOverrideNotice(ENV)).toBe('⚠ agent overridden by RATCHET_BATCH_AGENT_CMD');
+    expect(agentOverrideNotice('RATCHET_EVAL_AGENT_CMD')).toBe(
+      '⚠ agent overridden by RATCHET_EVAL_AGENT_CMD'
+    );
+    expect(ENV_OVERRIDE_PROVENANCE).toBe('env-override');
+  });
+});
+
+/**
+ * makeRealSpawner — the real process-spawn seam: detached process group on
+ * POSIX, overall timeout with TERM→grace→KILL on the whole group, and a
+ * resolved (non-hanging) result carrying stdout/stderr/exit.
+ *
+ * These run REAL subprocesses (sh -c …) — parity with the env-threading tests
+ * in rex-sidecar-runtime.test.ts — to prove the spawned command observes the
+ * timeout/reap behavior, not just the string shape.
+ */
+describe('makeRealSpawner — detached spawn + timeout reap', () => {
+  function req(command: string): AgentSpawnRequest {
+    return {
+      command: 'sh',
+      args: ['-c', command],
+      instructions: '',
+      cwd: process.cwd(),
+      env: { ...process.env, PATH: process.env.PATH ?? '' },
+    };
+  }
+
+  it('runs a fast command and resolves with its stdout + exit code', async () => {
+    const spawner = makeRealSpawner({ timeoutMs: 5000 });
+    const result = await spawner(req("echo 'hello world'; exit 3"));
+    expect(result.exitCode).toBe(3);
+    expect(result.stdout.trim()).toBe('hello world');
+  });
+
+  it('times out a hung command: resolves with non-zero + a timeout message in stderr', async () => {
+    const spawner = makeRealSpawner({ timeoutMs: 50, killGraceMs: 20 });
+    const result = await spawner(req('sleep 30'));
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/timed out/i);
+  });
+
+  it('realSpawner is a Spawner built from makeRealSpawner', () => {
+    expect(typeof realSpawner).toBe('function');
+    expect(typeof makeRealSpawner).toBe('function');
   });
 });

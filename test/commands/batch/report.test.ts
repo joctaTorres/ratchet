@@ -132,4 +132,65 @@ describe('batchReportCommand', () => {
     expect(getParkedStep(fixture.root, 'b', 'c1')?.feedback).toBe('wrong approach');
     expect(output()).toMatch(/re-runs propose/);
   });
+
+  /**
+   * Implements: features/agent-cmd-override/override-provenance.feature
+   *
+   * Scenario: agent-reported journal entries are stamped. `batch report` runs
+   * INSIDE the spawned agent; when its own process env carries an active
+   * RATCHET_BATCH_AGENT_CMD, every entry it appends (progress, blocker,
+   * needs-input, completion) carries `via: 'env-override'` — the spawned
+   * stand-in inherits the var, so stub-reported completions are auditable.
+   * Override-free reports stay unstamped.
+   */
+  describe('override provenance stamping (override-provenance.feature)', () => {
+    const ENV = 'RATCHET_BATCH_AGENT_CMD';
+    let saved: string | undefined;
+
+    beforeEach(() => {
+      saved = process.env[ENV];
+    });
+    afterEach(() => {
+      if (saved === undefined) delete process.env[ENV];
+      else process.env[ENV] = saved;
+    });
+
+    it('stamps every appended entry with `via: env-override` under an active override', async () => {
+      process.env[ENV] = 'echo stub-agent';
+      await batchReportCommand('b', { change: 'c1', status: 'making progress' });
+      await batchReportCommand('b', { change: 'c1', complete: 'all done' });
+
+      const entries = readJournalForChange(fixture.root, 'b', 'c1');
+      expect(entries).toHaveLength(2);
+      for (const e of entries) expect(e.via).toBe('env-override');
+    });
+
+    it('stamps blocker and needs-input entries under an active override', async () => {
+      process.env[ENV] = 'echo stub-agent';
+      await batchReportCommand('b', { change: 'c1', blocker: 'which db?' });
+      // Answer is a USER action (recordAnswer appends its own 'answer' entry
+      // inside journal.ts, not report.ts), so it is intentionally NOT stamped —
+      // only the agent-reported kinds report.ts appends directly carry `via`.
+      await batchReportCommand('b', { change: 'c1', answer: 'use postgres' });
+      await batchReportCommand('b', { change: 'c1', needsInput: 'need an API key' });
+
+      const entries = readJournalForChange(fixture.root, 'b', 'c1');
+      const blocker = entries.find((e) => e.kind === 'blocker');
+      const needsInput = entries.find((e) => e.kind === 'needs-input');
+      expect(blocker?.via).toBe('env-override');
+      expect(needsInput?.via).toBe('env-override');
+      // The user-driven answer entry stays unstamped.
+      const answer = entries.find((e) => e.kind === 'answer');
+      expect(answer?.via).toBeUndefined();
+    });
+
+    it('leaves entries unstamped when no override is active', async () => {
+      delete process.env[ENV];
+      await batchReportCommand('b', { change: 'c1', status: 'making progress' });
+
+      const entries = readJournalForChange(fixture.root, 'b', 'c1');
+      expect(entries).toHaveLength(1);
+      expect(entries[0].via).toBeUndefined();
+    });
+  });
 });

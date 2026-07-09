@@ -57,6 +57,10 @@ vi.mock('../../../src/core/batch/engine/index.js', () => ({
     journal.some((e) => e.kind === 'completion' && e.transition === 'pr'),
   readJournalTolerant: readJournalTolerantMock,
   runProofOfWork: runProofOfWorkMock,
+  // Pure helpers `renderResult` imports for the override notice — passed
+  // through as the real functions so the notice text is asserted honestly.
+  agentOverrideNotice: (envVar: string) => `⚠ agent overridden by ${envVar}`,
+  BATCH_AGENT_CMD_ENV: 'RATCHET_BATCH_AGENT_CMD',
 }));
 
 vi.mock('../../../src/core/planning-home.js', () => ({
@@ -532,5 +536,64 @@ describe('batchApplyCommand', () => {
 
     expect(output()).toContain('Nothing to do — all changes are done.');
     expect(runPrStepMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Implements: features/agent-cmd-override/override-notice.feature
+   *
+   * Scenario: batch apply text output carries the override notice / --json
+   * carries agentOverride. The engine sets `StepResult.agentOverride` exactly
+   * when its spawn ran under an active `RATCHET_BATCH_AGENT_CMD`; `renderResult`
+   * prints the one-line notice (text) and emits the field verbatim (--json).
+   * No override → no notice and no field.
+   */
+  describe('agent-cmd override notice (override-notice.feature)', () => {
+    it('prints the one-line override notice in text mode when the result carries agentOverride', async () => {
+      await fixture.writeBatch('b', { phases: [{ ...PHASE, changes: [{ name: 'c1' }] }] });
+      runStepMock.mockResolvedValue({
+        state: 'advanced',
+        change: 'c1',
+        transition: 'propose',
+        message: 'step complete',
+        agentOverride: true,
+      } satisfies StepResult);
+
+      await batchApplyCommand('b', {});
+
+      expect(output()).toContain('⚠ agent overridden by RATCHET_BATCH_AGENT_CMD');
+      // The notice precedes the Ran line.
+      expect(output().indexOf('⚠ agent overridden')).toBeLessThan(output().indexOf('Ran:'));
+    });
+
+    it('emits agentOverride: true in --json when the result carries agentOverride', async () => {
+      await fixture.writeBatch('b', { phases: [{ ...PHASE, changes: [{ name: 'c1' }] }] });
+      runStepMock.mockResolvedValue({
+        state: 'advanced',
+        change: 'c1',
+        transition: 'propose',
+        message: 'step complete',
+        agentOverride: true,
+      } satisfies StepResult);
+
+      await batchApplyCommand('b', { json: true });
+
+      const parsed = JSON.parse(output());
+      expect(parsed.agentOverride).toBe(true);
+    });
+
+    it('prints no notice and omits agentOverride when no override is active', async () => {
+      await fixture.writeBatch('b', { phases: [{ ...PHASE, changes: [{ name: 'c1' }] }] });
+      runStepMock.mockResolvedValue({
+        state: 'advanced',
+        change: 'c1',
+        transition: 'propose',
+        message: 'step complete',
+      } satisfies StepResult);
+
+      await batchApplyCommand('b', { json: true });
+
+      const parsed = JSON.parse(output());
+      expect(parsed.agentOverride).toBeUndefined();
+    });
   });
 });

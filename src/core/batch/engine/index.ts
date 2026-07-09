@@ -34,11 +34,17 @@ export {
   realSpawner,
   UnknownAgentError,
   DEFAULT_AGENT,
+  activeAgentCmdOverride,
+  buildAgentSpawnRequest,
+  agentOverrideNotice,
+  ENV_OVERRIDE_PROVENANCE,
+  BATCH_AGENT_CMD_ENV,
   type AgentAdapter,
   type AgentRequestContext,
   type Spawner,
   type AgentSpawnRequest,
   type AgentSpawnResult,
+  type EnvOverrideProvenance,
 } from './agent.js';
 export {
   buildAgentInstructions,
@@ -57,6 +63,7 @@ export {
   type SkillLocusDeps,
 } from './skill-locus.js';
 export { mapSessionToOutcome } from './outcome.js';
+export { parksForApproval } from './approval-gate.js';
 export {
   computeNextTransition,
   readChangeDiskState,

@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import {
   makeRexRemoteRuntime,
   buildRemoteRunCommand,
@@ -336,6 +340,82 @@ describe('makeRexRemoteRuntime — error paths (actionable, no hang, no secret l
   });
 });
 
+/**
+ * Job-control launch + group-kill teardown — the reap-agents-on-teardown change.
+ *
+ * The launch command runs under `set -m` and records the agent's pid to a
+ * pidfile (`agent.pid`) so teardown can reap the whole process group (negative
+ * pid) BEFORE removing the run dir and closing the session — the prior code
+ * closed the session leaving the nohup'd agent alive on the server.
+ */
+describe('makeRexRemoteRuntime — job-control launch + group-kill teardown', () => {
+  function executeCommands(server: { fetch: FetchLike; calls: Recorded[] }): string[] {
+    return server.calls
+      .filter((c) => c.path === '/execute')
+      .map((c) => (c.body as { command: string }).command);
+  }
+
+  it('launches under `set -m` and writes the agent pid to a pidfile', async () => {
+    const server = fakeServer({ authToken: 'tok', logChunks: ['x\n'], exitCode: 0 });
+    const runtime = makeRexRemoteRuntime({
+      host: 'h',
+      port: 1,
+      authToken: 'tok',
+      pollIntervalMs: 0,
+      deps: noWaitDeps(server.fetch),
+    });
+    await runtime(req, () => {});
+    const cmds = executeCommands(server);
+    const launch = cmds.find((c) => /^nohup /.test(c));
+    expect(launch).toBeDefined();
+    // `set -m` makes the backgrounded pipeline its own process-group leader.
+    expect(launch).toContain('set -m');
+    // The pid is recorded to a pidfile so teardown finds the group.
+    expect(launch).toContain('agent.pid');
+    expect(launch).toMatch(/echo \$! >/);
+  });
+
+  it('teardown reaps the group (TERM→KILL) BEFORE rm -rf and close', async () => {
+    const server = fakeServer({ authToken: 'tok', logChunks: ['x\n'], exitCode: 0 });
+    const runtime = makeRexRemoteRuntime({
+      host: 'h',
+      port: 1,
+      authToken: 'tok',
+      pollIntervalMs: 0,
+      deps: noWaitDeps(server.fetch),
+    });
+    await runtime(req, () => {});
+
+    const allCalls = server.calls;
+    const executeCalls = allCalls.filter((c) => c.path === '/execute');
+    const teardownKill = executeCalls.find((c) =>
+      /kill -TERM -- -\$\(cat/.test((c.body as { command: string }).command)
+    );
+    expect(teardownKill).toBeDefined();
+    const killCmd = (teardownKill!.body as { command: string }).command;
+    // TERM then KILL on the negative pgid, best-effort.
+    expect(killCmd).toContain('kill -TERM -- -$(cat');
+    expect(killCmd).toContain('kill -KILL -- -$(cat');
+    expect(killCmd).toContain('agent.pid');
+
+    // ORDERING: the group-kill /execute appears BEFORE the rm -rf /execute and
+    // the /close_session + /close calls (the pidfile lives in runDir and the
+    // session must be alive for the kill to run).
+    const killIdx = allCalls.indexOf(teardownKill!);
+    const rmrf = allCalls.find((c) => {
+      if (c.path !== '/execute') return false;
+      return /^rm -rf /.test((c.body as { command: string }).command);
+    });
+    expect(rmrf).toBeDefined();
+    const rmrfIdx = allCalls.indexOf(rmrf!);
+    const closeSessionIdx = allCalls.findIndex((c) => c.path === '/close_session');
+    const closeIdx = allCalls.findIndex((c) => c.path === '/close');
+    expect(killIdx).toBeLessThan(rmrfIdx);
+    expect(rmrfIdx).toBeLessThan(closeSessionIdx);
+    expect(closeSessionIdx).toBeLessThan(closeIdx);
+  });
+});
+
 describe('resolveTransport — scheme selection + plaintext guard', () => {
   it('defaults a loopback host to http (token never leaves the machine)', () => {
     expect(resolveTransport('localhost')).toEqual({ scheme: 'http', host: 'localhost' });
@@ -459,5 +539,134 @@ describe('buildRemoteRunCommand', () => {
       env: {},
     });
     expect(cmd).toBe("cat '/tmp/run/prompt.txt' | 'agent' '-p' 'it'\\''s'");
+  });
+
+  it('omits exports when the request env is empty (parity with prior output)', () => {
+    const cmd = buildRemoteRunCommand('/tmp/run/prompt.txt', {
+      command: 'agent',
+      args: ['-p'],
+      instructions: '',
+      cwd: '/',
+      env: {},
+    });
+    expect(cmd.startsWith('cat ')).toBe(true);
+    expect(cmd).not.toContain('export ');
+  });
+});
+
+/**
+ * Env threading — the per-step env the engine places on AgentSpawnRequest.env
+ * reaches the agent the remote runtime launches, with overlay merge semantics.
+ *
+ * Implements `features/rex-env-threading/env-reaches-spawned-agent.feature`.
+ * The `/execute` nohup body assertion uses the fake server (no spawn); the
+ * execution assertions run buildRemoteRunCommand's output through a real `sh -c`
+ * with a controlled base env so actual visibility is proven (per the testing
+ * standard: an execution test per builder proves the spawned command observes the
+ * request value). Temp dirs are isolated via mkdtemp and removed in afterEach.
+ */
+describe('makeRexRemoteRuntime — env threading (env-reaches-spawned-agent.feature)', () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(path.join(os.tmpdir(), 'rex-remote-env-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /**
+   * Run buildRemoteRunCommand's output through a real `sh -c` with a controlled
+   * base env, returning the spawned command's stdout. Keeps PATH so `sh` and the
+   * agent binary resolve; controls only the vars under test.
+   */
+  function runBuiltCommand(request: AgentSpawnRequest, baseEnv: NodeJS.ProcessEnv): string {
+    const promptPath = path.join(tmp, 'prompt.txt');
+    writeFileSync(promptPath, request.instructions ?? '');
+    const cmd = buildRemoteRunCommand(promptPath, request);
+    return execFileSync('sh', ['-c', cmd], {
+      env: { PATH: process.env.PATH ?? '', ...baseEnv },
+      encoding: 'utf-8',
+    });
+  }
+
+  it('the /execute nohup body command exports a per-step env var set on the request env', async () => {
+    const server = fakeServer({ authToken: 'tok', logChunks: ['x\n'], exitCode: 0 });
+    const runtime = makeRexRemoteRuntime({
+      host: 'h',
+      port: 1,
+      authToken: 'tok',
+      pollIntervalMs: 0,
+      deps: noWaitDeps(server.fetch),
+    });
+    await runtime({ ...req, env: { RATCHET_STEP_VAR: 'from-engine' } }, () => {});
+    const launch = server.calls.find(
+      (c) => c.path === '/execute' && /nohup/.test((c.body as { command: string }).command)
+    );
+    expect(launch).toBeDefined();
+    const cmd = (launch!.body as { command: string }).command;
+    // The export rides inside the nohup launcher's `( … )` subshell, before `cat`.
+    // The outer `shquote(launch)` re-escapes the inner single quotes, so assert on
+    // the quote-free tokens that survive the wrap (`export NAME=` and the value);
+    // actual visibility is proven by the execution assertions below.
+    expect(cmd).toContain('export RATCHET_STEP_VAR=');
+    expect(cmd).toContain('from-engine');
+    expect(cmd).toContain('cat ');
+    expect(cmd).toContain('exit.code'); // the nohup launcher wrapping is unchanged
+  });
+
+  it('the spawned agent observes the request env value (execution via sh -c)', () => {
+    const out = runBuiltCommand(
+      {
+        command: 'printenv',
+        args: ['RATCHET_STEP_VAR'],
+        instructions: '',
+        cwd: '/srv/project',
+        env: { RATCHET_STEP_VAR: 'from-engine' },
+      },
+      // A colliding SESSION base value — the request must win (overlay).
+      { RATCHET_STEP_VAR: 'from-session' }
+    );
+    expect(out.trim()).toBe('from-engine');
+  });
+
+  it('a base var absent from the request env stays visible (overlay, not replace)', () => {
+    const out = runBuiltCommand(
+      {
+        command: 'printenv',
+        args: ['BASE_ONLY'],
+        instructions: '',
+        cwd: '/srv/project',
+        env: { RATCHET_STEP_VAR: 'from-engine' },
+      },
+      // BASE_ONLY is in the session base but NOT in the request env.
+      { BASE_ONLY: 'base-val' }
+    );
+    expect(out.trim()).toBe('base-val');
+  });
+
+  /**
+   * Implements: features/agent-cmd-override/shared-spawn-helper.feature
+   *
+   * Scenario: an override-built request threads env like any other request. An
+   * override-shaped request (`bash -c <override>` with a per-step env var) has
+   * that var exported in the built launch command — the override path composes
+   * with #89's env threading on the remote runtime.
+   */
+  it('an override-built (bash -c) request exports a per-step env var into the launch command', () => {
+    const promptPath = path.join(tmp, 'prompt.txt');
+    writeFileSync(promptPath, 'PROMPT BODY');
+    const cmd = buildRemoteRunCommand(promptPath, {
+      command: 'bash',
+      args: ['-c', 'echo stub-agent'],
+      instructions: 'PROMPT BODY',
+      cwd: '/srv/project',
+      env: { RATCHET_STEP_VAR: 'from-engine' },
+    });
+    expect(cmd).toContain('export RATCHET_STEP_VAR=');
+    expect(cmd).toContain('from-engine');
+    expect(cmd).toContain("'bash' '-c' 'echo stub-agent'");
+    expect(cmd).toContain('cat ');
   });
 });

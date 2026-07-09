@@ -12,7 +12,7 @@ import { execFileSync } from 'child_process';
 import { resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
 import { loadBatchManifest, type Phase } from '../../core/batch/manifest.js';
 import { computeBatchStatus } from '../../core/batch/status.js';
-import { resolveBatchSettings, type PrGrouping } from '../../core/batch/config.js';
+import { resolveBatchSettings, type PrGrouping, type SuppressedEscalation } from '../../core/batch/config.js';
 import {
   RatchetBatchEngine,
   computeNextTransition,
@@ -28,6 +28,8 @@ import {
   type StepResult,
   type ProofOfWorkResult,
   type RunProofOfWorkDeps,
+  agentOverrideNotice,
+  BATCH_AGENT_CMD_ENV,
 } from '../../core/batch/engine/index.js';
 import type { BatchStatusInfo, ChangeStatus } from '../../core/batch/status.js';
 // The two pure stacked-grouping policies are imported from their own modules —
@@ -53,6 +55,15 @@ import { resolveBatchName } from './shared.js';
 
 export interface BatchApplyOptions {
   json?: boolean;
+  /**
+   * Per-invocation opt-in letting a repo-committed manifest RAISE the posture
+   * above the operator-owned (default/user/project) scopes. Default `false`:
+   * the manifest may only NARROW posture (lower it); a raise is clamped and
+   * surfaced via a posture warning on `batch apply`. Pass `true` (the
+   * `--allow-manifest-escalation` flag) to let a manifest raise posture
+   * unchanged. See {@link resolveBatchSettings}.
+   */
+  allowManifestEscalation?: boolean;
 }
 
 /** The git branch names the completion PR step opens between, resolved by the CLI. */
@@ -146,8 +157,30 @@ export async function batchApplyCommand(
   const projectRoot = deps.projectRoot ?? resolveCurrentPlanningHomeSync().root;
   const batch = resolveBatchName(projectRoot, name);
   const manifest = loadBatchManifest(projectRoot, batch);
-  const { settings, agentStageScopes } = resolveBatchSettings(projectRoot, manifest);
+  const { settings, sources, agentStageScopes, suppressedEscalation } = resolveBatchSettings(
+    projectRoot,
+    manifest,
+    { allowManifestEscalation: options.allowManifestEscalation }
+  );
   const status = await computeBatchStatus(projectRoot, manifest);
+
+  // Surface the effective permission posture and its source scope at the start
+  // of every human-readable run so the permission story is visible up front
+  // instead of buried in config (`apply-posture-banner.feature`). `--json`
+  // suppresses the line (machine consumers read the resolved settings they
+  // build themselves); the banner is for interactive operators.
+  if (!options.json && settings.permissions) {
+    renderPostureBanner(settings.permissions.posture, sources.permissions);
+  }
+
+  // Surface a manifest posture-raise refusal as a human-facing warning BEFORE
+  // any engine work, so the operator knows the effective posture was clamped to
+  // the operator-owned scopes' value and how to opt in. `--json` suppresses it
+  // (machine callers read the structured `suppressedEscalation` on the resolved
+  // settings they build themselves); the banner is for interactive operators.
+  if (suppressedEscalation && !options.json && settings.permissions) {
+    renderSuppressedEscalationWarning(suppressedEscalation, settings.permissions.posture);
+  }
 
   // The engine is bundled into this package; construct it and run in-process.
   const engine = new RatchetBatchEngine();
@@ -1031,6 +1064,8 @@ async function runProofAtBoundary(
     policy: result.policy,
     reason: result.reason,
     detail: result.detail,
+    conditionKind: result.conditionKind,
+    matchedExcerpt: result.matchedExcerpt,
   };
   recordProofOfWork(projectRoot, batch, phase.name, record);
   renderProofOutcome(phase.name, result, options);
@@ -1086,6 +1121,17 @@ async function renderResult(
     return;
   }
 
+  // An override notice rides the result, not a side-channel print: the engine
+  // sets `agentOverride` on the step outcome exactly when its spawn ran under
+  // an active `RATCHET_BATCH_AGENT_CMD`. The notice appears before the result
+  // line so a leftover override is the first thing the operator sees; --json
+  // carries the field via the stringify above (no notice interleaved into the
+  // JSON document). Pre-spawn parks (`notAdvanced`) carry no `agentOverride`
+  // and print no notice — nothing was spawned.
+  if (result.agentOverride) {
+    console.log(chalk.yellow(agentOverrideNotice(BATCH_AGENT_CMD_ENV)));
+  }
+
   console.log(chalk.bold(`\nRan: ${result.change} (${result.transition})`));
   switch (result.state) {
     case 'advanced':
@@ -1100,4 +1146,40 @@ async function renderResult(
     default:
       console.log(chalk.dim(result.message ?? result.state));
   }
+}
+
+/**
+ * Render the one-line effective-posture banner that opens every human-readable
+ * `batch apply` run: `permissions: <posture> (<source> scope)`. Names the
+ * effective permission posture and which scope supplied it so the permission
+ * story is visible up front instead of buried in config. Suppressed under
+ * `--json` (machine consumers read the resolved settings they build themselves).
+ */
+function renderPostureBanner(posture: string, source: string): void {
+  console.log(chalk.dim(`permissions: ${posture} (${source} scope)`));
+}
+
+/**
+ * Render a human-facing posture banner when a repo-committed manifest tried to
+ * RAISE the posture above the operator-owned (default/user/project) scopes and
+ * the raise was clamped. Names the requested posture, the effective (clamped)
+ * posture, and the `--allow-manifest-escalation` opt-in so the operator knows
+ * both that the effective posture was held back and how to allow the raise.
+ * Printed once before any engine work; `--json` callers read the structured
+ * `suppressedEscalation` on the resolved settings they build themselves.
+ */
+function renderSuppressedEscalationWarning(
+  suppressed: SuppressedEscalation,
+  effectivePosture: string
+): void {
+  console.log(
+    chalk.yellow(
+      `⚠ manifest requested posture '${suppressed.requested}' (higher than operator scopes); clamped to '${effectivePosture}'.`
+    )
+  );
+  console.log(
+    chalk.dim(
+      `  To allow the raise: rerun with --allow-manifest-escalation, or raise posture in your user/project config (operator-owned scopes).`
+    )
+  );
 }

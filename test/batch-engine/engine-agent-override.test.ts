@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
+import * as fsSync from 'fs';
 import path from 'path';
 import os from 'os';
-import { appendJournal } from 'ratchet-ai';
+import { appendJournal, readJournalForChange } from 'ratchet-ai';
 import type { ResolvedStepContext, BatchSettings, ProofOfWork } from 'ratchet-ai';
 import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
 import type { AgentAdapter, Spawner, AgentSpawnRequest } from '../../src/core/batch/engine/agent.js';
@@ -13,6 +14,12 @@ import type { AgentAdapter, Spawner, AgentSpawnRequest } from '../../src/core/ba
  * configured adapter. Unset → behavior is identical to today. The `Spawner`
  * (unit-test injection seam) stays untouched either way; here we use it to
  * capture the request the engine built.
+ *
+ * Also implements features/agent-cmd-override/override-notice.feature and
+ * features/agent-cmd-override/override-provenance.feature (engine side): a
+ * step spawned under an active override carries `agentOverride: true` on the
+ * `StepResult` and stamps `via: 'env-override'` on the transition-outcome
+ * journal entry the engine appends.
  */
 
 let projectRoot: string;
@@ -94,17 +101,27 @@ function engineWith(behavior: Parameters<typeof fakeAgent>[0]) {
   return { engine, fake };
 }
 
+/** Corroborate a propose completion by writing the change dir + plan.md. */
+function corroboratePropose(root: string, change: string): void {
+  const dir = path.join(root, '.ratchet', 'changes', change);
+  fsSync.mkdirSync(dir, { recursive: true });
+  fsSync.writeFileSync(path.join(dir, 'plan.md'), '## Tasks\n- [ ] do it\n');
+}
+
 describe('RatchetBatchEngine.runStep — RATCHET_BATCH_AGENT_CMD override', () => {
   it('runs the override via `bash -c` with instructions on stdin, skipping the adapter', async () => {
     process.env[ENV] = 'echo stub-agent';
     const { engine, fake } = engineWith({
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
     });
 
     const result = await engine.runStep(context());
 
     expect(result.state).toBe('advanced');
+    expect(result.agentOverride).toBe(true); // override notice flag rides the result
     expect(fake.state.adapterCalls).toBe(0); // adapter was NOT resolved/used
     expect(fake.calls.length).toBe(1);
     const req = fake.calls[0];
@@ -117,8 +134,10 @@ describe('RatchetBatchEngine.runStep — RATCHET_BATCH_AGENT_CMD override', () =
   it('treats a blank/whitespace override as unset (configured adapter is used)', async () => {
     process.env[ENV] = '   ';
     const { engine, fake } = engineWith({
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
     });
 
     const result = await engine.runStep(context());
@@ -130,13 +149,16 @@ describe('RatchetBatchEngine.runStep — RATCHET_BATCH_AGENT_CMD override', () =
 
   it('uses the configured adapter when the override is unset', async () => {
     const { engine, fake } = engineWith({
-      report: (root, batch, change) =>
-        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' }),
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
     });
 
     const result = await engine.runStep(context());
 
     expect(result.state).toBe('advanced');
+    expect(result.agentOverride).toBeUndefined(); // no override → no flag
     expect(fake.state.adapterCalls).toBe(1);
     expect(fake.calls[0].command).toBe('fake-agent');
   });
@@ -149,11 +171,54 @@ describe('RatchetBatchEngine.runStep — RATCHET_BATCH_AGENT_CMD override', () =
 
     expect(result.state).toBe('blocked'); // failed surfaces as a resumable blocked step
     expect(result.blocker).toMatch(/exited|completion/i);
+    expect(result.agentOverride).toBe(true); // override was active even on failure
     expect(fake.calls[0].command).toBe('bash');
 
     // The batch run-state stays consistent: a later retry can run again.
     const retry = await engine.runStep(context());
     expect(retry.state).toBe('blocked');
     expect(fake.calls.length).toBe(2);
+  });
+
+  // features/agent-cmd-override/override-provenance.feature — Scenario: engine
+  // transition-outcome journal entry is stamped.
+  it('stamps `via: env-override` on the transition-outcome journal entry under an override', async () => {
+    process.env[ENV] = 'echo stub-agent';
+    const { engine } = engineWith({
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
+    });
+
+    await engine.runStep(context());
+
+    // The engine appends a transition-outcome entry after the agent session.
+    // The agent's own report (via the fake spawner's callback) appended a
+    // completion entry WITHOUT `via` first; the engine's outcome entry is the
+    // stamped one, so assert the stamped entry exists rather than the first
+    // completion.
+    const entries = readJournalForChange(projectRoot, 'b', 'add-login-api');
+    const stamped = entries.find(
+      (e) => e.transition === 'propose' && e.kind === 'completion' && e.via === 'env-override'
+    );
+    expect(stamped).toBeDefined();
+  });
+
+  // Override-free work stays unstamped (override-provenance.feature — Scenario:
+  // work produced without an override stays unstamped).
+  it('does not stamp `via` on the outcome entry when no override is active', async () => {
+    const { engine } = engineWith({
+      report: (root, batch, change) => {
+        corroboratePropose(root, change);
+        appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
+      },
+    });
+
+    await engine.runStep(context());
+
+    // No entry the engine appends carries `via` when the override is inactive.
+    const entries = readJournalForChange(projectRoot, 'b', 'add-login-api');
+    expect(entries.every((e) => e.via === undefined)).toBe(true);
   });
 });

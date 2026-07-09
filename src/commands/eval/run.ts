@@ -15,6 +15,10 @@
 import chalk from 'chalk';
 import { executeRun, evaluateRun, type EvalReport } from '../../core/eval/index.js';
 import {
+  activeAgentCmdOverride,
+  agentOverrideNotice,
+} from '../../core/batch/engine/agent.js';
+import {
   projectRoot,
   resolveScope,
   resolveContributorGate,
@@ -22,6 +26,14 @@ import {
   resolveSkipConfig,
   type ScopeFlags,
 } from './shared.js';
+
+/**
+ * The env var that arms the eval agent-cmd override. Declared locally so the
+ * run-command's notice/json stamp is self-documenting; the override GATE itself
+ * lives in the shared `buildAgentSpawnRequest` helper used by the judge and
+ * mutation harness.
+ */
+const EVAL_AGENT_CMD_ENV = 'RATCHET_EVAL_AGENT_CMD';
 
 export interface EvalRunOptions extends ScopeFlags {
   /** `--gate <ids>`: set the enabled contributor set outright. */
@@ -73,6 +85,10 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
   const report = await evaluateRun(root, run.runId);
   const warnings = [...specWarnings, ...baselineSkipWarnings(report.diff)];
 
+  // The eval stamp/notice keys on the override var being ACTIVE for the run
+  // (deterministic, documented), not on whether a given case happened to spawn.
+  const agentOverride = activeAgentCmdOverride(EVAL_AGENT_CMD_ENV, process.env) !== undefined;
+
   if (options.json) {
     console.log(
       JSON.stringify(
@@ -87,6 +103,7 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
           regressions: report.diff.regressions,
           warnings,
           cases: report.cases,
+          ...(agentOverride ? { agentOverride: true } : {}),
         },
         null,
         2
@@ -94,7 +111,7 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
     );
     return;
   }
-  renderRun(run.runId, report, warnings);
+  renderRun(run.runId, report, warnings, agentOverride);
 }
 
 /**
@@ -124,8 +141,13 @@ function renderRunLevelViolations(report: EvalReport): void {
   }
 }
 
-function renderRun(runId: string, report: EvalReport, warnings: string[]): void {
+function renderRun(runId: string, report: EvalReport, warnings: string[], agentOverride = false): void {
   const { scorecard } = report;
+  // An active agent-cmd override prints the one-line notice atop the scorecard
+  // so a leftover eval override is the first thing the operator sees.
+  if (agentOverride) {
+    console.log(chalk.yellow(agentOverrideNotice(EVAL_AGENT_CMD_ENV)));
+  }
   console.log(chalk.bold(`Eval run ${runId}  [${report.overall.toUpperCase()}]`));
   console.log(
     `  ${chalk.green(`${scorecard.pass} pass`)}  ` +

@@ -5,11 +5,11 @@
  * hand-feeding `runStep` a forced `context()`. This test instead exercises the
  * path `ratchet batch apply` actually takes to decide WHICH change/transition
  * runs next: it drives propose -> apply with a stub agent, then lets SELECTION
- * choose the step (`pickNextStep` over `computeBatchStatus`, plus the pure
- * `selectRunnableStep`) and runs exactly that selected step. It asserts:
+ * choose the step (`pickNextStep` over `computeBatchStatus`) and runs exactly
+ * that selected step. It asserts:
  *
- *  (a) after apply, both `pickNextStep` and `selectRunnableStep` return the
- *      `awaiting-verify` change, with `verify` as its next transition;
+ *  (a) after apply, `pickNextStep` returns the `awaiting-verify` change, with
+ *      `verify` as its next transition;
  *  (b) running the selected step spawns a prompt that DELEGATES to
  *      `/rct:verify <change>` (the canonical skill) rather than describing verify
  *      inline (`delegated-lifecycle`);
@@ -27,15 +27,11 @@ import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
 import { appendJournal, recordProofOfWork } from '../../src/core/batch/journal.js';
 import {
   computeNextTransition,
-  isChangeDone,
-  readChangeDiskState,
-  selectRunnableStep,
-  type SelectablePhase,
+  pickNextStep,
 } from '../../src/core/batch/engine/index.js';
 import { computeBatchStatus } from '../../src/core/batch/status.js';
 import { readChangeJournalTolerant } from '../../src/core/batch/engine/run-state.js';
 import { parseBatchManifest } from '../../src/core/batch/manifest.js';
-import { pickNextStep } from '../../src/commands/batch/apply.js';
 import type {
   ResolvedStepContext,
   BatchSettings,
@@ -46,6 +42,7 @@ import type {
   Spawner,
   AgentSpawnRequest,
 } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 let projectRoot: string;
 
@@ -103,7 +100,7 @@ function engineWith(effect: (root: string, request: AgentSpawnRequest) => Promis
     return { exitCode: 0, signal: null, stdout: '', stderr: '' };
   };
   const engine = new RatchetBatchEngine({
-    spawner,
+    runtime: spawnerAsRuntime(spawner),
     adapters: { fake: adapter },
     projectRoot: () => projectRoot,
   });
@@ -145,18 +142,9 @@ async function verifyEffect(root: string): Promise<void> {
   });
 }
 
-/** The pure selection view for the single-change phase, from disk + journal. */
-function selectableFor(): SelectablePhase[] {
-  const disk = readChangeDiskState(projectRoot, CHANGE);
-  const journal = readChangeJournalTolerant(projectRoot, BATCH, CHANGE);
-  return [
-    {
-      name: 'p1',
-      gated: false,
-      // `done` fed from the SAME journal-aware predicate as status/transition.
-      changes: [{ name: CHANGE, after: [], done: isChangeDone(disk, journal), parked: false }],
-    },
-  ];
+/** The current batch status (the selection seam runs over this). */
+async function currentStatus() {
+  return computeBatchStatus(projectRoot, parseBatchManifest(MANIFEST));
 }
 
 /**
@@ -227,7 +215,14 @@ describe('verify scheduled and run through the real selection seam', () => {
       expect(target!.change).toBe(CHANGE);
     }
     expect(computeNextTransition(projectRoot, CHANGE, journalAfterApply)).toBe('verify');
-    expect(selectRunnableStep(selectableFor()).step).toEqual({ phase: 'p1', change: CHANGE });
+    {
+      const status = await currentStatus();
+      // SELECTION returns the awaiting-verify change as the runnable step.
+      expect(pickNextStep(status, parseBatchManifest(MANIFEST).phases)).toMatchObject({
+        kind: 'change',
+        change: CHANGE,
+      });
+    }
 
     // (b) running the SELECTED step spawns a verify transition that DELEGATES to
     //     /rct:verify <change> rather than re-describing verify inline.
@@ -273,7 +268,10 @@ describe('verify scheduled and run through the real selection seam', () => {
       expect(pickNextStep(status, manifest.phases, new Set(['p1']))).toBeUndefined();
     }
     expect(computeNextTransition(projectRoot, CHANGE, journalAfterVerify)).toBeUndefined();
-    expect(selectRunnableStep(selectableFor()).reason).toBe('all-done');
+    {
+      const status = await currentStatus();
+      expect(pickNextStep(status, parseBatchManifest(MANIFEST).phases)).toBeUndefined();
+    }
   });
 
   it('(d) selects a partially-applied change for apply, not verify', async () => {
@@ -318,17 +316,8 @@ phases:
     const target = pickNextStep(status, manifest.phases);
     expect(target!.change).toBe('first');
 
-    // The pure seam agrees: first is runnable, second is gated behind it.
-    const phases: SelectablePhase[] = [
-      {
-        name: 'p1',
-        gated: false,
-        changes: [
-          { name: 'first', after: [], done: false, parked: false },
-          { name: 'second', after: ['first'], done: false, parked: false },
-        ],
-      },
-    ];
-    expect(selectRunnableStep(phases).step).toEqual({ phase: 'p1', change: 'first' });
+    // status and selection share one eligibility walk: first is the runnable next
+    // (the shared `firstRunnableChange` derived `status.next` from the same gate).
+    expect(status.next).toEqual({ phase: 'p1', change: 'first' });
   });
 });

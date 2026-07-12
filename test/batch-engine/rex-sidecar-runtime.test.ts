@@ -16,6 +16,7 @@ import type { BootstrapOptions } from '../../src/core/batch/engine/runtime/rex-b
 import { RexBootstrapError, type ResolvedLaunch } from '../../src/core/batch/engine/runtime/rex-bootstrap.js';
 import type { AgentSpawnRequest } from '../../src/core/batch/engine/agent.js';
 import type { AgentEvent } from '../../src/core/batch/engine/runtime/contract.js';
+import { MAX_PARTIAL_BYTES } from '../../src/core/batch/engine/runtime/spawn-command.js';
 
 /**
  * A fake sidecar child: a programmable, in-memory stand-in for the spawned
@@ -235,7 +236,7 @@ describe('makeRexSidecarRuntime', () => {
 
     const promptPath = [...files.keys()].find((p) => p.endsWith('prompt.txt'));
     expect(promptPath).toBeDefined();
-    expect(promptPath).toContain('.ratchet/batches/b/.run/');
+    expect(promptPath).toContain('.ratchet/batches/b/run/');
     expect(files.get(promptPath!)).toBe('PROMPT BODY');
     // The run command fed the prompt file to the agent via `cat … | …`.
     const runOp = child.ops.find((o) => o.op === 'run');
@@ -243,7 +244,7 @@ describe('makeRexSidecarRuntime', () => {
     expect(runOp.command).toContain('prompt.txt');
     expect(runOp.command).toContain('| ');
     // Cleaned up.
-    expect(removed.some((p) => p.includes('.run/'))).toBe(true);
+    expect(removed.some((p) => p.includes('batches/b/run/'))).toBe(true);
   });
 
   it('maps a host path under the project root to the in-container mount path', () => {
@@ -521,7 +522,7 @@ describe('makeRexSidecarRuntime', () => {
 
     const runOp = child.ops.find((o) => o.op === 'run');
     expect(runOp.run_dir).toBeDefined();
-    expect(runOp.run_dir).toContain('/proj/.ratchet/batches/b/.run/');
+    expect(runOp.run_dir).toContain('/proj/.ratchet/batches/b/run/');
   });
 
   /**
@@ -799,5 +800,94 @@ describe('makeRexSidecarRuntime — env threading (env-reaches-spawned-agent.fea
     expect(cmd).toContain("'bash' '-c' 'echo stub-agent'");
     expect(cmd).toContain('cat ');
     expect(cmd).toContain('| ');
+  });
+});
+
+/**
+ * Protocol diagnostics + bounded protocol buffer (issue #90).
+ *
+ * A stray non-JSON line on the protocol channel and an unrecognized event kind
+ * must be SURFACED in the run's diagnostic transcript (the accumulated stderr,
+ * which flows into AgentSpawnResult.stderr and the mapped outcome detail) rather
+ * than silently dropped — a sidecar bug printing to stdout is otherwise invisible.
+ * The Node protocol line buffer is capped so a huge partial with no newline is
+ * flushed through the same line handler instead of growing without bound.
+ */
+describe('makeRexSidecarRuntime — protocol diagnostics + bounded buffer', () => {
+  // Implements features/protocol-diagnostics/surface-non-json-frames.feature.
+  it('routes a non-JSON line and an unknown event kind to the diagnostic transcript, leaving outcome unchanged', async () => {
+    const child = new FakeChild();
+    const { deps } = fakeDeps(child);
+    const runtime = makeRexSidecarRuntime({ projectRoot: '/proj', deps });
+    const events: AgentEvent[] = [];
+
+    child.onOp = (op, self) => {
+      if (op.op === 'run') {
+        // A stray non-JSON line on the protocol channel (e.g. a sidecar bug
+        // printing to stdout).
+        self.stdoutEmitter.emit('data', 'boom: not json at all\n');
+        // An event whose kind the runtime does not recognize.
+        self.emitLine({ event: 'mystery', id: op.id, note: 'weird' });
+        // A known event is still handled exactly as before.
+        self.emitLine({ event: 'stdout', id: op.id, line: 'real-output' });
+        self.emitLine({ event: 'exit', id: op.id, exit_code: 0 });
+      } else if (op.op === 'shutdown') {
+        self.emitLine({ event: 'closed' });
+        self.emit('exit', 0, null);
+      }
+    };
+
+    const runPromise = runtime(request(), (e) => events.push(e));
+    child.emitLine({ event: 'ready', locus: 'local' });
+    const result = await runPromise;
+
+    // Both stray frames surfaced in the diagnostic transcript with the prefix.
+    expect(result.stderr).toContain('[sidecar protocol] non-JSON line: boom: not json at all');
+    expect(result.stderr).toContain('[sidecar protocol] unknown event:');
+    expect(result.stderr).toContain('mystery');
+    // Outcome-relevant behavior unchanged: the known event still streamed, exit 0.
+    expect(result.stdout).toContain('real-output');
+    expect(result.exitCode).toBe(0);
+    // The diagnostics did NOT emit an error event (which would force a failed outcome).
+    expect(events.some((e) => e.kind === 'error')).toBe(false);
+    // And did not leak into the agent's stdout transcript.
+    expect(result.stdout).not.toContain('not json');
+    expect(result.stdout).not.toContain('mystery');
+  });
+
+  // Implements features/bounded-partials/flush-oversized-partial.feature.
+  it('caps the protocol line buffer: flushes an oversized partial through the diagnostic path and resets', async () => {
+    const child = new FakeChild();
+    const { deps } = fakeDeps(child);
+    const runtime = makeRexSidecarRuntime({ projectRoot: '/proj', deps });
+    const events: AgentEvent[] = [];
+    const garbage = 'Z'.repeat(MAX_PARTIAL_BYTES + 50); // > 1 MiB, no newline
+
+    child.onOp = (op, self) => {
+      if (op.op === 'run') {
+        // An oversized protocol partial with NO newline: it must be flushed, not
+        // grown. It is by construction not a valid frame → the non-JSON path.
+        self.stdoutEmitter.emit('data', garbage);
+        // After the flush the buffer resets, so a subsequent valid frame parses.
+        self.emitLine({ event: 'stdout', id: op.id, line: 'after-flush' });
+        self.emitLine({ event: 'exit', id: op.id, exit_code: 0 });
+      } else if (op.op === 'shutdown') {
+        self.emitLine({ event: 'closed' });
+        self.emit('exit', 0, null);
+      }
+    };
+
+    const runPromise = runtime(request(), (e) => events.push(e));
+    child.emitLine({ event: 'ready', locus: 'local' });
+    const result = await runPromise;
+
+    // The oversized garbage lands in the diagnostic transcript, not silently dropped.
+    expect(result.stderr).toContain('[sidecar protocol] non-JSON line:');
+    expect(result.stderr).toContain('ZZZZZZZZ');
+    // Buffer reset: the valid frame AFTER the flush was parsed and streamed normally.
+    expect(result.stdout).toContain('after-flush');
+    expect(result.exitCode).toBe(0);
+    // The garbage never polluted the agent's stdout transcript.
+    expect(result.stdout).not.toContain('ZZZ');
   });
 });

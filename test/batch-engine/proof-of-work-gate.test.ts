@@ -6,15 +6,14 @@
  * with that result: a phase's proof-of-work is run once its changes are done, and
  * its `gatePassed` verdict decides whether the NEXT phase opens. We model a tiny
  * two-phase gate controller over `runProofOfWork` and assert the phase-progression
- * outcome under each policy, feeding decisions through the injectable BashRunner /
- * LlmJudge seams (no real shelling out, deterministic).
+ * outcome under each policy, feeding decisions through the injectable BashRunner
+ * seam (no real shelling out, deterministic).
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   runProofOfWork,
   type BashRunner,
-  type LlmJudge,
   type ProofOfWorkResult,
 } from '../../src/core/batch/engine/proof-of-work.js';
 import type { ProofOfWork, ProofOfWorkPolicy } from 'ratchet-ai';
@@ -119,55 +118,5 @@ describe('proof-of-work phase gate — bash/integration kinds', () => {
     expect(result.policy).toBe('warn');
     // Despite the failure, the next phase opens under warn.
     expect(nextPhaseOpens(result)).toBe(true);
-  });
-});
-
-describe('proof-of-work phase gate — llm-judge kind', () => {
-  it('a PASS verdict from the judge opens the next phase', async () => {
-    const judge: LlmJudge = async (req) => ({
-      pass: true,
-      reason: `exercised: ${req.run}`,
-    });
-    const result = await runProofOfWork(
-      integrationPow({ kind: 'llm-judge', run: 'exercise the slice', pass: 'works end to end' }),
-      'hard-gate',
-      '/tmp',
-    'phase succeeds',
-      { judge }
-    );
-    expect(result.passed).toBe(true);
-    expect(result.reason).toBe('judge-pass');
-    expect(nextPhaseOpens(result)).toBe(true);
-  });
-
-  it('a FAIL verdict under hard-gate keeps the next phase blocked', async () => {
-    const judge: LlmJudge = async () => ({ pass: false, reason: 'slice is broken' });
-    const result = await runProofOfWork(
-      integrationPow({ kind: 'llm-judge' }),
-      'hard-gate',
-      '/tmp',
-    'phase succeeds',
-      { judge }
-    );
-    expect(result.passed).toBe(false);
-    expect(result.reason).toBe('judge-fail');
-    expect(result.detail).toContain('broken');
-    expect(nextPhaseOpens(result)).toBe(false);
-  });
-
-  it('a judge that throws fails closed under hard-gate (next phase blocked)', async () => {
-    const judge: LlmJudge = async () => {
-      throw new Error('judge adapter crashed');
-    };
-    const result = await runProofOfWork(
-      integrationPow({ kind: 'llm-judge' }),
-      'hard-gate',
-      '/tmp',
-    'phase succeeds',
-      { judge }
-    );
-    expect(result.passed).toBe(false);
-    expect(result.reason).toBe('error');
-    expect(nextPhaseOpens(result)).toBe(false);
   });
 });

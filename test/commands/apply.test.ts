@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { applyCommand } from '../../src/commands/apply.js';
 import type { Spawner } from '../../src/core/batch/engine/agent.js';
 import { CommandFixture, makeCommandFixture, completingSpawner } from './change-fixture.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 /**
  * Behavioral tests for the `apply` verb.
@@ -31,7 +32,7 @@ describe('applyCommand', () => {
     const spawner = vi.fn<Parameters<Spawner>, ReturnType<Spawner>>();
 
     await expect(
-      applyCommand('ghost', {}, { projectRoot: () => fixture.root, spawner })
+      applyCommand('ghost', {}, { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) })
     ).rejects.toThrow(/does not exist[\s\S]*ratchet propose/i);
 
     expect(spawner).not.toHaveBeenCalled();
@@ -42,7 +43,7 @@ describe('applyCommand', () => {
     const spawner = vi.fn<Parameters<Spawner>, ReturnType<Spawner>>();
 
     await expect(
-      applyCommand('no-plan', {}, { projectRoot: () => fixture.root, spawner })
+      applyCommand('no-plan', {}, { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) })
     ).rejects.toThrow(/no plan\.md[\s\S]*propose[\s\S]*--force/i);
 
     expect(spawner).not.toHaveBeenCalled();
@@ -55,7 +56,7 @@ describe('applyCommand', () => {
     await applyCommand(
       'no-plan',
       { force: true },
-      { projectRoot: () => fixture.root, spawner }
+      { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) }
     );
 
     expect(calls()).toBe(1);
@@ -65,7 +66,7 @@ describe('applyCommand', () => {
     await fixture.writeChangeWithTasks('ready', { done: 0, total: 2 });
     const { spawner, calls } = completingSpawner(fixture.root, 'ready', 'apply');
 
-    await applyCommand('ready', {}, { projectRoot: () => fixture.root, spawner });
+    await applyCommand('ready', {}, { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) });
 
     expect(calls()).toBe(1);
     const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
@@ -91,7 +92,7 @@ describe('applyCommand', () => {
       applyCommand(
         'ready',
         { agent: 'claude:' },
-        { projectRoot: () => fixture.root, spawner }
+        { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) }
       )
     ).rejects.toThrow(/claude:/);
 

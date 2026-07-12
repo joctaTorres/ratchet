@@ -52,10 +52,10 @@ export const MIN_PYTHON = { major: 3, minor: 10 } as const;
 /**
  * Default container image for `locus: docker` when none is configured.
  * Single TS source of truth: re-exported from config.ts so the Node side never
- * drifts. The Python sidecar keeps its OWN constant (`DEFAULT_DOCKER_IMAGE` in
- * sidecar.py) as a pure unset-fallback because it cannot import TS — that copy
- * is only reached when `REX_IMAGE` is unset, which Node always threads; the
- * cross-language sync is noted there.
+ * drifts. The Python sidecar holds NO image default of its own — the Node side
+ * always threads the resolved image (this constant or the configured `image`)
+ * via `REX_IMAGE`, and the sidecar raises a clear error if `REX_IMAGE` is
+ * unset/empty rather than silently falling back to a built-in image.
  */
 export { DEFAULT_DOCKER_IMAGE, DEFAULT_DOCKER_MEMORY, DEFAULT_DOCKER_PIDS_LIMIT, DEFAULT_DOCKER_NETWORK };
 

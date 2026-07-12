@@ -42,7 +42,12 @@
 
 import type { AgentSpawnRequest, AgentSpawnResult } from '../agent.js';
 import type { AgentEvent, AgentRuntime } from './contract.js';
-import { shquote, buildEnvExports } from './spawn-command.js';
+import {
+  shquote,
+  buildAgentRunCommand,
+  surrogateEscapeByteLength,
+  MAX_PARTIAL_BYTES,
+} from './spawn-command.js';
 
 /** A minimal `fetch` surface (the Node global `fetch` is assignable to this). */
 export type FetchLike = (
@@ -125,9 +130,7 @@ const defaultDeps: RemoteDeps = {
  * so they apply to the agent pipeline without touching the REST protocol.
  */
 export function buildRemoteRunCommand(serverPromptPath: string, request: AgentSpawnRequest): string {
-  const argv = [request.command, ...request.args].map(shquote).join(' ');
-  const exports = buildEnvExports(request.env);
-  return `${exports}cat ${shquote(serverPromptPath)} | ${argv}`;
+  return buildAgentRunCommand(serverPromptPath, request);
 }
 
 /** Raised internally to short-circuit to the error-result path with a clean message. */
@@ -360,7 +363,11 @@ export function makeRexRemoteRuntime(options: RexRemoteRuntimeOptions): AgentRun
         // `tail -c +N` is 1-based, so read from offset+1.
         const { stdout: chunk } = await execShell(`tail -c +${offset + 1} ${shquote(logPath)}`);
         if (!chunk) return;
-        offset += Buffer.byteLength(chunk, 'utf-8');
+        // Advance the byte cursor with the sidecar's EXACT surrogateescape
+        // arithmetic (not Buffer.byteLength, which counts a non-UTF-8 byte's lone
+        // surrogate as the 3-byte replacement char and drifts the offset), so the
+        // remote and sidecar channels agree on non-UTF-8 output — issue #90.
+        offset += surrogateEscapeByteLength(chunk);
         partial += chunk;
         let nl: number;
         while ((nl = partial.indexOf('\n')) >= 0) {
@@ -368,6 +375,20 @@ export function makeRexRemoteRuntime(options: RexRemoteRuntimeOptions): AgentRun
           partial = partial.slice(nl + 1);
           stdout += (stdout ? '\n' : '') + line;
           onEvent({ kind: 'stdout', line });
+        }
+        // Bound the held partial: an agent emitting a huge line with no newline
+        // must not grow `partial` without limit. Past the cap, flush what we hold
+        // as a stdout line (accumulated as usual) and note the truncation in the
+        // diagnostic transcript; subsequent bytes of the same long line simply
+        // start a fresh partial, so content is split at the cap, never lost.
+        if (partial.length > MAX_PARTIAL_BYTES) {
+          const line = partial;
+          partial = '';
+          stdout += (stdout ? '\n' : '') + line;
+          onEvent({ kind: 'stdout', line });
+          stderr +=
+            (stderr ? '\n' : '') +
+            '[sidecar protocol] partial line exceeded 1 MiB; flushed truncated';
         }
       };
 

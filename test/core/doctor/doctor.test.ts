@@ -85,37 +85,54 @@ describe('runDoctorChecks', () => {
     expect(exitCodeFor(report)).toBe(0);
   });
 
-  it('no-agent-fail: no agent binary on PATH → required fail, non-zero, lists supported', () => {
-    const deps = new FakeDeps(() => ok());
-    deps.toolsOnPath.add('uv'); // runtime fine, only agent missing
+  it('no-agent-fail: no agent binary on PATH → required fail, non-zero, lists supported', async () => {
+    // Isolated projectRoot with no configured agent so the check falls through
+    // to the registry-wide "no binary at all" path (not the configured-agent
+    // path the repo's own config would trigger).
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'doctor-noagent-'));
+    await fsp.mkdir(path.join(root, '.ratchet'), { recursive: true });
+    await fsp.writeFile(path.join(root, '.ratchet', 'config.yaml'), 'schema: ratchet\n', 'utf-8');
+    try {
+      const deps = new FakeDeps(() => ok());
+      deps.toolsOnPath.add('uv'); // runtime fine, only agent missing
 
-    const report = runDoctorChecks(deps);
-    const agent = check(report, 'agent');
+      const report = runDoctorChecks(deps, root);
+      const agent = check(report, 'agent');
 
-    expect(agent.status).toBe('fail');
-    expect(agent.severity).toBe('required');
-    expect(agent.remedy).toBeDefined();
-    // Lists every supported agent id.
-    for (const id of Object.keys(AGENT_BINARIES)) {
-      expect(agent.detail).toContain(id);
+      expect(agent.status).toBe('fail');
+      expect(agent.severity).toBe('required');
+      expect(agent.remedy).toBeDefined();
+      // Lists every supported agent id.
+      for (const id of Object.keys(AGENT_BINARIES)) {
+        expect(agent.detail).toContain(id);
+      }
+      expect(report.ok).toBe(false);
+      expect(exitCodeFor(report)).toBe(1);
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
     }
-    expect(report.ok).toBe(false);
-    expect(exitCodeFor(report)).toBe(1);
   });
 
-  it('checks every agent, not just the default: a non-default agent satisfies it', () => {
-    const deps = new FakeDeps((command, args) => {
-      if (command === CURSOR_BIN && args.includes('--version')) return ok('cursor 0.9.0');
-      return ok();
-    });
-    deps.toolsOnPath.add(CURSOR_BIN); // only cursor, NOT the default claude
-    deps.toolsOnPath.add('uv');
+  it('checks every agent, not just the default: a non-default agent satisfies it', async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'doctor-every-'));
+    await fsp.mkdir(path.join(root, '.ratchet'), { recursive: true });
+    await fsp.writeFile(path.join(root, '.ratchet', 'config.yaml'), 'schema: ratchet\n', 'utf-8');
+    try {
+      const deps = new FakeDeps((command, args) => {
+        if (command === CURSOR_BIN && args.includes('--version')) return ok('cursor 0.9.0');
+        return ok();
+      });
+      deps.toolsOnPath.add(CURSOR_BIN); // only cursor, NOT the default claude
+      deps.toolsOnPath.add('uv');
 
-    const report = runDoctorChecks(deps);
-    const agent = check(report, 'agent');
+      const report = runDoctorChecks(deps, root);
+      const agent = check(report, 'agent');
 
-    expect(agent.status).toBe('pass');
-    expect(agent.detail).toContain('cursor');
+      expect(agent.status).toBe('pass');
+      expect(agent.detail).toContain('cursor');
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
   });
 
   it('reports the resolved version of an installed agent', () => {
@@ -278,16 +295,23 @@ describe('renderReport (human output)', () => {
     expect(out).not.toContain('✗');
   });
 
-  it('renders a failing check with the fail glyph, its detail, and a remedy line', () => {
-    // No agent on PATH and no runtime → two required failures.
-    const deps = new FakeDeps(() => fail());
+  it('renders a failing check with the fail glyph, its detail, and a remedy line', async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'doctor-render-'));
+    await fsp.mkdir(path.join(root, '.ratchet'), { recursive: true });
+    await fsp.writeFile(path.join(root, '.ratchet', 'config.yaml'), 'schema: ratchet\n', 'utf-8');
+    try {
+      // No agent on PATH and no runtime → two required failures.
+      const deps = new FakeDeps(() => fail());
 
-    const report = runDoctorChecks(deps);
-    const out = renderReport(report);
-    expect(out).toContain('✗'); // fail glyph
-    expect(out).toContain('→'); // remedy arrow
-    expect(out).toMatch(/No supported coding-agent CLI/);
-    expect(out).toContain('required check'); // failure summary
+      const report = runDoctorChecks(deps, root);
+      const out = renderReport(report);
+      expect(out).toContain('✗'); // fail glyph
+      expect(out).toContain('→'); // remedy arrow
+      expect(out).toMatch(/No supported coding-agent CLI/);
+      expect(out).toContain('required check'); // failure summary
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
   });
 });
 

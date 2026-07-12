@@ -36,6 +36,7 @@ import type {
   Spawner,
   AgentSpawnRequest,
 } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 import type { PrStepContext } from '../../src/core/batch/engine/contract.js';
 import { prJournalKey } from '../../src/core/batch/engine/instructions.js';
 import { hasJournaledPrForGroup } from '../../src/core/batch/engine/transition.js';
@@ -137,7 +138,7 @@ function completingSpawner(key: string): Spawner {
 
 function engine(spawner: Spawner): RatchetBatchEngine {
   return new RatchetBatchEngine({
-    spawner,
+    runtime: spawnerAsRuntime(spawner),
     adapters: fakeAdapters,
     projectRoot: () => projectRoot,
     // The command-file guarantee is exercised elsewhere; here the command is

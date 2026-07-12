@@ -12,6 +12,10 @@ import {
 } from '../../src/core/batch/engine/runtime/rex-remote-runtime.js';
 import type { AgentEvent } from '../../src/core/batch/engine/runtime/contract.js';
 import type { AgentSpawnRequest } from '../../src/core/batch/engine/agent.js';
+import {
+  MAX_PARTIAL_BYTES,
+  surrogateEscapeByteLength,
+} from '../../src/core/batch/engine/runtime/spawn-command.js';
 
 /**
  * Unit tests for the native-Node REST runtime with a MOCKED `fetch` — NO real
@@ -452,6 +456,207 @@ describe('resolveTransport — scheme selection + plaintext guard', () => {
       scheme: 'http',
       host: 'example.com',
     });
+  });
+});
+
+/**
+ * Encode a JS string to raw bytes the way Python's
+ * `str.encode("utf-8", "surrogateescape")` would: a lone surrogate in
+ * U+DC80–U+DCFF is the escape for one original non-UTF-8 byte and re-emits that
+ * single byte; every other code point emits its standard UTF-8 bytes.
+ */
+function surrogateEscapeEncode(s: string): Buffer {
+  const out: number[] = [];
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) as number;
+    if (cp >= 0xdc80 && cp <= 0xdcff) out.push(cp - 0xdc00);
+    else out.push(...Buffer.from(ch, 'utf-8'));
+  }
+  return Buffer.from(out);
+}
+
+/**
+ * Decode raw bytes the way Python's `bytes.decode("utf-8", "surrogateescape")`
+ * would — the exact decode swe-rex applies before handing the runtime a string:
+ * a byte that cannot start/continue a valid UTF-8 sequence surfaces as a lone
+ * surrogate U+DC00+byte, otherwise the sequence decodes normally.
+ */
+function surrogateEscapeDecode(bytes: Buffer): string {
+  let out = '';
+  let i = 0;
+  while (i < bytes.length) {
+    const b = bytes[i];
+    if (b < 0x80) {
+      out += String.fromCodePoint(b);
+      i += 1;
+      continue;
+    }
+    let len = 0;
+    let cp = 0;
+    if (b >= 0xc2 && b <= 0xdf) {
+      len = 2;
+      cp = b & 0x1f;
+    } else if (b >= 0xe0 && b <= 0xef) {
+      len = 3;
+      cp = b & 0x0f;
+    } else if (b >= 0xf0 && b <= 0xf4) {
+      len = 4;
+      cp = b & 0x07;
+    }
+    if (len === 0 || i + len > bytes.length) {
+      out += String.fromCodePoint(0xdc00 + b);
+      i += 1;
+      continue;
+    }
+    let ok = true;
+    for (let k = 1; k < len; k++) {
+      if ((bytes[i + k] & 0xc0) !== 0x80) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) {
+      out += String.fromCodePoint(0xdc00 + b);
+      i += 1;
+      continue;
+    }
+    for (let k = 1; k < len; k++) cp = (cp << 6) | (bytes[i + k] & 0x3f);
+    out += String.fromCodePoint(cp);
+    i += len;
+  }
+  return out;
+}
+
+/**
+ * A fake swerex-remote server whose logfile is modeled as RAW BYTES (not a JS
+ * string), so `tail -c +N` slices at a true byte offset and the returned chunk
+ * is surrogateescape-decoded exactly as the real server does. This exercises the
+ * runtime's byte-cursor arithmetic against non-UTF-8 content: if the cursor and
+ * the server disagree on how many bytes a decoded chunk spans, output is skipped
+ * or duplicated. `tailOffsets` records every 0-based byte offset the runtime read
+ * from, so the final cursor can be checked against the surrogateescape byte count.
+ */
+function fakeByteServer(opts: {
+  authToken: string;
+  byteChunks: Buffer[];
+  exitCode: number;
+}): { fetch: FetchLike; tailOffsets: number[] } {
+  let pollIndex = 0;
+  let fullLog = Buffer.alloc(0);
+  const tailOffsets: number[] = [];
+
+  const exec = (command: string): { stdout: string; exit_code: number } => {
+    if (
+      /^mkdir /.test(command) ||
+      /^rm -rf /.test(command) ||
+      /^nohup /.test(command) ||
+      /kill /.test(command)
+    ) {
+      return { stdout: '', exit_code: 0 };
+    }
+    const tail = command.match(/^tail -c \+(\d+) /);
+    if (tail) {
+      const offset = Number(tail[1]) - 1; // 1-based → 0-based
+      tailOffsets.push(offset);
+      if (pollIndex < opts.byteChunks.length) {
+        fullLog = Buffer.concat([fullLog, opts.byteChunks[pollIndex]]);
+        pollIndex++;
+      }
+      return { stdout: surrogateEscapeDecode(fullLog.subarray(offset)), exit_code: 0 };
+    }
+    if (/exit\.code/.test(command)) {
+      const done = pollIndex >= opts.byteChunks.length;
+      return { stdout: done ? `${opts.exitCode}\n` : '', exit_code: 0 };
+    }
+    return { stdout: '', exit_code: 0 };
+  };
+
+  const fetch: FetchLike = async (url, init) => {
+    const p = url.replace(/^https?:\/\/[^/]+/, '');
+    const apiKey = init.headers['X-API-Key'];
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    if (apiKey !== opts.authToken) return makeRes(401, { detail: 'Invalid API Key' });
+    if (p === '/is_alive') return makeRes(200, { is_alive: true });
+    if (p === '/create_session') return makeRes(200, {});
+    if (p === '/write_file') return makeRes(200, {});
+    if (p === '/execute') return makeRes(200, exec((body as { command: string }).command));
+    if (p === '/close_session') return makeRes(200, {});
+    if (p === '/close') return makeRes(200, {});
+    return makeRes(404, { detail: 'not found' });
+  };
+
+  return { fetch, tailOffsets };
+}
+
+describe('makeRexRemoteRuntime — surrogateescape byte cursor (issue #90)', () => {
+  // Implements features/cursor-alignment/surrogateescape-byte-cursor.feature.
+  it('keeps the tail-poll cursor aligned when non-UTF-8 bytes arrive split across polls', async () => {
+    // A line whose middle byte 0x80 is NOT valid UTF-8: swe-rex surfaces it as the
+    // lone surrogate U+DC80. `é` (U+00E9) is a 2-byte sequence. The full content is
+    // 10 surrogateescape bytes; Buffer.byteLength would report 12 (a lone surrogate
+    // encodes as the 3-byte replacement char) and skew the cursor by 2 → skipped
+    // output. The runtime uses surrogateEscapeByteLength, so it stays aligned.
+    const content = 'café\udc80bar\n';
+    const expectedBytes = surrogateEscapeByteLength(content); // 3 + 2 + 1 + 3 + 1 = 10
+    expect(expectedBytes).toBe(10);
+    // Split INSIDE the line, with the boundary right after the lone surrogate.
+    const server = fakeByteServer({
+      authToken: 'tok',
+      byteChunks: [surrogateEscapeEncode('café\udc80'), surrogateEscapeEncode('bar\n')],
+      exitCode: 0,
+    });
+    const events: AgentEvent[] = [];
+    const runtime = makeRexRemoteRuntime({
+      host: 'h',
+      port: 1,
+      authToken: 'tok',
+      pollIntervalMs: 0,
+      deps: noWaitDeps(server.fetch),
+    });
+
+    const result = await runtime(req, (e) => events.push(e));
+
+    // The line is reconstructed intact and emitted exactly once — no skip, no dup.
+    const lines = events.filter((e) => e.kind === 'stdout').map((e) => e.line);
+    expect(lines).toEqual(['café\udc80bar']);
+    expect(result.stdout).toBe('café\udc80bar');
+    // The final cursor equals the sidecar's surrogateescape byte count for the content.
+    expect(Math.max(...server.tailOffsets)).toBe(expectedBytes);
+  });
+});
+
+describe('makeRexRemoteRuntime — bounded partial buffer (issue #90)', () => {
+  // Implements features/bounded-partials/flush-oversized-partial.feature.
+  it('flushes an oversized partial as a truncated stdout event and bounds the buffer', async () => {
+    const big = 'x'.repeat(MAX_PARTIAL_BYTES + 100); // > 1 MiB, no newline
+    const server = fakeServer({
+      authToken: 'tok',
+      logChunks: [big, 'y'.repeat(10) + '\n'],
+      exitCode: 0,
+    });
+    const events: AgentEvent[] = [];
+    const runtime = makeRexRemoteRuntime({
+      host: 'h',
+      port: 1,
+      authToken: 'tok',
+      pollIntervalMs: 0,
+      deps: noWaitDeps(server.fetch),
+    });
+
+    const result = await runtime(req, (e) => events.push(e));
+
+    const lines = events.filter((e) => e.kind === 'stdout').map((e) => e.line as string);
+    // The oversized partial was flushed (not held forever growing memory).
+    expect(lines[0].length).toBe(MAX_PARTIAL_BYTES + 100);
+    // The truncation is surfaced in the diagnostic transcript, not silently dropped.
+    expect(result.stderr).toContain(
+      '[sidecar protocol] partial line exceeded 1 MiB; flushed truncated'
+    );
+    // Subsequent bytes of the same long line continue as a fresh partial — the cap
+    // splits the content, it is never lost.
+    expect(lines).toContain('y'.repeat(10));
+    expect(result.stdout.startsWith('x'.repeat(MAX_PARTIAL_BYTES + 100))).toBe(true);
+    expect(result.stdout.endsWith('y'.repeat(10))).toBe(true);
   });
 });
 

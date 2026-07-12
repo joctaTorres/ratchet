@@ -658,8 +658,8 @@ CI enforces a minimum line-coverage floor through the coverage gate
 (`node dist/core/ci/coverage-gate.js`). The enforced floor is raisable via the
 `COVERAGE_THRESHOLD` environment variable (default `95`) and sits at the testing
 standard's permanent 95% minimum, reached and locked in, never lowered — see the
-[Coverage gate](https://ratchet-ai.dev/engine/coverage-gate) Reference page
-(`docs/engine/coverage-gate.md`).
+[Coverage gate](https://ratchet-ai.dev/coverage-gate) Reference page
+(`docs/coverage-gate.md`).
 
 The CLI is built on `commander`, `@inquirer/prompts`, `zod`, `yaml`, `fast-glob`, `chalk`, and `ora`. The artifact graph is schema-driven (`schemas/ratchet/schema.yaml`); Gherkin is parsed by a hand-rolled parser in `src/core/parsers/`.
 

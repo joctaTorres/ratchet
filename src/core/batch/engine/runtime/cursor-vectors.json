@@ -1,0 +1,14 @@
+[
+  { "text": "", "bytes": 0 },
+  { "text": "plain ascii", "bytes": 11 },
+  { "text": "café", "bytes": 5 },
+  { "text": "über", "bytes": 5 },
+  { "text": "日本語", "bytes": 9 },
+  { "text": "😀", "bytes": 4 },
+  { "text": "x😀y", "bytes": 6 },
+  { "text": "\udc80", "bytes": 1 },
+  { "text": "\udcff", "bytes": 1 },
+  { "text": "a\udc80b", "bytes": 3 },
+  { "text": "café\udcff", "bytes": 6 },
+  { "text": "a\udcc3", "bytes": 2 }
+]

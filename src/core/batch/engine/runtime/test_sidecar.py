@@ -183,6 +183,65 @@ class TailOffsetLoopTests(unittest.TestCase):
         self.assertEqual(stdout, [f"a{raw}b", "next"])
 
 
+class BoundedPartialTests(unittest.TestCase):
+    """Cap the sidecar partial: an oversized unterminated line is flushed as a
+    truncated stdout event and the offset advances past it (no re-read).
+
+    Implements ``features/bounded-partials/flush-oversized-partial.feature``.
+    """
+
+    def test_oversized_partial_is_flushed_truncated_and_not_re_read(self):
+        big = "X" * (sidecar.MAX_PARTIAL_BYTES + 10)
+        # First chunk: a huge unterminated line (> cap). Second chunk completes a
+        # newline plus a normal line, proving the cursor advanced past the flush.
+        events, _ = _drive_run([big, "\ndone\n"], exit_code=0)
+        stdout = [e for e in events if e.get("event") == "stdout"]
+        flushed = [e for e in stdout if len(e["line"]) > sidecar.MAX_PARTIAL_BYTES]
+        # The oversized partial is emitted EXACTLY ONCE (not re-read every poll)…
+        self.assertEqual(len(flushed), 1)
+        # …carries the full partial content…
+        self.assertEqual(len(flushed[0]["line"]), sidecar.MAX_PARTIAL_BYTES + 10)
+        # …and is marked truncated so a Node consumer can surface it.
+        self.assertTrue(flushed[0].get("truncated"))
+        # The line after the flushed bytes still streams (offset advanced past it).
+        self.assertIn("done", [e["line"] for e in stdout])
+
+    def test_partial_under_the_cap_is_still_pushed_back_not_flushed(self):
+        # A sub-cap partial keeps the prior behaviour: held, not flushed truncated.
+        events, _ = _drive_run(["par", "tial\ndone\n"], exit_code=0)
+        stdout = [e for e in events if e.get("event") == "stdout"]
+        self.assertEqual([e["line"] for e in stdout], ["partial", "done"])
+        self.assertFalse(any(e.get("truncated") for e in stdout))
+
+
+class UnifiedDrainTests(unittest.TestCase):
+    """The final drain emits the same lines the streaming loop would: interior
+    blanks survive, only the empty segment after a trailing newline is dropped,
+    and a trailing partial is emitted as its own final line.
+
+    Implements ``features/protocol-diagnostics/unify-blank-line-drain.feature``.
+    """
+
+    def test_interior_blank_lines_survive_the_drain(self):
+        # The sentinel is present with multi-line content still undrained; the
+        # drain must emit the interior blank between "a" and "b".
+        events = _drive_drain("a\n\nb\n", exit_code=0)
+        stdout = [e["line"] for e in events if e.get("event") == "stdout"]
+        self.assertEqual(stdout, ["a", "", "b"])
+
+    def test_only_the_segment_after_a_trailing_newline_is_dropped(self):
+        events = _drive_drain("solo\n", exit_code=0)
+        stdout = [e["line"] for e in events if e.get("event") == "stdout"]
+        # "solo\n".split → ["solo", ""]; the trailing "" is dropped, "solo" stays.
+        self.assertEqual(stdout, ["solo"])
+
+    def test_trailing_partial_without_newline_is_emitted_by_the_drain(self):
+        events = _drive_drain("a\nb", exit_code=0)
+        stdout = [e["line"] for e in events if e.get("event") == "stdout"]
+        # No trailing newline → the last segment "b" is a final line, emitted.
+        self.assertEqual(stdout, ["a", "b"])
+
+
 class MakeDeploymentTests(unittest.TestCase):
     def setUp(self):
         for k in (
@@ -218,18 +277,35 @@ class MakeDeploymentTests(unittest.TestCase):
             self._expected_default_args(),
         )
 
-    def test_docker_defaults_image_and_container_mount(self):
+    def test_docker_uses_rex_image_verbatim(self):
+        os.environ["REX_IMAGE"] = "my/image:tag"
         os.environ["REX_MOUNT_HOST"] = "/host/project"
+        os.environ["REX_MOUNT_CONTAINER"] = "/workspace"
         sidecar._make_deployment("docker")
-        # Unset image -> the pinned default; unset container mount -> /workspace.
-        self.assertEqual(CAPTURED["docker"]["image"], sidecar.DEFAULT_DOCKER_IMAGE)
+        self.assertEqual(CAPTURED["docker"]["image"], "my/image:tag")
         self.assertEqual(
             CAPTURED["docker"]["docker_args"],
             self._expected_default_args(),
         )
 
+    def test_docker_unset_rex_image_raises(self):
+        # Unset/empty REX_IMAGE raises a clear error naming REX_IMAGE instead of
+        # silently falling back to a built-in image (the default lives solely in
+        # config.ts and Node always threads it).
+        os.environ["REX_MOUNT_HOST"] = "/host/project"
+        with self.assertRaises(ValueError) as ctx:
+            sidecar._make_deployment("docker")
+        self.assertIn("REX_IMAGE", str(ctx.exception))
+        self.assertNotIn("docker", CAPTURED)
+
+    def test_docker_empty_rex_image_raises(self):
+        os.environ["REX_IMAGE"] = "   "
+        with self.assertRaises(ValueError):
+            sidecar._make_deployment("docker")
+
     def test_docker_omits_v_mount_when_mount_host_unset_but_keeps_hardening(self):
         # No REX_MOUNT_HOST -> no `-v`, but hardening knobs are still applied.
+        os.environ["REX_IMAGE"] = "no/mount:image"
         sidecar._make_deployment("docker")
         args = CAPTURED["docker"]["docker_args"]
         self.assertNotIn("-v", args)
@@ -241,6 +317,7 @@ class MakeDeploymentTests(unittest.TestCase):
         self.assertNotIn("--cpus", args)
 
     def test_docker_all_hardening_knobs_threaded_together(self):
+        os.environ["REX_IMAGE"] = "all/knobs:image"
         os.environ["REX_MOUNT_HOST"] = "/host/project"
         os.environ["REX_MOUNT_CONTAINER"] = "/workspace"
         os.environ["REX_DOCKER_USER"] = "2000:2000"
@@ -275,6 +352,10 @@ class DockerHardeningTests(unittest.TestCase):
             "REX_DOCKER_CPUS", "REX_DOCKER_NETWORK",
         ):
             os.environ.pop(k, None)
+        # REX_IMAGE is now required (no Python-side default); give the
+        # hardening tests a placeholder so they exercise the knobs, not the
+        # image-required guard.
+        os.environ["REX_IMAGE"] = "hardening/image:tag"
         CAPTURED.clear()
 
     def _args(self):
@@ -346,6 +427,7 @@ class DockerHardeningValidationTests(unittest.TestCase):
             "REX_DOCKER_CPUS", "REX_DOCKER_NETWORK",
         ):
             os.environ.pop(k, None)
+        os.environ["REX_IMAGE"] = "validation/image:tag"
         CAPTURED.clear()
 
     def test_non_integer_pids_limit_raises(self):
@@ -536,6 +618,114 @@ def _drive_run_with_run_dir(log_chunks, exit_code, run_dir):
     sc.runtime = FakeRuntime(log_chunks, exit_code)
     asyncio.run(sc.run(run_id=1, command="agent --go", run_dir=run_dir))
     return events, sc.runtime, sc
+
+
+class _DrainFakeRuntime:
+    """A runtime that streams nothing, then reveals all content in ONE shot on the
+    final drain — the first `tail` is empty, `cat <done>` reports the sentinel
+    immediately, and the SECOND `tail` (the post-sentinel drain) returns the whole
+    remaining logfile. Exercises the final-drain split discipline in isolation."""
+
+    def __init__(self, drain_content: str, exit_code: int = 0):
+        self._drain_content = drain_content
+        self._exit_code = exit_code
+        self._tail_calls = 0
+        self.commands: list[str] = []
+
+    async def execute(self, command):
+        cmd = command.command
+        self.commands.append(cmd)
+        if cmd.startswith("rm -f") or cmd.startswith("nohup"):
+            return FakeExecResult("")
+        if cmd.startswith("tail -c +"):
+            self._tail_calls += 1
+            # 1st tail: nothing streamed yet; 2nd tail: the drain returns it all.
+            return FakeExecResult(self._drain_content if self._tail_calls >= 2 else "")
+        if cmd.startswith("cat "):
+            # Sentinel present from the first check so the run enters the drain.
+            return FakeExecResult(f"{self._exit_code}\n")
+        return FakeExecResult("")
+
+
+def _drive_drain(drain_content, exit_code=0):
+    """Drive Sidecar.run so all output lands in the final drain; return events."""
+    events: list[dict] = []
+    sidecar.emit = lambda obj: events.append(obj)
+    sidecar.POLL_INTERVAL = 0
+    sc = sidecar.Sidecar()
+    sc.workdir = "/tmp"
+    sc.runtime = _DrainFakeRuntime(drain_content, exit_code)
+    asyncio.run(sc.run(run_id=1, command="agent --go"))
+    return events
+
+
+class ShquoteContractTests(unittest.TestCase):
+    """Cross-language shquote contract test (Python side).
+
+    Implements ``features/shquote-contract/cross-language-vectors.feature``.
+    Loads the SAME ``shquote-vectors.json`` the TS vitest contract test loads
+    (next to this file), so a change to either ``_shquote`` (Python) or
+    ``shquote`` (TS) that breaks parity fails a test in its own language.
+    Neither this test nor the TS side embeds a private copy of the vectors.
+    """
+
+    VECTORS_PATH = Path(__file__).resolve().parent / "shquote-vectors.json"
+
+    def _vectors(self):
+        import json
+
+        with self.VECTORS_PATH.open("r", encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_vectors_cover_the_required_metacharacter_classes(self):
+        inputs = {v["input"] for v in self._vectors()}
+        self.assertIn("", inputs)
+        self.assertTrue(any(" " in s for s in inputs))
+        self.assertTrue(any("'" in s for s in inputs))
+        self.assertTrue(any('"' in s for s in inputs))
+        self.assertTrue(any("$" in s for s in inputs))
+        self.assertTrue(any("`" in s for s in inputs))
+        self.assertTrue(any("\n" in s for s in inputs))
+
+    def test_python_shquote_satisfies_every_vector(self):
+        for v in self._vectors():
+            with self.subTest(input=v["input"]):
+                self.assertEqual(sidecar._shquote(v["input"]), v["quoted"])
+
+
+class CursorContractTests(unittest.TestCase):
+    """Cross-language cursor-arithmetic contract test (Python side).
+
+    Implements ``features/cursor-alignment/surrogateescape-byte-cursor.feature``.
+    Loads the SAME ``cursor-vectors.json`` the TS vitest contract test loads (next
+    to this file), so a change to either the TS ``surrogateEscapeByteLength`` or
+    the sidecar's ``encode("utf-8", "surrogateescape")`` cursor arithmetic that
+    breaks parity fails a test in its own language. The sidecar's tail-poll offset
+    advances by exactly ``len(chunk.encode("utf-8", "surrogateescape"))``, so this
+    asserts that quantity equals the vector's recorded byte count.
+    """
+
+    VECTORS_PATH = Path(__file__).resolve().parent / "cursor-vectors.json"
+
+    def _vectors(self):
+        import json
+
+        with self.VECTORS_PATH.open("r", encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_vectors_cover_the_required_classes(self):
+        texts = [v["text"] for v in self._vectors()]
+        self.assertIn("", texts)  # empty string
+        self.assertTrue(any(t and all(ord(c) < 0x80 for c in t) for t in texts))  # ASCII
+        self.assertTrue(any(any(ord(c) > 0x7F for c in t) for t in texts))  # multibyte
+        self.assertTrue(any(any(0xDC80 <= ord(c) <= 0xDCFF for c in t) for t in texts))  # lone surrogate
+
+    def test_sidecar_encode_arithmetic_matches_every_vector(self):
+        for v in self._vectors():
+            with self.subTest(text=v["text"]):
+                self.assertEqual(
+                    len(v["text"].encode("utf-8", "surrogateescape")), v["bytes"]
+                )
 
 
 if __name__ == "__main__":

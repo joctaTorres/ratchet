@@ -34,6 +34,7 @@ import type {
   Spawner,
   AgentSpawnRequest,
 } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 import type { PrStepContext } from '../../src/core/batch/engine/contract.js';
 import { prJournalKey } from '../../src/core/batch/engine/instructions.js';
 import { hasJournaledPr } from '../../src/core/batch/engine/transition.js';
@@ -117,7 +118,7 @@ const failingSpawner: Spawner = async (request) => {
 
 function engine(opts: { spawner: Spawner; printLine?: LinePrinter }): RatchetBatchEngine {
   return new RatchetBatchEngine({
-    spawner: opts.spawner,
+    runtime: spawnerAsRuntime(opts.spawner),
     adapters: fakeAdapters,
     projectRoot: () => projectRoot,
     ...(opts.printLine ? { printLine: opts.printLine } : {}),

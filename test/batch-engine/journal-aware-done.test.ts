@@ -7,8 +7,8 @@
  *
  *  - after apply (all tasks checked, NO journaled verify) the change is
  *    `awaiting-verify` — NOT done — and the next scheduled transition is `verify`;
- *    `computeBatchStatus`, `computeNextTransition`, and `selectRunnableStep` all
- *    agree the change still has runnable work.
+ *    `computeBatchStatus`, `computeNextTransition`, and the single selection
+ *    engine (`pickNextStep`) all agree the change still has runnable work.
  *  - once the verify step journals a verify completion the change is `done` and
  *    there is no next transition / nothing runnable.
  *  - status NEVER reports done for a change the transition logic still wants to
@@ -24,10 +24,7 @@ import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
 import { appendJournal, recordProofOfWork } from '../../src/core/batch/journal.js';
 import {
   computeNextTransition,
-  isChangeDone,
-  readChangeDiskState,
-  selectRunnableStep,
-  type SelectablePhase,
+  pickNextStep,
 } from '../../src/core/batch/engine/index.js';
 import { computeBatchStatus } from '../../src/core/batch/status.js';
 import { readChangeJournalTolerant } from '../../src/core/batch/engine/run-state.js';
@@ -42,6 +39,7 @@ import type {
   Spawner,
   AgentSpawnRequest,
 } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 let projectRoot: string;
 
@@ -111,7 +109,7 @@ function engineWith(effect: (root: string, request: AgentSpawnRequest) => Promis
     return { exitCode: 0, signal: null, stdout: '', stderr: '' };
   };
   const engine = new RatchetBatchEngine({
-    spawner,
+    runtime: spawnerAsRuntime(spawner),
     adapters: { fake: adapter },
     projectRoot: () => projectRoot,
   });
@@ -153,20 +151,7 @@ async function verifyEffect(root: string): Promise<void> {
   });
 }
 
-/** Build the selection view for the single-change phase from disk + journal. */
-function selectableFor(): SelectablePhase[] {
-  const disk = readChangeDiskState(projectRoot, CHANGE);
-  const journal = readChangeJournalTolerant(projectRoot, BATCH, CHANGE);
-  return [
-    {
-      name: 'p1',
-      gated: false,
-      // `done` fed from the SAME journal-aware predicate as status/transition.
-      changes: [{ name: CHANGE, after: [], done: isChangeDone(disk, journal), parked: false }],
-    },
-  ];
-}
-
+/** Resolve the single change's derived status from the batch status surface. */
 function statusChange() {
   return computeBatchStatus(projectRoot, parseBatchManifest(MANIFEST)).then((s) => {
     for (const phase of s.phases) {
@@ -208,7 +193,13 @@ describe('single journal-aware done-rule, driven propose -> apply -> verify', ()
 
     // (c) transition + selection agree: verify is next, and the change is runnable.
     expect(computeNextTransition(projectRoot, CHANGE, journalAfterApply)).toBe('verify');
-    expect(selectRunnableStep(selectableFor()).step).toEqual({ phase: 'p1', change: CHANGE });
+    {
+      const { status } = await statusChange();
+      expect(pickNextStep(status, parseBatchManifest(MANIFEST).phases)).toMatchObject({
+        kind: 'change',
+        change: CHANGE,
+      });
+    }
 
     // --- verify: runs and journals a verify completion ------------------------
     const r3 = await engineWith(verifyEffect).engine.runStep(context());
@@ -248,7 +239,10 @@ describe('single journal-aware done-rule, driven propose -> apply -> verify', ()
       expect(status.next).toBeUndefined();
     }
     expect(computeNextTransition(projectRoot, CHANGE, journalAfterVerify)).toBeUndefined();
-    expect(selectRunnableStep(selectableFor()).reason).toBe('all-done');
+    {
+      const { status } = await statusChange();
+      expect(pickNextStep(status, parseBatchManifest(MANIFEST).phases)).toBeUndefined();
+    }
   });
 
   it('status never reports done for a change the transition logic still wants to verify', async () => {

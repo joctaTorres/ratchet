@@ -44,7 +44,6 @@ import {
   type AgentAdapter,
   type AgentSpawnRequest,
   type AgentSpawnResult,
-  type Spawner,
 } from './agent.js';
 import { scopeAgentEnv } from './agent-env.js';
 import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
@@ -95,13 +94,6 @@ export interface EngineDeps {
    * the accumulated `AgentSpawnResult` for `mapSessionToOutcome`.
    */
   runtime?: AgentRuntime;
-  /**
-   * Legacy direct-spawn seam, preserved as a documented fallback for one release.
-   * When a `runtime` is provided (or defaulted) it is NOT used; an explicit
-   * `spawner` is wrapped into a non-streaming runtime so the old injection path
-   * keeps working for tests that have not migrated.
-   */
-  spawner?: Spawner;
   /** Print each streamed stdout line live (defaults to writing to stdout). */
   printLine?: LinePrinter;
   /** Extra/override agent adapters (e.g. for tests). */
@@ -114,24 +106,6 @@ export interface EngineDeps {
    * render/verify/fail paths without touching disk.
    */
   skillLocusDeps?: SkillLocusDeps;
-}
-
-/**
- * Adapt a legacy `Spawner` into an `AgentRuntime`: run it, then replay the
- * captured stdout as a single accumulated transcript followed by an exit event.
- * Preserves the direct-spawn fallback path while keeping the streaming contract.
- */
-function spawnerAsRuntime(spawner: Spawner): AgentRuntime {
-  return async (req, onEvent) => {
-    const result = await spawner(req);
-    if (result.stdout) {
-      for (const line of result.stdout.split('\n')) {
-        onEvent({ kind: 'stdout', line });
-      }
-    }
-    onEvent({ kind: 'exit', exitCode: result.exitCode ?? undefined });
-    return result;
-  };
 }
 
 /**
@@ -168,8 +142,7 @@ export class RatchetBatchEngine {
 
   /**
    * The injected runtime override, when any. When unset, the runtime is selected
-   * by locus per step (currently `local` → ReX sidecar). An injected `spawner`
-   * (legacy fallback) is wrapped into a runtime so the old path keeps working.
+   * by locus per step (currently `local` → ReX sidecar).
    */
   private readonly runtimeOverride?: AgentRuntime;
   private readonly printLine: LinePrinter;
@@ -178,8 +151,7 @@ export class RatchetBatchEngine {
   private readonly skillLocusDeps?: SkillLocusDeps;
 
   constructor(deps: EngineDeps = {}) {
-    this.runtimeOverride =
-      deps.runtime ?? (deps.spawner ? spawnerAsRuntime(deps.spawner) : undefined);
+    this.runtimeOverride = deps.runtime;
     this.printLine = deps.printLine ?? ((line) => process.stdout.write(line + '\n'));
     this.adapters = deps.adapters;
     this.projectRoot = deps.projectRoot ?? resolveProjectRoot;
@@ -187,9 +159,9 @@ export class RatchetBatchEngine {
   }
 
   /**
-   * Select the `AgentRuntime` for a step. An injected runtime/spawner always
-   * wins (tests, fallback). Otherwise the locus selects the runtime — and this
-   * is the ONLY place that branches on locus: `local` drives the ReX sidecar
+   * Select the `AgentRuntime` for a step. An injected runtime always wins
+   * (tests). Otherwise the locus selects the runtime — and this is the ONLY
+   * place that branches on locus: `local` drives the ReX sidecar
    * with `REX_LOCUS=local` and `REX_WORKDIR=projectRoot`; `docker` drives the
    * SAME sidecar runtime with `REX_LOCUS=docker` plus the resolved `image`
    * and docker hardening knobs (`dockerUser`/`dockerMemory`/`dockerPidsLimit`/
@@ -343,7 +315,7 @@ export class RatchetBatchEngine {
     // configured adapter is resolved (rejecting unknowns before any spawn).
     const instructions = buildAgentInstructions(ctx);
     // Thread the batch name through the env so the runtime can place the temp
-    // prompt file under `.ratchet/batches/<batch>/.run/<id>/`. With no batch the
+    // prompt file under `.ratchet/batches/<batch>/run/<id>/`. With no batch the
     // runtime falls back to the change-local `.run/`, so the var is omitted.
     const env: NodeJS.ProcessEnv = batch
       ? { ...scopeAgentEnv(process.env), RATCHET_BATCH_NAME: batch }

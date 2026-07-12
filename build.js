@@ -38,13 +38,13 @@ const copyNonTsAssets = () => {
     (f) => !path.basename(f).startsWith('test_')
   );
   if (assets.length === 0) {
-    // A guard so a future rename/move of the sidecar is noticed loudly rather
-    // than silently shipping a CLI without it.
+    // A note so a future rename/move of the sidecar is noticed loudly. We do
+    // NOT return here: the unconditional dist assertion below is the real gate
+    // and must run so a missing packaged sidecar hard-fails the build.
     console.warn(
       '⚠️  No .py assets found under src/ — expected the ReX sidecar. ' +
         'Did sidecar.py move or get renamed?'
     );
-    return;
   }
   for (const asset of assets) {
     const rel = path.relative(srcDir, asset);
@@ -52,6 +52,28 @@ const copyNonTsAssets = () => {
     mkdirSync(path.dirname(dest), { recursive: true });
     copyFileSync(asset, dest);
     console.log(`Copied asset: ${rel}`);
+  }
+
+  // Build-time assertion: the sidecar bootstrap resolves sidecar.py relative to
+  // the COMPILED runtime module (dist/core/batch/engine/runtime/sidecar.py), so
+  // that exact path MUST exist after the copy. A miss hard-fails the build
+  // (exit non-zero) rather than warn-and-continue, so a missing packaged
+  // sidecar never ships a CLI that would crash at the first docker/local spawn.
+  const expectedSidecar = path.join(
+    distDir,
+    'core',
+    'batch',
+    'engine',
+    'runtime',
+    'sidecar.py'
+  );
+  if (!existsSync(expectedSidecar)) {
+    throw new Error(
+      `Build assertion failed: expected packaged sidecar asset not found at ` +
+        `'${path.relative('.', expectedSidecar)}'. The ReX sidecar bootstrap ` +
+        `resolves sidecar.py relative to the compiled runtime module; a missing ` +
+        `asset would crash at spawn. Did sidecar.py move or get renamed?`
+    );
   }
 };
 
@@ -75,5 +97,8 @@ try {
   console.log('\n✅ Build completed successfully!');
 } catch (error) {
   console.error('\n❌ Build failed!');
+  if (error && error.message) {
+    console.error(error.message);
+  }
   process.exit(1);
 }

@@ -24,6 +24,7 @@ import type {
   AgentSpawnRequest,
   AgentRuntime,
 } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 import type {
   ResolvedStepContext,
   DecompositionStepContext,
@@ -116,7 +117,7 @@ describe('engine-spawn-env — change-transition spawn is scoped', () => {
       return { exitCode: 0, signal: null, stdout: '', stderr: '' };
     };
     const engine = new RatchetBatchEngine({
-      spawner,
+      runtime: spawnerAsRuntime(spawner),
       adapters: { fake: fakeAdapter('fake') },
       projectRoot: () => projectRoot,
     });
@@ -245,7 +246,7 @@ describe('engine-spawn-env — pr spawn is scoped', () => {
       return { exitCode: 0, signal: null, stdout: 'opened PR', stderr: '' };
     };
     const engine = new RatchetBatchEngine({
-      spawner,
+      runtime: spawnerAsRuntime(spawner),
       adapters: fakeAdapters,
       projectRoot: () => projectRoot,
       skillLocusDeps: { exists: () => true, writeText: () => {} },
@@ -273,7 +274,7 @@ describe('engine-spawn-env — the agent-cmd override still works under the scop
       return { exitCode: 0, signal: null, stdout: '', stderr: '' };
     };
     const engine = new RatchetBatchEngine({
-      spawner,
+      runtime: spawnerAsRuntime(spawner),
       adapters: { fake: fakeAdapter('fake') },
       projectRoot: () => projectRoot,
     });

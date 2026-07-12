@@ -40,28 +40,36 @@ const {
 // keep their real (pure) logic — including the per-group `pr:<batch>:<groupId>`
 // key a stacked boundary resolves to — so the PR park keys and the already-opened
 // gates are honest; `readJournalTolerant` is a controllable fake so a test can
-// pre-seed PR completions for the idempotent-resume cases. The two pure stacked
-// policies (`detectPrGroupBoundaries`, `selectStackedBases`) are NOT touched:
-// `batch apply` imports them from their own modules, so their real logic runs.
-vi.mock('../../../src/core/batch/engine/index.js', () => ({
-  RatchetBatchEngine: class {
-    runStep = runStepMock;
-    runDecompositionStep = runDecompositionStepMock;
-    runPrStep = runPrStepMock;
-  },
-  computeNextTransition: computeNextTransitionMock,
-  decompositionJournalKey: (phase: string) => phase,
-  prJournalKey: (batch: string, boundary?: { kind: string; groupId: string }) =>
-    !boundary || boundary.kind === 'batch' ? `pr:${batch}` : `pr:${batch}:${boundary.groupId}`,
-  hasJournaledPr: (journal: { kind: string; transition?: string }[] = []) =>
-    journal.some((e) => e.kind === 'completion' && e.transition === 'pr'),
-  readJournalTolerant: readJournalTolerantMock,
-  runProofOfWork: runProofOfWorkMock,
-  // Pure helpers `renderResult` imports for the override notice — passed
-  // through as the real functions so the notice text is asserted honestly.
-  agentOverrideNotice: (envVar: string) => `⚠ agent overridden by ${envVar}`,
-  BATCH_AGENT_CMD_ENV: 'RATCHET_BATCH_AGENT_CMD',
-}));
+// pre-seed PR completions for the idempotent-resume cases. The single selection
+// engine (`pickNextStep`) and `boundaryStateFromPhases` are passed through as the
+// real pure logic (via `importOriginal`) — `batch apply` now imports them from
+// this module — so selection over the real `computeBatchStatus` runs honestly. The
+// two pure stacked policies (`detectPrGroupBoundaries`, `selectStackedBases`) are
+// NOT touched: `batch apply` imports them from their own modules, so their real
+// logic runs.
+vi.mock('../../../src/core/batch/engine/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/core/batch/engine/index.js')>();
+  return {
+    ...actual,
+    RatchetBatchEngine: class {
+      runStep = runStepMock;
+      runDecompositionStep = runDecompositionStepMock;
+      runPrStep = runPrStepMock;
+    },
+    computeNextTransition: computeNextTransitionMock,
+    decompositionJournalKey: (phase: string) => phase,
+    prJournalKey: (batch: string, boundary?: { kind: string; groupId: string }) =>
+      !boundary || boundary.kind === 'batch' ? `pr:${batch}` : `pr:${batch}:${boundary.groupId}`,
+    hasJournaledPr: (journal: { kind: string; transition?: string }[] = []) =>
+      journal.some((e) => e.kind === 'completion' && e.transition === 'pr'),
+    readJournalTolerant: readJournalTolerantMock,
+    runProofOfWork: runProofOfWorkMock,
+    // Pure helpers `renderResult` imports for the override notice — passed
+    // through as the real functions so the notice text is asserted honestly.
+    agentOverrideNotice: (envVar: string) => `⚠ agent overridden by ${envVar}`,
+    BATCH_AGENT_CMD_ENV: 'RATCHET_BATCH_AGENT_CMD',
+  };
+});
 
 vi.mock('../../../src/core/planning-home.js', () => ({
   resolveCurrentPlanningHomeSync: resolvePlanningHomeMock,

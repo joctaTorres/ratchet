@@ -2,12 +2,14 @@
  * Status and selection agree on the proof-derived phase gate, and `batch apply`
  * cites the blocking proof.
  *
- * The gate is computed once in `computeBatchStatus`; both selection seams read
- * its result. With phase `p1` done and `p2` outstanding under `hard-gate`:
+ * The gate is computed once in `computeBatchStatus`; the single selection engine
+ * (`pickNextStep`) reads its result via the shared eligibility walk
+ * (`firstRunnableChange`, which skips gated phases). With phase `p1` done and
+ * `p2` outstanding under `hard-gate`:
  *   - a recorded FAILING proof for `p1` makes `pickNextStep` return no `p2` change
- *     AND `selectRunnableStep` (fed `gated` straight from the same status) agree
- *     there is no runnable `p2` work — status and selection cannot disagree;
- *   - a recorded PASSING proof returns `p2`'s outstanding change from both seams;
+ *     — status (which derives the gate) and selection share one walk, so they
+ *     cannot disagree;
+ *   - a recorded PASSING proof returns `p2`'s outstanding change;
  *   - `batch apply`'s no-step output cites `p1`'s failing proof rather than the
  *     generic "everything is blocked, gated, or parked" message, and advances no
  *     `p2` change (the block persists across stateless invocations).
@@ -25,13 +27,10 @@ import {
   readProofOfWorkByPhase,
   type ProofOfWorkRecord,
 } from '../../src/core/batch/journal.js';
-import { computeBatchStatus, type BatchStatusInfo } from '../../src/core/batch/status.js';
+import { computeBatchStatus } from '../../src/core/batch/status.js';
 import { loadBatchManifest, getBatchManifestPath } from '../../src/core/batch/manifest.js';
-import { pickNextStep, batchApplyCommand } from '../../src/commands/batch/apply.js';
-import {
-  selectRunnableStep,
-  type SelectablePhase,
-} from '../../src/core/batch/engine/selection.js';
+import { batchApplyCommand } from '../../src/commands/batch/apply.js';
+import { pickNextStep } from '../../src/core/batch/engine/index.js';
 
 let projectRoot: string;
 const BATCH = 'powg';
@@ -95,22 +94,8 @@ function record(over: Partial<ProofOfWorkRecord> = {}): ProofOfWorkRecord {
   };
 }
 
-/** Feed `gated` straight from the derived status into the pure selection seam. */
-function selectableFromStatus(status: BatchStatusInfo): SelectablePhase[] {
-  return status.phases.map((p) => ({
-    name: p.name,
-    gated: p.gated,
-    changes: p.changes.map((c) => ({
-      name: c.name,
-      after: c.after,
-      done: c.status === 'done',
-      parked: c.status === 'blocked' || c.status === 'awaiting-approval',
-    })),
-  }));
-}
-
 describe('proof-derived gate: status and selection agree', () => {
-  it('a failing recorded proof makes pickNextStep AND selectRunnableStep refuse p2', async () => {
+  it('a failing recorded proof makes pickNextStep refuse p2', async () => {
     await markDone('first');
     recordProofOfWork(
       projectRoot,
@@ -125,13 +110,13 @@ describe('proof-derived gate: status and selection agree', () => {
     const target = pickNextStep(status, manifest.phases, new Set(['p1']));
     expect(target).toBeUndefined();
 
-    // selectRunnableStep over the same derived `gated` agrees: no p2 step.
-    const result = selectRunnableStep(selectableFromStatus(status));
-    expect(result.step).toBeUndefined();
-    expect(result.reason).toBe('all-gated');
+    // The shared eligibility walk skips gated phases: p2 is gated, p1's change is
+    // done, so `firstRunnableChange` finds nothing — status and selection agree by
+    // construction (one walk, not two).
+    expect(status.next).toBeUndefined();
   });
 
-  it('a passing recorded proof makes both seams yield p2 outstanding change', async () => {
+  it('a passing recorded proof makes pickNextStep yield p2 outstanding change', async () => {
     await markDone('first');
     recordProofOfWork(projectRoot, BATCH, 'p1', record({ passed: true, gatePassed: true }));
     const manifest = loadBatchManifest(projectRoot, BATCH);
@@ -139,9 +124,8 @@ describe('proof-derived gate: status and selection agree', () => {
 
     const target = pickNextStep(status, manifest.phases, new Set(['p1']));
     expect(target).toMatchObject({ kind: 'change', change: 'second' });
-
-    const result = selectRunnableStep(selectableFromStatus(status));
-    expect(result.step).toEqual({ phase: 'p2', change: 'second' });
+    // The shared walk derived the same next from the same gate.
+    expect(status.next).toEqual({ phase: 'p2', change: 'second' });
   });
 });
 

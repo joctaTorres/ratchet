@@ -30,7 +30,8 @@ import {
   loadBatchManifest,
 } from '../../src/core/batch/manifest.js';
 import { computeBatchStatus } from '../../src/core/batch/status.js';
-import { pickNextStep, batchApplyCommand } from '../../src/commands/batch/apply.js';
+import { pickNextStep } from '../../src/core/batch/engine/index.js';
+import { batchApplyCommand } from '../../src/commands/batch/apply.js';
 
 let projectRoot: string;
 const BATCH = 'tpp';

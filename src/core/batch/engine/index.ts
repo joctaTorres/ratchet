@@ -74,10 +74,13 @@ export {
   type ChangeDiskState,
 } from './transition.js';
 export {
-  selectRunnableStep,
-  type SelectablePhase,
-  type SelectableChange,
-  type SelectionResult,
+  pickNextStep,
+  firstRunnableChange,
+  boundaryStateFromPhases,
+  RUNNABLE_STATUSES,
+  type ApplyTarget,
+  type RunnableChangeHit,
+  type PickPrContext,
 } from './selection.js';
 export {
   detectPrGroupBoundaries,
@@ -95,8 +98,6 @@ export {
   type RunProofOfWorkDeps,
   type BashRunner,
   type BashResult,
-  type LlmJudge,
-  type JudgeVerdict,
 } from './proof-of-work.js';
 export {
   acquireBatchLock,

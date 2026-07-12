@@ -39,7 +39,7 @@ interface ChangeStepContext {
   settings: BatchSettings;
   /** Prior journal entries for this change (resume context). */
   journal: JournalEntry[];
-  /** Appended verbatim to the agent instructions as an "Additional guidance:" block. */
+  /** Handed to the lifecycle skill invocation as its arguments ($ARGUMENTS). */
   guidance?: string;
   /** Resume context when the step was parked. */
   resume?: {
@@ -88,7 +88,6 @@ type StepState =
   | 'advanced'
   | 'blocked'
   | 'awaiting-approval'
-  | 'phase-gated'
   | 'nothing-ready';
 
 interface StepResult {

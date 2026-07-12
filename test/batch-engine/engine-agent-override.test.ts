@@ -7,6 +7,7 @@ import { appendJournal, readJournalForChange } from 'ratchet-ai';
 import type { ResolvedStepContext, BatchSettings, ProofOfWork } from 'ratchet-ai';
 import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
 import type { AgentAdapter, Spawner, AgentSpawnRequest } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 /**
  * The `RATCHET_BATCH_AGENT_CMD` override seam: when set, the engine runs the
@@ -94,7 +95,7 @@ function fakeAgent(behavior: {
 function engineWith(behavior: Parameters<typeof fakeAgent>[0]) {
   const fake = fakeAgent(behavior);
   const engine = new RatchetBatchEngine({
-    spawner: fake.spawner,
+    runtime: spawnerAsRuntime(fake.spawner),
     adapters: { fake: fake.adapter },
     projectRoot: () => projectRoot,
   });

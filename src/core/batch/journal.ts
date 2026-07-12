@@ -53,9 +53,8 @@ export interface ProofOfWorkRecord {
   detail: string;
   /**
    * Which pass-condition kind was evaluated (`exit-zero` | `contains` | `regex`
-   * | `substring`). Absent for the not-yet-wired `llm-judge` kind and on older
-   * records written before this field existed — readers ignore absence, no
-   * migration.
+   * | `substring`). Absent on older records written before this field existed —
+   * readers ignore absence, no migration.
    */
   conditionKind?: PassConditionKind;
   /**

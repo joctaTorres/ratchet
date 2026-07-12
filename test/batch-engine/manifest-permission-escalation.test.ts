@@ -237,6 +237,19 @@ vi.mock('../../src/core/batch/engine/index.js', () => ({
   runProofOfWork: vi.fn(),
   agentOverrideNotice: (envVar: string) => `⚠ agent overridden by ${envVar}`,
   BATCH_AGENT_CMD_ENV: 'RATCHET_BATCH_AGENT_CMD',
+  // The single selection engine: return a concrete change target so `batchApplyCommand`
+  // proceeds to `engine.runStep` (the mocked `runStepMock`).
+  pickNextStep: () => ({
+    kind: 'change',
+    phase: {
+      name: 'p1',
+      goal: 'ship',
+      success: 'works',
+      proofOfWork: { kind: 'integration', run: 'echo ok', pass: 'exit 0' },
+    },
+    change: 'c1',
+    changeDone: 'c1 done',
+  }),
 }));
 
 vi.mock('../../src/core/planning-home.js', () => ({

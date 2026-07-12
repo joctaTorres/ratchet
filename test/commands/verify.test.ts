@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { verifyCommand } from '../../src/commands/verify.js';
 import type { Spawner } from '../../src/core/batch/engine/agent.js';
 import { CommandFixture, makeCommandFixture, completingSpawner } from './change-fixture.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 /**
  * Behavioral tests for the `verify` verb.
@@ -31,7 +32,7 @@ describe('verifyCommand', () => {
     const spawner = vi.fn<Parameters<Spawner>, ReturnType<Spawner>>();
 
     await expect(
-      verifyCommand('ghost', {}, { projectRoot: () => fixture.root, spawner })
+      verifyCommand('ghost', {}, { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) })
     ).rejects.toThrow(/does not exist[\s\S]*ratchet propose/i);
 
     expect(spawner).not.toHaveBeenCalled();
@@ -42,7 +43,7 @@ describe('verifyCommand', () => {
     const spawner = vi.fn<Parameters<Spawner>, ReturnType<Spawner>>();
 
     await expect(
-      verifyCommand('half-done', {}, { projectRoot: () => fixture.root, spawner })
+      verifyCommand('half-done', {}, { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) })
     ).rejects.toThrow(/unfinished tasks \(1\/3 done\)[\s\S]*apply[\s\S]*--force/i);
 
     expect(spawner).not.toHaveBeenCalled();
@@ -55,7 +56,7 @@ describe('verifyCommand', () => {
     await verifyCommand(
       'half-done',
       { force: true },
-      { projectRoot: () => fixture.root, spawner }
+      { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) }
     );
 
     expect(calls()).toBe(1);
@@ -65,7 +66,7 @@ describe('verifyCommand', () => {
     await fixture.writeChangeWithTasks('complete', { done: 2, total: 2 });
     const { spawner, calls } = completingSpawner(fixture.root, 'complete', 'verify');
 
-    await verifyCommand('complete', {}, { projectRoot: () => fixture.root, spawner });
+    await verifyCommand('complete', {}, { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) });
 
     expect(calls()).toBe(1);
     const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
@@ -91,7 +92,7 @@ describe('verifyCommand', () => {
       verifyCommand(
         'complete',
         { agent: 'claude:' },
-        { projectRoot: () => fixture.root, spawner }
+        { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) }
       )
     ).rejects.toThrow(/claude:/);
 

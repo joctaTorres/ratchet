@@ -11,6 +11,7 @@ import type {
   AgentSpawnRequest,
 } from '../../src/core/batch/engine/agent.js';
 import type { ChangeStepContext } from '../../src/core/batch/engine/contract.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 /**
  * Tests for the headless `ratchet apply <change>` verb. It enforces on-disk
@@ -92,7 +93,7 @@ function deps(behavior: { exitCode?: number; stderr?: string; change: string }):
 } {
   const { adapter, spawner, calls, contexts } = fakeAgent(behavior);
   return {
-    engineDeps: { spawner, adapters: { fake: adapter }, projectRoot: () => projectRoot },
+    engineDeps: { runtime: spawnerAsRuntime(spawner), adapters: { fake: adapter }, projectRoot: () => projectRoot },
     calls,
     contexts,
   };

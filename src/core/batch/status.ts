@@ -27,6 +27,7 @@ import type { BatchManifest, Phase, ChangeIntent } from './manifest.js';
 import type { JournalEntry, ParkedKind, ParkedStep, RunState } from './journal.js';
 import { readJournal, proofRecordsFromEntries } from './journal.js';
 import { hasJournaledVerify } from './engine/transition.js';
+import { firstRunnableChange } from './engine/selection.js';
 
 export type ChangeStatus =
   | 'pending'
@@ -335,8 +336,8 @@ async function derivePhaseStatus(
  * Because the recorder folds policy into `gatePassed` (`warn` always records
  * `gatePassed: true`), consulting that one boolean expresses both policies: a
  * failing proof under `warn` never closes the gate. This is the single gate rule;
- * `pickNextStep` reads the derived `gated` and `selectRunnableStep` receives it
- * as input, so status and selection agree on the proof-derived gate by
+ * `pickNextStep` reads the derived `gated` (and `firstRunnableChange` skips the
+ * same gated phases), so status and selection agree on the proof-derived gate by
  * construction. The boundary proof itself is executed and recorded by
  * `batch apply` (see `engine/proof-of-work.ts`'s `runProofOfWork`).
  */
@@ -382,12 +383,15 @@ export async function computeBatchStatus(
     priorPhaseName = phase.name;
   }
 
-  // Aggregate task progress and counts.
+  // Aggregate task progress and counts. The change-level `next` is derived by
+  // the single runnable-change eligibility walk (`firstRunnableChange` in the
+  // engine selection module) — the same walk `pickNextStep`'s change branch
+  // uses — so status derivation and step selection share one code path and cannot
+  // disagree about which phase/change is next.
   let total = 0;
   let completed = 0;
   let changeCount = 0;
   let doneCount = 0;
-  let next: { phase: string; change?: string; decompose?: boolean; proof?: boolean } | undefined;
 
   for (const phase of phases) {
     for (const change of phase.changes) {
@@ -395,24 +399,18 @@ export async function computeBatchStatus(
       total += change.progress.total;
       completed += change.progress.completed;
       if (change.status === 'done') doneCount += 1;
-      if (
-        !next &&
-        !phase.gated &&
-        (change.status === 'ready' ||
-          change.status === 'in-progress' ||
-          // An `awaiting-verify` change has a runnable next step (verify); it is
-          // the gate that must run before the change can be done, so it is the
-          // batch's next actionable step.
-          change.status === 'awaiting-verify')
-      ) {
-        next = { phase: phase.name, change: change.name };
-      }
     }
   }
 
+  let next: { phase: string; change?: string; decompose?: boolean; proof?: boolean } | undefined;
+  const runnableHit = firstRunnableChange(phases, manifest.phases);
+  if (runnableHit) {
+    next = { phase: runnableHit.phase.name, change: runnableHit.change.name };
+  }
+
   // A reachable, ungated phase whose `changes` list is empty is undecomposed: an
-  // outstanding decomposition step, NOT vacuously complete. Both this seam and
-  // `selectRunnableStep` key off the same two facts — "phase decomposed?"
+  // outstanding decomposition step, NOT vacuously complete. This seam and
+  // `pickNextStep` key off the same two facts — "phase decomposed?"
   // (`changes.length > 0`) and "phase reachable?" (ungated) — so status and
   // selection cannot disagree about whether a reachable empty phase is work.
   // `derivePhaseStatus` already reports such a phase as `pending` (not `done`);

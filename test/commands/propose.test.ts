@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { proposeCommand, deriveChangeName } from '../../src/commands/propose.js';
 import type { Spawner } from '../../src/core/batch/engine/agent.js';
 import { CommandFixture, makeCommandFixture, completingSpawner } from './change-fixture.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 /**
  * Behavioral tests for the `propose` verb.
@@ -42,7 +43,7 @@ describe('proposeCommand', () => {
     const spawner = vi.fn<Parameters<Spawner>, ReturnType<Spawner>>();
 
     await expect(
-      proposeCommand('!!! ???', {}, { projectRoot: () => fixture.root, spawner })
+      proposeCommand('!!! ???', {}, { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) })
     ).rejects.toThrow(/non-empty objective or an explicit --name/i);
 
     expect(spawner).not.toHaveBeenCalled();
@@ -54,7 +55,7 @@ describe('proposeCommand', () => {
     await proposeCommand(
       'some long objective text',
       { name: 'chosen-change', json: true },
-      { projectRoot: () => fixture.root, spawner }
+      { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) }
     );
 
     // The step context was built for "chosen-change": exactly one step ran for it.
@@ -71,7 +72,7 @@ describe('proposeCommand', () => {
       proposeCommand(
         'already here',
         {},
-        { projectRoot: () => fixture.root, spawner }
+        { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) }
       )
     ).rejects.toThrow(/already exists/i);
 
@@ -84,7 +85,7 @@ describe('proposeCommand', () => {
     await proposeCommand(
       'Add login',
       {},
-      { projectRoot: () => fixture.root, spawner }
+      { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) }
     );
 
     expect(calls()).toBe(1);
@@ -99,7 +100,7 @@ describe('proposeCommand', () => {
     await proposeCommand(
       'Add login',
       { json: true },
-      { projectRoot: () => fixture.root, spawner }
+      { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) }
     );
 
     expect(logSpy).toHaveBeenCalledTimes(1);
@@ -128,7 +129,7 @@ describe('proposeCommand', () => {
       proposeCommand(
         'Add login',
         { agent: 'claude:' },
-        { projectRoot: () => fixture.root, spawner }
+        { projectRoot: () => fixture.root, runtime: spawnerAsRuntime(spawner) }
       )
     ).rejects.toThrow(/claude:/);
 

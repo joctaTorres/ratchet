@@ -63,6 +63,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import sys
 import uuid
 
@@ -73,6 +74,12 @@ os.environ.setdefault("SWE_REX_LOG_STREAM_LEVEL", "CRITICAL")
 
 # Poll interval for tailing a command's logfile (seconds).
 POLL_INTERVAL = 0.3
+
+# Upper bound (bytes) on a held partial line before it is flushed as a truncated
+# stdout event rather than pushed back and re-read every poll. MUST match the TS
+# `MAX_PARTIAL_BYTES` in spawn-command.ts (the shared cap for both rex runtimes'
+# partial buffers) — keep the two in sync if either ever changes.
+MAX_PARTIAL_BYTES = 1024 * 1024
 
 
 def emit(obj: dict) -> None:
@@ -94,19 +101,16 @@ def _exception_detail(exc: BaseException) -> object:
     return detail
 
 
-# Cross-language constant: this MUST match `DEFAULT_DOCKER_IMAGE` in config.ts
-# (the single TS source of truth, which rex-bootstrap.ts re-exports). Python
-# cannot import the TS constant, so this is a deliberate duplicate — but it is a
-# pure UNSET-FALLBACK: the Node side always threads the resolved image via
-# `REX_IMAGE`, so this default is only reached if `REX_IMAGE` is missing. Keep
-# the two in sync if the default image ever changes.
-DEFAULT_DOCKER_IMAGE = "python:3.12"
-
 # Cross-language fallbacks for the docker hardening knobs. These MUST match the
 # TS constants in config.ts (the single source of truth). They are PURE
 # UNSET-FALLBACKS: the Node side always threads the resolved value via the
 # matching `REX_DOCKER_*` env var, so these are only reached if that env is
 # missing. Keep the two languages in sync if any default ever changes.
+#
+# The docker IMAGE default is owned solely by config.ts
+# (`DEFAULT_DOCKER_IMAGE`); the Node side always threads it via `REX_IMAGE`, so
+# the Python side has NO image fallback — an unset/empty `REX_IMAGE` on the
+# docker locus raises a clear error rather than silently guessing an image.
 DEFAULT_DOCKER_MEMORY = "2g"
 DEFAULT_DOCKER_PIDS_LIMIT = "512"
 DEFAULT_DOCKER_NETWORK = "bridge"
@@ -116,20 +120,34 @@ def _make_deployment(locus: str):
     """Construct a deployment for the requested locus. Docker is imported lazily
     so the local path does not require docker-only dependencies (aiohttp).
 
-    For ``docker`` the image comes from ``REX_IMAGE`` (default
-    ``python:3.12``) and the project root is bind-mounted via ``docker_args``
-    (``-v REX_MOUNT_HOST:REX_MOUNT_CONTAINER``) — swe-rex 1.4.0 has no dedicated
-    ``volumes`` field; ``start()`` splices ``docker_args`` into the run argv.
+    For ``docker`` the image comes from ``REX_IMAGE`` (which the Node side
+    always threads, defaulting to ``DEFAULT_DOCKER_IMAGE`` in config.ts — the
+    single source of truth) and the project root is bind-mounted via
+    ``docker_args`` (``-v REX_MOUNT_HOST:REX_MOUNT_CONTAINER``) — swe-rex 1.4.0
+    has no dedicated ``volumes`` field; ``start()`` splices ``docker_args`` into
+    the run argv.
 
     Docker hardening knobs (``REX_DOCKER_*``) are appended to ``docker_args``
     conditionally on env presence, so an unset knob never emits a flag (Docker's
     own default then applies). The ``--user`` knob defaults to the current host
     uid:gid so container writes land as the host user rather than root.
+
+    An unset/empty ``REX_IMAGE`` on the docker locus raises a clear ``ValueError``
+    naming ``REX_IMAGE`` as required, rather than silently falling back to a
+    built-in image — the image default is owned solely by config.ts, and Node
+    always threads it, so reaching this branch means a mis-invoked sidecar.
     """
     if locus == "docker":
         from swerex.deployment.docker import DockerDeployment
 
-        image = os.environ.get("REX_IMAGE", "").strip() or DEFAULT_DOCKER_IMAGE
+        image = os.environ.get("REX_IMAGE", "").strip()
+        if not image:
+            raise ValueError(
+                "REX_IMAGE is required for the docker locus but is unset or empty. "
+                "The Node side always threads it (defaulting to DEFAULT_DOCKER_IMAGE "
+                "in config.ts); a missing value here means the sidecar was launched "
+                "without the resolved image."
+            )
         mount_host = os.environ.get("REX_MOUNT_HOST", "").strip()
         mount_container = (
             os.environ.get("REX_MOUNT_CONTAINER", "").strip() or "/workspace"
@@ -248,7 +266,7 @@ class Sidecar:
 
         ``run_dir`` (optional, from the run op) is the directory the sidecar
         writes its per-run sentinels (``ratchet-rex-<token>.log/.done``) and the
-        new pidfile into — typically ``.ratchet/batches/<batch>/.run/<id>/`` on
+        new pidfile into — typically ``.ratchet/batches/<batch>/run/<id>/`` on
         the host, or its in-container translation for docker. Absent → fall back
         to the workdir (the prior behaviour, so the op protocol is a pure
         extension)."""
@@ -298,15 +316,32 @@ class Sidecar:
                 # next poll by only splitting on newlines we actually have.
                 parts = chunk.split("\n")
                 # If chunk ended in a newline the split leaves a trailing "" we
-                # must drop; otherwise the last element is a partial line we push
-                # back via the byte offset so the next poll completes it.
+                # must drop; otherwise the last element is a partial line.
+                flushed_partial: str | None = None
                 if chunk.endswith("\n"):
                     parts.pop()
                 else:
                     partial = parts.pop()
-                    offset -= len(partial.encode("utf-8", "surrogateescape"))
+                    partial_bytes = len(partial.encode("utf-8", "surrogateescape"))
+                    if partial_bytes > MAX_PARTIAL_BYTES:
+                        # An unterminated line past the cap: flush it TRUNCATED and
+                        # do NOT decrement the offset, so the cursor advances past
+                        # the flushed bytes and the next poll reads only new bytes
+                        # instead of re-reading (and regrowing) the huge partial.
+                        flushed_partial = partial
+                    else:
+                        # Push the partial back via the byte offset so the next
+                        # poll completes it.
+                        offset -= partial_bytes
                 for line in parts:
                     emit({"event": "stdout", "id": run_id, "line": line})
+                if flushed_partial is not None:
+                    emit({
+                        "event": "stdout",
+                        "id": run_id,
+                        "line": flushed_partial,
+                        "truncated": True,
+                    })
 
             # Completion is signalled by the sentinel file existing.
             check = await self._exec(f"cat {done} 2>/dev/null")
@@ -317,9 +352,16 @@ class Sidecar:
                 final = await self._exec(f"tail -c +{offset + 1} {log} 2>/dev/null")
                 rest = final.stdout or ""
                 if rest:
-                    for line in rest.split("\n"):
-                        if line != "":
-                            emit({"event": "stdout", "id": run_id, "line": line})
+                    # Use the streaming loop's exact split discipline so blank-line
+                    # emission is unified between stream and drain: split on "\n",
+                    # drop ONLY the empty segment after a trailing newline, and emit
+                    # every remaining segment — including interior blanks and a
+                    # trailing partial (final at drain time, emitted as its own line).
+                    parts = rest.split("\n")
+                    if rest.endswith("\n"):
+                        parts.pop()
+                    for line in parts:
+                        emit({"event": "stdout", "id": run_id, "line": line})
                 try:
                     exit_code = int(sentinel.splitlines()[-1])
                 except (ValueError, IndexError):
@@ -391,7 +433,7 @@ class Sidecar:
             raise SystemExit(0)
 
         try:
-            loop.add_signal_handler(asyncio.SIGTERM, lambda: asyncio.ensure_future(_on_sigterm()))
+            loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.ensure_future(_on_sigterm()))
         except (NotImplementedError, RuntimeError):
             pass
         while True:

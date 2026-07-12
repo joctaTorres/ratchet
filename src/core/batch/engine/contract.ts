@@ -218,7 +218,6 @@ export type StepState =
   | 'advanced'
   | 'blocked'
   | 'awaiting-approval'
-  | 'phase-gated'
   | 'nothing-ready';
 
 /**

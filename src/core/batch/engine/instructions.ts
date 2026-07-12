@@ -251,6 +251,10 @@ export function buildAgentInstructions(context: ChangeStepContext): string {
  * with `ratchet batch report <batch> --change <phase> ...` and the engine
  * snapshots that key — the same single channel a change step uses, just keyed by
  * phase rather than change.
+ *
+ * The identity (returns the phase name unchanged) is intentional: this function
+ * exists as the single seam for the key-derivation rule, so callers never inline
+ * it and a future derivation change has one place to edit.
  */
 export function decompositionJournalKey(phase: string): string {
   return phase;

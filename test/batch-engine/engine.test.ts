@@ -7,6 +7,7 @@ import { appendJournal } from 'ratchet-ai';
 import type { ResolvedStepContext, BatchSettings, ProofOfWork } from 'ratchet-ai';
 import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
 import type { AgentAdapter, Spawner, AgentSpawnRequest } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 let projectRoot: string;
 
@@ -64,7 +65,7 @@ function fakeAgent(behavior: {
 function engineWith(behavior: Parameters<typeof fakeAgent>[0]) {
   const { adapter, spawner, calls } = fakeAgent(behavior);
   const engine = new RatchetBatchEngine({
-    spawner,
+    runtime: spawnerAsRuntime(spawner),
     adapters: { fake: adapter },
     projectRoot: () => projectRoot,
   });

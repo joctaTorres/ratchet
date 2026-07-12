@@ -20,7 +20,7 @@ settings:
   agent:
     propose: claude:fable
     apply: opencode:openrouter/z-ai/glm-5.2
-    verify: opencode:openrouter/z-ai/glm-5.2
+    verify: claude:sonnet
     decompose: claude:opus
     pr: claude:opus
 
@@ -279,3 +279,98 @@ phases:
       kind: integration
       run: npm test
       pass: exit code 0 — full suite green after consolidation and cleanup
+    changes:
+      # DECOMPOSE check (2026-07-09): `gh issue view` #83, #91, #90, #84 — all
+      # four confirmed OPEN. Validated against the tree after phases 1-3 shipped:
+      #  • #83 UNTOUCHED — `selectRunnableStep` (selection.ts:116) is still dead
+      #    (only re-exported in engine/index.ts + tests); `pickNextStep`
+      #    (apply.ts:493) re-implements the gate walk over computeBatchStatus.
+      #    Two selection implementations persist. Valid.
+      #  • #91 PARTIALLY ABSORBED by phase-3 — the gate-and-mark-agent-cmd-override
+      #    change extracted a SHARED TS `shquote`+`buildEnvExports` into
+      #    `spawn-command.ts`; both TS runtimes now import it, so shquote is ×2
+      #    (shared TS + Python `_shquote`) not ×3. STILL OPEN: `buildRunCommand`
+      #    (rex-sidecar-runtime.ts:189) vs `buildRemoteRunCommand`
+      #    (rex-remote-runtime.ts:127) + the tail-poll algorithm are still
+      #    duplicated; `DEFAULT_DOCKER_IMAGE` is still declared twice (config.ts:73
+      #    + sidecar.py:103); `test_sidecar.py` still runs via `python3 -m unittest`
+      #    OUTSIDE CI (ci.yml has no unittest step, no Makefile) and there is no
+      #    build-time assertion that sidecar.py is packaged. Trimmed the shquote
+      #    dedup to "add the cross-language contract test" (dedup already done).
+      #  • #90 NOT ABSORBED — phase-3 rewrote both tail-poll launchers (set -m/pgid)
+      #    but kept the divergent cursor arithmetic: remote advances via
+      #    `Buffer.byteLength(chunk,'utf-8')` (rex-remote-runtime.ts:363) while the
+      #    sidecar uses `len(chunk.encode('utf-8','surrogateescape'))` (sidecar.py:296);
+      #    partial-line buffers (remote `partial += chunk`, sidecar partial, Node
+      #    protocol) are still unbounded; non-JSON protocol lines are still
+      #    caught-and-dropped. Fully valid.
+      #  • #84 UNTOUCHED — run/ vs .run/ still split (lock.ts:37 `run/` vs sidecar
+      #    `.run/<id>/`); the `llm-judge` branch (proof-of-work.ts:249) is still
+      #    unreachable; `phase-gated`/`nothing-ready` StepStates (contract.ts:221-222)
+      #    are still never produced (apply.ts:292 hand-crafts the JSON);
+      #    `decompositionJournalKey` (instructions.ts:255) is STILL `return phase`
+      #    (#74 did not claim it); sidecar `spawnResult.signal` is still hardcoded
+      #    null (rex-sidecar-runtime.ts:286,367); `spawnerAsRuntime` legacy fallback
+      #    still present (engine.ts:124); coverage-gate.md still under docs/engine/.
+      #    Fully valid.
+      # No intent dropped. #90 ordered AFTER the #91 dedup so the cursor-alignment
+      # lands in the surviving command-builder (the overlap the phase goal names).
+      - name: consolidate-selection-engine
+        done: >-
+          `pickNextStep` becomes the single selection engine (moved into
+          `src/core/batch/engine/selection.ts`, already test-exported) and the
+          dead `selectRunnableStep` is deleted, with any unit coverage that only
+          the dead path had ported onto the surviving implementation; the
+          duplicated gate walk (`apply.ts` vs `status.ts`) no longer exists as two
+          copies — status derivation and step selection share one gate/eligibility
+          code path. Full suite green. `gh issue view 83` confirmed OPEN and
+          unfixed at decompose (2026-07-09; `selectRunnableStep` still dead,
+          `pickNextStep` still the live re-implementation). Fixes #83.
+      - name: dedup-rex-runtime-and-wire-ci
+        done: >-
+          The remaining rex duplication is consolidated: one shared TS
+          command-builder replaces the near-identical `buildRunCommand` /
+          `buildRemoteRunCommand`; the Python `_shquote` and the shared TS
+          `shquote` (already extracted into `spawn-command.ts` by phase-3) are
+          locked to the same vectors by a cross-language contract test; the
+          Python-side `DEFAULT_DOCKER_IMAGE` literal defers to `REX_IMAGE` (which
+          Node always threads) instead of re-declaring `python:3.12`; and
+          `test_sidecar.py` runs in CI (Makefile target + ci.yml step) with a
+          build-time assertion that `sidecar.py` is packaged next to the compiled
+          runtime module. Behavior-preserving. `gh issue view 91` confirmed OPEN
+          at decompose (2026-07-09); phase-3 already shared the TS shquote, so this
+          intent covers only the command-builder dedup, the cross-language test,
+          the image-default drop, and the CI wiring. Fixes #91.
+      - name: bound-protocol-buffers-and-align-cursors
+        after: [dedup-rex-runtime-and-wire-ci]
+        done: >-
+          Partial-line buffers on all three channels (Node protocol buffer,
+          sidecar partial, remote partial) are bounded (e.g. 1 MB), flushing an
+          oversized partial as a truncated stdout event instead of growing without
+          bound; the remote byte cursor is aligned with the sidecar's exact
+          `surrogateescape` arithmetic (landed in the deduped command-builder from
+          `dedup-rex-runtime-and-wire-ci`) so both agree on non-UTF-8 output, with
+          a test feeding non-UTF-8 bytes through the log; non-JSON protocol lines
+          and unknown event kinds are routed to the step's diagnostic transcript
+          rather than silently dropped, and blank-line emission is unified between
+          the streaming loop and the final drain. `gh issue view 90` confirmed OPEN
+          and unfixed at decompose (2026-07-09; remote `Buffer.byteLength` vs
+          sidecar `surrogateescape` divergence intact, buffers unbounded, non-JSON
+          dropped). Fixes #90.
+      - name: sweep-doc-and-code-drift
+        after: [consolidate-selection-engine]
+        done: >-
+          The doc/code-drift + dead-branch bundle is cleared: the `guidance`
+          doc/JSDoc is corrected to match the code (handed to the skill as
+          `$ARGUMENTS`, not appended verbatim to instructions); the two run dirs
+          are unified so lock/journal (`run/`) and the sidecar prompt dirs
+          (`.run/<id>/`) name one location; the unreachable `llm-judge` branch,
+          the never-produced `phase-gated`/`nothing-ready` StepStates, and the
+          legacy `spawnerAsRuntime` fallback are removed after confirming no
+          external consumer (any item found to have a live consumer is promoted to
+          its own issue rather than changed); the identity `decompositionJournalKey`
+          and the always-null sidecar `spawnResult.signal` are each either wired to
+          real behavior or annotated as intentional; and `docs/engine/coverage-gate.md`
+          is relocated out of `docs/engine/`. Behavior-preserving; full suite green.
+          `gh issue view 84` confirmed OPEN and unfixed at decompose (2026-07-09).
+          Fixes #84.

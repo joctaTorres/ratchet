@@ -68,10 +68,12 @@ remains resumable.
 The engine builds a per-step `AgentSpawnRequest.env` for every transition (see
 `buildSpawnRequest` → `agent.ts`). Both rex runtimes **export that env before
 launching the agent** so it is actually in effect inside the spawned command —
-honoring the spawn contract this runtime layer presents. Env serialization
-lives in one shared helper (`runtime/spawn-command.ts`: `shquote` +
-`buildEnvExports`), consumed by both runtimes, so the two cannot drift apart in
-how they apply env.
+honoring the spawn contract this runtime layer presents. Env serialization and
+run-command assembly live in one shared module (`runtime/spawn-command.ts`:
+`shquote`, `buildEnvExports`, and the `buildAgentRunCommand` builder that
+composes them into the full launch string), consumed by both runtimes, so the
+two cannot drift apart in how they apply env or build the run command (see
+[Shared run-command builder](#shared-run-command-builder)).
 
 **Merge semantics are overlay, not replace.** The runtimes prefix the agent
 launch command with `export NAME='value'; ` statements (single-quoted via
@@ -95,7 +97,8 @@ identifier (`/^[A-Za-z_][A-Za-z0-9_]*$/` — unreachable in shell and would brea
 `export`) and entries with `undefined` values are skipped; an empty/absent env
 yields an empty prefix.
 
-**No protocol change.** Env rides inside the command string:
+**No protocol change.** Env rides inside the command string, which both runtimes
+build from the shared `buildAgentRunCommand`:
 
 - **Sidecar** — the run-op `command` becomes `cd <cwd>; <exports> cat <promptfile> | <agent argv>`.
   The run-op shape (`{op, id, command}`) and `sidecar.py` are untouched; the
@@ -105,6 +108,30 @@ yields an empty prefix.
   and the existing nohup/log/exit-sentinel launcher wraps that unchanged; the
   exports sit inside its `( … )` subshell, so they apply to the agent pipeline
   without touching the REST protocol.
+
+### Shared run-command builder
+
+Both rex runtimes assemble their agent launch command from a single builder,
+`buildAgentRunCommand(promptPath, request, opts?: { cwd })`, in
+`runtime/spawn-command.ts`. It composes the `shquote` and `buildEnvExports`
+primitives into the full launch string —
+`[cd <cwd>; ]<exports>cat <promptPath> | <argv>` — single-quoting the `cwd`, the
+prompt path, and every argv token. `buildRunCommand` (`rex-sidecar-runtime.ts`,
+passing the sidecar `cwd`) and `buildRemoteRunCommand` (`rex-remote-runtime.ts`,
+no `cwd`) are thin delegations to it that keep their names and signatures, so
+neither runtime module carries its own quoting / env-export / `cat`-pipe
+assembly and the two constructions cannot drift apart. The build is
+byte-identical to the pre-dedup output, so the existing sidecar and remote
+runtime test suites double as the behavior-preservation proof.
+
+The TypeScript `shquote` and the Python `_shquote` (`sidecar.py`) are locked to
+identical quoting behavior by a cross-language contract test: both read the same
+`runtime/shquote-vectors.json` — `{ input, quoted }` pairs covering spaces,
+single and double quotes, `$`, backticks, newlines, and the empty string — the
+TypeScript side in `test/batch-engine/spawn-command.test.ts` and the Python side
+in `ShquoteContractTests` (`test_sidecar.py`). Neither test embeds a private copy
+of the vectors, so a change to either implementation that breaks parity fails a
+test in that language.
 
 > **What the engine places in `AgentSpawnRequest.env` is scoped, not the raw
 > host env.** Every spawn site builds the request env from
@@ -349,7 +376,85 @@ logfile and tail-polls that logfile at 300 ms intervals (`POLL_INTERVAL = 0.3`)
 via the SWE-ReX `execute()` API. It advances a byte cursor over the logfile so
 only new bytes are read each poll, and emits complete lines as `stdout` events.
 The exit sentinel file signals completion; the sidecar drains any final bytes
-before emitting the `exit` event.
+before emitting the `exit` event. The final drain uses the **same split
+discipline as the streaming loop** — split on `\n`, drop only the empty segment
+after a trailing newline, and emit every remaining segment — so interior blank
+lines and a trailing partial survive the drain instead of being filtered out
+(blank-line emission is unified between stream and drain).
+
+#### Bounded partial buffers (cap 1 MiB)
+
+Every partial-line buffer is bounded so an agent emitting a huge line with no
+newline cannot grow memory without limit. The cap, `MAX_PARTIAL_BYTES = 1 MiB`,
+is declared once in `runtime/spawn-command.ts` and mirrored in `sidecar.py` with
+a cross-language sync comment. Past the cap the partial is **flushed as a
+truncated line, never dropped or regrown**:
+
+- **Sidecar partial** (`sidecar.py`): an over-cap trailing partial is emitted as
+  a `{"event":"stdout","truncated":true,...}` event and the byte cursor is *not*
+  decremented, so the offset advances past the flushed bytes and the next poll
+  reads only new bytes rather than re-reading (and regrowing) the huge partial.
+  The extra `"truncated": true` field is additive; existing Node consumers ignore
+  it.
+- **Remote partial** (`rex-remote-runtime.ts`): an over-cap partial is flushed as
+  a `stdout` event (accumulated into `stdout` as usual), reset, and noted in the
+  diagnostic transcript; subsequent bytes start a fresh partial, so content is
+  split at the cap boundary, never lost.
+- **Node protocol buffer** (`rex-sidecar-runtime.ts`): an over-cap `buf` with no
+  newline is flushed through the same protocol-line handler as a complete line.
+  It is by construction not a valid frame, so it lands in the non-JSON
+  diagnostic path (below) — one mechanism, and the buffer resets.
+
+#### Aligned byte cursor (surrogateescape arithmetic)
+
+The sidecar advances its tail-poll cursor with
+`len(chunk.encode("utf-8", "surrogateescape"))`. Both ReX servers hand the Node
+side an already-*decoded* string in which any non-UTF-8 byte survives as a lone
+surrogate (U+DC80–U+DCFF). The remote runtime therefore advances its cursor with
+the shared `surrogateEscapeByteLength(s)` (`runtime/spawn-command.ts`), which
+counts each such lone surrogate as **one** byte and every other code point as its
+standard UTF-8 length — reproducing the sidecar's byte count exactly, so the two
+channels agree on non-UTF-8 output instead of drifting (as `Buffer.byteLength`,
+which encodes a lone surrogate as the 3-byte replacement char, would). The TS
+function and the Python `surrogateescape` count are locked together by the
+cross-language `runtime/cursor-vectors.json` contract test — `{ text, bytes }`
+pairs covering ASCII, multibyte, lone surrogates, and mixed content — asserted TS-side
+in `test/batch-engine/spawn-command.test.ts` and Python-side in
+`CursorContractTests` (`test_sidecar.py`). Like `shquote-vectors.json`, the JSON
+is test-only and is not packaged into `dist/`.
+
+#### Surfaced protocol diagnostics
+
+Malformed frames on the protocol channel are **surfaced, not silently dropped**.
+In `rex-sidecar-runtime.ts` a non-JSON line is appended to the run's diagnostic
+transcript as `[sidecar protocol] non-JSON line: <raw line>`, and an unknown
+event kind as `[sidecar protocol] unknown event: <json>`. The transcript is the
+runtime's accumulated `stderr`, which flows onto `AgentSpawnResult.stderr` and
+the mapped outcome detail — so a sidecar bug printing to stdout now shows up in
+the recorded transcript **without** emitting an `error` event (which would
+wrongly force a failed outcome) and without polluting the agent's stdout
+transcript. Outcome-relevant behavior (exit code, `stdout`) is otherwise
+unchanged.
+
+### Sidecar tests and packaging
+
+`sidecar.py` carries two guards against silent regressions:
+
+- **Unit tests in CI.** `test_sidecar.py` is a pure-stdlib `unittest` suite (no
+  pip, no venv, no Docker). The `make test-sidecar` target runs it with the
+  system `python3`, and a dedicated `ci.yml` step invokes that target, so a
+  sidecar unit-test failure fails the pipeline. The suite includes
+  `ShquoteContractTests` (see [Shared run-command builder](#shared-run-command-builder)),
+  the deployment tests (a set `REX_IMAGE` is used verbatim; an unset one asserts
+  the `REX_IMAGE`-required error), and the protocol tests.
+- **Build packaging assertion.** The sidecar bootstrap resolves `sidecar.py`
+  relative to the compiled runtime module, so the asset must be packaged at
+  `dist/core/batch/engine/runtime/sidecar.py`. After copying the non-test `.py`
+  assets, `build.js` asserts that exact path exists and exits non-zero with an
+  error naming the missing asset when it does not — a mis-packaged sidecar fails
+  the build instead of shipping a CLI that would crash at the first spawn. The
+  test-only `test_sidecar.py` and `shquote-vectors.json` are deliberately not
+  copied into `dist/`.
 
 ## Execution loci
 
@@ -385,10 +490,11 @@ The local runtime bootstraps the SWE-ReX sidecar, spawns it as a child process,
 and drives the JSON-lines protocol described above.
 
 Prompt delivery: the agent's instructions are written to a temporary prompt file
-at `.ratchet/batches/<batch>/.run/<id>/prompt.txt` on the host. The run command
+at `.ratchet/batches/<batch>/run/<id>/prompt.txt` on the host. The run command
 sent to the sidecar is `cd <cwd>; export NAME='value'; …; cat <promptfile> | <agent argv>`
-— the per-step `AgentSpawnRequest.env` is exported before the pipeline (after the
-`cd` prefix) via the shared `buildEnvExports` helper. The prompt file is removed
+— built by the shared [`buildAgentRunCommand`](#shared-run-command-builder), which
+exports the per-step `AgentSpawnRequest.env` before the pipeline (after the `cd`
+prefix). The prompt file is removed
 after the run (in a `finally` block).
 
 The overall run timeout defaults to `600000` ms (10 minutes) and is configurable
@@ -417,7 +523,13 @@ Additional behavior specific to the docker locus:
    project root. The prompt file is written on the host and its path is
    translated to the in-container equivalent before it is passed to the sidecar.
 4. `REX_IMAGE` is set to the configured `image`, or `DEFAULT_DOCKER_IMAGE`
-   (`python:3.12`) when none is configured.
+   (`python:3.12`) when none is configured. The image default is declared **once**,
+   in `config.ts`, and always threaded by Node; `sidecar.py` carries no fallback
+   literal of its own. An unset or empty `REX_IMAGE` on the docker locus makes the
+   sidecar raise a `ValueError` naming `REX_IMAGE` as required (surfaced as a
+   structured `error` event), rather than silently guessing an image — so a
+   hand-launched, mis-invoked sidecar fails loudly instead of running a drifted
+   default.
 5. **Docker hardening knobs** are threaded as `REX_DOCKER_*` env vars and
    spliced into `docker run` argv by the sidecar:
 

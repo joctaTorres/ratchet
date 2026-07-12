@@ -26,7 +26,7 @@ import {
   loadBatchManifest,
   getBatchManifestPath,
 } from '../../src/core/batch/manifest.js';
-import { pickNextStep } from '../../src/commands/batch/apply.js';
+import { pickNextStep } from '../../src/core/batch/engine/index.js';
 
 let projectRoot: string;
 const BATCH = 'prsel';

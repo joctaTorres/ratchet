@@ -1,0 +1,10 @@
+[
+  { "input": "plain", "quoted": "'plain'" },
+  { "input": "with spaces", "quoted": "'with spaces'" },
+  { "input": "it's a 'test'", "quoted": "'it'\\''s a '\\''test'\\'''" },
+  { "input": "double \"quote\"", "quoted": "'double \"quote\"'" },
+  { "input": "$HOME ${UNSET:-x} $(id)", "quoted": "'$HOME ${UNSET:-x} $(id)'" },
+  { "input": "back`tick`", "quoted": "'back`tick`'" },
+  { "input": "line1\nline2", "quoted": "'line1\nline2'" },
+  { "input": "", "quoted": "''" }
+]

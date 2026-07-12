@@ -15,7 +15,9 @@ import path from 'path';
 import os from 'os';
 import { appendJournalForLocus } from '../../src/core/batch/journal.js';
 import type { Transition } from '../../src/core/batch/engine/contract.js';
+import type { AgentRuntime } from '../../src/core/batch/engine/runtime/contract.js';
 import type { Spawner } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 /**
  * A fake agent spawn seam that simulates a clean, completed session: it records
@@ -60,6 +62,22 @@ export function completingSpawner(
     return { exitCode: 0, signal: null, stdout: '', stderr: '' };
   };
   return { spawner, calls: () => calls };
+}
+
+/**
+ * Same as `completingSpawner` but wraps the returned spawner as the
+ * `AgentRuntime` the engine now consumes via `EngineDeps.runtime` (the engine's
+ * `spawner` field is gone). The fake-agent behavior table above is untouched;
+ * only the injection point changes. Tests that assert the spawn seam was NOT
+ * invoked (precondition guards) still use `completingSpawner` directly.
+ */
+export function completingRuntime(
+  root: string,
+  change: string,
+  transition: Transition = 'propose'
+): { runtime: AgentRuntime; calls: () => number } {
+  const { spawner, calls } = completingSpawner(root, change, transition);
+  return { runtime: spawnerAsRuntime(spawner), calls };
 }
 
 /** A structurally valid Gherkin feature (header + a fully-stepped Scenario). */

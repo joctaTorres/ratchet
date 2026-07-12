@@ -12,16 +12,6 @@
  * and the next phase and is surfaced as a blocker; under `warn` the failure is
  * recorded and the phase is allowed to complete.
  *
- * NOT YET WIRED — `llm-judge`: a recognized proof-of-work kind whose design is to
- * spawn an agent that exercises the software directly (bash or an MCP tool) and
- * returns a pass/fail verdict against the success criteria. `batch apply` does
- * NOT support it yet: `parseBatchManifest` (`manifest.ts`) REJECTS an `llm-judge`
- * phase at validation, so the `kind === 'llm-judge'` branch below is currently
- * unreachable from the live caller. The branch (and the `JudgeRequest` /
- * `LlmJudge` / `JudgeVerdict` contract) is retained as fail-closed scaffolding
- * for when a judge adapter is wired — it returns a failing verdict when no judge
- * is configured, so a phase can never silently pass an unrun judge.
- *
  * STUBBED BOUNDARY: the bash runner is injectable (`BashRunner`) so tests do not
  * shell out; the default runner really executes the command via child_process.
  */
@@ -57,25 +47,10 @@ export const realBashRunner: BashRunner = (command, cwd) =>
     child.on('close', (exitCode) => resolve({ exitCode, stdout, stderr }));
   });
 
-/** A judge returns a verdict; would be spawned for the not-yet-wired `llm-judge`
- *  proof-of-work (see file header — `batch apply` rejects that kind today). */
-export interface JudgeRequest {
-  success: string;
-  run: string;
-  pass: string;
-  cwd: string;
-}
-export interface JudgeVerdict {
-  pass: boolean;
-  reason: string;
-}
-export type LlmJudge = (request: JudgeRequest) => Promise<JudgeVerdict>;
-
-export type ProofOfWorkPassReason = 'pass-condition-met' | 'judge-pass';
+export type ProofOfWorkPassReason = 'pass-condition-met';
 export type ProofOfWorkFailReason =
   | 'nonzero-exit'
   | 'pass-condition-unmet'
-  | 'judge-fail'
   | 'error';
 
 export interface ProofOfWorkResult {
@@ -88,8 +63,7 @@ export interface ProofOfWorkResult {
   detail: string;
   /**
    * Which pass-condition kind was evaluated (`exit-zero` | `contains` | `regex`
-   * | `substring`). Absent for the not-yet-wired `llm-judge` kind, which does
-   * not run a bash pass condition.
+   * | `substring`).
    */
   conditionKind?: PassConditionKind;
   /**
@@ -210,7 +184,6 @@ function applyPolicy(
 
 export interface RunProofOfWorkDeps {
   bash?: BashRunner;
-  judge?: LlmJudge;
 }
 
 /**
@@ -219,11 +192,9 @@ export interface RunProofOfWorkDeps {
  * (proof-of-work never runs while a phase has in-progress changes).
  *
  * `success` is the phase's success criteria from the resolved step context. The
- * (not-yet-wired) `llm-judge` kind would judge the running software against THAT
- * criteria; the bash pass-condition (`proofOfWork.pass`) drives the live
- * integration/blackbox kinds. See the file header: `batch apply` rejects
- * `llm-judge` at manifest validation, so its branch here is currently unreachable
- * from the live caller and fails closed when no judge is configured.
+ * bash pass-condition (`proofOfWork.pass`) drives the live integration/blackbox
+ * kinds. See `manifest.ts`: `parseBatchManifest` rejects `llm-judge` at
+ * validation, so `runProofOfWork` never receives that kind from the live caller.
  *
  * LIVE CALLER: `batch apply` (`runProofAtBoundary` in `src/commands/batch/apply.ts`)
  * runs this at the phase boundary — when a phase's changes are all done and the
@@ -245,49 +216,6 @@ export async function runProofOfWork(
   deps: RunProofOfWorkDeps = {}
 ): Promise<ProofOfWorkResult> {
   const bash = deps.bash ?? realBashRunner;
-
-  if (proofOfWork.kind === 'llm-judge') {
-    if (!deps.judge) {
-      // No judge wired: fail closed under hard-gate so a phase never silently
-      // passes an unrun judge.
-      const passed = false;
-      return {
-        kind: proofOfWork.kind,
-        passed,
-        ...applyPolicy(passed, policy),
-        policy,
-        reason: 'error',
-        detail: 'No llm-judge adapter configured for this run.',
-      };
-    }
-    let verdict: JudgeVerdict;
-    try {
-      verdict = await deps.judge({
-        success,
-        run: proofOfWork.run,
-        pass: proofOfWork.pass,
-        cwd,
-      });
-    } catch (err) {
-      const passed = false;
-      return {
-        kind: proofOfWork.kind,
-        passed,
-        ...applyPolicy(passed, policy),
-        policy,
-        reason: 'error',
-        detail: err instanceof Error ? err.message : String(err),
-      };
-    }
-    return {
-      kind: proofOfWork.kind,
-      passed: verdict.pass,
-      ...applyPolicy(verdict.pass, policy),
-      policy,
-      reason: verdict.pass ? 'judge-pass' : 'judge-fail',
-      detail: verdict.reason,
-    };
-  }
 
   // integration / blackbox: run the command via bash and evaluate pass.
   let result: BashResult;

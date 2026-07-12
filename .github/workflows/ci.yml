@@ -65,6 +65,13 @@ jobs:
         id: lint
         run: pnpm lint
 
+      # Sidecar unit tests (stdlib python3, no deps). Runs the ReX sidecar's
+      # pure-stdlib unittest suite (test_sidecar.py) via the Makefile target so a
+      # sidecar regression fails the pipeline. ubuntu-latest ships python3; the
+      # test file stubs swerex before importing it, so no pip/venv is needed.
+      - name: Sidecar unit tests
+        run: make test-sidecar
+
       - name: Test
         id: test
         run: pnpm vitest run

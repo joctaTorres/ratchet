@@ -64,11 +64,12 @@ export const PR_GROUPING_VALUES = ['off', 'whole-batch', 'per-phase', 'per-chang
  * A small, generic image that proves the plumbing; a REAL agent image (node +
  * the chosen coding agent + `ratchet` on PATH) is a documented follow-on.
  *
- * SINGLE TS SOURCE OF TRUTH: `rex-bootstrap.ts` re-exports this rather than
- * keeping its own copy. The Python sidecar (`sidecar.py`) holds a separate
- * `DEFAULT_DOCKER_IMAGE` only because it cannot import TS — and that copy is a
- * pure unset-fallback (Node always threads `REX_IMAGE`). Keep the two languages
- * in sync if this value ever changes.
+ * SINGLE SOURCE OF TRUTH: `rex-bootstrap.ts` re-exports this rather than
+ * keeping its own copy. The Python sidecar (`sidecar.py`) holds NO image
+ * default — the Node side always threads `REX_IMAGE` (resolved from this
+ * constant or the configured `image`), and the sidecar raises a clear error
+ * if `REX_IMAGE` arrives unset/empty on the docker locus instead of guessing.
+ * So this constant is the sole declaration of the docker image default.
  */
 export const DEFAULT_DOCKER_IMAGE = 'python:3.12';
 

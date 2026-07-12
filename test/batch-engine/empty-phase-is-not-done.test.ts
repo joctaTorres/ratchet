@@ -4,22 +4,19 @@
  *
  * The engine's done arithmetic used to count only DECLARED change intents:
  * `computeBatchStatus` reported `done` when `doneCount === changeCount` (both
- * derived from `phase.changes`), and `selectRunnableStep` computed
- * `allDone = phases.every((p) => p.changes.every((c) => c.done))` — which an
- * empty phase satisfies VACUOUSLY. So the moment the first phase's declared
- * changes were done, both consumers wrongly agreed the batch was finished even
- * though a later phase had no concrete intents yet.
- *
- * This recognition slice makes both seams key off the same two facts — "phase
+ * derived from `phase.changes`). This recognition slice makes status and the
+ * single selection engine (`pickNextStep`) key off the same two facts — "phase
  * decomposed?" (`changes.length > 0`) and "phase reachable?" (ungated) — so a
  * ready, ungated empty phase keeps the batch out of `done` and is surfaced as the
- * outstanding decomposition step. It asserts:
+ * outstanding decomposition step. Status derivation and step selection now share
+ * one eligibility walk (`firstRunnableChange`), so they agree by construction.
+ * It asserts:
  *
  *  (a) status does NOT report `done` and surfaces the empty phase as outstanding;
- *  (b) selection does NOT return `all-done` and surfaces the empty phase as the
- *      decomposition step;
+ *  (b) the single selection engine surfaces the empty phase as the decomposition
+ *      step, not no-step;
  *  (c) a gated empty phase is not selected while the prior phase has work;
- *  (d) a fully-decomposed, all-done batch still reports `done` and `all-done`;
+ *  (d) a fully-decomposed, all-done batch still reports `done` and yields no step;
  *  (e) no regression of the ready/blocked/in-progress/awaiting-verify states.
  */
 
@@ -28,13 +25,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
 import { appendJournal, recordProofOfWork } from '../../src/core/batch/journal.js';
-import {
-  isChangeDone,
-  readChangeDiskState,
-  selectRunnableStep,
-  type SelectablePhase,
-} from '../../src/core/batch/engine/index.js';
-import { readChangeJournalTolerant } from '../../src/core/batch/engine/run-state.js';
+import { pickNextStep } from '../../src/core/batch/engine/index.js';
 import { computeBatchStatus } from '../../src/core/batch/status.js';
 import { parseBatchManifest } from '../../src/core/batch/manifest.js';
 
@@ -85,21 +76,6 @@ async function markInProgress(change: string): Promise<void> {
   const dir = path.join(projectRoot, '.ratchet', 'changes', change);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, 'plan.md'), '## Tasks\n- [ ] 1.1 todo\n', 'utf-8');
-}
-
-/** Build the selection view from a status snapshot, mirroring the real seam. */
-function selectableFor(status: Awaited<ReturnType<typeof computeBatchStatus>>): SelectablePhase[] {
-  return status.phases.map((phase) => ({
-    name: phase.name,
-    gated: phase.gated,
-    // `decomposed` is derived from `changes.length > 0` (left to the default), so
-    // an empty phase reports undecomposed without the caller spelling it out.
-    changes: phase.changes.map((c) => {
-      const disk = readChangeDiskState(projectRoot, c.name);
-      const journal = readChangeJournalTolerant(projectRoot, BATCH, c.name);
-      return { name: c.name, after: c.after, done: isChangeDone(disk, journal), parked: false };
-    }),
-  }));
 }
 
 const POW = `proofOfWork: { kind: integration, run: x, pass: '0' }`;
@@ -160,11 +136,18 @@ phases:
     changes: []
 `;
     await markDone('first');
+    // p1 is the predecessor of the empty p2: record p1's passing boundary proof so
+    // `pickNextStep` skips the one-time boundary step and reaches the decompose
+    // step (the boundary proof runs FIRST, exactly as before a change step).
+    recordPassingProof('p1');
     const status = await computeBatchStatus(projectRoot, parseBatchManifest(manifest));
-    const result = selectRunnableStep(selectableFor(status));
 
-    expect(result.reason).not.toBe('all-done');
-    expect(result.step).toEqual({ phase: 'p2', decompose: true });
+    // The single selection engine surfaces the empty phase as the decomposition
+    // step, not no-step (status and selection share one eligibility walk).
+    expect(pickNextStep(status, parseBatchManifest(manifest).phases, new Set(['p1']))).toMatchObject({
+      kind: 'decompose',
+      phase: { name: 'p2' },
+    });
 
     // Status and selection agree: both have an outstanding step, neither is done.
     expect(status.status).not.toBe('done');
@@ -197,9 +180,12 @@ phases:
     // The next step is the unfinished prior-phase change, NOT the empty phase.
     expect(status.next).toEqual({ phase: 'p1', change: 'first' });
 
-    const result = selectRunnableStep(selectableFor(status));
-    expect(result.step).toEqual({ phase: 'p1', change: 'first' });
-    expect(result.step?.decompose).toBeUndefined();
+    // The single selection engine picks the unfinished prior-phase change, not the
+    // gated empty phase.
+    expect(pickNextStep(status, parseBatchManifest(manifest).phases)).toMatchObject({
+      kind: 'change',
+      change: 'first',
+    });
   });
 
   it('(d) a fully-decomposed, all-done batch still reports done and all-done', async () => {
@@ -233,9 +219,8 @@ phases:
     expect(status.status).toBe('done');
     expect(status.next).toBeUndefined();
 
-    const result = selectRunnableStep(selectableFor(status));
-    expect(result.reason).toBe('all-done');
-    expect(result.step).toBeUndefined();
+    // Done batch with the terminal proof recorded: no selectable step.
+    expect(pickNextStep(status, parseBatchManifest(manifest).phases)).toBeUndefined();
   });
 });
 
@@ -263,9 +248,9 @@ phases:
     expect(first.status).toBe('in-progress');
     expect(second.status).toBe('blocked');
     expect(status.status).toBe('in-progress');
-    // The only ungated work is `first`; selection picks it.
-    expect(selectRunnableStep(selectableFor(status)).step).toEqual({
-      phase: 'p1',
+    // The only ungated work is `first`; the single selection engine picks it.
+    expect(pickNextStep(status, parseBatchManifest(manifest).phases)).toMatchObject({
+      kind: 'change',
       change: 'first',
     });
   });
@@ -288,6 +273,6 @@ phases:
     recordPassingProof('p1');
     const status = await computeBatchStatus(projectRoot, parseBatchManifest(manifest));
     expect(status.status).toBe('done');
-    expect(selectRunnableStep(selectableFor(status)).reason).toBe('all-done');
+    expect(pickNextStep(status, parseBatchManifest(manifest).phases)).toBeUndefined();
   });
 });

@@ -15,7 +15,7 @@
  *
  * Prompt delivery: the sidecar runs a SHELL COMMAND (not stdin), and the agents
  * read their prompt on stdin, so we write `request.instructions` to a temp prompt
- * file under `.ratchet/batches/<batch>/.run/<id>/prompt.txt` and build the run
+ * file under `.ratchet/batches/<batch>/run/<id>/prompt.txt` and build the run
  * command as `cd <cwd>; cat <promptfile> | <agent argv>` (tool-agnostic). The
  * `cd <cwd>` threads `req.cwd` so the agent runs in the requested directory —
  * parity with the remote runtime; for docker the cwd is translated onto the
@@ -40,7 +40,7 @@ import {
   type BootstrapOptions,
   type ResolvedLaunch,
 } from './rex-bootstrap.js';
-import { shquote, buildEnvExports } from './spawn-command.js';
+import { buildAgentRunCommand, MAX_PARTIAL_BYTES } from './spawn-command.js';
 
 /** The minimal child-process surface the runtime drives (a `ChildProcess` subset). */
 export interface SidecarChild {
@@ -97,7 +97,7 @@ export const DOCKER_MOUNT_CONTAINER = '/workspace';
 export interface RexSidecarRuntimeOptions {
   /** REX_LOCUS to pass through (default 'local'). */
   locus?: string;
-  /** Project root → REX_WORKDIR and the `.ratchet/batches/<batch>/.run` parent. */
+  /** Project root → REX_WORKDIR and the `.ratchet/batches/<batch>/run` parent. */
   projectRoot: string;
   /**
    * Container image for the docker locus (passed through to the sidecar's
@@ -191,10 +191,7 @@ export function buildRunCommand(
   request: AgentSpawnRequest,
   cwd?: string
 ): string {
-  const argv = [request.command, ...request.args].map(shquote).join(' ');
-  const prefix = cwd ? `cd ${shquote(cwd)}; ` : '';
-  const exports = buildEnvExports(request.env);
-  return `${prefix}${exports}cat ${shquote(promptFile)} | ${argv}`;
+  return buildAgentRunCommand(promptFile, request, cwd ? { cwd } : undefined);
 }
 
 /**
@@ -218,7 +215,7 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
       '.ratchet',
       'batches',
       runIdBatch(req),
-      '.run',
+      'run',
       runId
     );
     // The prompt file is always WRITTEN on the host. For docker the project root
@@ -283,6 +280,9 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
         onEvent({ kind: 'error', message: err.message });
         return Promise.resolve({
           exitCode: 1,
+          // The sidecar protocol conveys only an integer exit status; the signal
+          // is intentionally null on this runtime (`describeExit`'s signal branch
+          // serves other runtimes that do report one).
           signal: null,
           stdout: '',
           stderr: err.message,
@@ -364,6 +364,9 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
         cleanupPromptFile();
         resolve({
           exitCode: over.exitCode !== undefined ? over.exitCode : exitCode,
+          // The sidecar protocol conveys only an integer exit status; the signal
+          // is intentionally null on this runtime (`describeExit`'s signal branch
+          // serves other runtimes that do report one).
           signal: null,
           stdout,
           stderr,
@@ -415,8 +418,31 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
             return;
           }
           default:
+            // An unknown event kind is not dropped: surface it in the run's
+            // diagnostic transcript (the accumulated stderr, which flows into
+            // AgentSpawnResult.stderr and the mapped outcome detail) so a sidecar
+            // bug is visible, without emitting an `error` event (which would wrongly
+            // force a failed outcome) or polluting the agent's stdout transcript.
+            stderr +=
+              (stderr ? '\n' : '') + `[sidecar protocol] unknown event: ${JSON.stringify(obj)}`;
             return;
         }
+      };
+
+      // Handle one protocol-channel line: parse JSON and dispatch, or — when the
+      // line is not valid JSON — route the raw line to the diagnostic transcript
+      // rather than silently dropping it (a sidecar bug printing to stdout now
+      // surfaces). Blank lines are protocol filler and are ignored.
+      const handleProtocolLine = (line: string) => {
+        if (!line.trim()) return;
+        let obj: { event?: string; line?: string; exit_code?: number; message?: string };
+        try {
+          obj = JSON.parse(line);
+        } catch {
+          stderr += (stderr ? '\n' : '') + `[sidecar protocol] non-JSON line: ${line}`;
+          return;
+        }
+        handleEvent(obj);
       };
 
       child.stdout?.setEncoding('utf-8');
@@ -426,14 +452,16 @@ export function makeRexSidecarRuntime(options: RexSidecarRuntimeOptions): AgentR
         while ((nl = buf.indexOf('\n')) >= 0) {
           const line = buf.slice(0, nl);
           buf = buf.slice(nl + 1);
-          if (!line.trim()) continue;
-          let obj: { event?: string; line?: string; exit_code?: number; message?: string };
-          try {
-            obj = JSON.parse(line);
-          } catch {
-            continue; // a non-JSON line on the protocol channel is ignored
-          }
-          handleEvent(obj);
+          handleProtocolLine(line);
+        }
+        // Bound the protocol line buffer: an oversized partial with no newline is
+        // by construction not a valid frame, so flushing it through the same line
+        // handler lands it in the non-JSON diagnostic path — one mechanism, and
+        // `buf` resets so memory stays bounded.
+        if (buf.length > MAX_PARTIAL_BYTES) {
+          const flushed = buf;
+          buf = '';
+          handleProtocolLine(flushed);
         }
       });
 

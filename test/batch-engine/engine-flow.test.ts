@@ -28,6 +28,7 @@ import type {
   Spawner,
   AgentSpawnRequest,
 } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 
 let projectRoot: string;
 
@@ -94,7 +95,7 @@ function engineWith(
 ): { engine: RatchetBatchEngine; calls: AgentSpawnRequest[] } {
   const { adapter, spawner, calls } = fakeAgent(behavior);
   const engine = new RatchetBatchEngine({
-    spawner,
+    runtime: spawnerAsRuntime(spawner),
     adapters: { fake: adapter },
     projectRoot: () => projectRoot,
   });

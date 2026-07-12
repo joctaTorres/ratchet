@@ -19,6 +19,7 @@ import type {
   Spawner,
   AgentSpawnRequest,
 } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 import { readChangeDiskState } from '../../src/core/batch/engine/transition.js';
 
 let projectRoot: string;
@@ -79,7 +80,7 @@ function fakeAgent(behavior: {
 function engineWith(behavior: Parameters<typeof fakeAgent>[0]) {
   const { adapter, spawner, calls } = fakeAgent(behavior);
   const engine = new RatchetBatchEngine({
-    spawner,
+    runtime: spawnerAsRuntime(spawner),
     adapters: { fake: adapter },
     projectRoot: () => projectRoot,
   });

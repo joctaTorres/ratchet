@@ -48,7 +48,7 @@ flowchart TB
 
     OUT["🧮 map session to outcome"]
     JOURNAL[("📓 journal.jsonl + state.json<br/>at run-state locus")]
-    RES(["🎯 StepResult<br/>advanced · blocked · awaiting-approval<br/>phase-gated · nothing-ready"])
+    RES(["🎯 StepResult<br/>advanced · blocked · awaiting-approval<br/>nothing-ready"])
 
     BA -->|"change step"| RS
     BA -->|"reachable empty phase"| RDS
@@ -193,8 +193,8 @@ when the function returns `undefined` (i.e., the change is already done).
 "Done" has **one** definition, computed in one place
 (`hasJournaledVerify` / `isChangeDone` in
 `src/core/batch/engine/transition.ts`) and honored uniformly by status
-derivation (`computeBatchStatus`), step selection (`selectRunnableStep` /
-`pickNextStep`), and `computeNextTransition`. A change is done only when its plan
+derivation (`computeBatchStatus`), step selection (`pickNextStep` in
+`src/core/batch/engine/selection.ts`), and `computeNextTransition`. A change is done only when its plan
 tasks are all checked **and** the run journal carries a `completion` entry for
 the `verify` transition — or the change is archived.
 
@@ -226,49 +226,54 @@ flowchart TB
 
 ## Step selection
 
-`selectRunnableStep` (`src/core/batch/engine/selection.ts`) picks the first
-runnable change across phases. `batch apply` uses `computeBatchStatus` and
-`pickNextStep` rather than calling `selectRunnableStep` directly, but they
-operate on the same semantics:
+`pickNextStep` (`src/core/batch/engine/selection.ts`) is the **single** selection
+engine: the one implementation of runnable-step selection in the codebase. `batch
+apply` calls it over `computeBatchStatus` and the manifest phases to pick the next
+step. Status derivation and step selection share one runnable-change eligibility
+walk (`firstRunnableChange` in the same module): `computeBatchStatus` calls it to
+derive the change-level `next`; `pickNextStep`'s change branch calls it and layers
+the boundary-proof interposition on the picked phase. One set, one walk — status
+and selection agree by construction.
 
 ```ts
-interface SelectableChange {
-  name: string;
-  after: string[]; // dependency names within the same phase
-  done: boolean;   // verified/archived
-  parked: boolean; // blocked or awaiting input
-}
-
-interface SelectablePhase {
-  name: string;
-  gated: boolean;     // prior phase incomplete, or its recorded hard-gate proof failed
-  changes: SelectableChange[];
-  decomposed?: boolean; // has concrete change intents; defaults to changes.length > 0
-}
+type ApplyTarget =
+  | { kind: 'change'; phase: Phase; change: string; changeDone: string }
+  | { kind: 'decompose'; phase: Phase }
+  | { kind: 'proof-of-work'; phase: Phase }
+  | { kind: 'pr'; phase: Phase; boundary?: PrGroupBoundary };
 ```
 
-Selection proceeds in phase order:
+Selection proceeds in load-bearing branch order (each branch returns its target
+or `undefined`, and the first non-`undefined` wins):
 
-1. Skip any phase where `gated` is `true`.
-2. If an ungated phase is **undecomposed** (`decomposed` is `false`, i.e. its
-   `changes` list is empty), return it as a decomposition step
-   (`{ step: { phase, decompose: true } }`) — a reachable empty phase is
-   outstanding work, not vacuously done.
-3. Within an ungated, decomposed phase, build the set of `done` changes.
-4. Iterate changes in manifest order; select the first change where:
-   - every `after[]` dependency name is in the `done` set, and
-   - the change is not `done`, and
-   - the change is not `parked`.
-5. Return `{ step: { phase, change } }` on the first match.
+1. **change / boundary proof-of-work** — `firstRunnableChange` finds the first
+   ungated phase's first change whose derived status is `ready`, `in-progress`,
+   or `awaiting-verify`. Before returning that change, the immediately-preceding
+   phase `P`'s one-time boundary proof-of-work is interposed (see [Phase gates
+   and proof-of-work](#phase-gates-and-proof-of-work)).
+2. **decompose** — when no ungated change is runnable, a reachable, ungated phase
+   whose `changes` list is empty is surfaced as a decomposition step (from
+   `computeBatchStatus.next`, which sets `decompose` only once no change-level next
+   exists — so a still-gated empty phase is never picked). Its predecessor's
+   boundary proof runs first, exactly as before a change step.
+3. **terminal proof-of-work** — once every change is done and nothing is left to
+   decompose, the LAST phase's unrun boundary proof is surfaced (from
+   `computeBatchStatus.next.proof`) — the last phase has no successor, so its
+   proof is selected here and run/recorded rather than at a later boundary.
+4. **whole-batch PR** — at genuine batch completion under `prGrouping:
+   whole-batch` with no PR already opened, a `pr` target for the terminal phase.
+5. **stacked PR tail** — at genuine batch completion under a STACKED grouping mode
+   (`per-phase`/`per-change`), a `pr` target for the first unopened group boundary
+   (each subsequent apply opens the next group, in boundary order).
 
 Because `done` is the [single journal-aware
 predicate](#the-single-journal-aware-done-rule), an `awaiting-verify` change
 (tasks all checked, no journaled verify) is `done: false` and is therefore
-**selectable** — selection schedules its `verify` transition as the gate that
-must run before it can be done, rather than skipping it on task-checkboxes
-alone. `batch apply`'s `pickNextStep` mirrors this on the derived status: it
-returns a change whose status is `ready`, `in-progress`, **or**
-`awaiting-verify`, so the same verify gate is scheduled through the CLI seam.
+**selectable** — `firstRunnableChange` includes `awaiting-verify` in
+`RUNNABLE_STATUSES`, so selection schedules its `verify` transition as the gate
+that must run before it can be done, rather than skipping it on task-checkboxes
+alone. `computeBatchStatus` derives the same change as `next` via the same walk,
+so status and selection schedule the same verify gate.
 
 Before returning a runnable change in phase `Q`, `pickNextStep` interposes the
 immediately-preceding phase `P`'s **proof-of-work** as a boundary step: `P` is
@@ -283,15 +288,12 @@ then cites `P`'s failing proof. The first phase has no predecessor, so it yields
 no proof step. See [Phase gates and
 proof-of-work](#phase-gates-and-proof-of-work).
 
-When no runnable step is found, `SelectionResult.reason` is one of:
-`all-done` | `all-gated` | `all-blocked-or-parked` | `empty`. `all-done` is
-returned **only** when every reachable phase is decomposed and all its changes
-are done — a reachable phase with an empty `changes` list keeps selection out of
-`all-done` (it is returned as a decomposition step instead). This mirrors the
-batch-done rule in [batch status](#batch-status-and-the-decomposition-step):
+When no runnable step is found, `pickNextStep` returns `undefined` (no target).
+This mirrors the batch-done rule in [batch status](#batch-status-and-the-decomposition-step):
 status and selection key off the same two facts — "phase decomposed?"
-(`changes.length > 0`) and "phase reachable?" (ungated) — so they cannot disagree
-about whether a reachable empty phase is outstanding work.
+(`changes.length > 0`) and "phase reachable?" (ungated) — via the shared
+`firstRunnableChange` walk, so they cannot disagree about whether a reachable
+empty phase is outstanding work.
 
 ## Batch status and the decomposition step
 
@@ -430,7 +432,8 @@ it once all changes in a phase are done:
 
 `batch apply` is `runProofOfWork`'s live caller. When phase `P`'s changes are all
 done and the next reachable phase `Q` still has outstanding work, the host loop
-(`pickNextStep` / `batchApplyCommand` in `src/commands/batch/apply.ts`) runs `P`'s
+(`pickNextStep` in `src/core/batch/engine/selection.ts`, driven by
+`batchApplyCommand` in `src/commands/batch/apply.ts`) runs `P`'s
 proof-of-work **at the boundary** before entering `Q`. The **terminal** phase has
 no successor `Q`, so its proof runs at a different trigger: once every change in
 the batch is done and nothing is left to decompose, the terminal phase's proof is
@@ -498,9 +501,10 @@ The recorded verdict **drives the phase gate**. `computeBatchStatus` derives `Q`
 gate from `P`'s recorded `gatePassed`: a failing `hard-gate` proof
 (`gatePassed: false`) keeps `Q` `blocked` with a `gatedBy` report citing `P`'s
 failing proof and its detail, while a passing proof — or any `warn` verdict, which
-the recorder always stores as `gatePassed: true` — opens `Q`. Both selection seams
-(`pickNextStep` and the pure `selectRunnableStep`) read that single derived gate,
-so what status reports `blocked` is exactly what selection refuses to run. Under
+the recorder always stores as `gatePassed: true` — opens `Q`. The single
+selection engine (`pickNextStep`, via the shared `firstRunnableChange` walk that
+skips gated phases) reads that single derived gate, so what status reports
+`blocked` is exactly what selection refuses to run. Under
 `warn` the failure is surfaced when the boundary proof runs (rendered as
 `⚠ failed (warn)`) but never blocks progression.
 
@@ -513,7 +517,6 @@ type StepState =
   | 'advanced'
   | 'blocked'
   | 'awaiting-approval'
-  | 'phase-gated'
   | 'nothing-ready';
 
 interface StepResult {
@@ -532,7 +535,6 @@ interface StepResult {
 | `advanced` | The transition completed; the agent reported a `completion` journal entry CORROBORATED against the on-disk change state (see [Session-to-outcome mapping](#session-to-outcome-mapping)). |
 | `blocked` | The step requires attention: the agent raised a blocker, the agent crashed, an internal `failed` state was mapped here, or a claimed `--complete` did not corroborate against disk (see below). The step is resumable. |
 | `awaiting-approval` | A completed change transition (corroborated) parked under an approval gate: `propose` under `after-propose`, or `propose`/`apply`/`verify` under `every-phase`. Parked until approved or feedback is recorded; the park message names the transition that completed. |
-| `phase-gated` | The selected change's phase is gated by an incomplete prior phase. |
 | `nothing-ready` | No runnable step exists (all done, all gated, or all blocked/parked). |
 
 ### `EngineStepOutcome` (internal)

@@ -39,6 +39,7 @@ import type {
   Spawner,
   AgentSpawnRequest,
 } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 import type {
   ChangeStepContext,
   DecompositionStepContext,
@@ -120,7 +121,7 @@ const spawner: Spawner = async (request) => {
 
 function engine(): RatchetBatchEngine {
   return new RatchetBatchEngine({
-    spawner,
+    runtime: spawnerAsRuntime(spawner),
     adapters: fakeAdapters,
     projectRoot: () => projectRoot,
     // The command-file guarantee is exercised elsewhere; here the command is
@@ -256,7 +257,7 @@ describe('per-stage adapter resolution — the decompose stage routes the spawn'
   it('a spec-form decompose entry routes the agent and threads the model flag', async () => {
     const opencode = capturingAdapter('opencode');
     const eng = new RatchetBatchEngine({
-      spawner,
+      runtime: spawnerAsRuntime(spawner),
       adapters: { opencode: opencode.adapter },
       projectRoot: () => projectRoot,
       skillLocusDeps: { exists: () => true, writeText: () => {} },
@@ -293,7 +294,7 @@ describe('engine spec-parsing — buildSpawnRequest threads the model (engine-sp
       return { exitCode: 0, signal: null, stdout: '', stderr: '' };
     };
     const engine = new RatchetBatchEngine({
-      spawner,
+      runtime: spawnerAsRuntime(spawner),
       adapters,
       projectRoot: () => projectRoot,
       skillLocusDeps: { exists: () => true, writeText: () => {} },

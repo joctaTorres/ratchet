@@ -27,6 +27,7 @@ import type {
   AgentSpawnRequest,
   Spawner,
 } from '../../src/core/batch/engine/agent.js';
+import { spawnerAsRuntime } from '../helpers/spawner-as-runtime.js';
 import type {
   ChangeStepContext,
   DecompositionStepContext,
@@ -79,7 +80,7 @@ const spawner: Spawner = async (request) => {
 
 function engine(): RatchetBatchEngine {
   return new RatchetBatchEngine({
-    spawner,
+    runtime: spawnerAsRuntime(spawner),
     // No `adapters` override: resolveAdapter uses BUILTIN_ADAPTERS, so the
     // captured argv carries each real adapter's declared model flag.
     projectRoot: () => projectRoot,

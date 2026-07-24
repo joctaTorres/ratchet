@@ -1,7 +1,7 @@
 {
   "name": "ratchet-ai",
   "version": "0.1.0-beta.2",
-  "description": "AI-native system for BDD-flavored spec-driven development",
+  "description": "AI-native spec-driven development that only moves forward",
   "keywords": [
     "ratchet",
     "bdd",

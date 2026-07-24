@@ -95,6 +95,33 @@ describe('batchConfigCommand', () => {
     expect(output()).toContain('Set batch.gate = autonomous');
   });
 
+  // -------------------------------------------------------------------------
+  // `agent` write-path (write-path-validation.feature): `batch config --set
+  // agent=claude:` is rejected naming the value with the file unchanged; a
+  // valid `agent=opencode:zai/glm-5.2` writes and echoes.
+  // -------------------------------------------------------------------------
+  it('rejects --set agent=claude: naming the value and leaves the file unchanged', async () => {
+    await fixture.writeProjectConfig('batch:\n  gate: after-propose\n');
+    const before = await fs.readFile(fixture.configPath(), 'utf-8');
+
+    await expect(batchConfigCommand(undefined, { set: 'agent=claude:' })).rejects.toThrow(
+      /claude:/
+    );
+
+    const after = await fs.readFile(fixture.configPath(), 'utf-8');
+    expect(after).toBe(before);
+  });
+
+  it('writes and echoes a valid --set agent=opencode:zai/glm-5.2', async () => {
+    await batchConfigCommand(undefined, { set: 'agent=opencode:zai/glm-5.2' });
+
+    const config = parseYaml(await fs.readFile(fixture.configPath(), 'utf-8')) as {
+      batch: { agent: string };
+    };
+    expect(config.batch.agent).toBe('opencode:zai/glm-5.2');
+    expect(output()).toContain('opencode:zai/glm-5.2');
+  });
+
   it('emits a JSON ack for a valid --set when --json is set', async () => {
     await batchConfigCommand(undefined, { set: 'gate=autonomous', json: true });
 

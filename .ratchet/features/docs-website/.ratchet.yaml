@@ -1,0 +1,19 @@
+features:
+  build-and-deploy.feature:
+    - documentation
+  docs-seed.feature:
+    - documentation
+  i18n.feature:
+    - documentation
+  isolation.feature:
+    - documentation
+  landing-install-command.feature:
+    - documentation
+  landing-page.feature:
+    - documentation
+  markdown-link-strictness.feature:
+    - documentation
+  site-structure.feature:
+    - documentation
+  workers-assets-deploy.feature:
+    - documentation

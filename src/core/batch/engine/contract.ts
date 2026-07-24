@@ -7,20 +7,26 @@
  * shared shape of that hand-off. `status`/`view`/`config` never touch the engine.
  */
 
-import type { BatchSettings } from '../config.js';
+import type { BatchSettings, SettingSource } from '../config.js';
+import type { AgentStage } from '../agent-setting.js';
 import type { ProofOfWork } from '../manifest.js';
 import type { JournalEntry } from '../journal.js';
+import type { PrGroupBoundary } from './boundary.js';
 
 export type Transition = 'propose' | 'apply' | 'verify';
 
 /**
- * What the engine ran for one step: a per-change transition, or a phase
- * decomposition. `decompose` is NOT a per-change transition — it is never derived
- * by `computeNextTransition` and never keys a change's done-rule. It exists only
- * so a decomposition step's {@link StepResult} can name its kind for rendering,
- * alongside the per-change transitions, without inventing a fourth transition.
+ * What the engine ran for one step: a per-change transition, a phase
+ * decomposition, or the whole-batch PR-open step. `decompose` and `pr` are NOT
+ * per-change transitions — neither is ever derived by `computeNextTransition` and
+ * neither keys a change's done-rule. They exist only so a decomposition or PR
+ * step's {@link StepResult} and journal entry can name their kind for rendering,
+ * alongside the per-change transitions, without inventing per-change transitions.
+ * `pr` doubles as the run-state done-key for the PR-open step (see
+ * `hasJournaledPr`): the completion PR step is done iff the batch journal carries a
+ * `completion` entry whose `transition` is `pr`.
  */
-export type StepKind = Transition | 'decompose';
+export type StepKind = Transition | 'decompose' | 'pr';
 
 /** Phase framing surfaced in the agent instructions for one step. */
 export interface StepPhase {
@@ -51,6 +57,17 @@ interface BaseStepContext {
   transition: Transition;
   phase: StepPhase;
   settings: BatchSettings;
+  /**
+   * Per-stage supplying scope for the resolved `agent` setting, threaded from
+   * {@link resolveBatchSettings}. When present for the running transition's
+   * stage, the engine builds a model-failure attribution naming that scope so a
+   * fast failure under an explicit model can surface which scope supplied it
+   * (the project config vs the batch manifest). Left undefined by the standalone
+   * headless verbs (their `--agent` flag can override the spec after scope
+   * resolution, so a threaded scope could lie; with no scope present the
+   * mapper's gate keeps today's failure surface).
+   */
+  agentStageScopes?: Partial<Record<AgentStage, SettingSource>>;
   /** Prior journal entries for this change (resume context). */
   journal: JournalEntry[];
   /** Resume context when the step was parked. */
@@ -125,12 +142,76 @@ export interface DecompositionStepContext {
   priorResults: PriorPhaseResult[];
   settings: BatchSettings;
   /**
+   * Per-stage supplying scope for the resolved `agent` setting, threaded from
+   * {@link resolveBatchSettings} (via `batchApplyCommand`). The decomposition
+   * spawn routes via the `decompose` stage (exactly as a change step routes its
+   * transition and the PR step routes `pr`), so its supplying scope is the
+   * `decompose` entry here. When present and the parsed spec names a model, the
+   * engine builds a model-failure attribution naming that scope so a
+   * fast-failing decompose spawn under an explicit model surfaces the same
+   * attributed hint a change step gets. Left undefined by the standalone paths
+   * (no scope present → the mapper's gate keeps today's failure surface).
+   */
+  agentStageScopes?: Partial<Record<AgentStage, SettingSource>>;
+  /**
    * Resume context when the decomposition step was parked (W1). Mirrors a change
    * step's `resume`: when the user answered a blocker (or rejected with feedback),
    * the resolved text rides along as a trailing argument of the decompose-phase
    * invocation so a resumed decomposition does not silently drop the answer.
    */
   resume?: StepResume;
+}
+
+/**
+ * The batch-scoped subset the engine needs to drive ONE whole-batch PR-open step
+ * for a completed batch. Like a decomposition step it carries NO `change` and NO
+ * `transition`: the spawned PR agent delegates to the canonical `/rct:open-pr`
+ * command to commit the prior stage agents' accumulated work in the repo's
+ * git-log style and open EXACTLY ONE pull request from the work branch to its base
+ * branch. The engine never re-authors those commit/push/PR-open steps itself.
+ *
+ * `baseBranch`/`workBranch` are RESOLVED UPSTREAM (the CLI's job when it assembles
+ * this context) and delivered here as DATA the `open-pr` body consumes as its
+ * "Input" — mirroring how `DecompositionStepContext.priorResults` hands the
+ * decomposition skill its grounding context rather than having the engine read it
+ * (`instruction-fed-config`). The engine method stays pure and unit-testable over
+ * these resolved names and never itself derives which git branch is base/work.
+ */
+export interface PrStepContext {
+  batch: string;
+  /** The terminal phase framing surfaced in the PR agent's instructions. */
+  phase: StepPhase;
+  settings: BatchSettings;
+  /**
+   * Per-stage supplying scope for the resolved `agent` setting, threaded from
+   * {@link resolveBatchSettings} (via `batchApplyCommand`). The PR spawn routes
+   * via the `pr` STAGE of the agent map (exactly as a change step routes
+   * propose/apply/verify), so its supplying scope is `agentStageScopes.pr`.
+   * When present and the parsed spec names a model, the engine builds a
+   * model-failure attribution naming that scope so a fast-failing PR spawn
+   * under an explicit per-stage model surfaces the same attributed hint a
+   * change step gets. Left undefined by the standalone paths (no scope present
+   * → the mapper's gate keeps today's failure surface).
+   */
+  agentStageScopes?: Partial<Record<AgentStage, SettingSource>>;
+  /** Resume context when the PR step was parked. */
+  resume?: StepResume;
+  /** The base branch the PR targets — resolved upstream, delivered as data. */
+  baseBranch: string;
+  /** The work branch the PR opens from — resolved upstream, delivered as data. */
+  workBranch: string;
+  /**
+   * The fired group boundary this PR step opens, under a stacked grouping mode
+   * (`per-phase`/`per-change`). Its `groupId` keys the per-group run-state entry
+   * ({@link prJournalKey}) so a resumed loop opens each group exactly once and
+   * distinct groups are guarded independently. Absent (or `kind: 'batch'`) for a
+   * whole-batch PR, which keeps its existing batch-level `pr:<batch>` key. The
+   * resolved stacked base for the boundary already rides in `baseBranch`/`workBranch`
+   * (computed upstream by `selectStackedBases`); this field carries only the group
+   * IDENTITY for keying, not the base derivation, so the engine never re-derives
+   * boundary rules inline (`detectPrGroupBoundaries` stays their single home).
+   */
+  boundary?: PrGroupBoundary;
 }
 
 export type StepState =
@@ -154,6 +235,13 @@ export interface StepResult {
   blocker?: string;
   /** Present when state is `awaiting-approval`: the proposal summary. */
   approvalRequest?: string;
+  /**
+   * Captured agent output surfaced on a failed/blocked step. Carries the
+   * model-failure attribution hint (when the failure matches the
+   * argv-rejection signature) above the truncated stderr tail, so the operator
+   * can spot an invalid model id without decoding raw stderr.
+   */
+  detail?: string;
   /** Pointer to journal entries this step produced (indices or ids). */
   journalRefs?: number[];
   message?: string;

@@ -16,7 +16,13 @@ export { ArtifactGraph } from './graph.js';
 
 // State detection
 export { detectCompleted } from './state.js';
-export { artifactOutputExists, isGlobPattern, resolveArtifactOutputs } from './outputs.js';
+export {
+  artifactOutputExists,
+  isGlobPattern,
+  materializeApplyContext,
+  resolveArtifactOutputs,
+  type ApplyContextResult,
+} from './outputs.js';
 
 // Schema resolution
 export {

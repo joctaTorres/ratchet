@@ -15,9 +15,13 @@ import {
   defaultDeps,
   type BootstrapDeps,
 } from '../batch/engine/runtime/rex-bootstrap.js';
+import { resolveCurrentPlanningHomeSync } from '../planning-home.js';
 import { checkAgents } from './checks/agents.js';
 import { checkRuntime } from './checks/runtime.js';
 import { checkDocker } from './checks/docker.js';
+import { checkPlaywright } from './checks/playwright.js';
+import { checkPrRemote } from './checks/pr-remote.js';
+import { hasWebBindingInScope } from './web-scope.js';
 import { isReportOk, type DoctorReport } from './types.js';
 
 export type { DoctorCheck, DoctorReport, DoctorStatus, DoctorSeverity } from './types.js';
@@ -26,9 +30,22 @@ export { isReportOk } from './types.js';
 /**
  * Run every doctor check against the injected deps and aggregate the result.
  * Checks run in a fixed, human-meaningful order: required agent + runtime first,
- * then the optional Docker notice.
+ * then the optional Docker notice, then — only when a `kind: web` eval binding
+ * is in scope for `projectRoot` — the optional Playwright notice. When no web
+ * binding is in scope, the Playwright check is entirely absent from the report.
+ * Finally, only when `prGrouping` is active for `projectRoot` and the repo has no
+ * configured git remote, the optional `pr-remote` notice is appended; in every other
+ * case it too is entirely absent from the report.
  */
-export function runDoctorChecks(deps: BootstrapDeps = defaultDeps): DoctorReport {
-  const checks = [checkAgents(deps), checkRuntime(deps), checkDocker(deps)];
+export function runDoctorChecks(
+  deps: BootstrapDeps = defaultDeps,
+  projectRoot: string = resolveCurrentPlanningHomeSync().root
+): DoctorReport {
+  const checks = [checkAgents(deps, projectRoot), checkRuntime(deps), checkDocker(deps)];
+  if (hasWebBindingInScope(projectRoot)) {
+    checks.push(checkPlaywright(deps));
+  }
+  const prRemote = checkPrRemote(deps, projectRoot);
+  if (prRemote) checks.push(prRemote);
   return { checks, ok: isReportOk(checks) };
 }

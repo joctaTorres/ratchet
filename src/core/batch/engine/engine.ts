@@ -27,11 +27,14 @@ import type {
   ResolvedStepContext,
   ChangeStepContext,
   DecompositionStepContext,
+  PrStepContext,
   StepResult,
   StepKind,
   Transition,
 } from './contract.js';
 import type { BatchSettings } from '../config.js';
+import { scalarAgent, resolveAgentForStage, parseAgentSpec } from '../agent-setting.js';
+import type { AgentStage, AgentSpec } from '../agent-setting.js';
 import {
   resolveAdapter,
   UnknownAgentError,
@@ -43,21 +46,34 @@ import {
 import type { AgentEvent, AgentRuntime } from './runtime/contract.js';
 import { makeRexSidecarRuntime } from './runtime/rex-sidecar-runtime.js';
 import { makeRexRemoteRuntime } from './runtime/rex-remote-runtime.js';
-import { validateRemoteSettings, resolveAgentTimeoutMs } from '../config.js';
+import { validateRemoteSettings, resolveAgentTimeoutMs, isPrGroupingActive } from '../config.js';
 import { makeStreamJsonRenderer } from './runtime/stream-json-renderer.js';
-import { buildAgentInstructions, buildDecompositionInstructions, decompositionJournalKey } from './instructions.js';
+import {
+  buildAgentInstructions,
+  buildDecompositionInstructions,
+  buildPrInstructions,
+  decompositionJournalKey,
+  prJournalKey,
+} from './instructions.js';
 import {
   ensureSkillInSpawnLocus,
   ensureCommandInSpawnLocus,
   DECOMPOSE_COMMAND_ID,
+  PR_OPEN_COMMAND_ID,
   SkillLocusError,
   type SkillLocusDeps,
 } from './skill-locus.js';
-import { mapSessionToOutcome } from './outcome.js';
+import { mapSessionToOutcome, type ModelAttribution } from './outcome.js';
 import { toStepResult, resolveProjectRoot, type EngineStepOutcome } from './context.js';
-import { computeNextTransition, readChangeDiskState, type ChangeDiskState } from './transition.js';
+import {
+  computeNextTransition,
+  hasJournaledPrForGroup,
+  readChangeDiskState,
+  type ChangeDiskState,
+} from './transition.js';
 import { withBatchLock } from './lock.js';
 import {
+  readJournalTolerant,
   readChangeJournalTolerant,
   readChangeJournalTolerantForLocus,
 } from './run-state.js';
@@ -318,10 +334,12 @@ export class RatchetBatchEngine {
       : { ...process.env };
     let request;
     let emitsStreamJson = false;
+    let spec: AgentSpec | undefined;
     try {
-      const built = this.buildSpawnRequest(ctx, instructions, projectRoot, env);
+      const built = this.buildSpawnRequest(ctx, instructions, projectRoot, env, transition);
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
+      spec = built.spec;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -334,6 +352,18 @@ export class RatchetBatchEngine {
       }
       throw err;
     }
+
+    // Build model-failure attribution only when the parsed spec explicitly
+    // named a model AND the context carries a supplying scope for this
+    // transition's stage. The standalone headless verbs thread no
+    // `agentStageScopes` (their `--agent` flag can override the spec after
+    // scope resolution), so with no scope present the mapper's gate keeps
+    // today's failure surface unchanged.
+    const scope = ctx.agentStageScopes?.[transition];
+    const modelAttribution: ModelAttribution | undefined =
+      spec?.model !== undefined && scope !== undefined
+        ? { stage: transition, agent: spec.agent, model: spec.model, scope }
+        : undefined;
 
     // Snapshot journal length and on-disk change state so we can isolate this
     // session's entries and measure the artifact delta (e.g. apply progress).
@@ -352,6 +382,7 @@ export class RatchetBatchEngine {
       change,
       transition,
       parkForApproval: this.shouldParkForApproval(ctx, transition),
+      modelAttribution,
       before,
       diskBefore,
       diskAfter: () => {
@@ -418,7 +449,8 @@ export class RatchetBatchEngine {
         DECOMPOSE_COMMAND_ID,
         context.settings,
         projectRoot,
-        this.skillLocusDeps
+        this.skillLocusDeps,
+        'decompose'
       );
     } catch (err) {
       if (err instanceof SkillLocusError) {
@@ -438,15 +470,18 @@ export class RatchetBatchEngine {
     const env: NodeJS.ProcessEnv = { ...process.env, RATCHET_BATCH_NAME: batch };
     let request;
     let emitsStreamJson = false;
+    let spec: AgentSpec | undefined;
     try {
       const built = this.buildSpawnRequest(
         { batch, change: key, settings: context.settings },
         instructions,
         projectRoot,
-        env
+        env,
+        'decompose'
       );
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
+      spec = built.spec;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -459,6 +494,19 @@ export class RatchetBatchEngine {
       }
       throw err;
     }
+
+    // Build model-failure attribution only when the parsed spec explicitly named
+    // a model AND the context carries a supplying scope for the `decompose`
+    // stage. The decomposition spawn routes via the `decompose` stage (exactly as
+    // a change step routes its transition and the PR step routes `pr`), so its
+    // supplying scope is `agentStageScopes.decompose` — absent for a bare-name
+    // spec, a stage-map that does not name `decompose`, and scope-less standalone
+    // paths, so the mapper's gate keeps today's failure surface there.
+    const decomposeScope = context.agentStageScopes?.decompose;
+    const modelAttribution: ModelAttribution | undefined =
+      spec?.model !== undefined && decomposeScope !== undefined
+        ? { stage: 'decompose', agent: spec.agent, model: spec.model, scope: decomposeScope }
+        : undefined;
 
     // Snapshot the decomposition journal (keyed by phase) so we can isolate this
     // session's entries. The decomposition artifact is the `batch.yaml` edit the
@@ -481,6 +529,180 @@ export class RatchetBatchEngine {
       change: key,
       transition: 'decompose',
       parkForApproval: false,
+      modelAttribution,
+      before,
+      diskBefore: diskState,
+      diskAfter: () => diskState,
+    });
+  }
+
+  /**
+   * Drive ONE PR-open step for a fired group boundary: spawn EXACTLY ONE PR agent
+    * that delegates to the canonical `/rct:open-pr` command to commit the prior
+   * stage agents' accumulated work in the repo's git-log style and open a single
+   * pull request from the group's work branch to its resolved (stacked) base
+   * branch. It is the exact structural twin of {@link runDecompositionStep} — it
+   * takes the per-batch lock, guarantees the shared command in the spawn locus,
+   * builds instructions, and hands the prepared request to the shared `spawnAndMap`
+   * tail — but is keyed off the GROUP (via {@link prJournalKey}, `pr:<batch>` for a
+   * whole-batch step, `pr:<batch>:<groupId>` for a stacked group), not a change, and
+   * it re-authors none of the commit/push/PR-open steps itself. Under
+   * `per-phase`/`per-change` the host loop calls this once per detected boundary,
+   * each with that group's `boundary` and resolved stacked `baseBranch`/`workBranch`.
+   *
+   * Two PRECONDITIONS guard the spawn so the guarantees hold at the engine layer
+   * independent of any CLI wiring:
+   *   A. `prGrouping` is INACTIVE (`off`/unset, via {@link isPrGroupingActive}) → a
+   *      `nothing-ready` result, NO agent spawned, nothing recorded — so existing
+   *      batches at the `off` default behave exactly as before; every active mode
+   *      (`whole-batch`/`per-phase`/`per-change`) proceeds.
+   *   B. the run-state journal already carries a PR-open completion for THIS group's
+   *      key ({@link hasJournaledPrForGroup}) → a `nothing-ready` result, NO second
+   *      agent spawned (idempotent per-group resume never double-opens a group,
+   *      while distinct groups are guarded independently).
+   * A failed PR-open journals a `blocker` (not a `completion`), so it leaves
+   * precondition B UNSET for that group and a subsequent run is free to retry it.
+   */
+  async runPrStep(context: PrStepContext): Promise<StepResult> {
+    const projectRoot = this.projectRoot();
+    const { batch } = context;
+    return withBatchLock(projectRoot, batch, async () =>
+      this.runPrStepLocked(projectRoot, context)
+    );
+  }
+
+  private async runPrStepLocked(
+    projectRoot: string,
+    context: PrStepContext
+  ): Promise<StepResult> {
+    const { batch } = context;
+    // Resolve the PER-GROUP run-state key from the fired boundary: `pr:<batch>`
+    // for a whole-batch step (no boundary), `pr:<batch>:<groupId>` for a stacked
+    // group. The engine reads the boundary's identity here rather than re-deriving
+    // which group fired (`detectPrGroupBoundaries` stays the single home).
+    const key = prJournalKey(batch, context.boundary);
+
+    // Precondition A: any ACTIVE grouping mode spawns a PR agent. `off` (and an
+    // unset setting) is the sole inactive mode — no spawn, nothing recorded — so a
+    // batch at the `off` default behaves exactly as before. `whole-batch`,
+    // `per-phase`, and `per-change` all proceed, via the shared `isPrGroupingActive`
+    // predicate so the precondition never re-inlines the active-mode rule.
+    if (!isPrGroupingActive(context.settings.prGrouping ?? 'off')) {
+      return toStepResult({
+        state: 'nothing-ready',
+        change: key,
+        transition: 'pr',
+        message: `prGrouping is '${context.settings.prGrouping ?? 'off'}': no PR agent is spawned.`,
+      });
+    }
+
+    // Precondition B: idempotent resume, keyed PER GROUP — a PR-open completion
+    // already journaled under THIS group's key means its PR was opened; do not
+    // spawn a second agent. Distinct groups carry distinct keys, so groups are
+    // guarded independently and a resumed loop opens each group exactly once.
+    const journal = readJournalTolerant(projectRoot, batch);
+    if (hasJournaledPrForGroup(journal, key)) {
+      return toStepResult({
+        state: 'nothing-ready',
+        change: key,
+        transition: 'pr',
+        message: `The PR for '${key}' was already opened; nothing to do.`,
+      });
+    }
+
+    // Guarantee the canonical open-pr command is present in the spawn locus BEFORE
+    // building the request or selecting a runtime — the agent is told to invoke
+    // `/rct:open-pr`, so it must exist where the agent runs. The `pr` stage
+    // argument resolves the SAME agent the spawn uses, so the rendered command
+    // matches the spawned binary. A locus the engine cannot render into (e.g.
+    // remote) short-circuits to a failed step carrying the actionable bootstrap
+    // message — no agent spawned (same contract as the change/decomposition paths).
+    try {
+      ensureCommandInSpawnLocus(
+        PR_OPEN_COMMAND_ID,
+        context.settings,
+        projectRoot,
+        this.skillLocusDeps,
+        'pr'
+      );
+    } catch (err) {
+      if (err instanceof SkillLocusError) {
+        this.printLine(err.message);
+        return toStepResult({
+          state: 'failed',
+          change: key,
+          transition: 'pr',
+          blocker: err.message,
+          message: err.message,
+        });
+      }
+      throw err;
+    }
+
+    const instructions = buildPrInstructions(context);
+    const env: NodeJS.ProcessEnv = { ...process.env, RATCHET_BATCH_NAME: batch };
+    let request;
+    let emitsStreamJson = false;
+    let spec: AgentSpec | undefined;
+    try {
+      // Route the PR step through the `pr` STAGE of the agent map, exactly as a
+      // change step routes propose/apply/verify: a stage-map spawns the mapped
+      // agent, a scalar routes `pr` to it, an unset/unmapped `pr` falls back to
+      // `DEFAULT_AGENT`. `resolveAdapter` rejects an unknown agent
+      // (`UnknownAgentError`) before any spawn, mapped to a failed step.
+      const built = this.buildSpawnRequest(
+        { batch, change: key, settings: context.settings },
+        instructions,
+        projectRoot,
+        env,
+        'pr'
+      );
+      request = built.request;
+      emitsStreamJson = built.emitsStreamJson;
+      spec = built.spec;
+    } catch (err) {
+      if (err instanceof UnknownAgentError) {
+        return toStepResult({
+          state: 'failed',
+          change: key,
+          transition: 'pr',
+          blocker: err.message,
+          message: err.message,
+        });
+      }
+      throw err;
+    }
+
+    // Build model-failure attribution only when the parsed spec explicitly named
+    // a model AND the context carries a supplying scope for the `pr` stage. The
+    // PR spawn routes via the `pr` stage (exactly as a change step routes its
+    // transition), so its supplying scope is `agentStageScopes.pr` — absent for a
+    // bare-name spec, a stage-map that does not name `pr`, and scope-less
+    // standalone paths, so the mapper's gate keeps today's failure surface there.
+    const prScope = context.agentStageScopes?.pr;
+    const modelAttribution: ModelAttribution | undefined =
+      spec?.model !== undefined && prScope !== undefined
+        ? { stage: 'pr', agent: spec.agent, model: spec.model, scope: prScope }
+        : undefined;
+
+    // Snapshot the PR journal (keyed by batch) so we can isolate this session's
+    // entries. There is no change directory for a PR step, so — like the
+    // decomposition path — disk evidence is a no-op snapshot (before === after)
+    // and there is never an approval park.
+    const locus: RunLocus = { batch };
+    const before = readChangeJournalTolerantForLocus(projectRoot, locus, key).length;
+    const diskState = readChangeDiskState(projectRoot, key);
+
+    return this.spawnAndMap({
+      request,
+      emitsStreamJson,
+      settings: context.settings,
+      projectRoot,
+      locus,
+      change: key,
+      transition: 'pr',
+      parkForApproval: false,
+      modelAttribution,
       before,
       diskBefore: diskState,
       diskAfter: () => diskState,
@@ -512,6 +734,7 @@ export class RatchetBatchEngine {
     change: string;
     transition: StepKind;
     parkForApproval: boolean;
+    modelAttribution?: ModelAttribution;
     before: number;
     diskBefore: ChangeDiskState;
     diskAfter: () => ChangeDiskState;
@@ -525,6 +748,7 @@ export class RatchetBatchEngine {
       change,
       transition,
       parkForApproval,
+      modelAttribution,
       before,
       diskBefore,
       diskAfter,
@@ -574,6 +798,7 @@ export class RatchetBatchEngine {
       spawn: spawnResult,
       parkForApproval,
       diskEvidence: { before: diskBefore, after: diskAfter() },
+      modelAttribution,
     });
 
     // Record a journal entry for the transition outcome (the agent may not have
@@ -604,21 +829,49 @@ export class RatchetBatchEngine {
     context: { batch?: string; change: string; settings: BatchSettings },
     instructions: string,
     projectRoot: string,
-    env: NodeJS.ProcessEnv
-  ): { request: AgentSpawnRequest; emitsStreamJson: boolean } {
+    env: NodeJS.ProcessEnv,
+    stage?: AgentStage
+  ): { request: AgentSpawnRequest; emitsStreamJson: boolean; spec?: AgentSpec } {
     const override = process.env.RATCHET_BATCH_AGENT_CMD;
     if (override && override.trim().length > 0) {
       // The `bash -c` override stands in for the agent binary and is NOT
-      // stream-json-capable (keeps e2e/eval deterministic) → raw streaming.
+      // stream-json-capable (keeps e2e/eval deterministic) → raw streaming. It
+      // bypasses spec parsing, so no `AgentSpec` is returned — the override
+      // path carries no model attribution by construction.
       return {
         request: { command: 'bash', args: ['-c', override], instructions, cwd: projectRoot, env },
         emitsStreamJson: false,
       };
     }
-    const adapter = resolveAdapter(context.settings.agent, this.adapters);
+    // Resolve the spawn agent for the running transition's STAGE when one is
+    // given (propose/apply/verify/decompose/pr) — a stage-map routes each stage
+    // independently; a scalar/unset agent resolves the same for every stage.
+    // Either way `resolveAdapter` maps an unmapped-stage/unset name to
+    // `DEFAULT_AGENT` and rejects an unknown name (`UnknownAgentError`) before
+    // any spawn.
+    const resolved = stage
+      ? resolveAgentForStage(context.settings.agent, stage)
+      : scalarAgent(context.settings.agent);
+    // Parse the resolved spec ONCE per transition: the stored value is a whole
+    // `agent[:model]` spec string (config load already rejected malformed specs,
+    // so this parse cannot throw on validated config). The adapter is resolved by
+    // the AGENT PART — an unknown agent part still throws `UnknownAgentError`
+    // before any spawn, naming `rex` not `rex:some-model`; the model part is
+    // threaded to the adapter via `AgentRequestContext.model` so the adapter
+    // emits its own flag. A bare agent name (no `:`) parses to `{ agent }` with
+    // no `model` key, so the adapter emits no flag and the agent uses its
+    // harness-configured default model — byte-for-byte today's argv.
+    const spec = resolved !== undefined ? parseAgentSpec(resolved) : undefined;
+    const adapter = resolveAdapter(spec?.agent, this.adapters);
     return {
-      request: adapter.buildRequest(context, instructions, projectRoot, env),
+      request: adapter.buildRequest(
+        { ...context, model: spec?.model },
+        instructions,
+        projectRoot,
+        env
+      ),
       emitsStreamJson: adapter.emitsStreamJson === true,
+      spec,
     };
   }
 

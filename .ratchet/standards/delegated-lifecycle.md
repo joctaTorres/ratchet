@@ -84,3 +84,11 @@ skill/workflow rather than re-author the lifecycle inline.
 ## Implemented by
 
 <!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
+
+- proof-of-work-boundary/execute-and-record.feature
+- proof-of-work-boundary/recorded-proof-reader.feature
+- proof-of-work-gate/hard-gate-blocks-on-recorded-proof.feature
+- proof-of-work-gate/status-and-selection-agree.feature
+- proof-of-work-gate/warn-advances-surfacing-failure.feature
+- rerun-recorded-proof/cli-surface.feature
+- rerun-recorded-proof/invalidation-folding.feature

@@ -65,3 +65,52 @@ orchestration (`src/core/`), and user-visible CLI flows. Each such change must
 add or update tests at the correct pyramid layer, keep tests isolated via the
 fixture pattern, and keep the full suite and the coverage gate green at or above
 the enforced `COVERAGE_THRESHOLD`.
+
+## Implemented by
+
+<!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
+
+- batch-command-tests/apply.feature
+- batch-command-tests/config.feature
+- batch-command-tests/new-batch.feature
+- batch-command-tests/report.feature
+- batch-command-tests/status.feature
+- batch-command-tests/view.feature
+- commands-core-verbs/apply.feature
+- commands-core-verbs/coverage-floor.feature
+- commands-core-verbs/propose.feature
+- commands-core-verbs/validate.feature
+- commands-core-verbs/verify.feature
+- core-remainder-tests/archive.feature
+- core-remainder-tests/features-apply.feature
+- core-remainder-tests/file-system.feature
+- core-remainder-tests/init-update-remainders.feature
+- core-remainder-tests/list.feature
+- core-remainder-tests/markdown-parser.feature
+- core-remainder-tests/move-directory.feature
+- core-remainder-tests/proof-of-work.feature
+- core-remainder-tests/version-guard.feature
+- core-util-tests/change-status-policy.feature
+- core-util-tests/config-schema.feature
+- core-util-tests/migration.feature
+- coverage-gate/documented-floor-80.feature
+- coverage-gate/documented-floor-95.feature
+- coverage-gate/documented-knob.feature
+- coverage-gate/floor-to-80.feature
+- coverage-gate/floor-to-95.feature
+- coverage-gate/ratchetable-threshold.feature
+- eval-command-tests/baseline.feature
+- eval-command-tests/record.feature
+- eval-command-tests/report.feature
+- eval-command-tests/run.feature
+- eval-command-tests/set.feature
+- eval-command-tests/shared.feature
+- testing-standard/reference-docs.feature
+- testing-standard/standard-library.feature
+- utils-helper-tests/item-discovery.feature
+- utils-helper-tests/match.feature
+- utils-helper-tests/task-progress.feature
+- workflow-command-tests/instructions.feature
+- workflow-command-tests/new-change.feature
+- workflow-command-tests/shared.feature
+- workflow-command-tests/status.feature

@@ -138,11 +138,13 @@ ratchet --version
 | Requirement | Why | Needed when |
 |---|---|---|
 | **Node.js ≥ 20.19** | Runs the `ratchet` CLI. | Always |
-| **A supported coding-agent CLI** — Claude Code (`claude`), Codex (`codex`), Gemini (`gemini`), or Cursor (`cursor-agent`) | ratchet drives a coding agent for batch changes; at least one must be on your PATH. Install it from the agent's own docs. | To run batch changes |
+| **A supported coding-agent CLI** — Claude Code (`claude`), Codex (`codex`), Gemini (`gemini`), Cursor (`cursor-agent`), or OpenCode (`opencode`) | ratchet drives a coding agent for batch changes; at least one must be on your PATH. Install it from the agent's own docs. | To run batch changes |
 | **Python 3.10+ (with `venv` + `pip`), or [`uv`](https://docs.astral.sh/uv/) (preferred)** | Bootstraps the isolated SWE-ReX sidecar runtime. `uv` is preferred for faster, more reliable builds. | To run batch changes |
 | **Docker** | Only needed for the `docker` execution locus. Local runs never use it. | Optional |
+| **Playwright** | Drives the Given/When/Then browser scenarios of a `kind: web` eval binding. | Only when a `kind: web` eval binding is in scope |
+| **A configured git remote** | PR grouping spawns a PR agent at batch completion that pushes the work branch and opens a PR, which needs somewhere to push. | Only when `prGrouping` is active |
 
-Run **`ratchet doctor`** to validate your setup — it checks each of these and prints an actionable remedy for anything missing. `ratchet init` also runs these checks once, automatically, the first time you initialize a project (advisory only — it never blocks setup).
+Run **`ratchet doctor`** to validate your setup — it checks each of these and prints an actionable remedy for anything missing (including an advisory warning when `prGrouping` is active but your repo has no configured git remote). Doctor also verifies that any agent CLI named by your project's `batch.agent` setting is installed (an `agent[:model]` spec is parsed and the agent part's binary is probed; the model part is never validated). `ratchet init` also runs these checks once, automatically, the first time you initialize a project (advisory only — it never blocks setup).
 
 ### From source (development)
 
@@ -197,14 +199,16 @@ ratchet archive add-login -y                      # sync features → store, arc
 │   └── invariants.yaml       # anti-gaming invariant manifest (spec-not-weakened active, rest scaffolded inert)
 └── config.yaml               # schema + project context/rules
 
+.gitignore                    # ensured to ignore .ratchet/evals/runs/ (transient run records)
+
 .claude/                      # (per selected tool)
 ├── skills/ratchet-{brainstorm,propose,apply-change,verify-change,archive-change,propose-standard,propose-batch,apply-batch}/
-└── commands/rct/{brainstorm,propose,apply,verify,archive,propose-standard,propose-batch,apply-batch}.md
+└── commands/rct/{brainstorm,propose,apply,verify,archive,propose-standard,propose-batch,apply-batch,open-pr}.md
 ```
 
 The `core` profile installed by a stock `ratchet init` ships the change workflows, the `brainstorm` front door, **and** the batch workflows (`propose-batch` + `apply-batch`). `eval` is the one opt-in workflow — request it with a custom profile.
 
-**Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`.
+**Supported tools** (`--tools`): `claude`, `opencode`, `cursor`, `github-copilot`, `codex`. The batch-engine spawnable coding agents (drivable by `--agent` on the headless verbs and `batch apply`) are `claude`, `codex`, `cursor`, `gemini`, and `opencode`; `github-copilot` is an init config target only. In project config or a batch manifest, the `agent` setting is either a single `agent[:model]` spec or a partial per-stage `{propose, apply, verify, pr, decompose}` map of spec values; each lifecycle transition (and the batch-driven pr / phase-decomposition step) spawns the agent its stage maps to (falling back to a scalar `agent`, then the default), so you can have one agent propose while another applies and verifies, and route phase decomposition to its own agent+model. A spec splits on the first `:` into an agent name and an optional model — e.g. `claude:fable`, `opencode:zai/glm-5.2`, `codex:gpt-5.2-codex` — and each adapter emits its own model flag (`--model` for claude/opencode/cursor, `-m` for codex/gemini) only when a model is named; a bare agent name emits no model flag so the agent uses its harness-configured default model. The model part is free-form pass-through (the parser keeps no model registry), while a malformed spec (empty agent or model part, e.g. `claude:`, `:fable`; or a part with leading/trailing whitespace like `claude: opus`, `claude :m`, `" claude"`; or a model part starting with `-` like `claude:-flag`) is rejected at config load naming the offending value. When a transition (or a batch-driven pr / phase-decomposition step) whose resolved spec explicitly names a model fails fast — the agent exited with a real non-zero exit code (not a signal kill) having made no journal progress, the argv-rejection signature — the surfaced step failure names the stage, the agent, the exact model string, and the supplying scope (the project config vs the batch manifest) as an "if this model id is invalid or not available to this agent, correct the `agent` setting at that scope and resume" hint, threaded into the `blocker`/`message` fields so every rendered surface — the non-JSON `batch apply` blocked line, the parked-step reason shown on resume, the journal entry message, and the standalone change-step renderer — carries it (the `detail` field still opens with the hint above the captured stderr tail for `--json` consumers), never a diagnosis (stderr is surfaced verbatim, uninterpreted); the `pr` stage spawn is attributed via its `pr` stage entry's supplying scope, and the phase-decomposition spawn likewise via its own `decompose` stage entry's supplying scope; there is no retry and no fallback model — the existing park/failure flow takes over. A signal-killed spawn (e.g. a `timeout` SIGKILL, OOM kill — `exitCode: null, signal: 'SIGKILL'`) under a valid explicit model is NOT a real exit code, so the hint is suppressed there even with zero journal progress; the bare-failure fallback names the signal (`via signal SIGKILL`) and surfaces the stderr tail on every rendered surface without the hint, so an externally killed agent under a valid model never misdirects the operator into "fixing" a model id that was never the problem. A bare agent name (no model part), an unmapped decompose spawn under a stage map (default agent, no model), or a failure after the agent made journal progress surfaces today's failure unchanged, with no hint. See [config reference: Agent `[:model]` spec](docs/configuration/config-yaml.md#agent-model-spec).
 
 ## Commands
 
@@ -230,10 +234,10 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step) |
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
 | `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
-| `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--json`) |
-| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--json`) |
+| `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--holdout`/`--no-holdout`, `--json`) |
+| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--include-skipped`, `--holdout`/`--no-holdout`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
-| `eval report --run <id>` | Scorecard, failing cases with evidence, and the baseline regression diff (`--json`) |
+| `eval report --run <id>` | **Read-only** scorecard, failing cases with evidence, and the baseline regression diff, rendered from the run's persisted state — never re-evaluates the invariant gate (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |
 
 In `ratchet --help`, the workflow commands `propose`, `apply`, `verify`, `batch`, and `eval` are gathered (in that order) under a single **`Workflow:`** heading; every other command keeps its default placement.
@@ -368,10 +372,108 @@ dials under `.ratchet/config.yaml` `batch:`, with manifest-level overrides).
 
 The coding agent itself runs through a **SWE-ReX agent runtime** with live
 output streaming, configurable to execute **locally**, in **Docker**, or on a
-**remote** host — with pluggable adapters (claude / codex / gemini / cursor). The
+**remote** host — with pluggable adapters (claude / codex / gemini / cursor / opencode). The
 per-agent timeout defaults to 10 minutes and is raised with the
 `batch.agentTimeoutMs` config key or the `RATCHET_AGENT_TIMEOUT_MS` environment
 variable (env wins) when a slow-but-passing proof-of-work needs more time.
+
+### PR grouping
+
+By default a batch opens **no** pull request — the prior stage agents leave their
+work on the branch and you open a PR yourself. Set **`prGrouping: whole-batch`**
+(in `.ratchet/config.yaml` `batch:` or a manifest override) to have `batch apply`
+open **exactly one** pull request at batch completion. The default is
+**`prGrouping: off`**, which is unchanged behavior.
+
+When `prGrouping: whole-batch` is active, once every change is done and the
+terminal proof-of-work has passed, `batch apply` spawns one agent for the **`pr`
+stage** — one of the routable agent stages alongside `propose`, `apply`,
+`verify`, and `decompose` (route it independently in the [`agent` map](https://ratchet-ai.dev/configuration/config-yaml),
+e.g. `agent: { pr: opencode }`). That agent delegates to the shared **`/rct:open-pr`**
+instruction: it reads `git log` for the repository's own commit style (defaulting
+to semantic / Conventional Commits), commits the accumulated work, pushes the work
+branch, and opens one PR to the base branch using **whichever forge CLI your
+environment provides** (`gh`, `glab`, …) — ratchet hard-codes no forge. The PR-open
+outcome is recorded in run-state, so re-running the loop never double-opens; a
+commit/push/PR-open failure surfaces as a reported step failure and a later run
+retries. `prGrouping: off` (the default) or unset spawns no PR agent and the loop
+behavior is unchanged. PR opening needs [a configured git remote](#requirements)
+to push to.
+
+The stacked modes **`prGrouping: per-phase`** (one stacked PR per completed phase)
+and **`prGrouping: per-change`** (one stacked PR per change) group work into
+**stacked** pull requests: the engine spawns **one `pr`-stage agent per group
+boundary**, injecting that group's resolved stacked base — group 0 targets the
+batch base branch and group N targets group N-1's branch, so each PR's diff stays
+scoped to its own unit while dependent code still compiles. Each group's PR-open
+outcome is recorded in run-state **keyed by group** (`pr:<batch>:<groupId>`), so a
+resumed loop opens every group exactly once and distinct groups are guarded
+independently; the whole-batch group keeps its batch-level `pr:<batch>` key.
+`batch apply` drives these per-boundary spawns end to end: it opens **one stacked
+PR per group boundary, one group per apply, in boundary order**, and is idempotent
+per group — a resumed loop opens every group exactly once and never double-opens
+one already recorded. The stacked-branch base rule is that **group 0 targets the
+batch base branch and group N targets group N-1's branch**:
+
+```mermaid
+flowchart TD
+  base(["💾 main<br/>batch base branch"])
+  g0(["📝 group 0 branch<br/>per-phase: phase 0 · per-change: change 0"])
+  pr0(["🌐 group 0 PR<br/>base = main"])
+  g1(["📝 group 1 branch<br/>per-phase: phase 1 · per-change: change 1"])
+  pr1(["🌐 group 1 PR<br/>base = group 0 branch"])
+
+  base -->|"group 0 bases on the batch base branch"| g0
+  g0 --> pr0
+  g0 -->|"group 1 bases on group 0's branch"| g1
+  g1 --> pr1
+
+  classDef base fill:#3730a3,stroke:#a5b4fc,stroke-width:2px,color:#ffffff;
+  classDef branch fill:#1f2937,stroke:#93c5fd,stroke-width:2px,color:#ffffff;
+  classDef pr fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#ffffff;
+  class base base;
+  class g0,g1 branch;
+  class pr0,pr1 pr;
+```
+
+The whole-batch `batch apply` PR flow (a stacked mode runs this same engine step
+once per group boundary, keyed by group):
+
+```mermaid
+flowchart TD
+  done(["✅ batch done<br/>every change done + terminal proof passed"])
+  grouping{"🔀 prGrouping?"}
+  opened{"🔀 hasJournaledPr?"}
+  nogrouping["❌ no PR agent spawned<br/>Nothing to do — all changes are done."]
+  already["❌ no second spawn<br/>Nothing to do — all changes are done."]
+  spawn["⚙️ spawn one pr-stage agent<br/>/rct:open-pr (work + base branch as Input)"]
+  commit["📝 derive git-log style (semantic default)<br/>commit accumulated work · push work branch"]
+  pr["🌐 open EXACTLY ONE pull request<br/>work branch → base branch (forge CLI)"]
+  record["💾 record pr completion in run-state<br/>transition: 'pr' (hasJournaledPr)"]
+  fail["❌ reported step failure<br/>no pr completion · retry stays possible"]
+
+  done --> grouping
+  grouping -- "off / unset" --> nogrouping
+  grouping -- "whole-batch" --> opened
+  opened -- "already opened" --> already
+  opened -- "not yet opened" --> spawn
+  spawn --> commit
+  commit -- "success" --> pr
+  commit -- "commit / push fails" --> fail
+  pr -- "opened" --> record
+  pr -- "PR-open fails" --> fail
+
+  classDef start fill:#90EE90,stroke:#333,stroke-width:2px,color:#063d1a
+  classDef gate fill:#FFD700,stroke:#333,stroke-width:2px,color:#000000
+  classDef work fill:#87CEEB,stroke:#333,stroke-width:2px,color:#06263d
+  classDef store fill:#E6E6FA,stroke:#5b2a86,stroke-width:2px,color:#2a1452
+  classDef stop fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:#000000
+  class done start
+  class grouping,opened gate
+  class spawn,commit,pr work
+  class record store
+  class nogrouping,already,fail stop
+```
 
 ## Eval suite
 
@@ -385,7 +487,7 @@ its own work — the scenarios, fixtures, and baseline are the review surface, i
 git, diffable on every run.
 
 ```bash
-ratchet eval set --json                 # one case per Scenario, with binding status
+ratchet eval set --json                 # one case per Scenario, with binding + hold-out status
 ratchet eval run --json                 # judge bound cases through the engine, persist a run
 ratchet eval report --run <run-id> --json   # scorecard + baseline regression diff
 ratchet eval baseline <run-id>          # promote a clean run as the baseline
@@ -414,8 +516,21 @@ features/cli/status#status-as-text:
   fixture: verify-sample
   kind: llm-judge             # spawned-judge fallback for prose-y scenarios
   success: the status output is human-readable text
-  agentVotes: 3               # N-of-M repeat votes; majority wins
+  jury:                       # optional: overrides the project's eval.jury default
+    votes: 3
+    quorum: unanimous         # majority (default) | unanimous
+  rubric:                     # optional: overrides the auto-derived Then-clause rubric
+    - "Output is readable prose, not raw JSON"
 ```
+
+A third kind, `web`, declares a browser-scenario lifecycle instead of a check or
+a judge — `start` (boot command), `readiness` (a `url`-or-`command` probe with a
+required `timeoutMs`), and `spec` (the Playwright test that drives the case). It
+gates as a `deterministic` contributor case (exit-zero Playwright run = pass; a
+non-zero exit or a readiness timeout = fail). A failure persists its captured
+Playwright trace (and a screenshot, when the project's own Playwright config
+captures one) as durable run evidence, referenced by path from the run record.
+See [`ratchet eval`](docs/commands/eval.md#bindings) for its full field shape.
 
 **Fixtures run isolated.** Before judging, the fixture is materialized into a
 throwaway temp working copy that becomes the judging cwd, so a check or agent may
@@ -423,16 +538,54 @@ build/run/mutate freely without touching the checked-in fixture or the host repo
 An optional `setup` bootstraps a fixture **once** into a copy cached by
 fixture+setup and reused across every case bound to it.
 
-**The agent judge is guarded.** It **fails closed on uncertainty** (no concrete
-evidence ⇒ not a pass) and may cast **N-of-M votes** (`agentVotes`, default 1).
-When votes disagree, the case is recorded `unjudged` — never silently `fail` — so
-judge noise can't manufacture a regression. Prefer a `deterministic` binding.
+**The agent judge is rubric-driven and guarded.** Each case is judged against a
+binary rubric — one item per Gherkin `Then`-clause by default, or an explicit
+`rubric:` list. The judge reasons step by step about each clause before stating
+its verdict (CoT-before-verdict) and judges the evidence on its own merits
+instead of trusting the scenario's framing (anti-sycophancy). A vote **fails
+closed on uncertainty**: a clause judged `"no"`/`"can't-tell"`, left
+unaddressed, or claimed `"yes"` with no concrete evidence, does not pass, and a
+vote passes only when every clause does (all-yes). A configurable **jury**
+(`votes`, default 1; `quorum`, `majority` (default) or `unanimous`) resolves
+the cast votes into one verdict — layered from a project-level `eval.jury`
+default down to a per-binding `jury:` override; when the votes do not reach
+the configured quorum, the case is recorded `unjudged` — never silently `fail`
+— so judge noise can't manufacture a regression. Prefer a `deterministic`
+binding. The run JSON persists this structured detail per judged case — the
+resolved rubric, each clause's boolean pass/fail with its cited evidence, and
+every juror's individual vote — surfaced via `eval run --json`/`eval report
+--json`'s `cases[]`.
 
-**Verdicts & baseline.** Each case is `pass`, `fail`, or `unjudged`. A regression
-is a case that **passed in the baseline and fails now**; new/retired cases are
-diffed, not failed. `unjudged` keeps a run incomplete and never counts as a pass.
-Unbound cases (no fixture) can take a manual verdict via `ratchet eval record`
-(a `fail` requires `--evidence`).
+**Verdicts & baseline.** Each case is `pass`, `fail`, `unjudged`, or `skipped`. A
+regression is a case that **passed in the baseline and fails now**; new/retired
+cases are diffed, not failed. `unjudged` keeps a run incomplete and never counts
+as a pass. Unbound cases (no fixture) can take a manual verdict via `ratchet
+eval record` (a `fail` requires `--evidence`).
+
+**Skip filters.** A case tagged `@skip` in its `.feature` file, or whose id
+matches a project `eval.skip` glob pattern, is excluded from judging by
+default and recorded `skipped` — counted in the scorecard, never silently
+dropped, and never blocking baseline promotion. `--include-skipped` overrides
+both sources for a run. Skipping a case that was `pass` in the promoted
+baseline prints a visible warning naming it. The run JSON persists a skipped
+case's skip source (`tag` or `config`) and matched detail, surfaced via `eval
+run --json`/`eval report --json`'s `cases[]`.
+
+**Hold-out scenarios.** A Scenario tagged `@holdout` is an anti-overfitting
+visibility split, not a skip: `ratchet instructions apply` hands the building
+agent a materialized copy of each `.feature` artifact with `@holdout`-tagged
+content stripped out, so the agent implementing a change never sees a held-out
+case. `ratchet verify` reads the same filtered view (by design — it shares the
+same `ratchet instructions apply` builder; re-using it prevents the verify loop
+from leaking held-out content back to apply). Enforcement is `eval run`:
+`enumerateEvalSet()` reads the untouched source file directly and gates
+`@holdout`-tagged Scenarios exactly like any other case. `ratchet eval set`
+reports each case's hold-out status alongside its binding kind —
+`holdout: true`/`false` in JSON, a `[holdout]` tag in text — reporting only,
+with no effect on gating. `--holdout`/`--no-holdout` on `eval set`/`eval run`
+restrict the in-scope set to just the held-out or just the non-held-out cases,
+composing with the existing `--changes`/`--change`/`--path` scope flags.
+Filtering is only active when the project has a `.ratchet/evals/` directory.
 
 **One verdict, contributor-shaped.** A run's overall pass/fail is decided in one
 place — the [verdict-aggregation core](docs/eval-verdict-aggregation.md) — as a
@@ -446,10 +599,17 @@ against.
 
 **Invariants (`.ratchet/evals/invariants.yaml`).** The `invariants` contributor
 draws its run-level, anti-gaming checks from a checked-in manifest: a YAML list
-of invariants, each one of three kinds — `deterministic` (an absolute predicate),
+of invariants, each one of four kinds — `deterministic` (an absolute predicate),
 `monotonic` (a named measure that must not decrease vs the baseline), `snapshot`
-(output diffed against a checked-in golden) — and each carrying an `active` flag
-so an invariant can be scaffolded inert before it is turned on. On every `eval
+(output diffed against a checked-in golden), `mutation` (a `test`/`budget`/
+`threshold` mutation-testing invariant — the seed/oracle/classify/revert harness
+at [`docs/eval-mutation-harness.md`](docs/eval-mutation-harness.md) is wired into
+evaluation: a survived mutant is a hard fail, and too little evaluated evidence
+(fewer than `threshold` mutants reaching a verdict) is unevaluable; each
+mutant's diff/test output is persisted as run evidence, reproducible from the
+run record without re-invoking the agent)
+— and each carrying an `active` flag so an invariant can be
+scaffolded inert before it is turned on. On every `eval
 run` the contributor evaluates the manifest's **active** invariants run-level and
 **hard-fails the run — surfaced first, as a sibling to a regression** — when any
 is violated, unevaluable, or the manifest can't be loaded; inert invariants are
@@ -457,8 +617,13 @@ skipped, never counted as vacuous passes. It is **fail-closed** at both layers: 
 absent manifest is the only path to an empty (passing) set, while a malformed
 manifest or an uncheckable active invariant fails the run rather than degrading to
 a vacuous pass. `--no-invariants` (or `eval.gate.invariants: false`) disables the
-gate for a run. See the [eval invariant manifest](docs/eval-invariants.md)
-Reference doc for the schema, the gate contributor, and the loader contract.
+gate for a run. The gate is evaluated **only by `eval run`** (which runs the
+invariant commands, spawns the mutation seeder, and persists the result onto the
+run); the read-only `eval report` reads that persisted result and never
+re-evaluates, spawns, or mutates the tree — a run with no persisted gate reports
+its invariants as _not evaluated_. See the
+[eval invariant manifest](docs/eval-invariants.md) Reference doc for the schema,
+the gate contributor, and the loader contract.
 
 **The gate is configurable.** Which contributors execute and gate a run is
 selectable, generalizing the old `--judge` flag: set `eval.gate` in

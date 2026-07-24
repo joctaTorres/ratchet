@@ -9,9 +9,11 @@
  */
 
 import { CommandAdapterRegistry } from '../../command-generation/index.js';
-import { rctCommandIdForTransition, DECOMPOSE_COMMAND_ID } from './skill-locus.js';
+import { rctCommandIdForTransition, DECOMPOSE_COMMAND_ID, PR_OPEN_COMMAND_ID } from './skill-locus.js';
 import { DEFAULT_AGENT } from './agent.js';
-import type { ChangeStepContext, DecompositionStepContext } from './contract.js';
+import { resolveAgentForStage, parseAgentSpec } from '../agent-setting.js';
+import type { ChangeStepContext, DecompositionStepContext, PrStepContext } from './contract.js';
+import type { PrGroupBoundary } from './boundary.js';
 
 /**
  * Resolve the `/rct:<transition> <change>` skill-invocation token the spawned
@@ -39,7 +41,16 @@ import type { ChangeStepContext, DecompositionStepContext } from './contract.js'
  */
 function rctInvocation(context: ChangeStepContext): string {
   const commandId = rctCommandIdForTransition(context.transition);
-  const agentId = context.settings.agent ?? DEFAULT_AGENT;
+  // Resolve the invocation token for the SAME per-stage agent the engine spawns
+  // for this transition, so a stage routed to a non-default agent is handed that
+  // agent's invocation syntax (not the default agent's). Falls back to
+  // `DEFAULT_AGENT` for an unmapped stage / unset agent exactly as before. The
+  // resolved value is a whole `agent[:model]` spec string; the invocation token
+  // keys on the AGENT PART alone, so a spec-form value routes exactly like its
+  // bare name — never the default agent's syntax for a spec-form stage.
+  const resolved = resolveAgentForStage(context.settings.agent, context.transition);
+  const agentId =
+    (resolved !== undefined ? parseAgentSpec(resolved).agent : undefined) ?? DEFAULT_AGENT;
   const adapter =
     CommandAdapterRegistry.get(agentId) ?? CommandAdapterRegistry.get(DEFAULT_AGENT)!;
   const base = `${adapter.getInvocation(commandId)} ${context.change}`;
@@ -231,7 +242,16 @@ export function decompositionJournalKey(phase: string): string {
  * adapter rather than an inline string.
  */
 function rctDecomposeInvocation(context: DecompositionStepContext): string {
-  const agentId = context.settings.agent ?? DEFAULT_AGENT;
+  // Resolve the invocation token for the SAME per-stage agent the engine spawns
+  // for the decompose step, so a stage routed to a non-default agent is handed
+  // that agent's invocation syntax (not the default agent's). Falls back to
+  // `DEFAULT_AGENT` for an unmapped stage / unset agent exactly as before. The
+  // resolved value is a whole `agent[:model]` spec string; the invocation token
+  // keys on the AGENT PART alone, so a spec-form value routes exactly like its
+  // bare name — never the default agent's syntax for a spec-form setting.
+  const resolved = resolveAgentForStage(context.settings.agent, 'decompose');
+  const agentId =
+    (resolved !== undefined ? parseAgentSpec(resolved).agent : undefined) ?? DEFAULT_AGENT;
   const adapter =
     CommandAdapterRegistry.get(agentId) ?? CommandAdapterRegistry.get(DEFAULT_AGENT)!;
   const base = `${adapter.getInvocation(DECOMPOSE_COMMAND_ID)} ${context.phase.name}`;
@@ -379,5 +399,149 @@ export function buildDecompositionInstructions(context: DecompositionStepContext
   if (resume) sections.push('', resume);
 
   sections.push('', reportChannel(context.batch, key));
+  return sections.join('\n');
+}
+
+/**
+ * The journal `change` key a PR-open step reports under. A PR step has no
+ * `change`, so — like a decomposition or proof-of-work entry — it is keyed off the
+ * BATCH; the `pr:` prefix keeps it from colliding with a change's own name
+ * (mirroring {@link decompositionJournalKey} and the `proof-of-work:` prefix). The
+ * PR agent reports with `ratchet batch report <batch> --change <prJournalKey> ...`
+ * and the engine snapshots that key — the same single channel a change step uses,
+ * keyed by batch rather than change.
+ *
+ * Under a STACKED grouping mode (`per-phase`/`per-change`) each fired group needs
+ * its OWN key so a resumed loop opens every group exactly once and distinct groups
+ * are guarded independently. Passing the fired `boundary` returns
+ * `pr:<batch>:<groupId>` for a `phase`/`change` group; the whole-batch group (no
+ * boundary, or `kind: 'batch'`) keeps its existing `pr:<batch>` key UNCHANGED, so
+ * Phase 2 whole-batch behavior and its tests are byte-identical. The boundary
+ * carries only the group IDENTITY; the engine reads it here rather than
+ * re-deriving which group fired.
+ */
+export function prJournalKey(batch: string, boundary?: PrGroupBoundary): string {
+  if (!boundary || boundary.kind === 'batch') return `pr:${batch}`;
+  return `pr:${batch}:${boundary.groupId}`;
+}
+
+/**
+ * Resolve the `/rct:open-pr` skill-invocation token the spawned PR agent should
+ * run. The command id is the single-source {@link PR_OPEN_COMMAND_ID} the
+ * spawn-locus guarantee also renders, and the invocation TOKEN is resolved through
+ * the agent the `pr` STAGE maps to (`resolveAgentForStage(settings.agent, 'pr')`) —
+ * claude `/rct:<id>`, others `/rct-<id>` — never a hard-coded literal, so a `pr`
+ * stage routed to a non-default agent is handed that agent's own invocation syntax
+ * (`multi-agent-support`). Falls back to `DEFAULT_AGENT`'s adapter for an
+ * unmapped/unset agent (or a synthetic spawn stand-in with no adapter), exactly as
+ * {@link rctDecomposeInvocation} does. The `open-pr` command takes no positional
+ * argument — the work/base branch ride in the prompt as Input data, not the
+ * invocation — so the token stays the bare `/rct:open-pr`.
+ */
+function rctPrOpenInvocation(context: PrStepContext): string {
+  // The `pr` stage value is a whole `agent[:model]` spec string; the invocation
+  // token keys on the AGENT PART alone, so a spec-form value routes exactly like
+  // its bare name — never the default agent's syntax for a spec-form `pr` stage.
+  const resolved = resolveAgentForStage(context.settings.agent, 'pr');
+  const agentId =
+    (resolved !== undefined ? parseAgentSpec(resolved).agent : undefined) ?? DEFAULT_AGENT;
+  const adapter =
+    CommandAdapterRegistry.get(agentId) ?? CommandAdapterRegistry.get(DEFAULT_AGENT)!;
+  return adapter.getInvocation(PR_OPEN_COMMAND_ID);
+}
+
+/**
+ * The resolved work/base branch delivered to the PR agent as the "Input" data the
+ * `open-pr` body expects (`instruction-fed-config`): the static skill body says the
+ * surrounding instructions supply the work and base branch, and this supplies
+ * exactly that. The base is a GENERAL supplied value passed through VERBATIM —
+ * whatever the `PrStepContext` carries: the repository's default branch for a
+ * whole-batch PR, or an arbitrary stacked sibling branch (the previous group's
+ * branch) for a per-phase / per-change stacked PR. This assembly derives nothing
+ * from git and never falls back to the default branch or the work branch's
+ * upstream; the resolved base is the SOLE PR target, delivered as prompt data. The
+ * engine never bakes an "if config says X" branch into the skill body — resolved
+ * behavior arrives here as data, so a later change can inject the computed stacked
+ * base with no edit to the shared command.
+ */
+function prInputContext(context: PrStepContext): string {
+  return [
+    'Input for the open-pr command (the branches are already resolved for you):',
+    `  Work branch: ${context.workBranch}`,
+    `  Base branch: ${context.baseBranch}`,
+    `Open EXACTLY ONE pull request FROM the work branch "${context.workBranch}" TO`,
+    `the supplied base branch "${context.baseBranch}". This base is the sole target —`,
+    'do not invent, infer, or re-derive it from git, the repository default branch,',
+    "the work branch's upstream, or config; use exactly the base given here.",
+  ].join('\n');
+}
+
+/**
+ * Delegate the whole-batch PR-open step to the canonical `/rct:open-pr` skill
+ * rather than re-authoring the commit/push/PR-open steps inline
+ * (`delegated-lifecycle`: the engine orchestrates the spawn; the shared skill
+ * authors the PR steps). The prose is agent-neutral (names no coding agent and no
+ * forge CLI); only the invocation TOKEN is agent-specific, resolved through the
+ * `pr` stage's adapter in {@link rctPrOpenInvocation}.
+ */
+function prDelegationGuidance(context: PrStepContext): string {
+  const invocation = `  ${rctPrOpenInvocation(context)}`;
+  return [
+    'Open the pull request by invoking the ratchet open-pr skill — run:',
+    invocation,
+    'It loads the project standards under ".ratchet/standards/" and is the single',
+    "author of the PR-open steps: read `git log` for the repository's commit style",
+    '(defaulting to semantic / Conventional Commits), commit the prior stage agents\'',
+    'accumulated work, push the work branch, and open EXACTLY ONE pull request to its',
+    'base branch using whichever forge CLI the environment provides. Do NOT hand-build',
+    'or re-describe the commit/push/PR-open steps yourself — delegate to the skill and',
+    'use the work/base branch identified above as its Input.',
+  ].join('\n');
+}
+
+/**
+ * A short, human-readable scope for the PR step's intro line, derived from the
+ * fired group boundary: the completed batch for a whole-batch step (no boundary or
+ * `kind: 'batch'`), or the completed phase/change group otherwise. Framing only —
+ * the authoritative branches ride in {@link prInputContext} as data.
+ */
+function prScopeDescription(boundary?: PrGroupBoundary): string {
+  if (!boundary || boundary.kind === 'batch') return 'the completed batch';
+  return `the completed ${boundary.kind} group "${boundary.groupId}"`;
+}
+
+/**
+ * Build the spawned agent's instructions for ONE PR-open step. Unlike
+ * {@link buildAgentInstructions} (a per-change transition) it directs the agent to
+ * commit the accumulated work and open a single pull request by delegating to the
+ * canonical `/rct:open-pr` skill. The terminal phase framing and the resolved
+ * work/base branch are injected as the delegation's Input, so the delegation is
+ * context-preserving and never a bare, context-free skill call
+ * (`delegated-lifecycle` / `instruction-fed-config`).
+ *
+ * Under a stacked grouping mode the step opens ONE group's PR (the fired
+ * `boundary`), stacked on the previous group via the resolved `baseBranch`; a
+ * whole-batch step (no boundary) opens the single batch-wide PR. Either way the
+ * agent still delegates to the shared command — the group scope is data, not a
+ * re-authored prompt.
+ */
+export function buildPrInstructions(context: PrStepContext): string {
+  const key = prJournalKey(context.batch, context.boundary);
+  const scope = prScopeDescription(context.boundary);
+  const sections = [
+    `You are advancing the ratchet batch "${context.batch}".`,
+    `Perform EXACTLY ONE step: open the single pull request for ${scope}.`,
+    `You MUST finish by running \`ratchet batch report ${context.batch} --change ${key} --complete "<summary>"\` — without it this step is treated as unreported and parked.`,
+    '',
+    `Active phase: ${context.phase.name}`,
+    `Phase goal: ${context.phase.goal}`,
+    `Phase success criteria: ${context.phase.success}`,
+    '',
+    prInputContext(context),
+    '',
+    prDelegationGuidance(context),
+    '',
+    reportChannel(context.batch, key),
+  ];
   return sections.join('\n');
 }

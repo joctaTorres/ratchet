@@ -5,6 +5,7 @@ import os from 'os';
 import {
   computeNextTransition,
   readChangeDiskState,
+  hasJournaledPr,
 } from '../../src/core/batch/engine/transition.js';
 import type { JournalEntry } from 'ratchet-ai';
 
@@ -72,5 +73,35 @@ describe('computeNextTransition', () => {
     await fs.mkdir(path.join(changesDir, 'archive', 'c'), { recursive: true });
     expect(computeNextTransition(projectRoot, 'c')).toBeUndefined();
     expect(readChangeDiskState(projectRoot, 'c').archived).toBe(true);
+  });
+});
+
+describe('hasJournaledPr', () => {
+  const at = '2026-01-01T00:00:00Z';
+
+  it('is true only for a completion entry whose transition is pr', () => {
+    const journal: JournalEntry[] = [
+      { at, change: 'pr:b', kind: 'completion', message: 'opened', transition: 'pr' },
+    ];
+    expect(hasJournaledPr(journal)).toBe(true);
+  });
+
+  it('is false for a pr blocker entry (a failed PR-open leaves the flag unset)', () => {
+    const journal: JournalEntry[] = [
+      { at, change: 'pr:b', kind: 'blocker', message: 'commit failed', transition: 'pr' },
+    ];
+    expect(hasJournaledPr(journal)).toBe(false);
+  });
+
+  it('is false for a verify completion (a different transition)', () => {
+    const journal: JournalEntry[] = [
+      { at, change: 'c', kind: 'completion', message: 'verified', transition: 'verify' },
+    ];
+    expect(hasJournaledPr(journal)).toBe(false);
+  });
+
+  it('defaults to false for an empty journal', () => {
+    expect(hasJournaledPr()).toBe(false);
+    expect(hasJournaledPr([])).toBe(false);
   });
 });

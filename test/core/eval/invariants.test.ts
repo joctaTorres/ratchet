@@ -1,4 +1,5 @@
 // Implements features/eval-invariants/manifest-loader.feature
+// Implements features/eval-invariants/mutation-kind.feature
 import { afterEach, describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -119,6 +120,122 @@ describe('loadInvariantManifest', () => {
     } else {
       throw new Error('expected snapshot');
     }
+  });
+
+  // Scenario: Load a mutation invariant exposing its test/budget/threshold fields
+  it('loads a mutation invariant exposing its test/budget/threshold fields', () => {
+    const root = makeProject();
+    writeManifest(
+      root,
+      `invariants:
+  - id: mutants-are-killed
+    kind: mutation
+    active: true
+    test: "pnpm test"
+    budget: 5
+    threshold: 3
+`
+    );
+    const mut = loadInvariantManifest(root).invariants[0];
+    if (mut.kind !== 'mutation') throw new Error('expected mutation');
+    expect(mut.test).toBe('pnpm test');
+    expect(mut.budget).toBe(5);
+    expect(mut.threshold).toBe(3);
+  });
+
+  // Scenario: A mutation invariant coexists with the existing three kinds
+  it('loads all four kinds together, each still exposing its own fields', () => {
+    const root = makeProject();
+    writeManifest(
+      root,
+      `invariants:
+  - id: det
+    kind: deterministic
+    active: true
+    check:
+      run: "pnpm lint"
+  - id: mono
+    kind: monotonic
+    active: true
+    measure: scenario-count
+  - id: snap
+    kind: snapshot
+    active: true
+    golden: golden/api.txt
+    produce:
+      run: "produce-api"
+  - id: mut
+    kind: mutation
+    active: true
+    test: "pnpm test"
+    budget: 5
+    threshold: 3
+`
+    );
+    const { invariants } = loadInvariantManifest(root);
+    expect(invariants.map((i) => i.kind)).toEqual([
+      'deterministic',
+      'monotonic',
+      'snapshot',
+      'mutation',
+    ]);
+    const [det, mono, snap, mut] = invariants;
+    if (det.kind !== 'deterministic') throw new Error('expected deterministic');
+    expect(det.check.run).toBe('pnpm lint');
+    if (mono.kind !== 'monotonic') throw new Error('expected monotonic');
+    expect(mono.measure).toBe('scenario-count');
+    if (snap.kind !== 'snapshot') throw new Error('expected snapshot');
+    expect(snap.golden).toBe('golden/api.txt');
+    if (mut.kind !== 'mutation') throw new Error('expected mutation');
+    expect(mut.test).toBe('pnpm test');
+    expect(mut.budget).toBe(5);
+    expect(mut.threshold).toBe(3);
+  });
+
+  // Scenario Outline: A mutation invariant missing a required field fails closed
+  it.each(['test', 'budget', 'threshold'])(
+    'throws naming the mutation invariant that omits %s',
+    (field) => {
+      const root = makeProject();
+      const fields: Record<string, string> = {
+        test: 'test: "pnpm test"',
+        budget: 'budget: 5',
+        threshold: 'threshold: 3',
+      };
+      delete fields[field];
+      writeManifest(
+        root,
+        `invariants:
+  - id: missing-${field}
+    kind: mutation
+    active: true
+    ${Object.values(fields).join('\n    ')}
+`
+      );
+      expect(() => loadInvariantManifest(root)).toThrow(InvariantManifestError);
+      expect(() => loadInvariantManifest(root)).toThrow(new RegExp(`missing-${field}`));
+    }
+  );
+
+  // Scenario Outline: A non-positive budget or threshold fails closed
+  it.each(['budget', 'threshold'])('throws when mutation %s is 0', (field) => {
+    const root = makeProject();
+    const fields: Record<string, string> = {
+      budget: 'budget: 5',
+      threshold: 'threshold: 3',
+    };
+    fields[field] = `${field}: 0`;
+    writeManifest(
+      root,
+      `invariants:
+  - id: zero-${field}
+    kind: mutation
+    active: true
+    test: "pnpm test"
+    ${Object.values(fields).join('\n    ')}
+`
+    );
+    expect(() => loadInvariantManifest(root)).toThrow(InvariantManifestError);
   });
 
   it('defaults a deterministic check pass condition to exit-zero', () => {

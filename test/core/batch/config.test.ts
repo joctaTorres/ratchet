@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -155,6 +155,137 @@ describe('resolveBatchSettings', () => {
     expect(settings.image).toBe('manifest/image:2');
     expect(sources.image).toBe('manifest');
   });
+
+  it('resolves a scalar agent from project config (whole-value, source project)', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  agent: opencode\n');
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toBe('opencode');
+    expect(sources.agent).toBe('project');
+  });
+
+  it('resolves a per-stage agent map from project config', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  agent:\n    propose: claude\n    apply: opencode\n    verify: opencode\n'
+    );
+    const { settings, sources } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toEqual({
+      propose: 'claude',
+      apply: 'opencode',
+      verify: 'opencode',
+    });
+    expect(sources.agent).toBe('project');
+  });
+
+  it('merges a manifest agent map over a project scalar base per stage', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  agent: claude\n');
+    const manifest = {
+      name: 'q3-auth',
+      phases: [],
+      settings: { agent: { apply: 'opencode' } },
+    } as unknown as BatchManifest;
+    const { settings, sources } = resolveBatchSettings(projectRoot, manifest);
+    // Per-stage cross-scope merge: the manifest's partial map overrides `apply`,
+    // and the project scalar base covers the stages it does not name (propose,
+    // verify, pr, and decompose) — so the value materializes to a full map
+    // preserving the scalar fallback per stage.
+    expect(settings.agent).toEqual({
+      propose: 'claude',
+      apply: 'opencode',
+      verify: 'claude',
+      pr: 'claude',
+      decompose: 'claude',
+    });
+    expect(sources.agent).toBe('manifest');
+  });
+
+  // -------------------------------------------------------------------------
+  // agentStageScopes: per-stage supplying-scope attribution for the `agent`
+  // setting (features/model-failure-attribution/unchanged-surfaces.feature —
+  // "Exposing per-stage scopes changes no resolved setting"). Asserts the scope
+  // matches the supplying scope per stage AND that resolved `settings`/`sources`
+  // equal today's values byte-for-byte.
+  // -------------------------------------------------------------------------
+  it('exposes agentStageScopes attributing every stage to the project for a project scalar', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  agent: claude:fable\n');
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toBe('claude:fable');
+    expect(sources.agent).toBe('project');
+    expect(agentStageScopes).toEqual({
+      propose: 'project',
+      apply: 'project',
+      verify: 'project',
+      pr: 'project',
+      decompose: 'project',
+    });
+  });
+
+  it('exposes agentStageScopes attributing every stage to the manifest for a manifest scalar', async () => {
+    await writeConfig('schema: ratchet\n');
+    const manifest = {
+      name: 'q3-auth',
+      phases: [],
+      settings: { agent: 'claude:fable' },
+    } as unknown as BatchManifest;
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot, manifest);
+    expect(settings.agent).toBe('claude:fable');
+    expect(sources.agent).toBe('manifest');
+    expect(agentStageScopes).toEqual({
+      propose: 'manifest',
+      apply: 'manifest',
+      verify: 'manifest',
+      pr: 'manifest',
+      decompose: 'manifest',
+    });
+  });
+
+  it('exposes agentStageScopes attributing only the named stages to project for a project stage-map', async () => {
+    await writeConfig(
+      'schema: ratchet\nbatch:\n  agent:\n    propose: claude\n    apply: opencode\n'
+    );
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toEqual({ propose: 'claude', apply: 'opencode' });
+    expect(sources.agent).toBe('project');
+    // Only the stages the map named are attributed; the unnamed stages are absent
+    // (no config scope supplied them — the caller's default agent did).
+    expect(agentStageScopes).toEqual({ propose: 'project', apply: 'project' });
+  });
+
+  it('exposes agentStageScopes for a mixed project-scalar + manifest-map layering', async () => {
+    await writeConfig('schema: ratchet\nbatch:\n  agent: claude\n');
+    const manifest = {
+      name: 'q3-auth',
+      phases: [],
+      settings: { agent: { apply: 'opencode:zai/glm-5.2' } },
+    } as unknown as BatchManifest;
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot, manifest);
+    // Byte-for-byte today's merge: the manifest partial map overrides `apply`,
+    // the project scalar covers the rest.
+    expect(settings.agent).toEqual({
+      propose: 'claude',
+      apply: 'opencode:zai/glm-5.2',
+      verify: 'claude',
+      pr: 'claude',
+      decompose: 'claude',
+    });
+    expect(sources.agent).toBe('manifest');
+    // Attribution mirrors the merge: `apply` → manifest (the nearer map named
+    // it), the rest → project (the scalar base covered them).
+    expect(agentStageScopes).toEqual({
+      propose: 'project',
+      apply: 'manifest',
+      verify: 'project',
+      pr: 'project',
+      decompose: 'project',
+    });
+  });
+
+  it('exposes an empty agentStageScopes when no scope supplies an agent', async () => {
+    await writeConfig('schema: ratchet\n');
+    const { settings, sources, agentStageScopes } = resolveBatchSettings(projectRoot);
+    expect(settings.agent).toBeUndefined();
+    expect(sources.agent).toBe('default');
+    expect(agentStageScopes).toEqual({});
+  });
 });
 
 describe('validateSetting', () => {
@@ -218,6 +349,48 @@ describe('validateSetting', () => {
     const blank = validateSetting('image', '   ');
     expect(blank.ok).toBe(false);
   });
+
+  // -------------------------------------------------------------------------
+  // `agent` write-path validation (write-path-validation.feature): the write
+  // path validates through the SAME shared schema the loaders use
+  // (AgentSettingSchema's superRefine routes every string position through
+  // parseAgentSpec), so it can never persist what the loader rejects.
+  // -------------------------------------------------------------------------
+  describe('agent spec validation (write path)', () => {
+    it.each(['claude:', ':fable', 'claude: opus', 'claude :m', 'claude:-flag'])(
+      'rejects malformed scalar %j naming the value',
+      (value) => {
+        const result = validateSetting('agent', value);
+        expect(result.ok).toBe(false);
+        expect(result.error).toContain(value);
+      }
+    );
+
+    it('rejects a malformed per-stage entry in an inline map naming the stage and value', () => {
+      const result = validateSetting('agent', "{apply: 'claude:'}");
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('apply');
+      expect(result.error).toContain('claude:');
+    });
+
+    it('accepts a valid scalar spec', () => {
+      const result = validateSetting('agent', 'opencode:zai/glm-5.2');
+      expect(result.ok).toBe(true);
+      expect(result.parsedValue).toBe('opencode:zai/glm-5.2');
+    });
+
+    it('accepts a bare agent name', () => {
+      const result = validateSetting('agent', 'claude');
+      expect(result.ok).toBe(true);
+      expect(result.parsedValue).toBe('claude');
+    });
+
+    it('accepts a valid inline stage map and returns a parsed map', () => {
+      const result = validateSetting('agent', "{apply: opencode, verify: 'claude:fable'}");
+      expect(result.ok).toBe(true);
+      expect(result.parsedValue).toEqual({ apply: 'opencode', verify: 'claude:fable' });
+    });
+  });
 });
 
 describe('setProjectBatchSetting', () => {
@@ -267,6 +440,66 @@ describe('setProjectBatchSetting', () => {
     // YAML reads a numeric string back as a number.
     expect(parsed.batch.port).toBe(8123);
     expect(parsed.batch.authToken).toBe('tok');
+  });
+
+  // -------------------------------------------------------------------------
+  // `agent` write-path (write-path-validation.feature): a malformed agent
+  // value leaves the config file byte-for-byte unchanged; a valid inline map
+  // persists as a real YAML map the loader round-trips with no warning; a
+  // valid scalar persists as a plain string.
+  // -------------------------------------------------------------------------
+  it('leaves the config file byte-for-byte unchanged when agent=claude: is rejected', async () => {
+    const original = 'schema: ratchet\nbatch:\n  gate: after-propose\n';
+    await writeConfig(original);
+    const result = setProjectBatchSetting(projectRoot, 'agent', 'claude:');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('claude:');
+    const after = readFileSync(
+      path.join(projectRoot, '.ratchet', 'config.yaml'),
+      'utf-8'
+    );
+    expect(after).toBe(original);
+  });
+
+  it('persists a valid inline stage map as a real YAML map the loader round-trips with no warning', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await writeConfig('schema: ratchet\n');
+      const result = setProjectBatchSetting(
+        projectRoot,
+        'agent',
+        "{apply: opencode, verify: 'claude:fable'}"
+      );
+      expect(result.ok).toBe(true);
+      const parsed = parseYaml(
+        readFileSync(path.join(projectRoot, '.ratchet', 'config.yaml'), 'utf-8')
+      );
+      // Persisted as a real map, not a quoted string.
+      expect(parsed.batch.agent).toEqual({ apply: 'opencode', verify: 'claude:fable' });
+      expect(typeof parsed.batch.agent).toBe('object');
+      // The loader round-trips it with no warning.
+      const { readProjectConfig } = await import('../../../src/core/project-config.js');
+      const loaded = readProjectConfig(projectRoot);
+      expect(loaded?.batch?.agent).toEqual({
+        apply: 'opencode',
+        verify: 'claude:fable',
+      });
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("Invalid 'batch")
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('persists a valid scalar agent as a plain string', async () => {
+    await writeConfig('schema: ratchet\n');
+    const result = setProjectBatchSetting(projectRoot, 'agent', 'opencode:zai/glm-5.2');
+    expect(result.ok).toBe(true);
+    const parsed = parseYaml(
+      readFileSync(path.join(projectRoot, '.ratchet', 'config.yaml'), 'utf-8')
+    );
+    expect(parsed.batch.agent).toBe('opencode:zai/glm-5.2');
   });
 });
 

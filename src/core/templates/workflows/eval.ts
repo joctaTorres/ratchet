@@ -40,7 +40,7 @@ const EVAL_BODY = `Run the engine-backed eval suite, surface regressions, and cl
 4. **Help author bindings for unjudged cases**
    For each \`unbound\` / \`unjudged\` case, guide authoring an eval-spec binding under \`.ratchet/evals/specs/\` that names a fixture under \`.ratchet/evals/fixtures/<name>/\` and a judging check:
    - **Prefer a \`deterministic\` binding**: a bash command run against the fixture working copy with a pass condition (\`exit-zero\`, \`contains:<text>\`, or \`regex:<pattern>\`). Deterministic checks are reproducible and need no agent.
-   - **Fall back to an \`llm-judge\` binding** only when no deterministic check fits: provide the \`success\` criteria the spawned judge must satisfy, and optionally \`agentVotes\` for N-of-M majority voting. The llm-judge fails closed on missing evidence, and a disagreeing vote records \`unjudged\` rather than a false failure.
+   - **Fall back to an \`llm-judge\` binding** only when no deterministic check fits: provide the \`success\` criteria the spawned judge must satisfy, and optionally a \`jury: { votes, quorum }\` block (default 1 vote, majority quorum) to cast repeat votes under majority or unanimous agreement. The llm-judge fails closed on missing evidence, and a sub-quorum vote records \`unjudged\` rather than a false failure.
    - If a fixture needs bootstrapping, declare a one-time \`setup\` command; it runs once into a cached working copy reused across cases.
 
    Use a structured-question tool such as AskUserQuestion if your agent has one when you need the user to choose a fixture or check; otherwise ask in plain prose.

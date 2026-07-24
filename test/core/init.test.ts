@@ -133,6 +133,43 @@ describe('InitCommand', () => {
       expect(specNotWeakened.measure).toBe('scenario-count');
     });
 
+    // features/ratchet-init/gitignore-eval-runs.feature
+    it('should add .ratchet/evals/runs/ to a fresh project .gitignore', async () => {
+      const initCommand = new InitCommand({ tools: 'claude', force: true });
+
+      await initCommand.execute(testDir);
+
+      const gitignorePath = path.join(testDir, '.gitignore');
+      expect(await fileExists(gitignorePath)).toBe(true);
+      const content = await fs.readFile(gitignorePath, 'utf-8');
+      expect(content).toContain('.ratchet/evals/runs/');
+    });
+
+    // features/ratchet-init/gitignore-eval-runs.feature
+    it('should not duplicate the eval-runs .gitignore entry on re-init', async () => {
+      await new InitCommand({ tools: 'claude', force: true }).execute(testDir);
+      await new InitCommand({ tools: 'claude', force: true }).execute(testDir);
+
+      const gitignorePath = path.join(testDir, '.gitignore');
+      const content = await fs.readFile(gitignorePath, 'utf-8');
+      const occurrences = content.split('\n').filter((line) => line.trim() === '.ratchet/evals/runs/').length;
+      expect(occurrences).toBe(1);
+    });
+
+    // features/ratchet-init/gitignore-eval-runs.feature
+    it('should preserve an existing .gitignore and append the eval-runs entry only once', async () => {
+      const gitignorePath = path.join(testDir, '.gitignore');
+      await fs.writeFile(gitignorePath, 'node_modules/\ndist/\n');
+
+      await new InitCommand({ tools: 'claude', force: true }).execute(testDir);
+
+      const content = await fs.readFile(gitignorePath, 'utf-8');
+      expect(content).toContain('node_modules/');
+      expect(content).toContain('dist/');
+      const occurrences = content.split('\n').filter((line) => line.trim() === '.ratchet/evals/runs/').length;
+      expect(occurrences).toBe(1);
+    });
+
     it('should leave a user-edited invariants.yaml unchanged byte-for-byte on re-init', async () => {
       const initCommand1 = new InitCommand({ tools: 'claude', force: true });
       await initCommand1.execute(testDir);

@@ -8,19 +8,25 @@
  * `unjudged` (the reason names the disabled contributor) instead of being
  * executed — no fixture is materialized and no judge is spawned for it — so the
  * run stays **incomplete** and cannot be promoted to baseline. Unbound cases are
- * recorded `unjudged` too, never passed. The judge seams are injected so tests
- * never shell out or spawn.
+ * recorded `unjudged` too, never passed. A case matching a skip filter
+ * (`options.skip` or its `@skip` tag) is recorded `skipped` before binding
+ * resolution — an intentional, counted exclusion, not an incompleteness — unless
+ * `options.includeSkipped` is set. The judge seams are injected so tests never
+ * shell out or spawn.
  */
 
 import { enumerateEvalSet, type EvalCase, type EvalScope } from './set.js';
 import { loadEvalSpecs, resolveBinding, type ResolvedBinding } from './spec.js';
 import { FixtureManager, type FixtureManagerDeps } from './fixture.js';
-import { judgeCase, type JudgeDeps } from './judge.js';
+import { judgeCase, type CaseVerdict, type JudgeDeps } from './judge.js';
 import { ALL_CONTRIBUTOR_IDS } from './gate.js';
-import type { ContributorId } from './aggregate.js';
+import { resolveSkip, type SkipReason } from './skip.js';
+import { filterCasesByHoldout } from './holdout.js';
+import { contributorForBindingKind, type ContributorId } from './aggregate.js';
 import {
   generateRunId,
   persistRun,
+  persistCaseArtifacts,
   toSnapshot,
   type EvalRun,
   type CaseRecord,
@@ -36,6 +42,16 @@ export interface RunOptions {
   /** Injected judge seams (bash/spawner) for deterministic tests. */
   judge?: JudgeDeps;
   fixtures?: FixtureManagerDeps;
+  /** Project-level `eval.skip` glob patterns, matched against the case id. */
+  skip?: string[];
+  /** Override both skip sources (config patterns and the in-file `@skip` tag) for this run. */
+  includeSkipped?: boolean;
+  /**
+   * Restrict the enumerated case set to only held-out (`true`) or only
+   * non-held-out (`false`) cases via `filterCasesByHoldout`; `undefined`
+   * (no flag) leaves the set unchanged.
+   */
+  holdout?: boolean;
   /** Override the run id / clock (tests). */
   runId?: string;
   now?: Date;
@@ -63,7 +79,26 @@ function disabledContributor(contributor: ContributorId): CaseRecord {
   };
 }
 
+/** Flatten a {@link SkipReason} into the human-readable sentence persisted on `CaseRecord.reason`. */
+function flattenSkipReason(reason: SkipReason): string {
+  return reason.source === 'tag'
+    ? `Skipped: tagged @skip in ${reason.detail}.`
+    : `Skipped: matched eval.skip pattern '${reason.detail}'.`;
+}
+
+/** Record a case excluded by a skip filter: an intentional, counted exclusion, never an unjudged incompleteness. */
+function skipped(reason: SkipReason): CaseRecord {
+  return {
+    verdict: 'skipped',
+    reason: flattenSkipReason(reason),
+    source: 'judged',
+    skip: { source: reason.source, detail: reason.detail },
+  };
+}
+
 async function judgeBound(
+  projectRoot: string,
+  runId: string,
   c: EvalCase,
   bound: ResolvedBinding,
   fixtures: FixtureManager,
@@ -72,12 +107,26 @@ async function judgeBound(
   const { cwd } = await fixtures.materialize(bound.binding.fixture, bound.binding.setup);
   // The gate already decided this case runs; judge it by its bound kind.
   const verdict = await judgeCase(c, bound.binding, cwd, judge);
-  return { verdict: verdict.verdict, reason: verdict.reason, source: 'judged' };
+  const artifacts = verdict.artifacts ? persistCaseArtifacts(projectRoot, runId, c.id, verdict.artifacts) : undefined;
+  return {
+    verdict: verdict.verdict,
+    reason: summarizeEvidence(verdict.evidence),
+    source: 'judged',
+    rubric: verdict.rubric,
+    clauses: verdict.evidence,
+    votes: verdict.votes,
+    ...(artifacts ? { artifacts } : {}),
+  };
+}
+
+/** Flatten the structured per-clause evidence into the single `reason` string `CaseRecord` persists. */
+function summarizeEvidence(evidence: CaseVerdict['evidence']): string {
+  return evidence.map((cl) => `[${cl.pass ? 'pass' : 'fail'}] ${cl.clause}: ${cl.evidence}`).join('\n');
 }
 
 /** Run the eval over the in-scope set and persist the result. */
 export async function executeRun(projectRoot: string, options: RunOptions): Promise<RunOutcome> {
-  const cases = enumerateEvalSet(projectRoot, options.scope);
+  const cases = filterCasesByHoldout(enumerateEvalSet(projectRoot, options.scope), options.holdout);
   const specs = loadEvalSpecs(projectRoot);
   const fixtures = new FixtureManager(projectRoot, options.fixtures);
 
@@ -91,16 +140,24 @@ export async function executeRun(projectRoot: string, options: RunOptions): Prom
   };
 
   for (const c of cases) {
+    if (!options.includeSkipped) {
+      const skipReason = resolveSkip(c, options.skip);
+      if (skipReason) {
+        run.cases.push(toSnapshot(c, null));
+        run.verdicts[c.id] = skipped(skipReason);
+        continue;
+      }
+    }
     const bound = resolveBinding(specs, c.id);
     run.cases.push(toSnapshot(c, bound?.binding.kind ?? null));
     if (!bound) {
       run.verdicts[c.id] = { ...UNBOUND };
       continue;
     }
-    // A bound case's contributor is its binding kind (deterministic | llm-judge).
-    const contributor = bound.binding.kind as ContributorId;
+    // A bound case's contributor is its binding kind, folded through the shared mapping.
+    const contributor = contributorForBindingKind(bound.binding.kind);
     run.verdicts[c.id] = options.gate.has(contributor)
-      ? await judgeBound(c, bound, fixtures, options.judge ?? {})
+      ? await judgeBound(projectRoot, run.runId, c, bound, fixtures, options.judge ?? {})
       : disabledContributor(contributor);
   }
 

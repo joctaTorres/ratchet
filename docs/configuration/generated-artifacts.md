@@ -24,6 +24,9 @@ sidebar_position: 2
 └── config.yaml             # project config (schema + optional context/rules)
 ```
 
+`init` also ensures the project-root `.gitignore` ignores the transient eval
+run-records directory (see the table below).
+
 | Path | Description |
 |---|---|
 | `features/` | Permanent Gherkin feature store. `ratchet archive` copies a change's `.feature` files here by whole-file replacement. Organized by capability: `features/<capability>/<name>.feature`. |
@@ -34,6 +37,7 @@ sidebar_position: 2
 | `evals/specs/` | YAML eval-spec files. Each file maps case IDs to judge bindings (`fixture`, `kind`, `check` or `success`). Read by `ratchet eval`. |
 | `evals/fixtures/` | Checked-in fixture codebases. Each fixture is a directory (`evals/fixtures/<name>/`) that eval materializes into a throwaway working copy before judging. |
 | `config.yaml` | Project configuration. Contains at minimum `schema: ratchet`. May include `batch.permissions` for agent sandbox policy. Created by `init` when it does not already exist; never overwritten on re-runs. |
+| `.gitignore` (project root) | `init` idempotently ensures the project-root `.gitignore` contains `.ratchet/evals/runs/`, so transient eval run records never dirty the working tree or the mutation invariant gate. The file is created if absent and the entry appended only if missing; a re-run never duplicates it. |
 
 ## Per-tool skills and commands
 
@@ -72,7 +76,7 @@ Each command is a Markdown file with YAML frontmatter. The file path and frontma
 
 ### Workflows: core profile vs. eval opt-in
 
-The `core` profile (the default) installs ten workflows. The `eval` workflow is opt-in and only installed when a `custom` profile explicitly lists it.
+The `core` profile (the default) installs eleven workflows. The `eval` workflow is opt-in and only installed when a `custom` profile explicitly lists it.
 
 **Core profile workflows** (installed by `ratchet init` by default):
 
@@ -88,12 +92,24 @@ The `core` profile (the default) installs ten workflows. The `eval` workflow is 
 | `archive-batch` | `ratchet-archive-batch` | `archive-batch` |
 | `propose-batch` | `ratchet-propose-batch` | `propose-batch` |
 | `decompose-phase` | `ratchet-decompose-phase` | `decompose-phase` |
+| `open-pr` | `ratchet-open-pr` | `open-pr` |
+
+The `open-pr` command is also the artifact the batch engine renders into the spawn
+locus for the whole-batch PR step: at batch completion the engine spawns a PR agent
+that delegates to `/rct:open-pr` to commit the accumulated work in the repo's
+`git log` commit style, push the work branch, and open exactly one forge-agnostic PR
+to its base branch. Like every command it is generated for every tool above at the
+tool's command path (e.g. claude `.claude/commands/rct/open-pr.md`, cursor
+`.cursor/commands/rct-open-pr.md`).
 
 The `decompose-phase` command is also the artifact the batch engine renders into
 the spawn locus when `batch apply` drives a phase decomposition (it delegates to
 `/rct:decompose-phase <phase>` to author a reachable empty phase's change intents
-into `batch.yaml`). Like every command it is generated for every tool above at the
-tool's command path (e.g. claude `.claude/commands/rct/decompose-phase.md`, cursor
+into `batch.yaml`). The decomposition spawn routes through the `decompose` agent
+stage — so `agent.decompose` (or a scalar `agent`) selects which agent runs it,
+exactly as the `pr` stage selects the PR agent. Like every command it is
+generated for every tool above at the tool's command path (e.g. claude
+`.claude/commands/rct/decompose-phase.md`, cursor
 `.cursor/commands/rct-decompose-phase.md`).
 
 **Opt-in workflow** (custom profile only):

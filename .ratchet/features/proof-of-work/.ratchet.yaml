@@ -1,0 +1,3 @@
+features:
+  exit-zero-prefix.feature:
+    - documentation

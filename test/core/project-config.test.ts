@@ -411,6 +411,40 @@ context: |
       });
     });
 
+    // Implements features/eval-judge/jury-quorum-resolution.feature — the
+    // project-level `eval.jury` default is parsed field-by-field via the same
+    // resilient `eval` branch as `eval.gate`: a valid jury map is kept, an
+    // invalid one is warned-and-dropped.
+    describe('eval.jury default', () => {
+      it('keeps a valid eval.jury map of votes and quorum', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\neval:\n  jury:\n    votes: 3\n    quorum: unanimous\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.eval?.jury).toEqual({ votes: 3, quorum: 'unanimous' });
+        expect(consoleWarnSpy).not.toHaveBeenCalled();
+      });
+
+      it('warns and drops the eval section when the quorum value is not majority|unanimous', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\neval:\n  jury:\n    quorum: sometimes\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.eval).toBeUndefined();
+        expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid 'eval' field"));
+      });
+    });
+
     describe('.yml/.yaml precedence', () => {
       it('should prefer .yaml when both exist', () => {
         const configDir = path.join(tempDir, '.ratchet');
@@ -459,6 +493,117 @@ context: |
 
         expect(config).toBeNull();
         expect(consoleWarnSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    // -------------------------------------------------------------------------
+    // Per-key `batch:` section load (load-path-warning.feature): an invalid
+    // batch key is warned naming the key path and offending value (NOT the
+    // generic `check gate/strategy/proofOfWork values` text), and valid sibling
+    // settings are preserved instead of being silently reverted to defaults.
+    // Replaces the prior whole-section drop.
+    // -------------------------------------------------------------------------
+    describe('per-key batch load (resilient)', () => {
+      function writeYaml(body: string): void {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(configDir, 'config.yaml'), `schema: ratchet\n${body}`);
+      }
+
+      it('warns naming agent and "claude:" (not the generic text) and preserves valid siblings', () => {
+        writeYaml('batch:\n  gate: after-propose\n  locus: docker\n  agent: "claude:"\n');
+
+        const config = readProjectConfig(tempDir);
+
+        // The warning names `agent` and the offending value.
+        const warned = consoleWarnSpy.mock.calls
+          .map((c) => String(c[0]))
+          .filter((s) => s.includes('batch.agent'));
+        expect(warned.some((s) => s.includes('claude:'))).toBe(true);
+        // It does NOT use the generic gate/strategy/proofOfWork text.
+        expect(warned.every((s) => !s.includes('gate/strategy/proofOfWork'))).toBe(true);
+
+        // Valid siblings are preserved; only agent is dropped.
+        expect(config?.batch?.gate).toBe('after-propose');
+        expect(config?.batch?.locus).toBe('docker');
+        expect(config?.batch?.agent).toBeUndefined();
+      });
+
+      it('warns naming agent.apply and the value for a malformed per-stage map entry', () => {
+        writeYaml(
+          'batch:\n  gate: after-propose\n  agent:\n    apply: "claude :m"\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        const warned = consoleWarnSpy.mock.calls
+          .map((c) => String(c[0]))
+          .filter((s) => s.includes('batch.agent.apply'));
+        expect(warned.some((s) => s.includes('claude :m'))).toBe(true);
+        // The valid sibling survives; the malformed agent key is dropped.
+        expect(config?.batch?.gate).toBe('after-propose');
+      });
+
+      it('warns naming gate and "bogus" beside a valid agent and preserves the agent', () => {
+        writeYaml('batch:\n  gate: bogus\n  agent: claude:fable\n');
+
+        const config = readProjectConfig(tempDir);
+
+        const warned = consoleWarnSpy.mock.calls
+          .map((c) => String(c[0]))
+          .filter((s) => s.includes('batch.gate'));
+        expect(warned.some((s) => s.includes('bogus'))).toBe(true);
+
+        expect(config?.batch?.gate).toBeUndefined();
+        expect(config?.batch?.agent).toBe('claude:fable');
+      });
+
+      it('loads a fully valid batch section warning-free and value-identical', () => {
+        writeYaml(
+          'batch:\n  gate: after-propose\n  locus: docker\n  agent: claude:fable\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.batch).toEqual({
+          gate: 'after-propose',
+          locus: 'docker',
+          agent: 'claude:fable',
+        });
+        expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+          expect.stringContaining('batch')
+        );
+      });
+
+      it('never echoes the authToken value on failure (names the key only)', () => {
+        writeYaml('batch:\n  authToken: 123\n');
+
+        readProjectConfig(tempDir);
+
+        const warned = consoleWarnSpy.mock.calls
+          .map((c) => String(c[0]))
+          .filter((s) => s.includes('batch.authToken'));
+        expect(warned.length).toBeGreaterThan(0);
+        // The value is never echoed.
+        expect(warned.every((s) => !s.includes('123'))).toBe(true);
+      });
+
+      it('ignores prototype-chain key names without nuking the whole config', () => {
+        // `constructor`/`toString` live on Object.prototype, so a naive
+        // `key in shape` check would treat them as known keys and then call
+        // `.safeParse` on the inherited value, throwing and reverting the
+        // entire config to null. They must be ignored like any unknown key.
+        writeYaml('batch:\n  constructor: nope\n  toString: nope\n  gate: after-propose\n');
+
+        const config = readProjectConfig(tempDir);
+
+        // Config still parses; the valid sibling survives and the
+        // prototype-chain keys are silently ignored (partial schema).
+        expect(config).not.toBeNull();
+        expect(config?.batch?.gate).toBe('after-propose');
+        // The prototype-chain names never become own keys of the parsed batch.
+        expect(Object.hasOwn(config!.batch!, 'constructor')).toBe(false);
+        expect(Object.hasOwn(config!.batch!, 'toString')).toBe(false);
       });
     });
 

@@ -11,6 +11,7 @@ export type {
   ResolvedStepContext,
   ChangeStepContext,
   DecompositionStepContext,
+  PrStepContext,
   PriorPhaseResult,
   ShippedChange,
   StepResult,
@@ -39,12 +40,19 @@ export {
   type AgentSpawnRequest,
   type AgentSpawnResult,
 } from './agent.js';
-export { buildAgentInstructions, buildDecompositionInstructions, decompositionJournalKey } from './instructions.js';
+export {
+  buildAgentInstructions,
+  buildDecompositionInstructions,
+  buildPrInstructions,
+  decompositionJournalKey,
+  prJournalKey,
+} from './instructions.js';
 export {
   ensureSkillInSpawnLocus,
   ensureCommandInSpawnLocus,
   rctCommandIdForTransition,
   DECOMPOSE_COMMAND_ID,
+  PR_OPEN_COMMAND_ID,
   SkillLocusError,
   type SkillLocusDeps,
 } from './skill-locus.js';
@@ -53,6 +61,8 @@ export {
   computeNextTransition,
   readChangeDiskState,
   hasJournaledVerify,
+  hasJournaledPr,
+  hasJournaledPrForGroup,
   isChangeDone,
   type ChangeDiskState,
 } from './transition.js';
@@ -63,12 +73,21 @@ export {
   type SelectionResult,
 } from './selection.js';
 export {
+  detectPrGroupBoundaries,
+  type BoundaryPhase,
+  type BoundaryBatchState,
+  type PrGroupKind,
+  type PrGroupBoundary,
+} from './boundary.js';
+export { selectStackedBases, type StackedBase } from './stacked-base.js';
+export {
   runProofOfWork,
   evaluatePassCondition,
   realBashRunner,
   type ProofOfWorkResult,
   type RunProofOfWorkDeps,
   type BashRunner,
+  type BashResult,
   type LlmJudge,
   type JudgeVerdict,
 } from './proof-of-work.js';

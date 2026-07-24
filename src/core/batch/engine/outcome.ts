@@ -25,6 +25,7 @@ import type { StepKind } from './contract.js';
 import type { AgentSpawnResult } from './agent.js';
 import type { EngineStepOutcome } from './context.js';
 import type { ChangeDiskState } from './transition.js';
+import type { SettingSource } from '../config.js';
 
 /**
  * On-disk change state snapshotted before and after the agent session. The
@@ -36,6 +37,58 @@ import type { ChangeDiskState } from './transition.js';
 export interface DiskEvidence {
   before: ChangeDiskState;
   after: ChangeDiskState;
+}
+
+/**
+ * Model-failure attribution, threaded from {@link resolveBatchSettings} through
+ * the engine into the mapper. Carries the stage, agent, exact model string, and
+ * supplying scope of the resolved `agent[:model]` spec a fast-failing transition
+ * ran under. Present only when the parsed spec explicitly named a model AND the
+ * context carries a scope for the running transition's stage; absent for bare
+ * names, scope-less (standalone) paths, and failures after journal progress.
+ */
+export interface ModelAttribution {
+  stage: StepKind;
+  agent: string;
+  model: string;
+  scope: SettingSource;
+}
+
+/**
+ * Render a {@link SettingSource} as a human-readable supplying-scope label for
+ * the model-failure hint. Exhaustive over `SettingSource` so a future scope
+ * renders as its own name rather than crashing. The two scopes the agent layers
+ * carry today are "the project config" and "the batch manifest"; `default`/`user`
+ * render as their own names (they never carry an agent today, but the label
+ * never crashes if they ever do).
+ */
+function scopeLabel(scope: SettingSource): string {
+  switch (scope) {
+    case 'project':
+      return 'the project config';
+    case 'manifest':
+      return 'the batch manifest';
+    case 'default':
+      return 'the default';
+    case 'user':
+      return 'the user config';
+  }
+}
+
+/**
+ * Build the model-failure attribution hint text — a fixed template over the
+ * stage, agent, exact model string, and supplying scope. The copy is a HINT,
+ * never a diagnosis: it names the exact model string and where it came from and
+ * asserts nothing about why the agent died. Stderr is surfaced verbatim below
+ * it, uninterpreted. Phrased as "if this model id is invalid…" guidance.
+ */
+function modelAttributionHint(attribution: ModelAttribution): string {
+  return (
+    `The "${attribution.stage}" stage ran the "${attribution.agent}" agent ` +
+    `with model "${attribution.model}" supplied by ${scopeLabel(attribution.scope)}. ` +
+    `If this model id is invalid or not available to this agent, ` +
+    `correct the \`agent\` setting at that scope and resume.`
+  );
 }
 
 export interface MapOutcomeInput {
@@ -50,6 +103,22 @@ export interface MapOutcomeInput {
   parkForApproval: boolean;
   /** Pre-computed on-disk change state before/after the session. */
   diskEvidence: DiskEvidence;
+  /**
+   * Model-failure attribution, consulted in exactly one branch: a real
+   * non-zero exit code (spawn.signal === null, not a signal kill) without a
+   * completion AND zero session journal entries (the argv-rejection
+   * signature). When present there, the outcome's `detail` opens with the
+   * attribution hint above the truncated stderr tail, and `blocker`/`message`
+   * carry the hint too — so every rendered surface that prints `blocker`/
+   * `message` (the non-JSON `batch apply` blocked line, the parked-step reason
+   * shown on resume, the journal entry message, the standalone change-step
+   * renderer) surfaces the hint. Every other branch and every absent
+   * attribution surfaces byte-for-byte today's output. A signal-killed spawn
+   * (e.g. a `timeout` SIGKILL) under a valid explicit model is NOT a real exit
+   * code, so the hint is suppressed there even with zero journal entries — the
+   * bare-failure fallback (describeExit naming the signal) handles it.
+   */
+  modelAttribution?: ModelAttribution;
 }
 
 /**
@@ -86,6 +155,51 @@ function truncate(text: string, max = 2000): string {
   return trimmed.length > max ? trimmed.slice(0, max) + '… (truncated)' : trimmed;
 }
 
+/**
+ * Build the outcome for a non-zero exit WITHOUT a completion — the failed step.
+ *
+ * Attribution enriches EXACTLY this failure shape: when the parsed spec
+ * explicitly named a model (attribution present) AND the agent wrote zero
+ * journal entries during the session (the argv-rejection signature — an agent
+ * that made any journal progress got past argv parsing, so the hint would
+ * mislead) AND the spawn exited with a real non-zero exit code (spawn.signal ===
+ * null — a signal-killed agent, e.g. a `timeout` SIGKILL, was killed externally;
+ * its model was likely valid and the hint would misdirect the operator), the
+ * hint is threaded into `detail`, `blocker`, and `message`. Every human-facing
+ * surface prints `blocker`/`message` (the non-JSON `batch apply` blocked line,
+ * the parked-step reason shown on resume, the journal entry message, the
+ * standalone change-step renderer), so threading the hint into those two fields
+ * reaches every rendered surface without any renderer edits. `detail` keeps
+ * today's shape (hint above the stderr tail) for `--json` consumers. No other
+ * branch is touched: bare-name, progressed, scope-less, signal-killed, and
+ * zero-exit failures render byte-for-byte today's output.
+ */
+function buildNonZeroExitFailure(input: MapOutcomeInput): EngineStepOutcome {
+  const { change, transition, sessionEntries, sessionIndices, spawn } = input;
+  const stderrTail = truncate(spawn.stderr || spawn.stdout || '');
+  if (input.modelAttribution && sessionEntries.length === 0 && spawn.signal === null) {
+    const hint = modelAttributionHint(input.modelAttribution);
+    return {
+      state: 'failed',
+      change,
+      transition,
+      detail: stderrTail ? `${hint}\n\n${stderrTail}` : hint,
+      blocker: `Agent exited ${describeExit(spawn)} without reporting completion. ${hint}`,
+      journalRefs: sessionIndices,
+      message: `Agent failed during ${transition}. ${hint}`,
+    };
+  }
+  return {
+    state: 'failed',
+    change,
+    transition,
+    detail: stderrTail,
+    blocker: `Agent exited ${describeExit(spawn)} without reporting completion.`,
+    journalRefs: sessionIndices,
+    message: `Agent failed during ${transition}.`,
+  };
+}
+
 export function mapSessionToOutcome(input: MapOutcomeInput): EngineStepOutcome {
   const { change, transition, sessionEntries, sessionIndices, spawn } = input;
 
@@ -110,17 +224,9 @@ export function mapSessionToOutcome(input: MapOutcomeInput): EngineStepOutcome {
 
   // Non-zero exit WITHOUT a completion report is a failed step. State stays
   // consistent: the CLI parks it (failed -> blocked) and the batch is resumable.
+  // The attribution-enriched vs. plain-failure split lives in one helper.
   if (nonZero && !completion) {
-    const detail = truncate(spawn.stderr || spawn.stdout || '');
-    return {
-      state: 'failed',
-      change,
-      transition,
-      detail,
-      blocker: `Agent exited ${describeExit(spawn)} without reporting completion.`,
-      journalRefs: sessionIndices,
-      message: `Agent failed during ${transition}.`,
-    };
+    return buildNonZeroExitFailure(input);
   }
 
   if (completion) {

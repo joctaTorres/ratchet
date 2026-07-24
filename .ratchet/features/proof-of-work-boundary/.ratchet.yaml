@@ -1,0 +1,9 @@
+features:
+  execute-and-record.feature:
+    - delegated-lifecycle
+    - documentation
+    - generalizable-defaults
+  recorded-proof-reader.feature:
+    - delegated-lifecycle
+    - documentation
+    - generalizable-defaults

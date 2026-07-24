@@ -30,7 +30,7 @@ export const PERMISSION_POSTURE_VALUES = [
 export type PermissionPosture = (typeof PERMISSION_POSTURE_VALUES)[number];
 
 /** The agents the per-agent `raw` override escape hatch recognizes. */
-export const PERMISSION_RAW_AGENTS = ['claude', 'codex', 'gemini', 'cursor'] as const;
+export const PERMISSION_RAW_AGENTS = ['claude', 'codex', 'gemini', 'cursor', 'opencode'] as const;
 export type PermissionRawAgent = (typeof PERMISSION_RAW_AGENTS)[number];
 
 /**
@@ -51,6 +51,7 @@ export const PermissionsPolicySchema = z
         codex: z.array(z.string()).optional(),
         gemini: z.array(z.string()).optional(),
         cursor: z.array(z.string()).optional(),
+        opencode: z.array(z.string()).optional(),
       })
       .partial()
       .optional(),

@@ -39,6 +39,12 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
 
    This returns the change directory and \`contextFiles\` (artifact ID -> array of concrete file paths). For the ratchet schema these are the \`features/**/*.feature\` files and \`plan.md\`. Read all of them.
 
+   The JSON also carries \`heldOutCount\` (integer) and \`heldOutCounts\` (per-artifact map) — the number of \`@holdout\`-tagged Scenario blocks that were stripped from the context files. If \`heldOutCount > 0\`, emit exactly one non-blocking WARNING before proceeding:
+
+   > WARNING: \`heldOutCount\` @holdout scenario(s) are excluded from this view — run \`ratchet eval run\` to enforce them.
+
+   Do NOT attempt to guess or recover the names or steps of held-out scenarios — only the count is available, by design. This warning must NOT block or fail verify.
+
 4. **Load the standards the change declared**
 
    Standards are a project-level library at \`.ratchet/standards/\`, a sibling of
@@ -96,6 +102,8 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
    - If no implementation or test covers the scenario:
      - Add WARNING: "Scenario not covered: <scenario name>"
      - Recommendation: "Add test or implementation for: <Given/When/Then>"
+
+   **Note on @holdout scenarios:** If \`heldOutCount > 0\` (step 3), a number of Scenarios were stripped from the context files before you read them. Their absence is intentional — they are held-out anti-overfitting checks enforced by \`ratchet eval run\`, not by verify. Do NOT treat the gap as a coverage deficiency or add a WARNING for missing held-out scenarios. Coverage in this step is measured over the Scenarios you can see.
 
 8. **Verify Coherence**
 

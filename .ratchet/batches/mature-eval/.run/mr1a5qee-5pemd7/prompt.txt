@@ -1,0 +1,24 @@
+You are advancing the ratchet batch "mature-eval".
+Perform EXACTLY ONE transition: VERIFY for change "skip-filters".
+You MUST finish by running `ratchet batch report mature-eval --change skip-filters --complete "<summary>"` — without it this step is treated as unreported and parked.
+
+Active phase: judge-hardening
+Phase goal: Harden the `llm-judge` contributor: per-Then-clause binary rubric decomposition, a panel-ready `jury` block with project-level defaults, transparent skip filters, and structured evidence persistence — without changing where the judge plugs into the gate.
+Phase success criteria: An `llm-judge` case is judged per Gherkin Then-clause (rubric auto-derived, optional explicit `rubric:` override) returning structured [{clause, pass, evidence}] and passing only on all-yes (fail-closed on any no/can't-tell); the `jury` block (votes + quorum majority|unanimous, project default in `eval.jury` with per-binding override) resolves with sub-quorum → unjudged and reserves a `panel:` slot for future cross-family use; skip filters (project `eval.skip`, in-file `@skip` tag, CLI `--include-skipped`) record cases `skipped` and count them (never silently dropped), with a warning when a baseline-`pass` case is skipped; the run JSON persists structured rubric + per-clause booleans + per-juror votes + cited evidence; CoT-before- verdict and anti-sycophancy are enforced.
+Phase proof-of-work (integration): run `pnpm build && pnpm vitest run judge`, passes when exit code 0 — tests assert per-clause rubric decomposition with all-yes gating, jury quorum resolution with project/per-binding layering and sub-quorum abstention, skip filters recording counted `skipped` with the baseline-skip warning, and structured evidence persisted in the run JSON
+Definition of done: a case matching project `eval.skip` config or an in-file `@skip` Gherkin tag (captured by gherkin-parser.ts, today discarded along with all tags) is excluded from judging by default and recorded with a new `skipped` CaseRecord status (never silently dropped) and counted in the run summary; `--include-skipped` on `eval run` overrides the exclusion and judges the case normally; a case whose most recent baseline status was `pass` and is now skipped emits a visible warning at run time
+
+Advance this change by invoking the ratchet verify skill — run:
+  /rct:verify skip-filters
+It loads the project standards under ".ratchet/standards/" and is the single
+author of the verify lifecycle. Do NOT hand-build or re-describe
+the verify steps yourself — delegate to the skill and let it
+author/advance the change to its canonical definition of done.
+
+Communicate ONLY by running these shell commands (do not prompt interactively):
+  ratchet batch report mature-eval --change skip-filters --status "<progress note>"
+  ratchet batch report mature-eval --change skip-filters --blocker "<question you need answered>"
+  ratchet batch report mature-eval --change skip-filters --needs-input "<what you need>"
+  ratchet batch report mature-eval --change skip-filters --complete "<summary of what you did>"
+Raise a blocker instead of guessing when a decision is required.
+Post a completion ONLY when this single transition is genuinely finished.

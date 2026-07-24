@@ -3,7 +3,7 @@
  * `.ratchet/evals/invariants.yaml` for a project that has none yet.
  *
  * `buildDefaultInvariantManifestYaml` is a pure function (project root in,
- * manifest text out) composed of three blocks:
+ * manifest text out) composed of four blocks:
  *
  *   - `spec-not-weakened` (monotonic, `scenario-count`) — always present and
  *     **active**. It is the one invariant ratchet can evaluate on every
@@ -12,6 +12,12 @@
  *   - `tests-still-exist` (deterministic) — always **inert**. Emitted as live,
  *     uncommented YAML (ready to flip to `active: true`) when
  *     `detectTestDirectory` finds a conventional test directory; emitted as a
+ *     commented placeholder otherwise.
+ *   - `mutants-are-killed` (mutation) — always **inert**, gated on the same
+ *     `detectedDir` signal as `tests-still-exist`. Emitted as live,
+ *     uncommented YAML with placeholder `test`/`budget`/`threshold` values
+ *     when a conventional test directory is detected (a detected suite is
+ *     evidence there is an oracle for the harness to run); emitted as a
  *     commented placeholder otherwise.
  *   - `public-api-unchanged` (snapshot) — always **inert** and always a
  *     commented placeholder. No `produce.run` ratchet could pick is
@@ -61,6 +67,29 @@ function testsStillExistBlock(detectedDir: string | null): string {
 `;
 }
 
+function mutationScaffoldBlock(detectedDir: string | null): string {
+  if (detectedDir) {
+    return `  - id: mutants-are-killed
+    kind: mutation
+    active: false
+    description: A conventional test directory was detected. Fill in the test command below, then flip active to true once you are ready to gate on it.
+    test: "<command that runs your test suite>"
+    budget: 5
+    threshold: 3
+`;
+  }
+  return `  # No conventional test directory (test, tests, spec, __tests__) was found.
+  # Once your project has a test suite, uncomment and fill in the command below,
+  # then flip active to true when you are ready to gate on it.
+  # - id: mutants-are-killed
+  #   kind: mutation
+  #   active: false
+  #   test: "<command that runs your test suite>"
+  #   budget: 5
+  #   threshold: 3
+`;
+}
+
 function publicApiUnchangedBlock(): string {
   return `  # public-api-unchanged needs a command that emits your project's current
   # public API surface, to diff against a checked-in golden. Ratchet cannot
@@ -86,10 +115,11 @@ export function buildDefaultInvariantManifestYaml(projectRoot: string): string {
   const detectedDir = detectTestDirectory(projectRoot);
   return `# Anti-gaming invariant manifest, scaffolded by \`ratchet init\`.
 #
-# Each invariant is one of three kinds:
+# Each invariant is one of four kinds:
 #   deterministic — an absolute predicate (a command that must pass)
 #   monotonic     — a named measure that must not decrease vs. the baseline run
 #   snapshot      — current output diffed against a checked-in golden
+#   mutation      — a seeded fault that must be killed by your own test suite
 #
 # Only invariants with \`active: true\` gate a run. See docs/eval-invariants.md
 # for the full schema and the run-level gate this manifest feeds.
@@ -101,5 +131,6 @@ invariants:
     measure: scenario-count
 
 ${testsStillExistBlock(detectedDir)}
+${mutationScaffoldBlock(detectedDir)}
 ${publicApiUnchangedBlock()}`;
 }

@@ -46,7 +46,13 @@ Read from on-disk change state before any settings resolution or spawn:
 1. Enforce the preconditions above.
 2. Resolve settings standalone (`flag → project config → default`) via
    `resolveChangeStepSettings`. An invalid `--agent`/`--locus`/`--image` fails
-   before any agent is spawned.
+   before any agent is spawned. A malformed `agent[:model]` spec (empty agent or
+   model part, e.g. `claude:`, `:fable`; whitespace-padded like `claude: opus`,
+   `claude :m`, `" claude"`; or a model part starting with `-` like
+   `claude:-flag`) is rejected with an actionable error **naming the offending
+   value** before any spawn — the same shared schema (`AgentSettingSchema` →
+   `parseAgentSpec`) the load and write paths use, so the flag path can never
+   diverge from what the loader accepts.
 3. Build a `ChangeStepContext` with `batch` undefined, `transition: 'apply'`,
    the joined `-m` guidance, and the change-local journal, then run once via
    `engine.runChangeStep`. `computeNextTransition` is never consulted.

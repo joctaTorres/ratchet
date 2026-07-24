@@ -43,7 +43,7 @@ flowchart TD
 
     CTX[📦 ContributorContext<br/>run + baseline diff + invariant gate]
 
-    CTX --> DET[⚙️ deterministic<br/>fails of deterministic-kind cases]
+    CTX --> DET[⚙️ deterministic<br/>fails of deterministic/web-kind cases]
     CTX --> LLM[⚙️ llm-judge<br/>fails of llm-judge-kind cases]
     CTX --> INV[🛡️ invariants<br/>active invariant violations]
     CTX --> REG[🔁 regression<br/>baseline regressions]
@@ -115,14 +115,21 @@ filesystem or process I/O.
 
 | Contributor | Fails when | Failing ids |
 |---|---|---|
-| `deterministic` | any `deterministic`-bound case is judged `fail` | those case ids |
+| `deterministic` | any `deterministic`- or `web`-bound case is judged `fail` | those case ids |
 | `llm-judge` | any `llm-judge`-bound case is judged `fail` | those case ids |
 | `invariants` | any **active** manifest invariant is violated or unevaluable, or the manifest is unloadable | the violating invariant ids (or the manifest filename) |
 | `regression` | the baseline diff reports a regression (passed in baseline, fails now) | the regressed case ids |
 
 The `deterministic` and `llm-judge` contributors partition the run's cases by each
-case snapshot's `bindingKind`. The `invariants` and `regression` contributors are
-the two **run-level** gates (their failing ids are invariant/case names, not
+case snapshot's `bindingKind`, via `contributorForBindingKind(kind): ContributorId`
+(`src/core/eval/aggregate.ts`) — the single place a binding kind maps to the
+contributor that gates it: `deterministic` and `web` both fold to
+`'deterministic'` (a `web`-bound case gates exactly like a `deterministic`-bound
+one, with no separate `'web'` contributor id), and `llm-judge` maps to itself.
+`execute.ts` calls the same function to decide whether a bound case's contributor
+is enabled, so the binding-kind-to-contributor mapping has one source of truth
+across execution and aggregation. The `invariants` and `regression` contributors
+are the two **run-level** gates (their failing ids are invariant/case names, not
 per-case verdicts). Like `regression`, which reads the precomputed
 `diff.regressions`, the pure `invariants` contributor reads a precomputed
 `invariants.failing`: the async manifest load and per-invariant evaluation happen
@@ -181,13 +188,18 @@ is persisted on the run as `EvalRun.gate` (display order). Selection effects:
   contributor is disabled as `unjudged` (the reason names the disabled
   contributor) instead of executing it; no fixture is materialized and no judge
   is spawned. A disabled contributor therefore leaves the run **incomplete**.
-- **Aggregation** — `buildReport` filters `DEFAULT_CONTRIBUTORS` by `run.gate`
-  before calling `aggregateRun`, so the AND and the per-contributor breakdown
-  cover exactly the enabled contributors. A disabled contributor takes no part in
-  the verdict. (A legacy run persisted with no `gate` ANDs over the full set.) When
-  the `invariants` contributor survives the filter, `buildReport` evaluates the
-  run-level invariant gate once and feeds the result into the context; when it is
-  disabled, the gate is not evaluated and no manifest command runs.
+- **Aggregation** — both the run path (`evaluateRun`) and the read-only report
+  path (`renderReport`) filter `DEFAULT_CONTRIBUTORS` by `run.gate` before calling
+  `aggregateRun`, so the AND and the per-contributor breakdown cover exactly the
+  enabled contributors. A disabled contributor takes no part in the verdict. (A
+  legacy run persisted with no `gate` ANDs over the full set.) When the
+  `invariants` contributor survives the filter, `evaluateRun` evaluates the
+  run-level invariant gate once **at run time** and **persists the result** onto
+  the run; `renderReport` reads that persisted result rather than re-evaluating —
+  so reporting never re-runs a check command, spawns an agent, or mutates the
+  tree. When `invariants` is disabled (or a run predates gate persistence), no gate
+  is evaluated or persisted and its invariants render **not evaluated**, taking no
+  part in the verdict.
 - **Promotion** — because a disabled contributor leaves cases `unjudged`, the
   run is incomplete and the `promoteBaseline` guard refuses it (below), so a
   partial run can never become the baseline.

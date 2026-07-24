@@ -5,7 +5,7 @@
 import { resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
 import { readProjectConfig } from '../../core/project-config.js';
 import { resolveGate } from '../../core/eval/index.js';
-import type { EvalScope, GateFlags, ContributorId } from '../../core/eval/index.js';
+import type { EvalScope, GateFlags, ContributorId, Jury } from '../../core/eval/index.js';
 
 export function projectRoot(): string {
   return resolveCurrentPlanningHomeSync().root;
@@ -15,6 +15,13 @@ export interface ScopeFlags {
   changes?: boolean;
   change?: string;
   path?: string;
+  /**
+   * `--holdout`/`--no-holdout`: an orthogonal per-case filter, not a
+   * scope-kind flag. Narrows the enumerated case set to only held-out
+   * (`true`) or only non-held-out (`false`) cases via `filterCasesByHoldout`;
+   * `resolveScope()` does not read it.
+   */
+  holdout?: boolean;
 }
 
 /** Resolve scope flags into a single scope; flags are mutually exclusive. */
@@ -40,4 +47,14 @@ export function resolveScope(flags: ScopeFlags): EvalScope {
 export function resolveContributorGate(root: string, flags: GateFlags): Set<ContributorId> {
   const config = readProjectConfig(root);
   return resolveGate({ config: config?.eval?.gate, flags });
+}
+
+/** Resolve the project-level jury default (`eval.jury`) for the llm-judge contributor. */
+export function resolveJuryDefault(root: string): Jury | undefined {
+  return readProjectConfig(root)?.eval?.jury;
+}
+
+/** Resolve the project-level skip-filter glob patterns (`eval.skip`). */
+export function resolveSkipConfig(root: string): string[] | undefined {
+  return readProjectConfig(root)?.eval?.skip;
 }

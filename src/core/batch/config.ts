@@ -26,6 +26,10 @@ import type {
   ResolvedPermissionsPolicy,
 } from './permissions-policy.js';
 import type { BatchManifest } from './manifest.js';
+import { AGENT_STAGE_KEYS } from './agent-setting.js';
+import type { AgentSetting, AgentStage, AgentStageMap } from './agent-setting.js';
+import { AgentSettingSchema } from './agent-setting.js';
+import { parse as parseYamlFlow } from 'yaml';
 
 export const GATE_VALUES = ['voluntary', 'after-propose', 'every-phase', 'autonomous'] as const;
 export const STRATEGY_VALUES = ['vertical-slice', 'feature'] as const;
@@ -39,6 +43,20 @@ export const PROOF_OF_WORK_POLICY_VALUES = ['hard-gate', 'warn'] as const;
  * branch in the engine.
  */
 export const LOCUS_VALUES = ['local', 'docker', 'remote'] as const;
+
+/**
+ * PR-grouping mode: whether a completed batch opens a pull request, and how the
+ * work is grouped into PRs. `off` (the default) is the behavior-unchanged
+ * do-nothing mode — no PR agent is ever spawned. `whole-batch` groups the whole
+ * batch's work into a single PR opened by a dedicated PR agent at completion.
+ * `per-phase` opens one stacked PR per completed phase and `per-change` one
+ * stacked PR per change (their stacked-spawn behavior is wired later in Phase 3;
+ * this vocabulary slice only validates them).
+ *
+ * The single source of truth for the vocabulary; the project-config and manifest
+ * schemas validate the same `off | whole-batch | per-phase | per-change` set.
+ */
+export const PR_GROUPING_VALUES = ['off', 'whole-batch', 'per-phase', 'per-change'] as const;
 
 /**
  * The default container image for `locus: docker` when no `image` is configured.
@@ -57,6 +75,18 @@ export type Gate = (typeof GATE_VALUES)[number];
 export type Strategy = (typeof STRATEGY_VALUES)[number];
 export type ProofOfWorkPolicy = (typeof PROOF_OF_WORK_POLICY_VALUES)[number];
 export type Locus = (typeof LOCUS_VALUES)[number];
+export type PrGrouping = (typeof PR_GROUPING_VALUES)[number];
+
+/**
+ * The single home for "is PR grouping active?". Active means any mode other than
+ * `off`, so every non-`off` mode (`whole-batch`, `per-phase`, `per-change`, and
+ * any future mode) is covered by construction as the vocabulary grows. Consumers
+ * (e.g. the doctor PR-remote check) call this instead of inlining the rule, so
+ * the answer lives in exactly one place.
+ */
+export function isPrGroupingActive(mode: PrGrouping): boolean {
+  return mode !== 'off';
+}
 
 // The agent-agnostic permissions policy schema/types live in their own module to
 // avoid a config↔project-config import cycle; re-exported here for convenience.
@@ -79,7 +109,26 @@ export interface BatchSettings {
   proofOfWork: ProofOfWorkPolicy;
   /** Where the agent runs. Defaults to `local` (the ReX sidecar). */
   locus: Locus;
-  agent?: string;
+  /**
+   * Whether a completed batch opens a pull request, and how work is grouped.
+   * Defaults to `off` (no PR agent spawned, behavior unchanged). `whole-batch`
+   * groups the batch's work into a single PR opened by a dedicated PR agent at
+   * completion. Resolved by the generic nearest-wins cascade like the other
+   * scalar settings.
+   */
+  prGrouping: PrGrouping;
+  /**
+   * The coding agent(s) to spawn. Either a scalar agent name (route every
+   * lifecycle stage to one agent, the default when a plain string or unset) or a
+   * partial `{propose, apply, verify, pr}` stage-map (route each stage independently).
+   * Validated by the shared `AgentSettingSchema` at both config scopes.
+   *
+   * Nearest-wins-per-stage cross-scope merge (see {@link resolveBatchSettings}):
+   * a partial stage-map merges over a lower-scope scalar/map per stage, while a
+   * nearer scalar replaces the whole value (covering every stage). Each stage's
+   * spawn agent is resolved from this value by `resolveAgentForStage`.
+   */
+  agent?: string | AgentStageMap;
   /**
    * Container image for `locus: docker` (free-form, like `agent`). Ignored for
    * `local`. When unset and locus is `docker`, the runtime uses
@@ -254,6 +303,17 @@ export type SettingSource = 'default' | 'user' | 'project' | 'manifest';
 export interface ResolvedBatchSettings {
   settings: BatchSettings;
   sources: Record<keyof BatchSettings, SettingSource>;
+  /**
+   * Per-stage supplying scope for the resolved `agent` setting, the pure sibling
+   * of {@link resolveAgentSetting}'s merge: each stage's entry names the scope
+   * (project/manifest) whose value IS that stage's resolved `agent[:model]`
+   * spec string, mirroring the merge's `stages[stage] ?? base` materialization.
+   * Absent for a stage no config scope supplied (the caller's default agent).
+   * Resolved `settings` and `sources` stay byte-for-byte unchanged by this
+   * exposure; it only attributes each stage to its supplying scope for the
+   * engine's model-failure hint. See {@link resolveAgentStageScopes}.
+   */
+  agentStageScopes: Partial<Record<AgentStage, SettingSource>>;
 }
 
 export const DEFAULT_BATCH_SETTINGS: BatchSettings = {
@@ -261,6 +321,7 @@ export const DEFAULT_BATCH_SETTINGS: BatchSettings = {
   strategy: 'vertical-slice',
   proofOfWork: 'hard-gate',
   locus: 'local',
+  prGrouping: 'off',
 };
 
 const SETTING_KEYS: (keyof BatchSettings)[] = [
@@ -268,6 +329,7 @@ const SETTING_KEYS: (keyof BatchSettings)[] = [
   'strategy',
   'proofOfWork',
   'locus',
+  'prGrouping',
   'agent',
   'image',
   'host',
@@ -282,6 +344,7 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
   strategy: STRATEGY_VALUES,
   proofOfWork: PROOF_OF_WORK_POLICY_VALUES,
   locus: LOCUS_VALUES,
+  prGrouping: PR_GROUPING_VALUES,
   agent: null, // free-form string
   image: null, // free-form string (container image reference)
   host: null, // free-form string (swerex-remote host, optional scheme prefix)
@@ -296,7 +359,10 @@ const ALLOWED_VALUES: Record<string, readonly string[] | null> = {
  *
  *   built-in default ← user/global ← project config ← per-change manifest
  *
- * Scalar settings (gate/strategy/agent/…) are nearest-wins. The structured
+ * Scalar settings (gate/strategy/locus/…) are nearest-wins. The `agent` setting
+ * gets a dedicated nearest-wins-per-stage merge (see {@link resolveAgentSetting}):
+ * a partial stage-map merges over a lower-scope scalar/map per stage, a nearer
+ * scalar replaces the whole value. The structured
  * `permissions` policy is merged with documented per-field semantics: posture is
  * nearest-wins, `deny` is the UNION of every scope, `allow` is REPLACED by the
  * nearest scope that defines one, and each agent's `raw` entry is nearest-wins.
@@ -312,6 +378,7 @@ export function resolveBatchSettings(
     strategy: 'default',
     proofOfWork: 'default',
     locus: 'default',
+    prGrouping: 'default',
     agent: 'default',
     image: 'default',
     host: 'default',
@@ -329,6 +396,9 @@ export function resolveBatchSettings(
   const projectBatch = readProjectConfig(projectRoot)?.batch;
   if (projectBatch) {
     for (const key of SETTING_KEYS) {
+      // `agent` is resolved by a dedicated per-stage cross-scope merge below, not
+      // this generic whole-value loop.
+      if (key === 'agent') continue;
       const value = projectBatch[key];
       if (value !== undefined) {
         (writable[key] as BatchSettings[typeof key]) = value as BatchSettings[typeof key];
@@ -340,6 +410,7 @@ export function resolveBatchSettings(
   const manifestOverrides = manifest?.settings;
   if (manifestOverrides) {
     for (const key of SETTING_KEYS) {
+      if (key === 'agent') continue; // see the per-stage merge below
       const value = manifestOverrides[key];
       if (value !== undefined) {
         (writable[key] as BatchSettings[typeof key]) = value as BatchSettings[typeof key];
@@ -347,6 +418,28 @@ export function resolveBatchSettings(
       }
     }
   }
+
+  // `agent`: per-stage cross-scope merge (mirroring how `permissions` gets bespoke
+  // per-field semantics rather than whole-value nearest-wins). Fed the scalar
+  // scopes low→high (project ← manifest; the user/global scope carries no scalar
+  // `agent`), it merges partial stage-maps nearest-wins per stage over a
+  // lower-scope scalar/map, while a nearer scalar replaces the whole value.
+  const agentLayers = [
+    { scope: 'project' as SettingSource, agent: projectBatch?.agent },
+    { scope: 'manifest' as SettingSource, agent: manifestOverrides?.agent },
+  ];
+  const { agent: resolvedAgent, source: agentSource } = resolveAgentSetting(agentLayers);
+  if (resolvedAgent !== undefined) {
+    settings.agent = resolvedAgent;
+    sources.agent = agentSource ?? 'default';
+  }
+
+  // Per-stage supplying-scope attribution for the `agent` setting: the pure
+  // sibling of the merge above, replayed over the SAME layers so each stage's
+  // scope names the layer whose value IS that stage's resolved spec string.
+  // Computed here (where the layers live) and exposed as `agentStageScopes` so
+  // the engine never re-reads config; resolved `settings`/`sources` are untouched.
+  const agentStageScopes = resolveAgentStageScopes(agentLayers);
 
   // Structured permissions: resolved across user ← project ← manifest with
   // per-field merge semantics (see resolvePermissionsPolicy). The user/global
@@ -367,7 +460,158 @@ export function resolveBatchSettings(
   settings.permissions = policy;
   sources.permissions = postureSource;
 
-  return { settings, sources };
+  return { settings, sources, agentStageScopes };
+}
+
+/**
+ * Merge the `agent` setting across scopes (ordered low→high precedence) into a
+ * single resolved value with a nearest-wins-per-stage cross-scope merge. Tracks a
+ * `base` (the nearest scalar seen) and an accumulating partial `stages` map:
+ *
+ *   - a **scalar** scope sets `base` and resets `stages` — a scalar covers every
+ *     stage, so it overrides any lower-scope per-stage overrides (nearest-wins);
+ *   - a **map** scope merges its entries into `stages` (a nearer stage wins),
+ *     leaving a lower `base` in place as the fallback for stages it does not name.
+ *
+ * The resolved value is: `undefined` when nothing was set; the `base` scalar when
+ * no map contributed; the partial `stages` map when only maps contributed; and a
+ * **materialized full map** (`stages[stage] ?? base` per stage) when a scalar
+ * `base` and a partial map both contributed — so the scalar fallback is preserved
+ * inside a `string | AgentStageMap` value without widening the type. `source` is
+ * the nearest scope that contributed any `agent` value (`undefined` when none did,
+ * so the caller keeps the `default` source).
+ */
+export function resolveAgentSetting(
+  layers: { scope: SettingSource; agent: AgentSetting | undefined }[]
+): { agent: BatchSettings['agent']; source: SettingSource | undefined } {
+  // Fold recording the agent SPEC STRING at each position (scalar `base` and each
+  // named map stage), then materialize the resolved value.
+  const { base, stages, mapContributed, source } = foldAgentLayers(
+    layers,
+    (_scope, value) => value
+  );
+
+  if (source === undefined) return { agent: undefined, source: undefined };
+  if (!mapContributed) return { agent: base, source };
+  // A map contributed. When a scalar `base` also contributed, materialize a full
+  // map so the scalar fallback is preserved per stage; otherwise the partial map.
+  if (base !== undefined) {
+    const full: AgentStageMap = {};
+    for (const stage of AGENT_STAGE_KEYS) {
+      full[stage] = stages[stage] ?? base;
+    }
+    return { agent: full, source };
+  }
+  return { agent: { ...stages }, source };
+}
+
+/**
+ * The accumulated result of {@link foldAgentLayers}: the nearest scalar layer's
+ * recorded value (`base`), an accumulating partial per-stage map (`stages`),
+ * whether any map contributed after the last scalar (`mapContributed`), and the
+ * nearest scope that contributed anything (`source`).
+ */
+interface AgentLayerFold<T> {
+  base: T | undefined;
+  stages: Partial<Record<AgentStage, T>>;
+  mapContributed: boolean;
+  source: SettingSource | undefined;
+}
+
+/**
+ * The shared scalar-resets / map-merges-per-stage fold over the `agent` layers
+ * (ordered low→high precedence) that both {@link resolveAgentSetting} and
+ * {@link resolveAgentStageScopes} consume. It runs the identical nearest-wins
+ * merge but is parameterized over WHAT each layer records at a string position
+ * via `select`: `resolveAgentSetting` records the spec string itself; the scope
+ * sibling records the supplying scope. This keeps the two consumers' merge
+ * semantics provably identical (the agreement invariant is asserted in tests).
+ *
+ *   - a **scalar** layer sets `base` (to `select(scope, spec)`) and resets the
+ *     accumulated per-stage map — a scalar covers every stage, overriding any
+ *     lower-scope per-stage overrides (nearest-wins);
+ *   - a **map** layer records `select(scope, mapped)` for each stage it names (a
+ *     nearer stage wins), leaving a lower `base` in place for unnamed stages.
+ *
+ * Pure over in-memory layers; each consumer does its own final materialization.
+ */
+function foldAgentLayers<T>(
+  layers: { scope: SettingSource; agent: AgentSetting | undefined }[],
+  select: (scope: SettingSource, value: string) => T
+): AgentLayerFold<T> {
+  let base: T | undefined;
+  let stages: Partial<Record<AgentStage, T>> = {};
+  let mapContributed = false;
+  let source: SettingSource | undefined;
+
+  for (const { scope, agent } of layers) {
+    if (agent === undefined) continue;
+    source = scope;
+    if (typeof agent === 'string') {
+      base = select(scope, agent);
+      stages = {};
+      mapContributed = false;
+    } else {
+      for (const stage of AGENT_STAGE_KEYS) {
+        const mapped = agent[stage];
+        if (mapped !== undefined) stages[stage] = select(scope, mapped);
+      }
+      mapContributed = true;
+    }
+  }
+
+  return { base, stages, mapContributed, source };
+}
+
+/**
+ * Per-stage scope attribution for the resolved `agent` setting, a pure sibling
+ * of {@link resolveAgentSetting} that replays the same scalar-resets /
+ * map-merges-per-stage fold over the same low→high layers but tracks which
+ * scope supplied each stage's resolved spec string instead of the value itself.
+ *
+ * Returns a `Partial<Record<AgentStage, SettingSource>>` mirroring the merge's
+ * `stages[stage] ?? base` materialization: a **scalar** layer sets a base scope
+ * and resets the accumulated per-stage scopes (it covers every stage,
+ * nearest-wins); a **map** layer records its own scope for each stage it names
+ * (a nearer stage wins). A stage's attribution is its per-stage scope, falling
+ * back to the base scope when a scalar contributed, and absent when nothing
+ * supplied that stage — so an attributed scope always names the layer whose
+ * value IS that stage's resolved `agent[:model]` spec string. Absent means
+ * "no config scope supplied this stage (the caller's default agent did)".
+ *
+ * Hardcodes no agent name and consumes spec strings opaquely. Pure: no
+ * filesystem, no spawn, no I/O — unit-testable over in-memory layers. Does not
+ * call {@link resolveAgentSetting} and changes nothing about the shipping merge
+ * or its results; the agreement invariant is asserted in tests over the same
+ * layers.
+ */
+export function resolveAgentStageScopes(
+  layers: { scope: SettingSource; agent: AgentSetting | undefined }[]
+): Partial<Record<AgentStage, SettingSource>> {
+  // Same fold as the merge, but recording each position's SUPPLYING SCOPE instead
+  // of the spec string (the `select` ignores the value and records the scope).
+  const {
+    base: baseScope,
+    stages: stageScopes,
+    mapContributed,
+  } = foldAgentLayers(layers, (scope) => scope);
+
+  // No layer contributed anything: no attribution for any stage.
+  if (baseScope === undefined && !mapContributed) return {};
+
+  const result: Partial<Record<AgentStage, SettingSource>> = {};
+  for (const stage of AGENT_STAGE_KEYS) {
+    const perStage = stageScopes[stage];
+    if (perStage !== undefined) {
+      result[stage] = perStage;
+    } else if (baseScope !== undefined) {
+      // A scalar covered this stage (no nearer map named it): attribute it to
+      // the scalar's scope — exactly mirroring the merge's `stages[stage] ?? base`.
+      result[stage] = baseScope;
+    }
+    // else: nothing supplied this stage — absent (no attribution).
+  }
+  return result;
 }
 
 /** Environment variable that overrides the per-agent ReX timeout. */
@@ -455,9 +699,119 @@ export interface SetResult {
   error?: string;
   key?: keyof BatchSettings;
   value?: string;
+  /**
+   * The typed value to persist for keys whose CLI string form is not the storage
+   * form. Today only the `agent` key sets this: a scalar spec stays a string,
+   * but a `{`-prefixed inline stage map is parsed into a real map so the
+   * persisted YAML is a map (not a quoted string) the loader accepts. When
+   * unset, the raw `value` string is persisted.
+   */
+  parsedValue?: string | AgentStageMap;
 }
 
-/** Validate a `key=value` setting against the allowed enum values. */
+/**
+ * Per-key validation/serialization for settings whose CLI string needs a shape
+ * check beyond the generic {@link ALLOWED_VALUES} enum gate and/or a typed
+ * storage form. Both the write path ({@link validateSetting}) and the persist
+ * path ({@link setProjectBatchSetting}) read this ONE table, so a new persisted
+ * key adds a single entry here instead of a branch in each function.
+ */
+interface SettingCodec {
+  /**
+   * Shape validation beyond the enum gate. Returns a {@link SetResult} to
+   * short-circuit `validateSetting` — an error, or (for `agent`) the success
+   * result carrying the typed `parsedValue`. Returns `undefined` to accept the
+   * value and fall through to the generic success.
+   */
+  validate?: (value: string, key: keyof BatchSettings) => SetResult | undefined;
+  /**
+   * Map an accepted CLI string to its persisted YAML value (mirroring the real
+   * schema type so the loader round-trips it without warning). Absent means the
+   * raw string is persisted verbatim.
+   */
+  serialize?: (value: string, validation: SetResult) => unknown;
+}
+
+const SETTING_CODECS: Partial<Record<keyof BatchSettings, SettingCodec>> = {
+  // A free-form `image` must be a non-empty reference — an empty value is
+  // rejected before any container is started so the project config is left
+  // unchanged (see features/container-locus/configurable-image.feature).
+  image: {
+    validate: (value) =>
+      value.trim().length === 0
+        ? {
+            ok: false,
+            error: `Invalid value for 'image': the container image reference must not be empty.`,
+          }
+        : undefined,
+  },
+  // The remote-locus `host`/`authToken` each require a non-empty value, rejected
+  // before the project config is written (see features/remote-locus/config-and-validation).
+  host: {
+    validate: (value, key) =>
+      value.trim().length === 0
+        ? { ok: false, error: `Invalid value for '${key}': it must not be empty.` }
+        : undefined,
+  },
+  authToken: {
+    validate: (value, key) =>
+      value.trim().length === 0
+        ? { ok: false, error: `Invalid value for '${key}': it must not be empty.` }
+        : undefined,
+  },
+  // `port` and `agentTimeoutMs` are positive integers, rejected before the config
+  // is written and persisted with their real numeric type (a quoted string would
+  // be rejected by the manifest/project-config schemas on read).
+  port: {
+    validate: (value, key) =>
+      !isValidPort(value)
+        ? {
+            ok: false,
+            error: `Invalid value for '${key}': it must be a positive integer (got '${value}').`,
+          }
+        : undefined,
+    serialize: (value) => Number(value.trim()),
+  },
+  agentTimeoutMs: {
+    validate: (value, key) =>
+      !isValidPort(value)
+        ? {
+            ok: false,
+            error: `Invalid value for '${key}': it must be a positive integer (got '${value}').`,
+          }
+        : undefined,
+    serialize: (value) => Number(value.trim()),
+  },
+  // `insecure` is a boolean in the schema, so persist its real type.
+  insecure: {
+    serialize: (value) => value.trim() === 'true',
+  },
+  // The `agent` key is validated through the SAME shared schema the loaders use
+  // (AgentSettingSchema's superRefine routes every string position through
+  // parseAgentSpec), so the write path can never persist what the loader
+  // rejects. On success the typed value is carried via `parsedValue`; a
+  // `{`-prefixed inline stage map is persisted as a real YAML map (not a quoted
+  // string), mirroring how `port`/`insecure` persist their real types.
+  agent: {
+    validate: (value) => validateAgentSetting(value),
+    serialize: (value, validation) =>
+      validation.parsedValue !== undefined ? validation.parsedValue : value,
+  },
+};
+
+/**
+ * Validate a `key=value` setting against the allowed enum values AND, for the
+ * `agent` key, against the shared `AgentSettingSchema` (whose `superRefine`
+ * routes every string position through `parseAgentSpec`). The write path and
+ * the load path thus never diverge: a value the write path accepts is exactly
+ * what the loader accepts.
+ *
+ * For the `agent` key, a value whose trimmed form starts with `{` is parsed as
+ * a YAML flow map and validated as a stage map (so per-stage entries are
+ * checked); any other value is validated as a scalar spec string. Failures
+ * return `ok: false` with an error naming the offending value (and the stage
+ * key for map entries).
+ */
 export function validateSetting(key: string, value: string): SetResult {
   if (!SETTING_KEYS.includes(key as keyof BatchSettings)) {
     return {
@@ -474,40 +828,62 @@ export function validateSetting(key: string, value: string): SetResult {
     };
   }
 
-  // A free-form `image` must be a non-empty reference — an empty value is
-  // rejected before any container is started so the project config is left
-  // unchanged (see features/container-locus/configurable-image.feature).
-  if (key === 'image' && value.trim().length === 0) {
-    return {
-      ok: false,
-      error: `Invalid value for 'image': the container image reference must not be empty.`,
-    };
-  }
+  // Per-key shape validation lives in the codec table so validate and persist
+  // never diverge. A codec that returns a SetResult short-circuits here (an
+  // error, or the `agent` success carrying `parsedValue`); `undefined` falls
+  // through to the generic success below.
+  const typedKey = key as keyof BatchSettings;
+  const codecResult = SETTING_CODECS[typedKey]?.validate?.(value, typedKey);
+  if (codecResult) return codecResult;
 
-  // The remote-locus settings each have a shape constraint, rejected before the
-  // project config is written (see features/remote-locus/config-and-validation).
-  if ((key === 'host' || key === 'authToken') && value.trim().length === 0) {
-    return {
-      ok: false,
-      error: `Invalid value for '${key}': it must not be empty.`,
-    };
-  }
-  if (key === 'port' && !isValidPort(value)) {
-    return {
-      ok: false,
-      error: `Invalid value for 'port': it must be a positive integer (got '${value}').`,
-    };
-  }
-  // `agentTimeoutMs` is a positive integer (milliseconds), validated like `port`
-  // so a malformed value is rejected before the project config is written.
-  if (key === 'agentTimeoutMs' && !isValidPort(value)) {
-    return {
-      ok: false,
-      error: `Invalid value for 'agentTimeoutMs': it must be a positive integer (got '${value}').`,
-    };
-  }
+  return { ok: true, key: typedKey, value };
+}
 
-  return { ok: true, key: key as keyof BatchSettings, value };
+/**
+ * Validate an `agent` CLI value through {@link AgentSettingSchema}. A value
+ * whose trimmed form starts with `{` is parsed as a YAML flow map and validated
+ * as a stage map; any other value is validated as a scalar spec string. On
+ * success the typed value (string or stage map) is carried via `parsedValue`.
+ * On failure the error names the offending value (and the stage key for map
+ * entries), derived from the zod issues.
+ */
+function validateAgentSetting(value: string): SetResult {
+  const trimmed = value.trim();
+  let parsed: unknown = value;
+  if (trimmed.startsWith('{')) {
+    try {
+      parsed = parseYamlFlow(value);
+    } catch {
+      return {
+        ok: false,
+        key: 'agent',
+        value,
+        error: `Invalid value for 'agent': '${value}' is not a valid YAML flow map.`,
+      };
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        key: 'agent',
+        value,
+        error: `Invalid value for 'agent': '${value}' must be a stage map (e.g. {apply: claude:fable}).`,
+      };
+    }
+  }
+  const result = AgentSettingSchema.safeParse(parsed);
+  if (!result.success) {
+    const messages = result.error.issues.map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.join('.') : '';
+      return path ? `agent.${path}: ${issue.message}` : `agent: ${issue.message}`;
+    });
+    return {
+      ok: false,
+      key: 'agent',
+      value,
+      error: `Invalid value for 'agent': ${messages.join('; ')}`,
+    };
+  }
+  return { ok: true, key: 'agent', value, parsedValue: result.data as string | AgentStageMap };
 }
 
 /** A port is a positive integer (numeric string, no decimals/sign/whitespace). */
@@ -573,7 +949,16 @@ export function resolveChangeStepSettings(
     if (!validation.ok) {
       throw new Error(validation.error);
     }
-    (writable[key] as BatchSettings[typeof key]) = value as BatchSettings[typeof key];
+    // For the `agent` key, persist the typed value (a map override must be
+    // applied as a real map, not the raw CLI string). A scalar override stays
+    // a plain string. The validation already ran `parseAgentSpec` through the
+    // shared schema, so a malformed standalone `--agent` value throws here
+    // (naming the value) BEFORE any settings are mutated or any agent spawned.
+    const typed =
+      key === 'agent' && validation.parsedValue !== undefined
+        ? validation.parsedValue
+        : value;
+    (writable[key] as BatchSettings[typeof key]) = typed as BatchSettings[typeof key];
   };
 
   applyOverride('agent', overrides.agent);
@@ -623,16 +1008,12 @@ export function setProjectBatchSetting(
     string,
     unknown
   >;
-  // `port` is a number and `insecure` is a boolean in the schema, so persist
-  // them with their real type (a quoted string would be rejected by the
-  // manifest/project-config schemas on read).
-  if (key === 'port' || key === 'agentTimeoutMs') {
-    batch[key] = Number(value.trim());
-  } else if (key === 'insecure') {
-    batch[key] = value.trim() === 'true';
-  } else {
-    batch[key] = value;
-  }
+  // Persist through the SAME codec table `validateSetting` used, so a key's
+  // storage form (numeric `port`/`agentTimeoutMs`, boolean `insecure`, real-map
+  // `agent`) is defined in one place. Keys with no `serialize` persist the raw
+  // string verbatim.
+  const codec = SETTING_CODECS[key as keyof BatchSettings];
+  batch[key] = codec?.serialize ? codec.serialize(value, validation) : value;
   raw.batch = batch;
 
   writeFileSync(filePath, stringifyYaml(raw), 'utf-8');

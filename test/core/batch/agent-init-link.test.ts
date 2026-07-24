@@ -22,6 +22,9 @@ import type {
  * - features/agent-init-link/derived-agent-registry.feature
  * - features/agent-init-link/registry-drift-guard.feature
  * - features/agent-init-link/doctor-preserved.feature
+ * - features/model-flag-threading/model-flag-argv.feature (drift guard covers the
+ *   model flag: every spawnable adapter declares a non-empty `modelFlag` and
+ *   `buildRequest` with a model appends exactly that flag and the model string)
  */
 
 /** The set of init tools that declare an agentBinary (the coding agents). */
@@ -55,7 +58,7 @@ class FakeDeps implements BootstrapDeps {
 const ok = (stdout = ''): RunResult => ({ status: 0, stdout, stderr: '' });
 
 describe('agent ↔ init registry derivation', () => {
-  it('AGENT_BINARIES reflects exactly the agentBinary-marked init tools, including gemini', () => {
+  it('AGENT_BINARIES reflects exactly the agentBinary-marked init tools, including gemini and opencode', () => {
     const expected = Object.fromEntries(
       agentInitTools.map((t) => [t.value, t.agentBinary])
     );
@@ -63,17 +66,15 @@ describe('agent ↔ init registry derivation', () => {
     // gemini is a first-class coding agent now.
     expect(AGENT_BINARIES.gemini).toBe('gemini');
     expect(AGENT_BINARIES.cursor).toBe('cursor-agent');
+    expect(AGENT_BINARIES.opencode).toBe('opencode');
   });
 
   it('excludes init tools that are NOT coding agents (no agentBinary)', () => {
     expect(AGENT_BINARIES).not.toHaveProperty('github-copilot');
-    expect(AGENT_BINARIES).not.toHaveProperty('opencode');
-    // And those tools really are registered init tools without an agentBinary.
-    for (const id of ['github-copilot', 'opencode']) {
-      const tool = AI_TOOLS.find((t) => t.value === id);
-      expect(tool).toBeDefined();
-      expect(tool?.agentBinary).toBeUndefined();
-    }
+    // And that tool really is a registered init tool without an agentBinary.
+    const tool = AI_TOOLS.find((t) => t.value === 'github-copilot');
+    expect(tool).toBeDefined();
+    expect(tool?.agentBinary).toBeUndefined();
   });
 });
 
@@ -102,6 +103,40 @@ describe('registry drift guard', () => {
     const adapterWithoutInit = [...adapterIds].filter((id) => !agentInitIds.has(id));
     expect(initWithoutAdapter).toEqual([]);
     expect(adapterWithoutInit).toEqual([]);
+  });
+
+  /**
+   * Implements: features/model-flag-threading/model-flag-argv.feature
+   * Scenario: The registry drift guard covers the model flag.
+   *
+   * Every spawnable adapter (BUILTIN_ADAPTERS) declares a non-empty `modelFlag`,
+   * and `buildRequest` with a model appends exactly that flag and the model
+   * string. This guards against a future adapter being registered without a flag
+   * or with the wrong flag.
+   */
+  it('every spawnable adapter declares a non-empty model flag', () => {
+    for (const id of Object.keys(AGENT_BINARIES)) {
+      const adapter = resolveAdapter(id);
+      expect(adapter.modelFlag, `adapter '${id}' must declare a non-empty modelFlag`).toBeTruthy();
+      expect(typeof adapter.modelFlag).toBe('string');
+    }
+  });
+
+  it('buildRequest with a model appends exactly [modelFlag, model] after the base argv', () => {
+    for (const id of Object.keys(AGENT_BINARIES)) {
+      const adapter = resolveAdapter(id);
+      const flag = adapter.modelFlag!;
+      const model = 'm-1';
+      const noModelArgs = adapter.buildRequest(CTX, 'instr', '/cwd', {}).args;
+      const withModelArgs = adapter.buildRequest(
+        { ...CTX, model },
+        'instr',
+        '/cwd',
+        {}
+      ).args;
+      // The with-model argv is exactly the no-model argv plus [flag, model].
+      expect(withModelArgs).toEqual([...noModelArgs, flag, model]);
+    }
   });
 });
 

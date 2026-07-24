@@ -1,0 +1,24 @@
+You are advancing the ratchet batch "mature-eval".
+Perform EXACTLY ONE transition: APPLY for change "eval-set-holdout-status".
+You MUST finish by running `ratchet batch report mature-eval --change eval-set-holdout-status --complete "<summary>"` — without it this step is treated as unreported and parked.
+
+Active phase: holdout-scenarios
+Phase goal: Add `@holdout` scenarios as an anti-overfitting visibility split: hidden from the building agent during apply, included as ordinary gating cases at verify — reusing the existing gate unchanged.
+Phase success criteria: A `@holdout`-tagged Scenario/Feature is excluded from the spec context handed to the building agent during `apply` (the change-step/prompt assembly filters it out) yet enumerated and gated normally at `eval run` / batch `verify` with no verdict/aggregation/persistence change; `ratchet eval set` reports hold-out status and a `--holdout` / `--no-holdout` scope filter runs just the held-out set; the stronger sibling-location isolation option is documented.
+Phase proof-of-work (integration): run `pnpm build && pnpm vitest run holdout`, passes when exit code 0 — tests assert a `@holdout` scenario is absent from the agent's materialized apply spec but present and gating at verify, and that `eval set` reports hold-out status with the scope filter working
+Definition of done: `ratchet eval set` reports each case's hold-out status alongside its existing binding/skip reporting, with no change to verdict, aggregation, or the persisted run JSON shape; `docs/commands/eval.md` and `README.md` are updated to describe the new status per `.ratchet/standards/documentation.md`
+
+Advance this change by invoking the ratchet apply skill — run:
+  /rct:apply eval-set-holdout-status
+It loads the project standards under ".ratchet/standards/" and is the single
+author of the apply lifecycle. Do NOT hand-build or re-describe
+the apply steps yourself — delegate to the skill and let it
+author/advance the change to its canonical definition of done.
+
+Communicate ONLY by running these shell commands (do not prompt interactively):
+  ratchet batch report mature-eval --change eval-set-holdout-status --status "<progress note>"
+  ratchet batch report mature-eval --change eval-set-holdout-status --blocker "<question you need answered>"
+  ratchet batch report mature-eval --change eval-set-holdout-status --needs-input "<what you need>"
+  ratchet batch report mature-eval --change eval-set-holdout-status --complete "<summary of what you did>"
+Raise a blocker instead of guessing when a decision is required.
+Post a completion ONLY when this single transition is genuinely finished.

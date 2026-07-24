@@ -16,6 +16,7 @@ export const ScenarioSchema = z.object({
   name: z.string().min(1),
   steps: z.array(StepSchema).min(1, VALIDATION_MESSAGES.SCENARIO_NO_STEPS),
   isOutline: z.boolean().default(false),
+  tags: z.array(z.string()).default([]),
 });
 
 export const FeatureSchema = z.object({

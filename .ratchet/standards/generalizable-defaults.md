@@ -61,3 +61,17 @@ Every change that introduces or modifies a default — a value or behavior — t
 ships to, or runs in, a consuming project: proof-of-work defaults, generated
 commands, scripts, templates, config-key defaults, and any literal embedded in
 change artifacts or agent instructions.
+
+## Implemented by
+
+<!-- ratchet:implemented-by — generated from .ratchet/features/<capability>/.ratchet.yaml; do not edit by hand -->
+
+- agent-timeout/configurable-timeout.feature
+- proof-of-work-boundary/execute-and-record.feature
+- proof-of-work-boundary/recorded-proof-reader.feature
+- proof-of-work-gate/e2e-gate.feature
+- proof-of-work-gate/hard-gate-blocks-on-recorded-proof.feature
+- proof-of-work-gate/status-and-selection-agree.feature
+- proof-of-work-gate/warn-advances-surfacing-failure.feature
+- rerun-recorded-proof/cli-surface.feature
+- rerun-recorded-proof/invalidation-folding.feature

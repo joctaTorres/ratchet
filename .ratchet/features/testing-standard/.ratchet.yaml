@@ -1,0 +1,7 @@
+features:
+  reference-docs.feature:
+    - documentation
+    - testing
+  standard-library.feature:
+    - documentation
+    - testing

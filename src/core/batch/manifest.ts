@@ -17,6 +17,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { RATCHET_DIR_NAME } from '../config.js';
 import { PermissionsPolicySchema } from './permissions-policy.js';
+import { AgentSettingSchema } from './agent-setting.js';
 
 // -----------------------------------------------------------------------------
 // Zod schema
@@ -60,7 +61,14 @@ export const BatchSettingsOverrideSchema = z
     strategy: z.enum(['vertical-slice', 'feature']).optional(),
     proofOfWork: z.enum(['hard-gate', 'warn']).optional(),
     locus: z.enum(['local', 'docker', 'remote']).optional(),
-    agent: z.string().optional(),
+    // PR grouping mode. Validated identically to the project-config scope;
+    // `PR_GROUPING_VALUES` in batch/config.ts is the vocabulary's source of
+    // truth. The enclosing object stays `.strict()` — `prGrouping` is known.
+    prGrouping: z.enum(['off', 'whole-batch', 'per-phase', 'per-change']).optional(),
+    // Scalar agent name OR a partial {propose, apply, verify, pr} stage-map. Shared
+    // schema; identical to the project-config scope (see agent-setting.ts). The
+    // enclosing object stays `.strict()` — `agent` is a known key.
+    agent: AgentSettingSchema.optional(),
     image: z.string().optional(),
     host: z.string().optional(),
     port: z.number().optional(),

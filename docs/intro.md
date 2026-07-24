@@ -7,9 +7,10 @@ sidebar_position: 1
 
 # Introduction
 
-ratchet is an AI-native system for BDD-flavored, spec-driven development. A
-change is described by executable Gherkin features and an implementation plan,
-then implemented against those features and verified before it is archived.
+ratchet is an AI-native CLI for spec-driven development. A change is described by
+executable Gherkin features and an implementation plan, then implemented against
+those features and verified before it is archived. Each scenario is re-checked by
+a scored eval suite, so behavior that has been verified cannot silently regress.
 
 This site renders the reference documentation kept in the repository's `docs/`
 directory. Reference entries describe ratchet's machinery — its CLI commands,

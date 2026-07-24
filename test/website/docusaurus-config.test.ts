@@ -25,7 +25,7 @@ import config from '../../website/docusaurus.config.ts';
 describe('website/docusaurus.config.ts', () => {
   it('publishes the ratchet site identity', () => {
     expect(config.title).toBe('ratchet');
-    expect(config.tagline).toBe('AI-native system for BDD-flavored spec-driven development');
+    expect(config.tagline).toBe('AI-native spec-driven development that only moves forward');
     expect(config.url).toBe('https://ratchet.pages.dev');
     expect(config.baseUrl).toBe('/');
     expect(config.favicon).toBe('img/ratchet.png');

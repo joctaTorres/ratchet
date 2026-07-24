@@ -66,7 +66,7 @@ vi.mock('@docusaurus/useDocusaurusContext', () => ({
   default: () => ({
     siteConfig: {
       title: 'ratchet',
-      tagline: 'AI-native system for BDD-flavored spec-driven development',
+      tagline: 'AI-native spec-driven development that only moves forward',
     },
   }),
 }));
@@ -117,7 +117,7 @@ describe('website/src/pages/index.tsx', () => {
   it('renders the hero with the site title, tagline, CTAs and install command', () => {
     const text = renderToText(Home({}));
     expect(text).toContain('ratchet');
-    expect(text).toContain('AI-native system for BDD-flavored spec-driven development');
+    expect(text).toContain('AI-native spec-driven development that only moves forward');
     expect(text).toContain('Read the docs');
     expect(text).toContain('GitHub');
     expect(text).toContain('npx ratchet-ai@beta init');
@@ -125,13 +125,15 @@ describe('website/src/pages/index.tsx', () => {
 
   it('renders all three capability cards from the FEATURES list', () => {
     const text = renderToText(Home({}));
-    expect(text).toContain('Spec-driven');
-    expect(text).toContain('BDD / Gherkin');
-    expect(text).toContain('Batch orchestration');
-    // Card tags are rendered alongside titles.
+    expect(text).toContain('Only ratchets forward');
+    expect(text).toContain('Behavior is the contract');
+    expect(text).toContain('Autonomy with a verifier');
+    // Card tags are rendered alongside titles; the eval card leads and no
+    // separate `// bdd` card remains (it folded into `// spec`).
+    expect(text).toContain('// eval');
     expect(text).toContain('// spec');
-    expect(text).toContain('// bdd');
     expect(text).toContain('// batch');
+    expect(text).not.toContain('// bdd');
   });
 
   it('points the GitHub CTA at the project repository', () => {

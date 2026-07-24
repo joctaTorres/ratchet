@@ -8,3 +8,12 @@ allowBuilds:
 onlyBuiltDependencies:
   - esbuild
 verifyDepsBeforeRun: false
+# Security remediation: force transitive dev-dependency ranges up to the patched
+# versions for two "high" advisories the dependency-audit gate flags —
+# brace-expansion DoS (GHSA-3jxr-9vmj-r5cp, patched in 1.1.16 / 2.1.2 / 5.0.7)
+# and js-yaml quadratic-CPU merge-keys (GHSA-52cp-r559-cp3m, patched in 4.3.0).
+overrides:
+  brace-expansion@1: 1.1.16
+  brace-expansion@2: 2.1.2
+  brace-expansion@5: 5.0.7
+  js-yaml@4: 4.3.0

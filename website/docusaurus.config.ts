@@ -13,7 +13,7 @@ const repoUrl = `https://github.com/${organizationName}/${projectName}`;
 // `../docs`; this app only provides the site shell, theme, and landing page.
 const config: Config = {
   title: 'ratchet',
-  tagline: 'AI-native system for BDD-flavored spec-driven development',
+  tagline: 'AI-native spec-driven development that only moves forward',
   favicon: 'img/ratchet.png',
 
   // Cloudflare Pages serves the site at the project root.

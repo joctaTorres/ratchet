@@ -4,9 +4,9 @@
 
 <h1 align="center">ratchet</h1>
 
-**AI-native, BDD-flavored spec-driven development.** A lightweight CLI that lets you and your coding agent agree on *behavior* — written as executable [Gherkin](https://cucumber.io/docs/gherkin/) — before any code is written, then drive the change from proposal to merged spec.
+**AI-native spec-driven development that only moves forward.** The hard part of agentic coding isn't getting code out of the agent — it's trusting what comes out. Agents produce plausible code that drifts from intent, and a spec that lives in chat history or a planning doc can't stop them. ratchet makes the spec enforceable: you and your agent agree on *behavior* as executable [Gherkin](https://cucumber.io/docs/gherkin/), and every scenario doubles as a scored, baseline-diffed eval — judged against fixtures, never by the agent grading its own work. Behavior that passes today can't silently regress. It only ratchets forward.
 
-ratchet keeps a lean, behavior-first model: every change is just **two artifacts** — feature files and a plan — and completed work ratchets forward into a permanent, living feature store.
+The model stays lean: every change is just **two artifacts** — feature files and a plan — and completed work ratchets into a permanent, living feature store. Free and MIT-licensed, no new API keys, runs on the coding agent you already have.
 
 📖 **Read the documentation at:  [ratchet-ai.dev](https://ratchet-ai.dev/)**
 
@@ -31,14 +31,14 @@ AI:  Synced features → .ratchet/features/theming/dark-mode.feature
 
 ## Why ratchet?
 
-AI coding assistants are powerful but unpredictable when the spec lives only in chat history. ratchet adds a thin spec layer so intent is explicit and verifiable:
+Most developers don't trust what AI agents produce — and most spec tools can't help, because their spec is a planning document that goes stale the moment implementation starts. ratchet closes that loop: the spec is thin, explicit, and re-checked, so what worked yesterday still works today:
 
 - **Behavior is the contract.** Requirements are Gherkin scenarios (`Given/When/Then`) — concrete, testable, and unambiguous for both humans and agents.
+- **The spec is also a regression suite.** [`ratchet eval`](#eval-suite) turns your `.feature` files into a scored, baseline-diffed eval run, judged against checked-in fixtures — never by the agent grading its own work. Behavior that passes today can't silently regress, and an agent can't go green by deleting the test.
 - **Two artifacts, no ceremony.** A change is `features/` + `plan.md`. That's it.
+- **Autonomy with a verifier.** [Batch orchestration](#batch-orchestration) slices a big objective into ordered vertical-slice phases and drives them to completion autonomously — but every phase is gated by an executable proof-of-work. The loop that runs unattended and quietly breaks three things it already had working is exactly the failure mode the gates exist to kill.
 - **From fuzzy idea to spec.** Not sure of the shape yet? `/rct:brainstorm` explores the project, clarifies one question at a time, weighs 2–3 approaches, and designs the change with you — then recommends and routes into `propose` (one change) or `propose-batch` (a phased effort).
 - **A living spec that ratchets forward.** Archiving a change copies its features into a permanent `.ratchet/features/` store — your project's always-current behavioral spec.
-- **Big work ships in phases, not waterfalls.** [Batch orchestration](#batch-orchestration) slices an objective into ordered vertical-slice phases, each gated by an executable proof-of-work, and drives them to completion autonomously — changes are created lazily as the batch advances.
-- **The spec is also a regression suite.** [`ratchet eval`](#eval-suite) turns your `.feature` files into a scored, baseline-diffed eval run, judged against fixtures by the bundled engine — so behavior that passes today can't silently regress.
 - **Works with the tools you already use.** Slash commands and skills for Claude Code, OpenCode, Cursor, GitHub Copilot, and Codex.
 
 ## The model
@@ -274,7 +274,9 @@ each phase is a **vertical slice** — runnable software a user can exercise end
 end — gated by an **executable proof-of-work**. It's deliberately
 **anti-waterfall**: only the current phase is decomposed into concrete change
 intents; later phases stay as goal + proof, and their changes are created
-**lazily** as the batch advances with real outcomes in hand.
+**lazily** as the batch advances with real outcomes in hand. The gates are what
+make the autonomy trustworthy: the loop advances only through an executable
+proof, so it can't advance by breaking what already worked.
 
 ```
 batch.yaml
@@ -479,6 +481,10 @@ flowchart TD
 baseline-diffed regression suite. The CLI is deterministic plumbing; **judging is
 delegated to the bundled batch engine, run against fixtures** — never the live
 working tree — so a scenario that passes today can't silently regress tomorrow.
+The verifier is **independent of the agent that wrote the code**: an
+implementation can't pass by deleting the test, weakening the spec, or grading
+its own work — the scenarios, fixtures, and baseline are the review surface, in
+git, diffable on every run.
 
 ```bash
 ratchet eval set --json                 # one case per Scenario, with binding + hold-out status

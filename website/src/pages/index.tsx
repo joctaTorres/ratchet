@@ -13,19 +13,19 @@ const GITHUB_URL = 'https://github.com/joctaTorres/ratchet';
 // stays accurate to what ratchet actually does.
 const FEATURES: {tag: string; title: string; body: string}[] = [
   {
-    tag: '// spec',
-    title: 'Spec-driven',
-    body: 'A change is a plan plus features: the propose → apply loop turns intent into executable artifacts before any code is written.',
+    tag: '// eval',
+    title: 'Only ratchets forward',
+    body: 'Every Gherkin scenario doubles as a scored, baseline-diffed eval judged against fixtures — never by the agent grading its own work. Behavior that passes today can\'t silently regress.',
   },
   {
-    tag: '// bdd',
-    title: 'BDD / Gherkin',
-    body: 'Behavior is captured as executable Gherkin features — Given/When/Then scenarios are the contract the implementation must satisfy.',
+    tag: '// spec',
+    title: 'Behavior is the contract',
+    body: 'You and your agent agree on behavior as executable Gherkin before code is written. A change is two artifacts — features plus a plan — and Given/When/Then is what the implementation must satisfy.',
   },
   {
     tag: '// batch',
-    title: 'Batch orchestration',
-    body: 'Larger efforts are sliced into ordered, vertical-slice phases with per-phase proofs of work — anti-waterfall by construction.',
+    title: 'Autonomy with a verifier',
+    body: 'Big objectives ship as ordered vertical-slice phases, driven autonomously — and every phase is gated by an executable proof-of-work, so the loop can\'t advance by breaking what already worked.',
   },
 ];
 

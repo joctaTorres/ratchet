@@ -1,0 +1,85 @@
+name: Defect / hardening
+description: A bug, exposure, or hardening task — scoped so it cannot be partially fixed and silently closed.
+title: "<concise imperative summary>"
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Wording rules (this template exists because #80 was worded weakly and half-fixed)
+        - Write requirements as imperative **MUST**. Do **not** use "consider", "maybe", "could", "optionally", or "nice to have" for anything that is actually required — hedged wording is what lets a fix get de-scoped.
+        - Enumerate every **material requirement** below. Each becomes a checkbox a PR must satisfy before it may claim `Closes`.
+        - `Closes/Fixes #N` is earned, not assumed: a PR may only claim it when **all** material requirements are implemented and verified. Partial work says **"partially addresses #N"**.
+        - Severe/High security exposures are governed by the `security-remediation` standard: **complete remediation required — no partial fixes, no silent deferrals.** Severity governs the bar, not how this issue happens to be phrased.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Bug (incorrect behavior)
+        - Security exposure
+        - Hardening / robustness
+        - Doc / contract drift
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: "Severe/High + a security category triggers the security-remediation standard: this issue may not be partially resolved."
+      options:
+        - Severe / High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why / exposure
+      description: What is wrong, where (file:line where known), and the concrete consequence if unfixed. State the trust boundary crossed for security items.
+    validations:
+      required: true
+
+  - type: textarea
+    id: material-requirements
+    attributes:
+      label: Material requirements (MUST — each is a close-gate)
+      description: Enumerate every requirement that MUST be satisfied to consider this fully fixed. Imperative only. A PR that ships a subset MUST NOT claim Closes.
+      placeholder: |
+        - [ ] MUST <requirement 1>
+        - [ ] MUST <requirement 2>
+        - [ ] MUST <requirement 3 — e.g. the operator-facing surface reflects the real state>
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria (testable)
+      description: Concrete, checkable conditions a reviewer/verify step can confirm. Each should map to a material requirement above.
+    validations:
+      required: true
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Explicitly out of scope / deferrals
+      description: "What this issue does NOT cover. A deferral of security / permissions / data-integrity scope is NOT allowed here — file it as its own linked, owned issue and link it below."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: discipline
+    attributes:
+      label: Author acknowledgement
+      options:
+        - label: Every required behavior above is imperative (MUST), with no "consider"/"optionally" hedging.
+          required: true
+        - label: I understand a PR may claim `Closes #N` only when ALL material requirements are implemented and verified; partial work says "partially addresses".
+          required: true
+        - label: "If Severe/High security: I understand the security-remediation standard forbids partial remediation and silent deferral of this exposure."
+          required: true

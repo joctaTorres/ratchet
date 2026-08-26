@@ -257,15 +257,31 @@ the alternative — a short body plus a reviewer expected to remember the rule �
       part of the generated propose / propose-batch / decompose-phase artifacts.
 - [x] 7.2 Update `README.md` wherever it describes the propose / propose-batch / decompose-phase
       workflows so the described behavior matches the hardened prose.
-- [ ] 8.1 File the tracking issue for issue #80's remainder (acceptance criterion 7): the
+- [x] 8.1 File the tracking issue for issue #80's remainder (acceptance criterion 7): the
       ungated `RATCHET_BATCH_AGENT_CMD` / `RATCHET_EVAL_AGENT_CMD` override seam, the voided
       permission posture under an override (`buildAgentSpawnRequest`'s override branch returns a
       bare `bash -c <override>` request with no adapter and no permission flags), and `batch
       config` (`src/core/batch/config.ts`) reporting the posture as enforced while an override
       voids it. Assign a named owner (`--assignee joctaTorres`) and link it to #80 and #100.
+      DONE: filed as **#112**, open, assigned to `joctaTorres`, linking both #80 and #100. Its
+      three material requirements were each verified against
+      `origin/erh/phase-1-spawn-env-plumbing` before filing:
+      `buildAgentSpawnRequest`'s override branch returns a bare `bash -c <override>` and never
+      calls `buildAdapterRequest()`, so the adapter's `resolvePermissionFlags(...)` block is
+      skipped entirely; `src/commands/batch/config.ts:118` prints `posture <value> <source>`
+      with no override awareness.
 - [ ] 8.2 Correct #80's close-claim in the open PR stack (acceptance criterion 7): edit PR #97's
       body so `Closes #80` becomes "Partially addresses #80 — remainder tracked in #<new issue>",
       leaving `Closes #89` intact.
+      DROPPED BY EXPLICIT HUMAN DECISION — recorded here per the `security-remediation`
+      standard's requirement that a deferral carry recorded human sign-off, not just a linked
+      issue. The repository owner reviewed the proposed edit and declined it, stating they will
+      close PR #97 themselves rather than have it amended. This is a de-scope of a
+      security-relevant record-keeping item, so it was surfaced and halted rather than actioned
+      on momentum; the owner's decision is the approval. The security remainder itself remains
+      tracked with an owner in #112 and is linked from #80 independently of #97's body, so no
+      security scope is left untracked by this drop. Sign-off: repository owner
+      (`joctaTorres`), during the apply session for this change.
 - [x] 9.1 Run the full test suite and the coverage gate; all tests pass and the enforced coverage
       threshold is not lowered (`testing` standard).
 - [x] 9.2 Run `ratchet validate issue-scope-reconciliation` and confirm the change validates.

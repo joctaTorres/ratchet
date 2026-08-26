@@ -234,11 +234,11 @@ the alternative — a short body plus a reviewer expected to remember the rule �
       needs its auth env present (for the default Claude agent, `CLAUDE_CODE_OAUTH_TOKEN`); if
       the spawn cannot be authenticated in this environment, say so explicitly in the completion
       report rather than marking this task done.
-- [ ] 7.1 Documentation task (REQUIRED by the `documentation` standard — not optional): update
+- [x] 7.1 Documentation task (REQUIRED by the `documentation` standard — not optional): update
       `docs/configuration/generated-artifacts.md` to describe the originating-issue
       reconciliation step, the close-claim rules, and the deferral carry-forward trichotomy as
       part of the generated propose / propose-batch / decompose-phase artifacts.
-- [ ] 7.2 Update `README.md` wherever it describes the propose / propose-batch / decompose-phase
+- [x] 7.2 Update `README.md` wherever it describes the propose / propose-batch / decompose-phase
       workflows so the described behavior matches the hardened prose.
 - [ ] 8.1 File the tracking issue for issue #80's remainder (acceptance criterion 7): the
       ungated `RATCHET_BATCH_AGENT_CMD` / `RATCHET_EVAL_AGENT_CMD` override seam, the voided

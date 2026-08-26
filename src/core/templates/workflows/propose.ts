@@ -12,8 +12,18 @@
  * verbatim in both places, which meant every edit had to be made twice or the
  * two surfaces silently diverged — the exact drift this workflow's own
  * reconciliation rules exist to prevent, so the duplication is gone.
+ *
+ * The originating-issue reconciliation step and the close-claim /
+ * stop-and-surface guardrails are not authored here: they are interpolated from
+ * `./scope-reconciliation.js`, the single author of those rules across
+ * `propose`, `propose-batch`, and `decompose-phase`.
  */
 import type { SkillTemplate, CommandTemplate } from '../types.js';
+import {
+  ISSUE_RECONCILIATION_STEP,
+  CLOSE_CLAIM_RULES,
+  STOP_AND_SURFACE_GUARDRAIL,
+} from './scope-reconciliation.js';
 
 /** The two lines that differ between the skill body and the command body. */
 interface ProposeBodyDeltas {
@@ -57,13 +67,17 @@ ${inputLine}
 
    **IMPORTANT**: Do NOT proceed without understanding the behavior to build.
 
-2. **Create the change directory**
+2. **Reconcile the authored scope against every originating issue**
+
+${ISSUE_RECONCILIATION_STEP}
+
+3. **Create the change directory**
    \`\`\`bash
    ratchet new change "<name>"
    \`\`\`
    This creates a scaffolded change in the planning home resolved by the CLI with \`.ratchet.yaml\`.
 
-3. **Get the artifact build order**
+4. **Get the artifact build order**
    \`\`\`bash
    ratchet status --change "<name>" --json
    \`\`\`
@@ -72,7 +86,7 @@ ${inputLine}
    - \`artifacts\`: list of all artifacts with their status and dependencies
    - \`planningHome\`, \`changeRoot\`, \`artifactPaths\`, and \`actionContext\`: path and scope context. Use these instead of assuming repo-local paths.
 
-4. **Create artifacts in sequence until apply-ready**
+5. **Create artifacts in sequence until apply-ready**
 
    Use the **TodoWrite tool** to track progress through the artifacts.
 
@@ -104,6 +118,10 @@ ${inputLine}
         particular standard). These tags are validated against \`.ratchet/standards/\` and
         are materialized into the feature store on archive.
       - Show brief progress: "Created <artifact-id>"
+      - Complete the reconciliation map from step 2 against what you actually
+        authored: every material requirement of every originating issue must point
+        at a feature scenario or a plan task. Anything still uncovered is surfaced
+        to the user as a decision point before you call the artifacts done.
 
    b. **Continue until all \`applyRequires\` artifacts are complete**
       - After creating each artifact, re-run \`ratchet status --change "<name>" --json\`
@@ -114,7 +132,7 @@ ${inputLine}
       - Ask the user to clarify (use a structured-question tool such as AskUserQuestion if your agent has one)
       - Then continue with creation
 
-5. **Show final status**
+6. **Show final status**
    \`\`\`bash
    ratchet status --change "<name>"
    \`\`\`
@@ -142,7 +160,9 @@ ${promptLine}
 - Always read dependency artifacts before creating a new one
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
 - If a change with that name already exists, ask if user wants to continue it or create a new one
-- Verify each artifact file exists after writing before proceeding to next`;
+- Verify each artifact file exists after writing before proceeding to next
+${CLOSE_CLAIM_RULES}
+${STOP_AND_SURFACE_GUARDRAIL}`;
 }
 
 /** The skill surface's **Input** line: a skill is invoked by a user request. */

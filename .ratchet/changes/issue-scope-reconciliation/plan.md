@@ -130,14 +130,14 @@ the alternative — a short body plus a reviewer expected to remember the rule �
 
 ## Tasks
 
-- [ ] 1.1 Create `src/core/templates/workflows/scope-reconciliation.ts` exporting
+- [x] 1.1 Create `src/core/templates/workflows/scope-reconciliation.ts` exporting
       `ISSUE_RECONCILIATION_STEP`, `CLOSE_CLAIM_RULES`, and `STOP_AND_SURFACE_GUARDRAIL` as
       string constants, with a module docstring stating they are the single author of these
       rules for all three change-authoring workflows. Keep the prose agent-neutral ("your
       agent", optional `AskUserQuestion` with a plain-prose fallback) per `multi-agent-support`,
       and tracker-neutral (`gh issue view <n>` named only as a GitHub example, with a
       paste-the-issue-text fallback) per `generalizable-defaults`.
-- [ ] 1.2 `ISSUE_RECONCILIATION_STEP` must require: identifying every originating issue
+- [x] 1.2 `ISSUE_RECONCILIATION_STEP` must require: identifying every originating issue
       (referenced by the user, the manifest, or the injected `done`); fetching each one;
       enumerating its material requirements from **both** its explicit fix items **and** the
       problems named in its narrative/Why; mapping each requirement to an authored feature
@@ -146,46 +146,46 @@ the alternative — a short body plus a reviewer expected to remember the rule �
       lower the bar for a security-relevant requirement, and that every uncovered requirement
       is surfaced to the user as an enumerated "issue asks X, this proposal does not include X"
       decision point before artifacts are finalized — never self-approved in plan prose.
-- [ ] 1.3 `CLOSE_CLAIM_RULES` must state that a `Fixes #N` / `Closes #N` claim — in a manifest
+- [x] 1.3 `CLOSE_CLAIM_RULES` must state that a `Fixes #N` / `Closes #N` claim — in a manifest
       `done`, a plan, or a PR body — is permitted only when the issue's material requirements
       are actually implemented; that partial work MUST use "partially addresses #N"; and that a
       close-claim is an output of verification, never an input of planning.
-- [ ] 1.4 `STOP_AND_SURFACE_GUARDRAIL` must state that any de-scope of security-, permission-,
+- [x] 1.4 `STOP_AND_SURFACE_GUARDRAIL` must state that any de-scope of security-, permission-,
       or integrity-relevant work is a stop-and-surface event — the workflow halts and asks the
       user, never proceeding on momentum — and that an approved deferral requires an explicitly
       filed tracking issue with a named owner, linked from the plan, before proceeding; a prose
       bullet in `plan.md` is not a deferral mechanism.
-- [ ] 2.1 Refactor `src/core/templates/workflows/propose.ts` so the skill `instructions` and the
+- [x] 2.1 Refactor `src/core/templates/workflows/propose.ts` so the skill `instructions` and the
       command `content` derive from ONE shared body builder parameterized by exactly the two
       known deltas (the **Input** line and the closing **Prompt** line, both quoted verbatim in
       this plan's Design section). Assert by inspection that no other text changed relative to
       the current file apart from the new sections added in 2.2.
-- [ ] 2.2 Add to the propose body: the `ISSUE_RECONCILIATION_STEP` as an explicit numbered step
+- [x] 2.2 Add to the propose body: the `ISSUE_RECONCILIATION_STEP` as an explicit numbered step
       that runs BEFORE artifacts are authored, and `CLOSE_CLAIM_RULES` +
       `STOP_AND_SURFACE_GUARDRAIL` embedded in its **Guardrails** section.
-- [ ] 3.1 Add to `src/core/templates/workflows/propose-batch.ts`: the
+- [x] 3.1 Add to `src/core/templates/workflows/propose-batch.ts`: the
       `ISSUE_RECONCILIATION_STEP` as an explicit step that runs before the manifest is
       scaffolded, reconciling each phase `goal`/`success` and each change-level `done` against
       the originating issues' material requirements.
-- [ ] 3.2 Add to `propose-batch.ts` the no-premature-close rule: the manifest MUST NOT hard-code
+- [x] 3.2 Add to `propose-batch.ts` the no-premature-close rule: the manifest MUST NOT hard-code
       `Closes #N` / `Fixes #N` in a phase `goal`, a phase `success`, or a change-level `done`
       for work not yet scoped and verified; phase contracts use "targets #N" / "addresses #N";
       a `done` covering only part of an issue says "partially addresses #N". Embed
       `CLOSE_CLAIM_RULES` + `STOP_AND_SURFACE_GUARDRAIL` in its **Guardrails** section.
-- [ ] 3.3 Verify the new propose-batch text does not trip the existing assertions in
+- [x] 3.3 Verify the new propose-batch text does not trip the existing assertions in
       `test/core/templates/workflows/propose-batch.test.ts`: it must not introduce the literal
       `/rct:propose ` (with trailing space) and must not introduce the phrase "per-change
       success".
-- [ ] 4.1 Add to `src/core/templates/workflows/decompose-phase.ts` a grounding sub-step that
+- [x] 4.1 Add to `src/core/templates/workflows/decompose-phase.ts` a grounding sub-step that
       requires reading each prior phase's shipped change `plan.md` files in addition to the
       injected `done` criteria, stating explicitly that the injected criteria are a paraphrase
       in which plan-prose deferrals are invisible.
-- [ ] 4.2 Require extracting from those plans every `## Out of scope`, "deferred", "revisit", or
+- [x] 4.2 Require extracting from those plans every `## Out of scope`, "deferred", "revisit", or
       equivalent item, and resolving EACH extracted item as exactly one of: (a) carried forward
       as a change intent in the phase being decomposed, (b) matched to an existing open tracking
       issue and reported as tracked, or (c) surfaced to the user as an explicit drop decision.
       State that silently ignoring an item is not an available outcome.
-- [ ] 4.3 Require earned-close verification: before treating an issue as shipped, compare the
+- [x] 4.3 Require earned-close verification: before treating an issue as shipped, compare the
       issue's material requirements against what the prior phase's `done` and `plan.md` describe
       as implemented; surface an unearned `Fixes/Closes #N` and carry the remaining scope
       forward rather than inheriting the claim as fact. Embed `CLOSE_CLAIM_RULES` +

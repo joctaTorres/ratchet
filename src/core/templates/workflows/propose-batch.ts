@@ -10,8 +10,18 @@
  * `.ratchet/batches/<name>/batch.yaml` — never change directories.
  *
  * Like `batch.ts`, both the skill and the command share a single body constant.
+ *
+ * The originating-issue reconciliation step and the close-claim /
+ * stop-and-surface guardrails are interpolated from `./scope-reconciliation.js`,
+ * the single author of those rules across `propose`, `propose-batch`, and
+ * `decompose-phase` — never restated here.
  */
 import type { SkillTemplate, CommandTemplate } from '../types.js';
+import {
+  ISSUE_RECONCILIATION_STEP,
+  CLOSE_CLAIM_RULES,
+  STOP_AND_SURFACE_GUARDRAIL,
+} from './scope-reconciliation.js';
 
 const PROPOSE_BATCH_BODY = `Propose a batch — a phased, anti-waterfall unit of work — by guiding the
 author to a batch manifest at \`.ratchet/batches/<name>/batch.yaml\`.
@@ -97,7 +107,37 @@ derive one from the objective.
      that the exact runnable command is **refined at phase entry**. Do not demand
      an exact command for software that does not yet exist.
 
-4. **Scaffold the manifest via existing machinery (shallow DAG)**
+4. **Reconcile the manifest against every originating issue (before scaffolding)**
+
+   When the objective, a phase, or a change intent originates from a tracked
+   issue, reconcile against that issue BEFORE \`ratchet new batch\` is run. The
+   "authored scope" being reconciled here is the manifest you are about to write:
+   each phase \`goal\`, each phase \`success\` criterion, and each change-level
+   \`done\`.
+
+${ISSUE_RECONCILIATION_STEP}
+
+   Map each enumerated requirement onto the phase \`goal\`, phase \`success\`, or
+   change-level \`done\` that carries it, and surface every requirement the
+   manifest leaves uncovered to the user BEFORE the manifest is scaffolded. A
+   requirement no phase contract carries is not "handled in a later phase" unless
+   a later phase's \`goal\` actually names it — an unwritten intention is an
+   omission, and omissions are the user's decision to make, not yours.
+
+   **No premature close-claims in the manifest.** The manifest MUST NOT hard-code
+   \`Closes #N\` or \`Fixes #N\` in a phase \`goal\`, in a phase \`success\`
+   criterion, or in a change-level \`done\` for work that has not yet been scoped
+   and verified. At manifest-authoring time nothing has been implemented, so no
+   close-claim can have been earned:
+
+   - Phase contracts reference an issue as **"targets #N"** or
+     **"addresses #N"** — never as a closing claim.
+   - A change-level \`done\` covering only part of an issue says
+     **"partially addresses #N"**, and MUST NOT say \`Fixes #N\` or \`Closes #N\`.
+   - The \`Closes #N\` linkage is earned at pull-request-authoring time, only
+     after the issue's material requirements are confirmed implemented.
+
+5. **Scaffold the manifest via existing machinery (shallow DAG)**
 
    Once you have valid phases with proofs-of-work and a batch name:
    \`\`\`bash
@@ -118,6 +158,10 @@ derive one from the objective.
      specifically (distinct from the phase \`success\`). Keep it to one line. It
      is **required** and must be non-empty — a change intent without a \`done\`
      fails validation.
+   - **Issue references**: phase contracts and change-level \`done\` criteria
+     reference originating issues as "targets #N" / "addresses #N", or
+     "partially addresses #N" for partial coverage. Never write \`Closes #N\` or
+     \`Fixes #N\` into the manifest — see step 4.
    - **Settings**: if the user wants a setting that differs from the project
      defaults, record it under the manifest \`settings\` block. Only these keys are
      accepted (the schema is strict — any other key fails validation): \`gate\`,
@@ -128,7 +172,7 @@ derive one from the objective.
    generate any change directories under \`.ratchet/changes/\`, and do not produce
    any per-change planning artifacts at proposal time.
 
-5. **Hand off to apply-batch to drive the batch now (gated)**
+6. **Hand off to apply-batch to drive the batch now (gated)**
 
    After the manifest is written, present an **explicit gate** — never an
    automatic action — asking whether to drive the batch now by running the
@@ -166,7 +210,11 @@ After scaffolding, summarize:
 - Only phase one is decomposed into change intents; later phases stay goal+proof.
 - The only artifact is the manifest — never change directories at proposal time.
 - The apply-batch hand-off is always gated: ask, never auto-drive the batch.
-- \`propose-batch\` is only useful alongside the \`batch\` workflow; pair them.`;
+- \`propose-batch\` is only useful alongside the \`batch\` workflow; pair them.
+- Reconcile every originating issue before scaffolding; a material requirement
+  the manifest omits is surfaced to the user, never quietly left to a later phase.
+${CLOSE_CLAIM_RULES}
+${STOP_AND_SURFACE_GUARDRAIL}`;
 
 export function getProposeBatchSkillTemplate(): SkillTemplate {
   return {

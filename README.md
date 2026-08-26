@@ -678,12 +678,12 @@ deprecated alias mapped onto the gate.
 | Workflow | What it does |
 |---|---|
 | **brainstorm** | Front door for an open-ended idea: explores context, clarifies one question at a time, weighs 2–3 approaches, designs section-by-section, then recommends + gates a route into `propose` or `propose-batch` (does no implementation itself) |
-| **propose** | Clarifies intent (explore-first when unclear), then generates `features/` + `plan.md` |
+| **propose** | Clarifies intent (explore-first when unclear), [reconciles the authored scope against every originating issue](#scope-reconciliation), then generates `features/` + `plan.md` |
 | **apply** | Implements against each scenario's `Given/When/Then`, checking off plan tasks |
 | **verify** | Confirms the implementation satisfies every scenario and all tasks are done |
 | **archive** | Runs `ratchet archive` to ratchet features into the permanent store |
 | **propose-standard** | Authors a new standard into `.ratchet/standards/` for propose + verify to apply |
-| **propose-batch** | Slices an objective into ordered vertical-slice phases with per-phase proofs-of-work and writes a batch manifest (not change directories) |
+| **propose-batch** | Slices an objective into ordered vertical-slice phases with per-phase proofs-of-work and writes a batch manifest (not change directories), [reconciled against every originating issue](#scope-reconciliation) and free of premature `Closes #N` claims |
 | **apply-batch** | Autonomously drives a batch to completion — loops the single-step `ratchet batch apply`, surfaces halts/approvals + proof-of-work failures, records answers, resumes |
 | **eval** | Runs the engine-backed eval, surfaces regressions first, and guides authoring bindings for unjudged cases |
 

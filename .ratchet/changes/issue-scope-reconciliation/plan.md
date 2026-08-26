@@ -234,6 +234,23 @@ the alternative — a short body plus a reviewer expected to remember the rule �
       needs its auth env present (for the default Claude agent, `CLAUDE_CODE_OAUTH_TOKEN`); if
       the spawn cannot be authenticated in this environment, say so explicitly in the completion
       report rather than marking this task done.
+      **Blocked — recorded evidence (independent verification pass).** The eval ran
+      twice against this binding: run `20260826T221610877Z-22f8f4` and run
+      `20260826T222224814Z-db1005`, both recording `fail` for
+      `…/worked-example-check#replaying-the-worked-example-flags-all-three-escapes`.
+      Root cause is a PRE-EXISTING defect in the judge harness, not in this change:
+      `extractVerdictJson` (`src/core/eval/judge.ts`, introduced in `0cb74c8`, present
+      on `main`) takes the LAST balanced top-level `[...]` in the agent's stdout. The
+      claude adapter spawns the judge with `--output-format stream-json`
+      (`src/core/batch/engine/agent.ts:190`), so the judge's real verdict array only
+      ever appears INSIDE a JSON string value (the assistant event's `text`, the result
+      event's `result`) — which `balancedBlocks` deliberately skips — while the result
+      envelope's own `permission_denials` array is picked up instead. This binding can
+      therefore never pass through the claude adapter regardless of how the judge
+      answers. A probe reproducing that stdout shape yields the recorded verdict's
+      evidence strings byte-for-byte. `git diff main...HEAD -- src/core/eval/
+      src/core/batch/engine/` is empty, so this branch neither caused nor can fix it
+      here; the harness defect needs its own change. The task stays UNCHECKED.
 - [x] 7.1 Documentation task (REQUIRED by the `documentation` standard — not optional): update
       `docs/configuration/generated-artifacts.md` to describe the originating-issue
       reconciliation step, the close-claim rules, and the deferral carry-forward trichotomy as

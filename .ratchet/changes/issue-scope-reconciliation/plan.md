@@ -190,25 +190,25 @@ the alternative â€” a short body plus a reviewer expected to remember the rule â
       as implemented; surface an unearned `Fixes/Closes #N` and carry the remaining scope
       forward rather than inheriting the claim as fact. Embed `CLOSE_CLAIM_RULES` +
       `STOP_AND_SURFACE_GUARDRAIL` in its **Guardrails** section.
-- [ ] 5.1 Add `test/core/templates/workflows/scope-reconciliation.test.ts`: assert each of the
+- [x] 5.1 Add `test/core/templates/workflows/scope-reconciliation.test.ts`: assert each of the
       three constants contains its required rules, and assert all three workflow bodies
       (`getRctProposeSkillTemplate`, `getProposeBatchSkillTemplate`,
       `getDecomposePhaseSkillTemplate`) `toContain` `STOP_AND_SURFACE_GUARDRAIL` and
       `CLOSE_CLAIM_RULES` **verbatim** (acceptance criterion 5).
-- [ ] 5.2 Add `test/core/templates/workflows/propose.test.ts`: assert the skill and command
+- [x] 5.2 Add `test/core/templates/workflows/propose.test.ts`: assert the skill and command
       bodies are identical except for the two known deltas; assert the reconciliation step and
       the no-self-approved-omission rule are present (criterion 1); assert the body stays
       agent-neutral and tracker-neutral; and render the command through every adapter in
       `CommandAdapterRegistry.getAll()` asserting the reconciliation text survives each
       rendering (mirroring the existing propose-batch adapter test).
-- [ ] 5.3 Extend `test/core/templates/workflows/propose-batch.test.ts` with the reconciliation
+- [x] 5.3 Extend `test/core/templates/workflows/propose-batch.test.ts` with the reconciliation
       step (criterion 1) and the no-premature-`Closes` / "targets #N" / "partially addresses #N"
       rules (criterion 2), including an adapter-render assertion.
-- [ ] 5.4 Add `test/core/templates/workflows/decompose-phase.test.ts` covering the prior-plan
+- [x] 5.4 Add `test/core/templates/workflows/decompose-phase.test.ts` covering the prior-plan
       sweep and the carry-forward/tracked/explicit-drop trichotomy (criterion 3), the
       earned-close verification (criterion 4), the shared guardrail (criterion 5), the
       skill/command shared-body identity, and an adapter-render assertion.
-- [ ] 5.5 Extend `test/core/init.test.ts` (or add a sibling test using the same fixture pattern)
+- [x] 5.5 Extend `test/core/init.test.ts` (or add a sibling test using the same fixture pattern)
       asserting that after `init`, the reconciliation step and the stop-and-surface guardrail
       are present in BOTH `.claude/skills/ratchet-propose/SKILL.md` and
       `.opencode/skills/ratchet-propose/SKILL.md`, and likewise for `ratchet-propose-batch` and

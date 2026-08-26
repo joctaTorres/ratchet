@@ -1,0 +1,82 @@
+# Worked-example check: replay issue #100's failure on the HARDENED workflows.
+#
+# Issue #100's acceptance criterion 6 asks for a checkable procedure that
+# demonstrates the reconciliation behavior rather than merely asserting it.
+# Deterministic coverage of criteria 1-5 lives in the vitest suite
+# (test/core/templates/workflows/*.test.ts), so CI never depends on a live agent
+# spawn; THIS binding is the demonstration, and it is an `llm-judge` because the
+# behavior under test is an agent applying a procedure to prose — there is no
+# pure function to assert over, and a `deterministic` binding could only re-grep
+# the skill text the vitest suite already greps.
+#
+# HOW THE JUDGE GETS THE PROCEDURE. The reconciliation step has exactly one
+# author: `src/core/templates/workflows/scope-reconciliation.ts`. Rather than
+# restate it here — the duplication this whole change exists to kill — `setup`
+# runs `ratchet init` inside the fixture working copy, so the judge reads the
+# procedure out of a REAL generated `SKILL.md`. The procedure therefore cannot
+# drift from what ships.
+#
+#   `${RATCHET_CLI:-ratchet}` resolves to the `ratchet` on PATH by default. When
+#   running from a worktree whose build is not the one on PATH, export
+#   RATCHET_CLI first, e.g.
+#     export RATCHET_CLI="node $PWD/bin/ratchet.js"
+#   The success criteria below FAIL CLOSED when the generated skill turns out not
+#   to carry the reconciliation step, so a stale CLI surfaces as an explicit
+#   failure rather than a vacuous pass.
+#
+# Run it with:
+#   node bin/ratchet.js eval run --change issue-scope-reconciliation \
+#     --path .ratchet/changes/issue-scope-reconciliation/features/scope-reconciliation/worked-example-check.feature \
+#     --only llm-judge --json
+#
+# KNOWN LIMITATION (issue #55): eval case ids embed the feature file's location,
+# so this binding needs re-keying when the change is archived.
+changes/issue-scope-reconciliation/features/scope-reconciliation/worked-example-check#replaying-the-worked-example-flags-all-three-escapes:
+  fixture: issue-scope-reconciliation
+  kind: llm-judge
+  setup: "${RATCHET_CLI:-ratchet} init --tools claude --force"
+  success: >-
+    You are replaying a real scope-reduction failure against the hardened
+    change-authoring workflows, inside a self-contained ratchet project (your
+    current working directory). Do the work; do not reason from memory.
+
+    STEP 1 — read the procedure. Open
+    `.claude/skills/ratchet-propose/SKILL.md` and
+    `.claude/skills/ratchet-propose-batch/SKILL.md` and locate the
+    originating-issue reconciliation step. If neither file contains that step,
+    STOP and FAIL, reporting that the generated skills do not carry the
+    reconciliation procedure — do not substitute your own reconciliation method.
+
+    STEP 2 — read the fixture. `issue-80.md` is the originating issue.
+    `manifest-excerpt.yaml` and `phase-1-plan.md` are the authored scope that a
+    prior, unhardened run produced. All three are inputs; none is a model to copy.
+
+    STEP 3 — apply the procedure from STEP 1, exactly as written, to the issue in
+    `issue-80.md` against the authored scope in `manifest-excerpt.yaml` and
+    `phase-1-plan.md`. Enumerate the issue's material requirements, map each to
+    the authored scope, and list what is uncovered.
+
+    PASS only if your reconciliation flags ALL THREE of the following, and
+    reports each one as a decision point requiring the user rather than an
+    omission you may approve yourself:
+
+    (a) The issue's GATING requirement — fix-proposal item 3, the explicit
+    opt-in pairing flag / NODE_ENV gate on the override seam — is present in the
+    issue and absent from the authored scope. Its hedged "Consider" wording must
+    NOT be treated as permission to drop it, because the exposure is a
+    permission bypass.
+
+    (b) The PERMISSION-POSTURE bypass named in the issue's Why (the override path
+    never consults an adapter, so the resolved permission posture is voided while
+    the displayed posture still reports it enforced) is absent from the authored
+    scope — it was never even recorded as deferred.
+
+    (c) The manifest's hard-coded close-claim (`Closes #80` in the phase `goal`
+    and `success`, and the `gate-and-mark-agent-cmd-override` change `done`
+    ending "Fixes #80.") is PREMATURE, because the issue's material requirements
+    are not all implemented.
+
+    Cite the concrete file and line/field for each of the three as evidence, and
+    quote the sentence of the generated SKILL.md that made you flag it. If ANY of
+    the three is missing from your reconciliation, or you cannot cite it, FAIL
+    CLOSED. A partial result is a failure, not a pass.

@@ -83,7 +83,10 @@ the full picture.
   objective, slices it into ordered **vertical-slice** phases, **hard-gates**
   every phase on a success criterion + an executable proof-of-work, and writes
   the manifest with a **shallow DAG** — only phase one is decomposed into change
-  intents. Its sole artifact is `batch.yaml`; it creates no change directories.
+  intents. Before scaffolding it **reconciles the manifest against every
+  originating issue** and refuses to hard-code a `Closes #N` claim into a phase
+  contract (see [Scope reconciliation](#scope-reconciliation)). Its sole artifact
+  is `batch.yaml`; it creates no change directories.
 - **`/rct:apply-batch`** is the autonomous orchestrator. It **loops** the
   single-step `ratchet batch apply` — read status → advance one transition
   (`propose → apply → verify` for one ready DAG step) → interpret the outcome —
@@ -92,6 +95,42 @@ the full picture.
   awaiting-approval / proof-of-work failure) **stops**, surfaces it, records your
   answer via `ratchet batch report`, and resumes. Changes are created **lazily**
   as the loop reaches them.
+
+### Scope reconciliation
+
+The three change-authoring workflows — `propose`, `propose-batch`, and
+`decompose-phase` — share one set of rules that keeps authored scope honest against
+the issues the work came from. The rules are authored once and rendered into every
+tool's generated skill and command.
+
+- **Originating-issue reconciliation.** `propose` and `propose-batch` fetch every
+  originating issue through the project's issue tracker before authoring anything
+  (`gh issue view <n>` is a GitHub example, not a requirement — you can paste the
+  issue text instead), enumerate its material requirements from both its explicit
+  fix items and the problems named in its narrative, map each requirement to a
+  feature scenario, plan task, or manifest field, and surface every uncovered one
+  as an enumerated *"issue asks X, this proposal does not include X"* decision
+  point. Hedged wording in the issue (*"consider"*, *"optionally"*) does not lower
+  the bar for a security-relevant requirement, and an omission may never be
+  self-approved in plan prose.
+- **Honest close-claims.** A `Fixes #N` / `Closes #N` claim is permitted only when
+  the issue's material requirements are actually implemented — it is an output of
+  verification, never an input of planning. Partial work says
+  *"partially addresses #N"*. Phase contracts reference issues as *"targets #N"* /
+  *"addresses #N"*; the closing linkage is earned at PR-authoring time.
+- **Stop-and-surface guardrail.** A de-scope of security-, permission-, or
+  integrity-relevant work halts the workflow and asks you rather than proceeding on
+  momentum. An approved deferral requires a filed tracking issue with a named owner,
+  linked from the plan — a prose bullet in `plan.md` is not a deferral mechanism.
+- **Deferrals survive phase boundaries.** `decompose-phase` reads each prior phase's
+  shipped `plan.md` (not only the injected `done` criteria, which are a paraphrase
+  that hides plan-prose deferrals), extracts every out-of-scope / deferred / revisit
+  item, and resolves each as **carried forward**, **tracked** against an open issue,
+  or **explicitly dropped** by you. It also verifies a prior phase's `Closes #N` was
+  earned before treating the issue as shipped.
+
+See [Generated artifacts](docs/configuration/generated-artifacts.md) for the full
+Reference entry.
 
 ### Standards
 
@@ -296,8 +335,8 @@ from the phase's. A batch is intent you can revise before applying.
 
 | Workflow | Command | What it does |
 |---|---|---|
-| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Ends with a **gated hand-off into `/rct:apply-batch`** to drive the batch now (this session as orchestrator) or defer it to a later run. |
-| **apply-batch** | `/rct:apply-batch <name>` | Autonomous orchestrator that drives the batch to completion. It **loops** `ratchet batch apply` (which stays single-step) until done, surfacing halts (blocked / awaiting-approval) and proof-of-work failures to you, recording your answers via `ratchet batch report`, then resuming. The orchestrator does **no coding itself** — it only runs `ratchet` CLI commands and talks to you; the coding happens inside the engine-spawned agent. When the next step is a reachable phase whose changes are still empty, `batch apply` decomposes it **natively** — spawning an agent that delegates to the canonical `decompose-phase` skill to author that phase's change intents from the prior phase's shipped results — then the loop continues into the new changes, with no manual stop/propose/resume detour. |
+| **propose-batch** | `/rct:propose-batch <objective>` | Guided, anti-waterfall authoring: explores the objective, slices it into ordered vertical-slice phases, **hard-gates** each phase on a success criterion + a proof-of-work (`integration` / `blackbox`), then scaffolds the manifest with a **shallow DAG** (only phase one decomposed). Its only artifact is the manifest — never change directories. Before scaffolding it reconciles the manifest against every originating issue and refuses a premature `Closes #N` (see [Scope reconciliation](#scope-reconciliation)). Ends with a **gated hand-off into `/rct:apply-batch`** to drive the batch now (this session as orchestrator) or defer it to a later run. |
+| **apply-batch** | `/rct:apply-batch <name>` | Autonomous orchestrator that drives the batch to completion. It **loops** `ratchet batch apply` (which stays single-step) until done, surfacing halts (blocked / awaiting-approval) and proof-of-work failures to you, recording your answers via `ratchet batch report`, then resuming. The orchestrator does **no coding itself** — it only runs `ratchet` CLI commands and talks to you; the coding happens inside the engine-spawned agent. When the next step is a reachable phase whose changes are still empty, `batch apply` decomposes it **natively** — spawning an agent that delegates to the canonical `decompose-phase` skill to author that phase's change intents from the prior phase's shipped results, sweeping those phases' `plan.md` files for deferred scope and verifying any prior `Closes #N` was earned — then the loop continues into the new changes, with no manual stop/propose/resume detour. |
 
 ```
 You: /rct:propose-batch ship a checkout flow
@@ -639,12 +678,12 @@ deprecated alias mapped onto the gate.
 | Workflow | What it does |
 |---|---|
 | **brainstorm** | Front door for an open-ended idea: explores context, clarifies one question at a time, weighs 2–3 approaches, designs section-by-section, then recommends + gates a route into `propose` or `propose-batch` (does no implementation itself) |
-| **propose** | Clarifies intent (explore-first when unclear), then generates `features/` + `plan.md` |
+| **propose** | Clarifies intent (explore-first when unclear), [reconciles the authored scope against every originating issue](#scope-reconciliation), then generates `features/` + `plan.md` |
 | **apply** | Implements against each scenario's `Given/When/Then`, checking off plan tasks |
 | **verify** | Confirms the implementation satisfies every scenario and all tasks are done |
 | **archive** | Runs `ratchet archive` to ratchet features into the permanent store |
 | **propose-standard** | Authors a new standard into `.ratchet/standards/` for propose + verify to apply |
-| **propose-batch** | Slices an objective into ordered vertical-slice phases with per-phase proofs-of-work and writes a batch manifest (not change directories) |
+| **propose-batch** | Slices an objective into ordered vertical-slice phases with per-phase proofs-of-work and writes a batch manifest (not change directories), [reconciled against every originating issue](#scope-reconciliation) and free of premature `Closes #N` claims |
 | **apply-batch** | Autonomously drives a batch to completion — loops the single-step `ratchet batch apply`, surfaces halts/approvals + proof-of-work failures, records answers, resumes |
 | **eval** | Runs the engine-backed eval, surfaces regressions first, and guides authoring bindings for unjudged cases |
 

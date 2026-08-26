@@ -249,9 +249,9 @@ the alternative — a short body plus a reviewer expected to remember the rule �
 - [ ] 8.2 Correct #80's close-claim in the open PR stack (acceptance criterion 7): edit PR #97's
       body so `Closes #80` becomes "Partially addresses #80 — remainder tracked in #<new issue>",
       leaving `Closes #89` intact.
-- [ ] 9.1 Run the full test suite and the coverage gate; all tests pass and the enforced coverage
+- [x] 9.1 Run the full test suite and the coverage gate; all tests pass and the enforced coverage
       threshold is not lowered (`testing` standard).
-- [ ] 9.2 Run `ratchet validate issue-scope-reconciliation` and confirm the change validates.
+- [x] 9.2 Run `ratchet validate issue-scope-reconciliation` and confirm the change validates.
 - [ ] 9.3 Reconcile this change against issue #100 itself before declaring it done: walk its
       seven acceptance criteria and confirm each maps to a completed task. Any criterion that
       cannot be completed is a stop-and-surface event — report it, do not silently drop it.

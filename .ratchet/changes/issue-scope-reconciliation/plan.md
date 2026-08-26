@@ -214,7 +214,7 @@ the alternative — a short body plus a reviewer expected to remember the rule �
       `.opencode/skills/ratchet-propose/SKILL.md`, and likewise for `ratchet-propose-batch` and
       `ratchet-decompose-phase` — the acceptance criteria's "both trees" clause, proven through
       the generator rather than by hand-editing a tree.
-- [ ] 6.1 Create the eval fixture `.ratchet/evals/fixtures/issue-scope-reconciliation/` as a
+- [x] 6.1 Create the eval fixture `.ratchet/evals/fixtures/issue-scope-reconciliation/` as a
       self-contained ratchet project containing: `issue-80.md` (issue #80's text, including its
       hedged "Consider requiring an explicit opt-in pairing flag…" item and the permission-posture
       problem named in its Why), `manifest-excerpt.yaml` (the phase-one contract that hard-codes
@@ -222,7 +222,7 @@ the alternative — a short body plus a reviewer expected to remember the rule �
       and `phase-1-plan.md` (the "Out of scope (kept thin per the vertical-slice strategy)…"
       bullet). Fixture content is quoted from issue #100's worked example — do not invent
       variants.
-- [ ] 6.2 Add `.ratchet/evals/specs/issue-scope-reconciliation.yaml` binding the
+- [x] 6.2 Add `.ratchet/evals/specs/issue-scope-reconciliation.yaml` binding the
       `worked-example-check` scenario "Replaying the worked example flags all three escapes" to
       that fixture with `kind: llm-judge`. Its `success` prose must require the spawned judge to
       PASS only if the reconciliation procedure flags ALL THREE: (a) the unimplemented gate,

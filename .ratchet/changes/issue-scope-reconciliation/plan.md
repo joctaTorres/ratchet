@@ -285,6 +285,46 @@ the alternative — a short body plus a reviewer expected to remember the rule �
 - [x] 9.1 Run the full test suite and the coverage gate; all tests pass and the enforced coverage
       threshold is not lowered (`testing` standard).
 - [x] 9.2 Run `ratchet validate issue-scope-reconciliation` and confirm the change validates.
-- [ ] 9.3 Reconcile this change against issue #100 itself before declaring it done: walk its
+- [x] 9.3 Reconcile this change against issue #100 itself before declaring it done: walk its
       seven acceptance criteria and confirm each maps to a completed task. Any criterion that
       cannot be completed is a stop-and-surface event — report it, do not silently drop it.
+
+## Reconciliation against issue #100
+
+Performed per this change's own rules — the procedure it adds to `propose`, applied to the
+issue that commissioned it. Every criterion is enumerated; nothing is dropped silently, and
+nothing hedged is downgraded.
+
+| # | Criterion | Status | Where |
+|---|---|---|---|
+| 1 | Reconciliation step + no-self-approved-omission guardrail in propose & propose-batch, both trees | **Met** | `scope-reconciliation.ts:52-106` → `propose.ts:70-72`, `propose-batch.ts:110-125`; both trees proven by `test/core/init-scope-reconciliation.test.ts` |
+| 2 | propose-batch forbids hard-coded `Closes #N`; requires "targets #N" / "partially addresses #N" | **Met** | `propose-batch.ts:127-140`, `:161-164` |
+| 3 | decompose-phase reads prior `plan.md`; carry-forward / tracked / explicit-drop trichotomy | **Met** | `decompose-phase.ts:63-94` |
+| 4 | decompose-phase verifies a prior `Fixes/Closes #N` was earned | **Met** | `decompose-phase.ts:95-110` |
+| 5 | Stop-and-surface guardrail in all three skills, both trees | **Met** | `scope-reconciliation.ts:125-137`; verbatim-containment asserted on all three bodies |
+| 6 | A test or checkable procedure **demonstrates** the behavior on the #80 worked example | **Partially met** | Fixture + binding authored and runnable (`.ratchet/evals/{fixtures,specs}/issue-scope-reconciliation*`), case resolves to `judged`; **no green demonstration recorded** — see below |
+| 7 | #80's remainder tracked with an owner; #80's `Closes` linkage corrected in the open PR stack | **Partially met** | Tracking half done (**#112**, owned). PR-body half dropped by owner decision — see task 8.2 |
+
+**Criterion 6 — the open gap, surfaced rather than self-approved.** The checkable procedure
+exists, is correctly bound, and runs; what cannot be produced here is a passing verdict. Cause
+(independently reproduced during verification): `extractVerdictJson`
+(`src/core/eval/judge.ts:211`, introduced by PR #40, on `main`) takes the last balanced
+top-level `[...]` in agent stdout, so under any adapter that emits stream-json the real verdict
+array — which lives inside a JSON *string* value — is skipped in favour of the envelope's own
+`permission_denials` array. Of the five registered adapters, `claude` and `opencode` both set
+`emitsStreamJson: true`; `codex`, `gemini`, and `cursor` do not, but none of the three is
+installed in this environment. So the binding cannot be demonstrated green by switching
+adapters either, and this branch touches neither `src/core/eval/` nor
+`src/core/batch/engine/` (`git diff main...HEAD` over both paths is empty).
+
+Three options were considered and rejected as violating the very rules this change adds:
+weakening the eval spec so it passes; using `ratchet eval record` to override the verdict to
+green; and quietly marking 6.3 done. The gap is instead recorded here and in the pull request,
+and the harness defect is called out as needing its own change — it is repo-wide (it silently
+fails-closed **every** `llm-judge` binding, including the pre-existing `eval-self.yaml`), not
+specific to this work.
+
+**Consequent close-claim.** Because criteria 6 and 7 are partial, the pull request for this
+change says **"partially addresses #100"** and does **not** claim `Closes #100`. That is this
+change's own honest-close-claim rule applied to itself: a close-claim is an output of
+verification, and verification did not produce one for all seven criteria.

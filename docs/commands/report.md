@@ -18,8 +18,8 @@ command as its report channel.
 ratchet report <change> <kind-flag> <message> [--json]
 ```
 
-`<change>` is required: the name of an existing change under
-`.ratchet/changes/<change>/`. Exactly one kind flag must be provided.
+`<change>` is required: a kebab-case change name under `.ratchet/changes/`.
+Exactly one kind flag must be provided.
 
 ## Options
 
@@ -35,8 +35,12 @@ ratchet report <change> <kind-flag> <message> [--json]
 
 - Exactly one of `--status`, `--blocker`, `--needs-input`, or `--complete` must be
   present; zero or more than one fails with an error and writes nothing.
-- A change that does not exist fails with an actionable error before any write;
-  no `.run/` directory is created.
+- `<change>` must be a valid kebab-case change name (`validateChangeName`); any
+  other value — including a path such as `../../src` — fails before a path is
+  built, and nothing is written.
+- The change directory is not required to exist: a fresh `ratchet propose`
+  spawns its agent before `.ratchet/changes/<change>/` is created, and a report
+  posted then is appended to `.ratchet/changes/<change>/.run/journal.jsonl`.
 - The entry is always written to the `{ change }` run-state locus. `report` never
   resolves a batch, so a batch in the project cannot capture the report.
 - No parked state (`state.json`) is written: the engine maps a standalone step's

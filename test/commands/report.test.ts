@@ -73,12 +73,29 @@ describe('reportCommand', () => {
     expect(JSON.parse(printed[4])).toEqual({ kind: 'complete', change: 'add-hello' });
   });
 
-  it('fails naming a missing change without creating a run directory', async () => {
-    await expect(reportCommand('ghost', { complete: 'done' }, fixture.root)).rejects.toThrow(
-      /Change "ghost" does not exist/
-    );
-    expect(existsSync(path.join(fixture.root, '.ratchet', 'changes', 'ghost', '.run'))).toBe(false);
+  it('accepts a report before a fresh propose has created the change directory', async () => {
+    await reportCommand('new-idea', { blocker: 'which database?' }, fixture.root);
+
+    expect(journalOf('new-idea')).toMatchObject([
+      { change: 'new-idea', kind: 'blocker', message: 'which database?' },
+    ]);
   });
+
+  it.each(['../../src', '../escape', 'Bad_Name'])(
+    'rejects the invalid change name %s before building any path',
+    async (name) => {
+      await fs.mkdir(path.join(fixture.root, 'src'), { recursive: true });
+
+      await expect(reportCommand(name, { complete: 'done' }, fixture.root)).rejects.toThrow(
+        `Invalid change name "${name}"`
+      );
+
+      const runDirs = (await fs.readdir(fixture.root, { recursive: true })).filter((p) =>
+        String(p).split(path.sep).includes('.run')
+      );
+      expect(runDirs).toEqual([]);
+    }
+  );
 
   it('requires exactly one report kind', async () => {
     await fixture.makeChange('add-hello');

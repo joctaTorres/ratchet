@@ -16,11 +16,22 @@ Feature: Batch-less report command
       | needs-input | needs-input |
       | complete    | completion  |
 
-  Scenario: Reporting against a missing change fails without writing a journal
-    Given a project with no change "ghost"
-    When I run "ratchet report ghost --complete \"done\""
-    Then the command fails naming the missing change "ghost"
-    And no ".ratchet/changes/ghost/.run" directory is created
+  Scenario: A report during a fresh propose is accepted before the change directory exists
+    Given a project with no change directory "new-idea" yet, as during a fresh `ratchet propose`
+    When I run "ratchet report new-idea --blocker \"which database?\""
+    Then ".ratchet/changes/new-idea/.run/journal.jsonl" gains one "blocker" entry for change "new-idea"
+
+  Scenario Outline: An invalid change name is rejected before any path is built
+    Given a project whose "src" directory exists
+    When I run "ratchet report <name> --complete \"done\""
+    Then the command fails naming the invalid change name
+    And no ".run" directory is created anywhere in the project
+
+    Examples:
+      | name       |
+      | ../../src  |
+      | ../escape  |
+      | Bad_Name   |
 
   Scenario: Exactly one report kind is required
     Given a project with an existing change "add-hello"

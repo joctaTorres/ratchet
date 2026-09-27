@@ -16,7 +16,7 @@
 import chalk from 'chalk';
 import { resolveCurrentPlanningHomeSync } from '../core/planning-home.js';
 import { appendJournalForLocus, type JournalEntry } from '../core/batch/journal.js';
-import { assertChangeExists } from './change-step-common.js';
+import { validateChangeName } from '../utils/change-utils.js';
 import { selectReportKind } from './batch/report.js';
 
 export interface ReportOptions {
@@ -43,8 +43,15 @@ export async function reportCommand(
 ): Promise<void> {
   const [kind, message] = selectReportKind(options, STANDALONE_KINDS);
 
-  // A typo'd change name must fail before any `.run/` directory is created.
-  assertChangeExists(projectRoot, change);
+  // Validate the NAME before building any path, so a traversal like `../../src`
+  // can never resolve a journal outside `.ratchet/changes/`. The change DIRECTORY
+  // is deliberately not required: a fresh `ratchet propose` spawns the agent
+  // before the change exists, and its early progress/blocker reports must still
+  // reach the change-local journal the engine snapshots.
+  const name = validateChangeName(change);
+  if (!name.valid) {
+    throw new Error(`Invalid change name "${change}": ${name.error}.`);
+  }
 
   appendJournalForLocus(projectRoot, { change }, { change, kind: JOURNAL_KIND[kind], message });
 

@@ -1,0 +1,6 @@
+schema: ratchet
+created: 2026-09-27
+standards:
+  - security-remediation
+  - testing
+  - documentation

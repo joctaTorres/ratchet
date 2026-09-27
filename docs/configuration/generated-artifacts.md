@@ -120,6 +120,146 @@ generated for every tool above at the tool's command path (e.g. claude
 
 The active profile is read from the global ratchet config. Pass `--profile core` or `--profile custom` to `ratchet init` to override it for that run.
 
+### Scope reconciliation in the change-authoring workflows
+
+The `propose`, `propose-batch`, and `decompose-phase` workflows carry a shared set of
+scope-reconciliation rules. The rules are authored once in
+`src/core/templates/workflows/scope-reconciliation.ts` and interpolated into each
+workflow body, so every generated skill and command for every tool in the table above
+renders the same text.
+
+#### Overview
+
+```mermaid
+flowchart TD
+    A[📝 Authoring run starts<br/>propose · propose-batch]
+    B{🔍 Work originates<br/>from a tracked issue?}
+    C[🌐 Fetch each issue<br/>through the project's tracker]
+    D[📋 Enumerate material requirements<br/>explicit fix items · narrative problems]
+    W[✍️ Author the artifacts]
+    E[🔗 Map each requirement to the authored scope<br/>feature scenario · plan task · manifest field]
+    F{❓ Any requirement<br/>uncovered?}
+    G[👤 Surface as an enumerated decision point<br/>issue asks X · this proposal omits X]
+    H{🔐 Security · permission ·<br/>integrity relevant?}
+    I[🛑 Stop and surface<br/>halt the run · ask the user]
+    J[👤 User decides]
+    K[📌 Approved deferral needs a filed<br/>tracking issue · named owner · linked from the plan]
+    Z[✅ Artifacts called done]
+    L{🏷️ All material requirements<br/>implemented?}
+    M[✅ A closing claim may be made<br/>at pull-request-authoring time]
+    N[⚠️ Say partially addresses<br/>never a closing claim]
+
+    A --> B
+    B -- no --> W
+    B -- yes --> C
+    C --> D
+    D --> W
+    W --> E
+    E --> F
+    F -- no --> Z
+    F -- yes --> G
+    G --> H
+    H -- yes --> I
+    H -- no --> J
+    I --> K
+    K --> Z
+    J --> Z
+    Z --> L
+    L -- yes --> M
+    L -- no --> N
+
+    classDef entry fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+    classDef step  fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef gate  fill:#FFD700,stroke:#333,stroke-width:2px,color:black
+    classDef halt  fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+    classDef done  fill:#ADD8E6,stroke:#333,stroke-width:2px,color:darkblue
+
+    class A entry
+    class C,D,W,E,G,J,K step
+    class B,F,H,L gate
+    class I,N halt
+    class Z,M done
+```
+
+#### Originating-issue reconciliation
+
+`propose` and `propose-batch` reconcile against every originating issue in two phases,
+each at the moment it can actually happen. Requirements can only be enumerated before
+the artifacts are authored, and they can only be mapped to authored scope afterwards,
+so the procedure is split in two and each workflow embeds each half where it applies:
+
+| Workflow | Before authoring: identify · fetch · enumerate | After authoring: map · list · surface |
+|---|---|---|
+| `propose` | Step 2, before `ratchet new change` creates the change directory. | Step 6, after the artifact loop and before the final status. The targets are feature scenarios and plan tasks. |
+| `propose-batch` | Step 2, before the phases are sliced and the manifest is drafted. | Step 5, after the phases and their success criteria are drafted and before `ratchet new batch` scaffolds the manifest. The targets are each phase `goal`, each phase `success` criterion, and each change-level `done`. |
+
+The two halves require:
+
+| Sub-step | Phase | Requirement |
+|---|---|---|
+| Identify | Before | Collect every originating issue — referenced by the user, by a manifest phase or change intent, or by an injected `done` criterion. |
+| Fetch | Before | Read each issue through the project's issue tracker. `gh issue view <n>` is named as a GitHub example; no tracker or command is required. When no tracker client is available, the user is asked to paste the issue text. |
+| Enumerate | Before | List the issue's material requirements from both its explicit fix items and the problems named in its narrative. Hedged wording (`consider`, `maybe`, `optionally`) does not lower the bar for a security-, permission-, or integrity-relevant requirement. |
+| Map | After | Point every enumerated requirement at the part of the authored scope that covers it. Each workflow names its targets in the step that embeds this half. |
+| List | After | Write out every requirement the authored scope does not cover. |
+| Surface | After | Present each uncovered requirement to the user as an enumerated `"issue asks X, this proposal does not include X"` decision point before the artifacts are called done. Writing an omission into plan prose as self-approval is prohibited. |
+
+The fetch and enumerate sub-steps are one shared text. `decompose-phase` embeds the
+same text in its earned-close check (see below), so the hedged-wording rule applies at
+the phase boundary exactly as it does at proposal time.
+
+#### Close-claim rules
+
+A `Fixes #N` / `Closes #N` claim — in a batch manifest `done`, in a plan, or in a
+pull-request body — is permitted only when the issue's material requirements are
+actually implemented. A close-claim is an output of verification, never an input of
+planning. Work covering only part of an issue states `"partially addresses #N"` and
+does not state `Fixes #N` or `Closes #N`.
+
+`propose-batch` applies this to the manifest specifically: `Closes #N` / `Fixes #N`
+must not be hard-coded into a phase `goal`, a phase `success` criterion, or a
+change-level `done` for work not yet scoped and verified. Phase contracts reference an
+issue as `"targets #N"` or `"addresses #N"`; the closing linkage is earned at
+pull-request-authoring time.
+
+#### Stop-and-surface guardrail
+
+All three workflows carry the guardrail in their **Guardrails** section. A de-scope of
+security-, permission-, or integrity-relevant work halts the workflow and asks the
+user rather than proceeding on momentum. An approved deferral requires a tracking
+issue that is explicitly filed, carries a named owner, and is linked from the change
+plan before the workflow proceeds; a prose bullet in `plan.md` is not a deferral
+mechanism.
+
+#### Deferral carry-forward in `decompose-phase`
+
+`decompose-phase` grounds a phase in the prior phases' shipped results. Its grounding
+step (step 1) additionally requires:
+
+- Reading each prior phase's shipped change `plan.md`, not only the injected `done`
+  criteria. The injected criteria are a paraphrase in which deferrals recorded as plan
+  prose are invisible.
+- Extracting every `## Out of scope`, `deferred`, `revisit`, `later phase`,
+  `follow-up`, or equivalent item recorded in those plans.
+- Resolving each extracted item as exactly one of three outcomes: **carried forward**
+  as a change intent in the phase being decomposed, **tracked** against an existing
+  open tracking issue, or **explicitly dropped** by the user. Silently ignoring an
+  extracted item is not an available outcome. For a security-, permission-, or
+  integrity-relevant item, **tracked** has the same bar as the stop-and-surface
+  guardrail: the tracking issue must be filed, open, have a named owner, and be linked
+  from the change plan. An open issue with no owner does not track such an item, and
+  the item is surfaced to the user instead. Other items only need an existing open
+  tracking issue.
+
+Its own step 2, before the phase is sliced, verifies that each prior phase's
+`Fixes #N` / `Closes #N` claim was earned before the issue is treated as shipped. It
+fetches and enumerates the issue with the same shared text `propose` and
+`propose-batch` use, including the hedged-wording rule, and compares the requirements
+against what the prior phase's `done` and `plan.md` describe as implemented. An
+unearned claim is surfaced and its remaining scope carried forward, never inherited as
+fact.
+
+
 ## Change directory artifacts
 
 `ratchet new change <name>` scaffolds a change directory at `.ratchet/changes/<name>/`. The propose workflow writes the two required artifacts into it.

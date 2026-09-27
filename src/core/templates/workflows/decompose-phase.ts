@@ -15,8 +15,21 @@
  * Like the other batch templates, the skill and the command share one body
  * constant, and the lazy-decomposition guidance is the SAME guidance
  * `propose-batch` owns (one author of decomposition semantics).
+ *
+ * The close-claim and stop-and-surface guardrails, and the issue fetch-and-
+ * enumerate procedure its earned-close check uses, are interpolated from
+ * `./scope-reconciliation.js`, the single author of those rules across
+ * `propose`, `propose-batch`, and `decompose-phase` — never restated here. This
+ * workflow is where a deferral either survives a phase boundary or evaporates,
+ * so its grounding step carries the prior-plan sweep and a dedicated step
+ * verifies every prior close-claim was earned.
  */
 import type { SkillTemplate, CommandTemplate } from '../types.js';
+import {
+  ISSUE_REQUIREMENT_ENUMERATION,
+  CLOSE_CLAIM_RULES,
+  STOP_AND_SURFACE_GUARDRAIL,
+} from './scope-reconciliation.js';
 
 const DECOMPOSE_PHASE_BODY = `Decompose ONE phase of an EXISTING batch — author that phase's concrete change
 intents into its \`changes\` list in \`.ratchet/batches/<name>/batch.yaml\`, lazily,
@@ -49,14 +62,64 @@ context is the basis for decomposition; do not invent requirements beyond it.
    decompose toward this phase's \`goal\` using what now actually exists, not a
    guess made before the prior phase ran.
 
-2. **Slice the phase into concrete change intents**
+   a. **Read each prior phase's shipped change \`plan.md\`, not only the injected
+      \`done\` criteria.** The injected criteria are a **paraphrase** of what each
+      change set out to do. A deferral recorded as plan prose — an
+      \`## Out of scope\` section, a "deferred", "revisit in the next phase", or
+      "not doing this yet" bullet — never appears in that paraphrase, so grounding
+      only in the injected \`done\` makes those deferrals **invisible** at exactly
+      the moment they were supposed to be picked up. Open the prior phases'
+      shipped change directories and read their \`plan.md\` files directly.
+
+   b. **Extract every deferred item recorded in those plans.** Sweep each plan for
+      every \`## Out of scope\` entry and every "deferred", "revisit", "later
+      phase", "follow-up", or equivalent item, wherever it appears — including
+      inside \`## Why\`, \`## What Changes\`, and \`## Design\` prose, not only under a
+      heading that happens to be named "Out of scope". List what you extracted.
+
+   c. **Resolve EACH extracted item as exactly one of three outcomes.** For every
+      item on that list, choose and record one:
+      - **(a) carried forward** — authored as a change intent in the phase you are
+        decomposing;
+      - **(b) tracked** — matched to an existing OPEN tracking issue, reported to
+        the user with that issue's number. For a security-, permission-, or
+        integrity-relevant item, the tracking issue must meet the bar the
+        stop-and-surface guardrail below sets for an approved deferral; an issue
+        that falls short of that bar does not track the item, and the item is
+        surfaced to the user instead; or
+      - **(c) explicitly dropped** — surfaced to the user as a drop decision and
+        answered by them.
+
+      **Silently ignoring an extracted item is not an available outcome.** Every
+      item leaves this step with (a), (b), or (c) written next to it. Report the
+      resolved list before you author intents. For a security-, permission-, or
+      integrity-relevant item, outcome (c) is a stop-and-surface event under the
+      guardrails below, and outcome (b) holds only under that guardrail's bar —
+      an issue you intend to file is not a tracked item until it is filed.
+
+2. **Verify each prior close-claim was earned**
+
+   When a prior phase's \`done\` criterion or plan claims \`Fixes #N\` /
+   \`Closes #N\`, do not inherit that claim as fact. For each such issue, fetch
+   and enumerate it:
+
+${ISSUE_REQUIREMENT_ENUMERATION}
+
+   Compare the enumerated requirements against what that phase's \`done\` and
+   \`plan.md\` describe as actually implemented. A requirement the prior phase
+   did not implement means the close-claim was **unearned**. Surface the unearned
+   claim to the user explicitly, and carry the remaining scope forward into this
+   phase's change intents — the claim is never inherited as fact, and the issue
+   is not treated as shipped.
+
+3. **Slice the phase into concrete change intents**
 
    Author one or more concrete change intents that, taken together, achieve this
    phase's \`goal\` and satisfy its \`success\` criterion. Each intent is a
    thin, self-contained unit of work. Order them with \`after\` edges that form a
    DAG within the phase (a change lists the names it depends on).
 
-3. **Write the intents into the manifest's \`changes\` list (edit in place)**
+4. **Write the intents into the manifest's \`changes\` list (edit in place)**
 
    Edit \`.ratchet/batches/<name>/batch.yaml\` and replace the named phase's empty
    \`changes: []\` with the authored intents. Use the manifest shape the existing
@@ -79,6 +142,11 @@ context is the basis for decomposition; do not invent requirements beyond it.
 After editing, summarize:
 - The phase you decomposed and the batch it belongs to.
 - The change intents you authored, each with its \`after\` edges and its \`done\`.
+- The deferred items you extracted from the prior phases' plans, each with its
+  resolution: carried forward, tracked (with the issue number), or explicitly
+  dropped by the user.
+- Any prior-phase close-claim you found unearned, and where its remaining scope
+  went.
 - A reminder that the changes are not yet created on disk — \`ratchet batch apply\`
   creates them lazily.
 
@@ -88,7 +156,12 @@ After editing, summarize:
   guess.
 - Every authored change intent has a non-empty \`done\`, or the manifest fails
   validation.
-- The only artifact is the manifest edit — never change directories.`;
+- The only artifact is the manifest edit — never change directories.
+- Ground in the prior phases' \`plan.md\` files, not only the injected \`done\`
+  criteria; every extracted deferral is carried forward, tracked, or explicitly
+  dropped by the user — never silently ignored.
+${CLOSE_CLAIM_RULES}
+${STOP_AND_SURFACE_GUARDRAIL}`;
 
 export function getDecomposePhaseSkillTemplate(): SkillTemplate {
   return {

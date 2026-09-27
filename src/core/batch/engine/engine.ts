@@ -335,11 +335,13 @@ export class RatchetBatchEngine {
     let request;
     let emitsStreamJson = false;
     let spec: AgentSpec | undefined;
+    let agentName: string | undefined;
     try {
       const built = this.buildSpawnRequest(ctx, instructions, projectRoot, env, transition);
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
       spec = built.spec;
+      agentName = built.agentName;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -383,6 +385,7 @@ export class RatchetBatchEngine {
       transition,
       parkForApproval: this.shouldParkForApproval(ctx, transition),
       modelAttribution,
+      agentName,
       before,
       diskBefore,
       diskAfter: () => {
@@ -471,6 +474,7 @@ export class RatchetBatchEngine {
     let request;
     let emitsStreamJson = false;
     let spec: AgentSpec | undefined;
+    let agentName: string | undefined;
     try {
       const built = this.buildSpawnRequest(
         { batch, change: key, settings: context.settings },
@@ -482,6 +486,7 @@ export class RatchetBatchEngine {
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
       spec = built.spec;
+      agentName = built.agentName;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -530,6 +535,7 @@ export class RatchetBatchEngine {
       transition: 'decompose',
       parkForApproval: false,
       modelAttribution,
+      agentName,
       before,
       diskBefore: diskState,
       diskAfter: () => diskState,
@@ -644,6 +650,7 @@ export class RatchetBatchEngine {
     let request;
     let emitsStreamJson = false;
     let spec: AgentSpec | undefined;
+    let agentName: string | undefined;
     try {
       // Route the PR step through the `pr` STAGE of the agent map, exactly as a
       // change step routes propose/apply/verify: a stage-map spawns the mapped
@@ -660,6 +667,7 @@ export class RatchetBatchEngine {
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
       spec = built.spec;
+      agentName = built.agentName;
     } catch (err) {
       if (err instanceof UnknownAgentError) {
         return toStepResult({
@@ -703,6 +711,7 @@ export class RatchetBatchEngine {
       transition: 'pr',
       parkForApproval: false,
       modelAttribution,
+      agentName,
       before,
       diskBefore: diskState,
       diskAfter: () => diskState,
@@ -735,6 +744,7 @@ export class RatchetBatchEngine {
     transition: StepKind;
     parkForApproval: boolean;
     modelAttribution?: ModelAttribution;
+    agentName?: string;
     before: number;
     diskBefore: ChangeDiskState;
     diskAfter: () => ChangeDiskState;
@@ -749,6 +759,7 @@ export class RatchetBatchEngine {
       transition,
       parkForApproval,
       modelAttribution,
+      agentName,
       before,
       diskBefore,
       diskAfter,
@@ -799,6 +810,7 @@ export class RatchetBatchEngine {
       parkForApproval,
       diskEvidence: { before: diskBefore, after: diskAfter() },
       modelAttribution,
+      agentName,
     });
 
     // Record a journal entry for the transition outcome (the agent may not have
@@ -831,7 +843,13 @@ export class RatchetBatchEngine {
     projectRoot: string,
     env: NodeJS.ProcessEnv,
     stage?: AgentStage
-  ): { request: AgentSpawnRequest; emitsStreamJson: boolean; spec?: AgentSpec } {
+  ): {
+    request: AgentSpawnRequest;
+    emitsStreamJson: boolean;
+    spec?: AgentSpec;
+    /** Resolved adapter name; absent under the `bash -c` override. */
+    agentName?: string;
+  } {
     const override = process.env.RATCHET_BATCH_AGENT_CMD;
     if (override && override.trim().length > 0) {
       // The `bash -c` override stands in for the agent binary and is NOT
@@ -872,6 +890,7 @@ export class RatchetBatchEngine {
       ),
       emitsStreamJson: adapter.emitsStreamJson === true,
       spec,
+      agentName: adapter.name,
     };
   }
 

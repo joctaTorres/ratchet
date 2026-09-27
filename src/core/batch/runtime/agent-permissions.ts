@@ -14,10 +14,11 @@
  * ACCEPTED CONSEQUENCE: denials are COARSE / tool-level — "rm -rf outside repo"
  * and "curl | sh" become blunt Bash-tool denials, not path-aware rules.
  *
- * VERIFY AT APPLY: claude and gemini flags are confirmed from `--help` on the
- * build machine. codex and cursor-agent are NOT installed here — their mappings
- * are the documented intended design and are flagged accordingly below; they are
- * unit-tested as pure mappings, to be re-verified once those binaries are present.
+ * VERIFIED: claude, gemini, and codex flags are confirmed from `--help` on the
+ * build machine (codex against codex-cli 0.157.1, whose `exec` subcommand parse is
+ * also exercised by an on-PATH integration test). cursor-agent is NOT installed
+ * here — its mapping is the documented intended design, flagged below, and is
+ * unit-tested as a pure mapping, to be re-verified once that binary is present.
  *
  * UNATTENDED SHELL (verified empirically with `claude -p` 2.x): a permission mode
  * that auto-accepts edits (claude `acceptEdits`, gemini `auto_edit`) covers FILE
@@ -159,21 +160,34 @@ function geminiFlags(policy: ResolvedPermissionsPolicy): string[] {
 }
 
 /**
- * Codex — VERIFY AT APPLY (binary not installed on the build machine). Intended
- * mapping per the plan's table: sandboxed work uses `--sandbox workspace-write`
- * with approvals off; curated keeps the workspace sandbox with default approvals;
- * full-autonomy uses `--full-auto`. Re-verify exact spellings once `codex` is on
- * PATH.
+ * Codex (verified against `codex exec --help`, codex-cli 0.157.1). The adapter
+ * spawns `codex exec -` and appends these flags AFTER `exec`, so only options the
+ * `exec` SUBCOMMAND accepts may appear here. `-a/--ask-for-approval` exists only
+ * on the root `codex` command (the TUI), and `--full-auto` was removed from
+ * `exec` — both are rejected by clap (exit 2) before the agent starts (#114).
+ *
+ * - Approval policy goes through `-c approval_policy=<value>`, which `exec` does
+ *   accept and validates at config load. The value is the BARE form (no TOML
+ *   quotes): codex falls back to the raw string when TOML parsing fails, and a
+ *   quote-free token survives every locus's argv/shell join unchanged.
+ * - sandboxed: workspace-write sandbox, approvals off.
+ * - curated: workspace-write sandbox, on-request approvals (NOT `--approve-for-me`,
+ *   which would route approvals to automatic review and loosen the posture).
+ * - full-autonomy: `--dangerously-bypass-approvals-and-sandbox`, the `exec`
+ *   analogue of claude's `--dangerously-skip-permissions` / gemini's `--yolo`.
+ *
+ * The Bash denylist is not argv-expressible for codex (its execpolicy is
+ * file-based); the workspace-write sandbox is the bound.
  */
 function codexFlags(policy: ResolvedPermissionsPolicy): string[] {
   switch (policy.posture) {
     case 'full-autonomy':
-      return ['--full-auto'];
+      return ['--dangerously-bypass-approvals-and-sandbox'];
     case 'curated-allowlist':
-      return ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request'];
+      return ['--sandbox', 'workspace-write', '-c', 'approval_policy=on-request'];
     case 'repo-sandboxed-permissive':
     default:
-      return ['--sandbox', 'workspace-write', '--ask-for-approval', 'never'];
+      return ['--sandbox', 'workspace-write', '-c', 'approval_policy=never'];
   }
 }
 

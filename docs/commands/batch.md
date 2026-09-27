@@ -480,6 +480,12 @@ operator. Bare-name specs, stage-map-driven decompose spawns (default agent, no
 model), scope-less standalone paths, and failures after journal progress render
 byte-for-byte today's output with no hint.
 
+**Rejected CLI options**: when such a fast failure's stderr contains the clap
+rejection `unexpected argument '<opt>' found`, the surfaced
+`blocker`/`message`/`detail` instead name the rejected option and the agent,
+and point at the agent CLI version or a `permissions.raw` override, in place of
+the model-id hint, with or without an explicit model.
+
 ## `batch rerun-proof`
 
 Invalidate a phase's recorded proof-of-work so the next `batch apply` re-runs

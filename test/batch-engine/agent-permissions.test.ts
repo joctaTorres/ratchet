@@ -114,19 +114,38 @@ describe('resolvePermissionFlags — gemini (verified flags)', () => {
   });
 });
 
-describe('resolvePermissionFlags — codex/cursor (verify-at-apply mappings)', () => {
-  it('codex sandboxed uses --sandbox workspace-write + approval never', () => {
-    const flags = resolvePermissionFlags('codex', policy(), REPO);
-    expect(flags).toContain('--sandbox');
-    expect(flags[flags.indexOf('--sandbox') + 1]).toBe('workspace-write');
-    expect(flags).toContain('--ask-for-approval');
-    expect(flags[flags.indexOf('--ask-for-approval') + 1]).toBe('never');
-  });
-  it('codex full-autonomy uses --full-auto', () => {
-    expect(resolvePermissionFlags('codex', policy({ posture: 'full-autonomy' }), REPO)).toEqual([
-      '--full-auto',
+// codex — features/agent-permissions/codex-exec-flags.feature and
+// posture-translation.feature. Flags follow `codex exec` (codex-cli 0.157.1),
+// which rejects `--ask-for-approval` and `--full-auto` (#114).
+describe('resolvePermissionFlags — codex (verified against codex exec)', () => {
+  it('sandboxed emits workspace-write + approval_policy=never via -c', () => {
+    expect(resolvePermissionFlags('codex', policy(), REPO)).toEqual([
+      '--sandbox',
+      'workspace-write',
+      '-c',
+      'approval_policy=never',
     ]);
   });
+  it('curated emits workspace-write + approval_policy=on-request via -c', () => {
+    expect(
+      resolvePermissionFlags('codex', policy({ posture: 'curated-allowlist' }), REPO)
+    ).toEqual(['--sandbox', 'workspace-write', '-c', 'approval_policy=on-request']);
+  });
+  it('full-autonomy emits only --dangerously-bypass-approvals-and-sandbox', () => {
+    expect(resolvePermissionFlags('codex', policy({ posture: 'full-autonomy' }), REPO)).toEqual([
+      '--dangerously-bypass-approvals-and-sandbox',
+    ]);
+  });
+  it('never emits the options codex exec rejects', () => {
+    for (const posture of ['repo-sandboxed-permissive', 'curated-allowlist', 'full-autonomy'] as const) {
+      const flags = resolvePermissionFlags('codex', policy({ posture }), REPO);
+      expect(flags).not.toContain('--ask-for-approval');
+      expect(flags).not.toContain('--full-auto');
+    }
+  });
+});
+
+describe('resolvePermissionFlags — cursor (verify-at-apply mapping)', () => {
   it('cursor reserves the --force bypass for full-autonomy ONLY', () => {
     expect(resolvePermissionFlags('cursor', policy({ posture: 'full-autonomy' }), REPO)).toContain(
       '--force'

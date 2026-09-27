@@ -119,6 +119,12 @@ export interface MapOutcomeInput {
    * bare-failure fallback (describeExit naming the signal) handles it.
    */
   modelAttribution?: ModelAttribution;
+  /**
+   * Name of the adapter that was spawned (absent under the `bash -c` override).
+   * Used only to name the agent in the rejected-CLI-option hint when no
+   * {@link ModelAttribution} carries it.
+   */
+  agentName?: string;
 }
 
 /**
@@ -150,6 +156,31 @@ function describeProgress(
   return undefined;
 }
 
+/**
+ * Detect an agent CLI rejecting a command-line option before it started, from
+ * its stderr. Matches the clap phrasing `unexpected argument '<opt>' found`
+ * (codex and other clap-based CLIs) and returns `<opt>`, or `undefined` when no
+ * such rejection is present. Pure.
+ */
+export function detectRejectedCliOption(stderr: string): string | undefined {
+  const match = /unexpected argument '([^']+)' found/.exec(stderr);
+  return match ? match[1] : undefined;
+}
+
+/**
+ * Hint for an argv rejection: names the rejected option and the agent, and
+ * points at the CLI version / `permissions.raw` rather than the model id.
+ */
+function rejectedOptionHint(option: string, agent: string | undefined): string {
+  const who = agent ? `The "${agent}" agent` : 'The agent';
+  const cli = agent ? `the installed ${agent} CLI` : 'the installed agent CLI';
+  return (
+    `${who} rejected the command-line option "${option}" — ` +
+    `${cli} does not support a flag ratchet passed. ` +
+    `Check the agent CLI version, or override its flags via \`permissions.raw\`, and resume.`
+  );
+}
+
 function truncate(text: string, max = 2000): string {
   const trimmed = text.trim();
   return trimmed.length > max ? trimmed.slice(0, max) + '… (truncated)' : trimmed;
@@ -177,6 +208,27 @@ function truncate(text: string, max = 2000): string {
 function buildNonZeroExitFailure(input: MapOutcomeInput): EngineStepOutcome {
   const { change, transition, sessionEntries, sessionIndices, spawn } = input;
   const stderrTail = truncate(spawn.stderr || spawn.stdout || '');
+  // An argv rejection (clap `unexpected argument '<opt>' found`) is the more
+  // specific diagnosis of the argv-rejection signature: name the rejected option
+  // instead of suggesting the model id is invalid (#114). Checked first, with or
+  // without a model attribution; absent a rejection, every branch below is
+  // unchanged.
+  const rejected =
+    sessionEntries.length === 0 && spawn.signal === null
+      ? detectRejectedCliOption(spawn.stderr || '')
+      : undefined;
+  if (rejected !== undefined) {
+    const hint = rejectedOptionHint(rejected, input.modelAttribution?.agent ?? input.agentName);
+    return {
+      state: 'failed',
+      change,
+      transition,
+      detail: stderrTail ? `${hint}\n\n${stderrTail}` : hint,
+      blocker: `Agent exited ${describeExit(spawn)} without reporting completion. ${hint}`,
+      journalRefs: sessionIndices,
+      message: `Agent failed during ${transition}. ${hint}`,
+    };
+  }
   if (input.modelAttribution && sessionEntries.length === 0 && spawn.signal === null) {
     const hint = modelAttributionHint(input.modelAttribution);
     return {

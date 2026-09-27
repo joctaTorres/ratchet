@@ -571,6 +571,16 @@ entries the agent wrote during the session and the process exit status:
    agent, no model), a scope-less (standalone) path, or a failure after
    journal progress surfaces byte-for-byte today's output — only the
    argv-rejection attribution branch changes.
+   **Rejected CLI option**: under the same zero-journal-entries, real
+   non-zero exit conditions, when the agent's stderr contains the clap
+   rejection `unexpected argument '<opt>' found`, the failure instead carries
+   a rejected-option hint — naming the agent and the rejected option, and
+   pointing at the agent CLI version or a `permissions.raw` override — in
+   `blocker`, `message`, and `detail`
+   (above the stderr tail). It takes precedence over the model-attribution
+   hint and applies with or without an explicit model (the agent is named from
+   the attribution or the spawned adapter; `The agent` when neither is known,
+   e.g. under `RATCHET_BATCH_AGENT_CMD`).
 5. Zero exit without a `completion` → `blocked`; on-disk evidence (plan.md
    appeared, task checkboxes advanced) is surfaced in the message but the step
    **never auto-advances** on unreported work.

@@ -1,0 +1,7 @@
+schema: ratchet
+created: 2026-09-27
+standards:
+  - testing
+  - documentation
+  - multi-agent-support
+  - security-remediation

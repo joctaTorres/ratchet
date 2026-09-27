@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  ISSUE_RECONCILIATION_STEP,
+  ISSUE_REQUIREMENT_ENUMERATION,
+  ISSUE_RECONCILIATION_PRE_AUTHORING,
+  ISSUE_RECONCILIATION_POST_AUTHORING,
   CLOSE_CLAIM_RULES,
   STOP_AND_SURFACE_GUARDRAIL,
 } from '../../../../src/core/templates/workflows/scope-reconciliation.js';
@@ -14,21 +16,13 @@ function occurrences(haystack: string, needle: string): number {
 }
 
 describe('scope-reconciliation shared fragments', () => {
-  describe('ISSUE_RECONCILIATION_STEP', () => {
-    const step = ISSUE_RECONCILIATION_STEP;
+  describe('ISSUE_REQUIREMENT_ENUMERATION', () => {
+    const step = ISSUE_REQUIREMENT_ENUMERATION;
 
-    it('requires identifying every originating issue from all three sources', () => {
-      expect(step).toMatch(/identify every originating issue/i);
-      // The user, the manifest, and the injected `done` each originate issues.
-      expect(step).toMatch(/the user\s+references it/i);
-      expect(step).toMatch(/manifest phase or change intent references it/i);
-      expect(step).toMatch(/injected `done` criterion references it/i);
-    });
-
-    it('requires fetching each issue through the project tracker before authoring', () => {
-      expect(step).toMatch(/fetch each originating issue through the project's issue tracker/i);
-      expect(step).toMatch(/BEFORE any artifact is written/);
+    it('requires fetching each issue through the project tracker, never a paraphrase', () => {
+      expect(step).toMatch(/fetch each issue through the project's issue tracker/i);
       expect(step).toMatch(/never work from a paraphrase/i);
+      expect(step).toMatch(/never from an injected `done`\s+criterion alone/i);
     });
 
     it('names gh only as a GitHub example and offers a paste fallback', () => {
@@ -54,17 +48,67 @@ describe('scope-reconciliation shared fragments', () => {
       expect(step).toMatch(/security-,\s+permission-, or integrity-relevant, severity governs/i);
     });
 
-    it('requires mapping every requirement and listing what is uncovered', () => {
-      expect(step).toMatch(/map every enumerated requirement to authored scope/i);
-      expect(step).toMatch(/feature scenario or\s+the plan task that covers it/i);
+    it('neither identifies originating issues nor maps to authored scope', () => {
+      expect(step).not.toMatch(/originating/i);
+      expect(step).not.toMatch(/\bmap/i);
+      expect(step).not.toMatch(/uncovered/i);
+    });
+  });
+
+  describe('ISSUE_RECONCILIATION_PRE_AUTHORING', () => {
+    const step = ISSUE_RECONCILIATION_PRE_AUTHORING;
+
+    it('runs before any artifact is written', () => {
+      expect(step).toMatch(/BEFORE any artifact is written/);
+    });
+
+    it('requires identifying every originating issue from all three sources', () => {
+      expect(step).toMatch(/identify every originating issue/i);
+      // The user, the manifest, and the injected `done` each originate issues.
+      expect(step).toMatch(/the user\s+references it/i);
+      expect(step).toMatch(/manifest phase or change intent references it/i);
+      expect(step).toMatch(/injected `done` criterion references it/i);
+    });
+
+    it('is composed from the enumeration constant, so the procedure has one copy', () => {
+      expect(step).toContain(ISSUE_REQUIREMENT_ENUMERATION);
+      expect(step.indexOf(ISSUE_REQUIREMENT_ENUMERATION)).toBeGreaterThan(
+        step.search(/identify every originating issue/i)
+      );
+    });
+
+    it('contains no mapping or surfacing language', () => {
+      expect(step).not.toMatch(/\bmap/i);
+      expect(step).not.toMatch(/uncovered/i);
+      expect(step).not.toMatch(/decision point/i);
+      expect(step).not.toMatch(/issue asks X/);
+    });
+  });
+
+  describe('ISSUE_RECONCILIATION_POST_AUTHORING', () => {
+    const step = ISSUE_RECONCILIATION_POST_AUTHORING;
+
+    it('runs after the artifacts are authored and before they are called done', () => {
+      expect(step).toMatch(/once the artifacts are authored, and BEFORE they are called done/i);
+    });
+
+    it('requires mapping every requirement and listing what is uncovered, target-neutrally', () => {
+      expect(step).toMatch(/map every enumerated requirement to the authored scope/i);
       expect(step).toMatch(/list every requirement the authored scope does not cover/i);
+      // Callers name their own targets; the shared text does not.
+      expect(step).not.toMatch(/feature scenario|plan task|phase `goal`/i);
     });
 
     it('requires the enumerated decision point and forbids self-approval', () => {
       expect(step).toMatch(/surface every uncovered requirement to the user as a decision point/i);
       expect(step).toContain('"issue asks X, this proposal does not include');
-      expect(step).toMatch(/before the artifacts are finalized/i);
+      expect(step).toMatch(/before the artifacts are called done/i);
       expect(step).toMatch(/MUST NOT self-approve an omission by writing it into plan prose/i);
+    });
+
+    it('does not re-run enumeration', () => {
+      expect(step).not.toContain(ISSUE_REQUIREMENT_ENUMERATION);
+      expect(step).not.toMatch(/gh issue view/);
     });
 
     it('stays agent-neutral with a plain-prose fallback', () => {
@@ -73,6 +117,18 @@ describe('scope-reconciliation shared fragments', () => {
       expect(step).toMatch(/if your agent has one, otherwise ask in plain prose/i);
       expect(step).not.toMatch(/\bClaude\b/);
     });
+  });
+
+  it('indents every reconciliation constant as a three-space numbered-step body', () => {
+    for (const constant of [
+      ISSUE_REQUIREMENT_ENUMERATION,
+      ISSUE_RECONCILIATION_PRE_AUTHORING,
+      ISSUE_RECONCILIATION_POST_AUTHORING,
+    ]) {
+      for (const line of constant.split('\n').filter((l) => l.length > 0)) {
+        expect(line.startsWith('   ')).toBe(true);
+      }
+    }
   });
 
   describe('CLOSE_CLAIM_RULES', () => {
@@ -141,9 +197,15 @@ describe('scope-reconciliation shared fragments', () => {
       expect(occurrences(body, STOP_AND_SURFACE_GUARDRAIL)).toBe(1);
     });
 
-    it('embeds the reconciliation step verbatim in the two issue-reconciling workflows', () => {
-      expect(getRctProposeSkillTemplate().instructions).toContain(ISSUE_RECONCILIATION_STEP);
-      expect(getProposeBatchSkillTemplate().instructions).toContain(ISSUE_RECONCILIATION_STEP);
+    it('embeds both reconciliation halves verbatim in the two issue-reconciling workflows', () => {
+      for (const body of [getRctProposeSkillTemplate().instructions, getProposeBatchSkillTemplate().instructions]) {
+        expect(occurrences(body, ISSUE_RECONCILIATION_PRE_AUTHORING)).toBe(1);
+        expect(occurrences(body, ISSUE_RECONCILIATION_POST_AUTHORING)).toBe(1);
+      }
+    });
+
+    it.each(bodies)('%s embeds the enumeration procedure exactly once', (_name, body) => {
+      expect(occurrences(body, ISSUE_REQUIREMENT_ENUMERATION)).toBe(1);
     });
   });
 });

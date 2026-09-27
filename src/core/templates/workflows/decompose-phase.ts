@@ -16,15 +16,17 @@
  * constant, and the lazy-decomposition guidance is the SAME guidance
  * `propose-batch` owns (one author of decomposition semantics).
  *
- * The close-claim and stop-and-surface guardrails are interpolated from
+ * The close-claim and stop-and-surface guardrails, and the issue fetch-and-
+ * enumerate procedure its earned-close check uses, are interpolated from
  * `./scope-reconciliation.js`, the single author of those rules across
  * `propose`, `propose-batch`, and `decompose-phase` — never restated here. This
  * workflow is where a deferral either survives a phase boundary or evaporates,
- * so its grounding step also carries the prior-plan sweep and the earned-close
- * verification.
+ * so its grounding step carries the prior-plan sweep and a dedicated step
+ * verifies every prior close-claim was earned.
  */
 import type { SkillTemplate, CommandTemplate } from '../types.js';
 import {
+  ISSUE_REQUIREMENT_ENUMERATION,
   CLOSE_CLAIM_RULES,
   STOP_AND_SURFACE_GUARDRAIL,
 } from './scope-reconciliation.js';
@@ -80,7 +82,11 @@ context is the basis for decomposition; do not invent requirements beyond it.
       - **(a) carried forward** — authored as a change intent in the phase you are
         decomposing;
       - **(b) tracked** — matched to an existing OPEN tracking issue, reported to
-        the user with that issue's number; or
+        the user with that issue's number. For a security-, permission-, or
+        integrity-relevant item, the tracking issue must meet the bar the
+        stop-and-surface guardrail below sets for an approved deferral; an issue
+        that falls short of that bar does not track the item, and the item is
+        surfaced to the user instead; or
       - **(c) explicitly dropped** — surfaced to the user as a drop decision and
         answered by them.
 
@@ -88,32 +94,32 @@ context is the basis for decomposition; do not invent requirements beyond it.
       item leaves this step with (a), (b), or (c) written next to it. Report the
       resolved list before you author intents. For a security-, permission-, or
       integrity-relevant item, outcome (c) is a stop-and-surface event under the
-      guardrails below, and outcome (b) requires the tracking issue to actually
-      exist and to be open — an issue you intend to file is not a tracked item
-      until it is filed.
+      guardrails below, and outcome (b) holds only under that guardrail's bar —
+      an issue you intend to file is not a tracked item until it is filed.
 
-   d. **Verify a prior phase's close-claim was earned before treating an issue as
-      shipped.** When a prior phase's \`done\` criterion or plan claims
-      \`Fixes #N\` / \`Closes #N\`, do not inherit that claim as fact. Fetch the
-      issue (on GitHub, for example, \`gh issue view <n>\`; other trackers have
-      their own client; if your agent has none, ask the user to paste the issue
-      text), enumerate its material requirements from both its explicit fix items
-      and the problems named in its narrative, and compare them against what that
-      phase's \`done\` and \`plan.md\` describe as actually implemented.
+2. **Verify each prior close-claim was earned**
 
-      A requirement the prior phase did not implement means the close-claim was
-      **unearned**. Surface the unearned claim to the user explicitly, and carry
-      the remaining scope forward into this phase's change intents — the claim is
-      never inherited as fact, and the issue is not treated as shipped.
+   When a prior phase's \`done\` criterion or plan claims \`Fixes #N\` /
+   \`Closes #N\`, do not inherit that claim as fact. For each such issue, fetch
+   and enumerate it:
 
-2. **Slice the phase into concrete change intents**
+${ISSUE_REQUIREMENT_ENUMERATION}
+
+   Compare the enumerated requirements against what that phase's \`done\` and
+   \`plan.md\` describe as actually implemented. A requirement the prior phase
+   did not implement means the close-claim was **unearned**. Surface the unearned
+   claim to the user explicitly, and carry the remaining scope forward into this
+   phase's change intents — the claim is never inherited as fact, and the issue
+   is not treated as shipped.
+
+3. **Slice the phase into concrete change intents**
 
    Author one or more concrete change intents that, taken together, achieve this
    phase's \`goal\` and satisfy its \`success\` criterion. Each intent is a
    thin, self-contained unit of work. Order them with \`after\` edges that form a
    DAG within the phase (a change lists the names it depends on).
 
-3. **Write the intents into the manifest's \`changes\` list (edit in place)**
+4. **Write the intents into the manifest's \`changes\` list (edit in place)**
 
    Edit \`.ratchet/batches/<name>/batch.yaml\` and replace the named phase's empty
    \`changes: []\` with the authored intents. Use the manifest shape the existing

@@ -8,19 +8,19 @@
  * `content` are the SAME body, produced by {@link buildProposeBody} and
  * differing in exactly two lines: the **Input** line (a skill is invoked by
  * request, a command by its argument) and the closing **Prompt** line. Those two
- * deltas are the builder's only parameters. The body used to be duplicated
- * verbatim in both places, which meant every edit had to be made twice or the
- * two surfaces silently diverged — the exact drift this workflow's own
- * reconciliation rules exist to prevent, so the duplication is gone.
+ * deltas are the builder's only parameters, so the two surfaces cannot
+ * diverge.
  *
- * The originating-issue reconciliation step and the close-claim /
+ * The two halves of originating-issue reconciliation (enumerate before
+ * authoring, map and surface after authoring) and the close-claim /
  * stop-and-surface guardrails are not authored here: they are interpolated from
  * `./scope-reconciliation.js`, the single author of those rules across
  * `propose`, `propose-batch`, and `decompose-phase`.
  */
 import type { SkillTemplate, CommandTemplate } from '../types.js';
 import {
-  ISSUE_RECONCILIATION_STEP,
+  ISSUE_RECONCILIATION_PRE_AUTHORING,
+  ISSUE_RECONCILIATION_POST_AUTHORING,
   CLOSE_CLAIM_RULES,
   STOP_AND_SURFACE_GUARDRAIL,
 } from './scope-reconciliation.js';
@@ -67,9 +67,9 @@ ${inputLine}
 
    **IMPORTANT**: Do NOT proceed without understanding the behavior to build.
 
-2. **Reconcile the authored scope against every originating issue**
+2. **Enumerate the requirements of every originating issue**
 
-${ISSUE_RECONCILIATION_STEP}
+${ISSUE_RECONCILIATION_PRE_AUTHORING}
 
 3. **Create the change directory**
    \`\`\`bash
@@ -118,10 +118,6 @@ ${ISSUE_RECONCILIATION_STEP}
         particular standard). These tags are validated against \`.ratchet/standards/\` and
         are materialized into the feature store on archive.
       - Show brief progress: "Created <artifact-id>"
-      - Complete the reconciliation map from step 2 against what you actually
-        authored: every material requirement of every originating issue must point
-        at a feature scenario or a plan task. Anything still uncovered is surfaced
-        to the user as a decision point before you call the artifacts done.
 
    b. **Continue until all \`applyRequires\` artifacts are complete**
       - After creating each artifact, re-run \`ratchet status --change "<name>" --json\`
@@ -132,7 +128,14 @@ ${ISSUE_RECONCILIATION_STEP}
       - Ask the user to clarify (use a structured-question tool such as AskUserQuestion if your agent has one)
       - Then continue with creation
 
-6. **Show final status**
+6. **Reconcile the authored artifacts against every originating issue**
+
+   Here the authored scope is the change's feature scenarios and plan tasks:
+   each enumerated requirement is covered by a feature scenario or a plan task.
+
+${ISSUE_RECONCILIATION_POST_AUTHORING}
+
+7. **Show final status**
    \`\`\`bash
    ratchet status --change "<name>"
    \`\`\`

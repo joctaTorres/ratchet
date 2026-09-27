@@ -11,14 +11,17 @@
  *
  * Like `batch.ts`, both the skill and the command share a single body constant.
  *
- * The originating-issue reconciliation step and the close-claim /
- * stop-and-surface guardrails are interpolated from `./scope-reconciliation.js`,
+ * The two halves of originating-issue reconciliation (enumerate before the
+ * phases are sliced, map and surface once the manifest is drafted) and the
+ * close-claim / stop-and-surface guardrails are interpolated from
+ * `./scope-reconciliation.js`,
  * the single author of those rules across `propose`, `propose-batch`, and
  * `decompose-phase` — never restated here.
  */
 import type { SkillTemplate, CommandTemplate } from '../types.js';
 import {
-  ISSUE_RECONCILIATION_STEP,
+  ISSUE_RECONCILIATION_PRE_AUTHORING,
+  ISSUE_RECONCILIATION_POST_AUTHORING,
   CLOSE_CLAIM_RULES,
   STOP_AND_SURFACE_GUARDRAIL,
 } from './scope-reconciliation.js';
@@ -73,7 +76,15 @@ derive one from the objective.
    Ask follow-ups until you understand the objective well enough to slice it.
    **Do NOT scaffold a manifest until the objective is understood.**
 
-2. **Slice into ordered vertical-slice phases**
+2. **Enumerate the requirements of every originating issue (before slicing)**
+
+   When the objective, a phase, or a change intent originates from a tracked
+   issue, enumerate that issue's requirements before any phase is sliced, so the
+   phases are drafted against the real issue rather than a paraphrase of it.
+
+${ISSUE_RECONCILIATION_PRE_AUTHORING}
+
+3. **Slice into ordered vertical-slice phases**
 
    Propose an **ordered** list of phases. Each phase must be **functional,
    runnable software a user can exercise end to end** — not a horizontal layer.
@@ -87,7 +98,7 @@ derive one from the objective.
    or infrastructure needed to ship **one** runnable behavior. Accept a phase
    only when it ships a feature a user can exercise end to end.
 
-3. **Require success criteria + a proof-of-work per phase (hard gate)**
+4. **Require success criteria + a proof-of-work per phase (hard gate)**
 
    For **every** phase you must have, before scaffolding:
    - a **success criterion** (what "done" means for the phase), and
@@ -107,22 +118,13 @@ derive one from the objective.
      that the exact runnable command is **refined at phase entry**. Do not demand
      an exact command for software that does not yet exist.
 
-4. **Reconcile the manifest against every originating issue (before scaffolding)**
+5. **Reconcile the drafted manifest against every originating issue (before scaffolding)**
 
-   When the objective, a phase, or a change intent originates from a tracked
-   issue, reconcile against that issue BEFORE \`ratchet new batch\` is run. The
-   "authored scope" being reconciled here is the manifest you are about to write:
-   each phase \`goal\`, each phase \`success\` criterion, and each change-level
-   \`done\`.
+   Here the authored scope is the manifest you have drafted but not yet
+   scaffolded: each phase \`goal\`, each phase \`success\` criterion, and each
+   change-level \`done\`. Reconcile it BEFORE \`ratchet new batch\` is run.
 
-${ISSUE_RECONCILIATION_STEP}
-
-   Map each enumerated requirement onto the phase \`goal\`, phase \`success\`, or
-   change-level \`done\` that carries it, and surface every requirement the
-   manifest leaves uncovered to the user BEFORE the manifest is scaffolded. A
-   requirement no phase contract carries is not "handled in a later phase" unless
-   a later phase's \`goal\` actually names it — an unwritten intention is an
-   omission, and omissions are the user's decision to make, not yours.
+${ISSUE_RECONCILIATION_POST_AUTHORING}
 
    **No premature close-claims in the manifest.** The manifest MUST NOT hard-code
    \`Closes #N\` or \`Fixes #N\` in a phase \`goal\`, in a phase \`success\`
@@ -137,7 +139,7 @@ ${ISSUE_RECONCILIATION_STEP}
    - The \`Closes #N\` linkage is earned at pull-request-authoring time, only
      after the issue's material requirements are confirmed implemented.
 
-5. **Scaffold the manifest via existing machinery (shallow DAG)**
+6. **Scaffold the manifest via existing machinery (shallow DAG)**
 
    Once you have valid phases with proofs-of-work and a batch name:
    \`\`\`bash
@@ -161,7 +163,7 @@ ${ISSUE_RECONCILIATION_STEP}
    - **Issue references**: phase contracts and change-level \`done\` criteria
      reference originating issues as "targets #N" / "addresses #N", or
      "partially addresses #N" for partial coverage. Never write \`Closes #N\` or
-     \`Fixes #N\` into the manifest — see step 4.
+     \`Fixes #N\` into the manifest — see step 5.
    - **Settings**: if the user wants a setting that differs from the project
      defaults, record it under the manifest \`settings\` block. Only these keys are
      accepted (the schema is strict — any other key fails validation): \`gate\`,
@@ -172,7 +174,7 @@ ${ISSUE_RECONCILIATION_STEP}
    generate any change directories under \`.ratchet/changes/\`, and do not produce
    any per-change planning artifacts at proposal time.
 
-6. **Hand off to apply-batch to drive the batch now (gated)**
+7. **Hand off to apply-batch to drive the batch now (gated)**
 
    After the manifest is written, present an **explicit gate** — never an
    automatic action — asking whether to drive the batch now by running the

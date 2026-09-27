@@ -83,10 +83,11 @@ the full picture.
   objective, slices it into ordered **vertical-slice** phases, **hard-gates**
   every phase on a success criterion + an executable proof-of-work, and writes
   the manifest with a **shallow DAG** — only phase one is decomposed into change
-  intents. Before scaffolding it **reconciles the manifest against every
-  originating issue** and refuses to hard-code a `Closes #N` claim into a phase
-  contract (see [Scope reconciliation](#scope-reconciliation)). Its sole artifact
-  is `batch.yaml`; it creates no change directories.
+  intents. It enumerates every originating issue's requirements before slicing and
+  **reconciles the drafted manifest against them** before scaffolding, and
+  refuses to hard-code a `Closes #N` claim into a phase contract (see
+  [Scope reconciliation](#scope-reconciliation)). Its sole artifact is
+  `batch.yaml`; it creates no change directories.
 - **`/rct:apply-batch`** is the autonomous orchestrator. It **loops** the
   single-step `ratchet batch apply` — read status → advance one transition
   (`propose → apply → verify` for one ready DAG step) → interpret the outcome —
@@ -103,16 +104,17 @@ The three change-authoring workflows — `propose`, `propose-batch`, and
 the issues the work came from. The rules are authored once and rendered into every
 tool's generated skill and command.
 
-- **Originating-issue reconciliation.** `propose` and `propose-batch` fetch every
-  originating issue through the project's issue tracker before authoring anything
-  (`gh issue view <n>` is a GitHub example, not a requirement — you can paste the
-  issue text instead), enumerate its material requirements from both its explicit
-  fix items and the problems named in its narrative, map each requirement to a
-  feature scenario, plan task, or manifest field, and surface every uncovered one
-  as an enumerated *"issue asks X, this proposal does not include X"* decision
-  point. Hedged wording in the issue (*"consider"*, *"optionally"*) does not lower
-  the bar for a security-relevant requirement, and an omission may never be
-  self-approved in plan prose.
+- **Originating-issue reconciliation.** `propose` and `propose-batch` reconcile in
+  two phases. Before authoring anything, they fetch every originating issue through
+  the project's issue tracker (`gh issue view <n>` is a GitHub example, not a
+  requirement — you can paste the issue text instead) and enumerate its material
+  requirements from both its explicit fix items and the problems named in its
+  narrative. After authoring, they map each requirement to a feature scenario, plan
+  task, or manifest field, and surface every uncovered one as an enumerated
+  *"issue asks X, this proposal does not include X"* decision point. Hedged
+  wording in the issue (*"consider"*, *"optionally"*) does not lower the bar for
+  a security-relevant requirement, and an omission may never be self-approved
+  in plan prose.
 - **Honest close-claims.** A `Fixes #N` / `Closes #N` claim is permitted only when
   the issue's material requirements are actually implemented — it is an output of
   verification, never an input of planning. Partial work says
@@ -126,8 +128,11 @@ tool's generated skill and command.
   shipped `plan.md` (not only the injected `done` criteria, which are a paraphrase
   that hides plan-prose deferrals), extracts every out-of-scope / deferred / revisit
   item, and resolves each as **carried forward**, **tracked** against an open issue,
-  or **explicitly dropped** by you. It also verifies a prior phase's `Closes #N` was
-  earned before treating the issue as shipped.
+  or **explicitly dropped** by you. A security-relevant item counts as tracked only
+  when its issue meets the stop-and-surface bar (filed, open, a named owner, linked
+  from the plan). It also verifies a prior phase's `Closes #N` was earned before
+  treating the issue as shipped, enumerating the issue with the same shared
+  procedure (hedged-wording rule included) that `propose` uses.
 
 See [Generated artifacts](docs/configuration/generated-artifacts.md) for the full
 Reference entry.
@@ -678,7 +683,7 @@ deprecated alias mapped onto the gate.
 | Workflow | What it does |
 |---|---|
 | **brainstorm** | Front door for an open-ended idea: explores context, clarifies one question at a time, weighs 2–3 approaches, designs section-by-section, then recommends + gates a route into `propose` or `propose-batch` (does no implementation itself) |
-| **propose** | Clarifies intent (explore-first when unclear), [reconciles the authored scope against every originating issue](#scope-reconciliation), then generates `features/` + `plan.md` |
+| **propose** | Clarifies intent (explore-first when unclear), enumerates every originating issue's requirements, generates `features/` + `plan.md`, then [reconciles them against every originating issue](#scope-reconciliation) |
 | **apply** | Implements against each scenario's `Given/When/Then`, checking off plan tasks |
 | **verify** | Confirms the implementation satisfies every scenario and all tasks are done |
 | **archive** | Runs `ratchet archive` to ratchet features into the permanent store |

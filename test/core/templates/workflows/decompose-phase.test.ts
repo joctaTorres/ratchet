@@ -4,6 +4,7 @@ import {
   getRctDecomposePhaseCommandTemplate,
 } from '../../../../src/core/templates/workflows/decompose-phase.js';
 import {
+  ISSUE_REQUIREMENT_ENUMERATION,
   CLOSE_CLAIM_RULES,
   STOP_AND_SURFACE_GUARDRAIL,
 } from '../../../../src/core/templates/workflows/scope-reconciliation.js';
@@ -54,6 +55,20 @@ describe('decompose-phase workflow templates', () => {
       expect(body).toMatch(/matched to an existing OPEN tracking issue/i);
     });
 
+    it('holds a security-relevant "tracked" item to the stop-and-surface guardrail bar', () => {
+      // One definition of tracked: outcome (b) defers to the guardrail below for
+      // security-, permission-, or integrity-relevant items instead of setting a
+      // lower bar of its own.
+      expect(body).toMatch(
+        /For a security-, permission-, or\s+integrity-relevant item, the tracking issue must meet the bar the\s+stop-and-surface guardrail below sets/i
+      );
+      expect(STOP_AND_SURFACE_GUARDRAIL).toMatch(/named owner/i);
+      expect(STOP_AND_SURFACE_GUARDRAIL).toMatch(/linked\s+from the change plan/i);
+      expect(body).toMatch(/does not track the item, and the item is\s+surfaced to the user instead/i);
+      // The bar it points at is the guardrail's own text, embedded once.
+      expect(body).toContain(STOP_AND_SURFACE_GUARDRAIL);
+    });
+
     it('states that silently ignoring an extracted item is not an outcome', () => {
       expect(body).toMatch(/\*\*Silently ignoring an extracted item is not an available outcome\.\*\*/);
     });
@@ -66,23 +81,51 @@ describe('decompose-phase workflow templates', () => {
   describe('earned-close verification (issue #100 criterion 4)', () => {
     const body = getDecomposePhaseSkillTemplate().instructions;
 
-    it('requires verifying a prior close-claim before treating an issue as shipped', () => {
-      expect(body).toMatch(/verify a prior phase's close-claim was earned before treating an issue as\s+shipped/i);
+    it('verifies prior close-claims in their own numbered step, after grounding and before slicing', () => {
+      const groundAt = body.indexOf("1. **Ground in the prior phase's shipped results**");
+      const verifyAt = body.indexOf('2. **Verify each prior close-claim was earned**');
+      const sliceAt = body.indexOf('3. **Slice the phase into concrete change intents**');
+
+      expect(groundAt).toBeGreaterThan(-1);
+      expect(verifyAt).toBeGreaterThan(groundAt);
+      expect(sliceAt).toBeGreaterThan(verifyAt);
       expect(body).toMatch(/do not inherit that claim as fact/i);
     });
 
+    it('embeds the shared fetch-and-enumerate procedure verbatim, exactly once', () => {
+      expect(body).toContain(ISSUE_REQUIREMENT_ENUMERATION);
+      expect(body.split(ISSUE_REQUIREMENT_ENUMERATION).length - 1).toBe(1);
+      // The step carries the enumeration inside the verify step, not elsewhere.
+      const verifyAt = body.indexOf('2. **Verify each prior close-claim was earned**');
+      const sliceAt = body.indexOf('3. **Slice the phase into concrete change intents**');
+      const enumAt = body.indexOf(ISSUE_REQUIREMENT_ENUMERATION);
+      expect(enumAt).toBeGreaterThan(verifyAt);
+      expect(enumAt).toBeLessThan(sliceAt);
+    });
+
+    it('carries the hedged-wording rule at the phase boundary', () => {
+      expect(body).toMatch(/hedged source wording does not lower the bar/i);
+      expect(body).toContain('"Consider"');
+      expect(body).toMatch(/security-,\s+permission-, or integrity-relevant, severity governs/i);
+    });
+
+    it('carries no hand-written restatement of the fetch-and-enumerate procedure', () => {
+      expect(body).not.toMatch(/enumerate its material requirements from both its explicit fix items/i);
+      expect(body.split('gh issue view <n>').length - 1).toBe(1);
+    });
+
     it('compares the issue requirements against what the prior done and plan describe', () => {
-      expect(body).toMatch(/enumerate its material requirements from both its explicit fix items/i);
+      expect(body).toMatch(/explicit fix items/i);
       expect(body).toMatch(/problems named in its narrative/i);
       expect(body).toMatch(
-        /compare them against what that\s+phase's `done` and `plan\.md` describe as actually implemented/i
+        /compare the enumerated requirements against what that phase's `done` and\s+`plan\.md` describe as actually implemented/i
       );
     });
 
     it('surfaces an unearned claim and carries the remaining scope forward', () => {
       expect(body).toMatch(/the close-claim was\s+\*\*unearned\*\*/i);
-      expect(body).toMatch(/surface the unearned claim to the user explicitly/i);
-      expect(body).toMatch(/carry\s+the remaining scope forward into this phase's change intents/i);
+      expect(body).toMatch(/surface the unearned\s+claim to the user explicitly/i);
+      expect(body).toMatch(/carry\s+the remaining scope forward into this\s+phase's change intents/i);
       expect(body).toMatch(/the claim is\s+never inherited as fact/i);
     });
 
@@ -135,7 +178,8 @@ describe('decompose-phase workflow templates', () => {
       expect(fileContent, label).toMatch(/extract every deferred item recorded in those plans/i);
       expect(fileContent, label).toMatch(/Silently ignoring an extracted item is not an available outcome/i);
       // …and so does the earned-close verification.
-      expect(fileContent, label).toMatch(/close-claim was earned before treating an issue as/i);
+      expect(fileContent, label).toMatch(/Verify each prior close-claim was earned/i);
+      expect(fileContent, label).toContain(ISSUE_REQUIREMENT_ENUMERATION);
       expect(fileContent, label).toMatch(/stop-and-surface event/i);
       expect(fileContent, label).toContain('"partially addresses #N"');
     }

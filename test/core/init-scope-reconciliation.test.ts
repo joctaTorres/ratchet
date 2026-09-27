@@ -4,7 +4,9 @@ import path from 'path';
 import os from 'os';
 import { InitCommand } from '../../src/core/init.js';
 import {
-  ISSUE_RECONCILIATION_STEP,
+  ISSUE_REQUIREMENT_ENUMERATION,
+  ISSUE_RECONCILIATION_PRE_AUTHORING,
+  ISSUE_RECONCILIATION_POST_AUTHORING,
   CLOSE_CLAIM_RULES,
   STOP_AND_SURFACE_GUARDRAIL,
 } from '../../src/core/templates/workflows/scope-reconciliation.js';
@@ -100,12 +102,18 @@ describe('init renders the scope-reconciliation hardening into every agent tree'
   );
 
   it.each(reconciliationCases)(
-    '%s/skills/%s/SKILL.md carries the originating-issue reconciliation step',
+    '%s/skills/%s/SKILL.md carries both originating-issue reconciliation halves',
     async (tree, skill) => {
-      // Criterion 1: the reconciliation step in propose and propose-batch, both trees.
-      expect(await read(tree, skill)).toContain(ISSUE_RECONCILIATION_STEP);
+      // Criterion 1: enumerate-before and map-after in propose and propose-batch, both trees.
+      const content = await read(tree, skill);
+      expect(content).toContain(ISSUE_RECONCILIATION_PRE_AUTHORING);
+      expect(content).toContain(ISSUE_RECONCILIATION_POST_AUTHORING);
     }
   );
+
+  it.each(TREES)('%s/skills/ratchet-decompose-phase/SKILL.md carries the shared enumeration', async (tree) => {
+    expect(await read(tree, 'ratchet-decompose-phase')).toContain(ISSUE_REQUIREMENT_ENUMERATION);
+  });
 
   it.each(TREES)('%s/skills/ratchet-propose-batch/SKILL.md forbids a premature close-claim', async (tree) => {
     // Criterion 2.
@@ -120,7 +128,7 @@ describe('init renders the scope-reconciliation hardening into every agent tree'
     const content = await read(tree, 'ratchet-decompose-phase');
     expect(content).toMatch(/extract every deferred item recorded in those plans/i);
     expect(content).toMatch(/Silently ignoring an extracted item is not an available outcome/i);
-    expect(content).toMatch(/close-claim was earned before treating an issue as/i);
+    expect(content).toMatch(/Verify each prior close-claim was earned/i);
   });
 
   it('renders both trees content-identically apart from slash-command naming', async () => {

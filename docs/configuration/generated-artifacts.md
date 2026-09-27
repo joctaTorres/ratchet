@@ -136,23 +136,25 @@ flowchart TD
     B{🔍 Work originates<br/>from a tracked issue?}
     C[🌐 Fetch each issue<br/>through the project's tracker]
     D[📋 Enumerate material requirements<br/>explicit fix items · narrative problems]
-    E[🔗 Map each requirement to a<br/>feature scenario · plan task · manifest field]
+    W[✍️ Author the artifacts]
+    E[🔗 Map each requirement to the authored scope<br/>feature scenario · plan task · manifest field]
     F{❓ Any requirement<br/>uncovered?}
     G[👤 Surface as an enumerated decision point<br/>issue asks X · this proposal omits X]
     H{🔐 Security · permission ·<br/>integrity relevant?}
     I[🛑 Stop and surface<br/>halt the run · ask the user]
     J[👤 User decides]
     K[📌 Approved deferral needs a filed<br/>tracking issue · named owner · linked from the plan]
-    Z[✅ Author the artifacts]
+    Z[✅ Artifacts called done]
     L{🏷️ All material requirements<br/>implemented?}
     M[✅ A closing claim may be made<br/>at pull-request-authoring time]
     N[⚠️ Say partially addresses<br/>never a closing claim]
 
     A --> B
-    B -- no --> Z
+    B -- no --> W
     B -- yes --> C
     C --> D
-    D --> E
+    D --> W
+    W --> E
     E --> F
     F -- no --> Z
     F -- yes --> G
@@ -173,7 +175,7 @@ flowchart TD
     classDef done  fill:#ADD8E6,stroke:#333,stroke-width:2px,color:darkblue
 
     class A entry
-    class C,D,E,G,J,K step
+    class C,D,W,E,G,J,K step
     class B,F,H,L gate
     class I,N halt
     class Z,M done
@@ -181,19 +183,30 @@ flowchart TD
 
 #### Originating-issue reconciliation
 
-`propose` and `propose-batch` each run an originating-issue reconciliation step before
-any artifact is authored — in `propose` it is step 2, before the change directory is
-created; in `propose-batch` it is step 4, before `ratchet new batch` scaffolds the
-manifest. The step requires:
+`propose` and `propose-batch` reconcile against every originating issue in two phases,
+each at the moment it can actually happen. Requirements can only be enumerated before
+the artifacts are authored, and they can only be mapped to authored scope afterwards,
+so the procedure is split in two and each workflow embeds each half where it applies:
 
-| Sub-step | Requirement |
-|---|---|
-| Identify | Collect every originating issue — referenced by the user, by a manifest phase or change intent, or by an injected `done` criterion. |
-| Fetch | Read each issue through the project's issue tracker. `gh issue view <n>` is named as a GitHub example; no tracker or command is required. When no tracker client is available, the user is asked to paste the issue text. |
-| Enumerate | List the issue's material requirements from both its explicit fix items and the problems named in its narrative. Hedged wording (`consider`, `maybe`, `optionally`) does not lower the bar for a security-, permission-, or integrity-relevant requirement. |
-| Map | Point every enumerated requirement at the feature scenario or plan task that covers it. In `propose-batch` the target is the phase `goal`, the phase `success` criterion, or the change-level `done`. |
-| List | Write out every requirement the authored scope does not cover. |
-| Surface | Present each uncovered requirement to the user as an enumerated `"issue asks X, this proposal does not include X"` decision point before artifacts are finalized. Writing an omission into plan prose as self-approval is prohibited. |
+| Workflow | Before authoring: identify · fetch · enumerate | After authoring: map · list · surface |
+|---|---|---|
+| `propose` | Step 2, before `ratchet new change` creates the change directory. | Step 6, after the artifact loop and before the final status. The targets are feature scenarios and plan tasks. |
+| `propose-batch` | Step 2, before the phases are sliced and the manifest is drafted. | Step 5, after the phases and their success criteria are drafted and before `ratchet new batch` scaffolds the manifest. The targets are each phase `goal`, each phase `success` criterion, and each change-level `done`. |
+
+The two halves require:
+
+| Sub-step | Phase | Requirement |
+|---|---|---|
+| Identify | Before | Collect every originating issue — referenced by the user, by a manifest phase or change intent, or by an injected `done` criterion. |
+| Fetch | Before | Read each issue through the project's issue tracker. `gh issue view <n>` is named as a GitHub example; no tracker or command is required. When no tracker client is available, the user is asked to paste the issue text. |
+| Enumerate | Before | List the issue's material requirements from both its explicit fix items and the problems named in its narrative. Hedged wording (`consider`, `maybe`, `optionally`) does not lower the bar for a security-, permission-, or integrity-relevant requirement. |
+| Map | After | Point every enumerated requirement at the part of the authored scope that covers it. Each workflow names its targets in the step that embeds this half. |
+| List | After | Write out every requirement the authored scope does not cover. |
+| Surface | After | Present each uncovered requirement to the user as an enumerated `"issue asks X, this proposal does not include X"` decision point before the artifacts are called done. Writing an omission into plan prose as self-approval is prohibited. |
+
+The fetch and enumerate sub-steps are one shared text. `decompose-phase` embeds the
+same text in its earned-close check (see below), so the hedged-wording rule applies at
+the phase boundary exactly as it does at proposal time.
 
 #### Close-claim rules
 
@@ -221,7 +234,7 @@ mechanism.
 #### Deferral carry-forward in `decompose-phase`
 
 `decompose-phase` grounds a phase in the prior phases' shipped results. Its grounding
-step additionally requires:
+step (step 1) additionally requires:
 
 - Reading each prior phase's shipped change `plan.md`, not only the injected `done`
   criteria. The injected criteria are a paraphrase in which deferrals recorded as plan
@@ -231,10 +244,20 @@ step additionally requires:
 - Resolving each extracted item as exactly one of three outcomes: **carried forward**
   as a change intent in the phase being decomposed, **tracked** against an existing
   open tracking issue, or **explicitly dropped** by the user. Silently ignoring an
-  extracted item is not an available outcome.
-- Verifying that a prior phase's `Fixes #N` / `Closes #N` claim was earned before the
-  issue is treated as shipped. An unearned claim is surfaced and its remaining scope
-  carried forward, never inherited as fact.
+  extracted item is not an available outcome. For a security-, permission-, or
+  integrity-relevant item, **tracked** has the same bar as the stop-and-surface
+  guardrail: the tracking issue must be filed, open, have a named owner, and be linked
+  from the change plan. An open issue with no owner does not track such an item, and
+  the item is surfaced to the user instead. Other items only need an existing open
+  tracking issue.
+
+Its own step 2, before the phase is sliced, verifies that each prior phase's
+`Fixes #N` / `Closes #N` claim was earned before the issue is treated as shipped. It
+fetches and enumerates the issue with the same shared text `propose` and
+`propose-batch` use, including the hedged-wording rule, and compares the requirements
+against what the prior phase's `done` and `plan.md` describe as implemented. An
+unearned claim is surfaced and its remaining scope carried forward, never inherited as
+fact.
 
 
 ## Change directory artifacts

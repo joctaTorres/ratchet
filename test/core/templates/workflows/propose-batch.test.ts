@@ -4,7 +4,8 @@ import {
   getRctProposeBatchCommandTemplate,
 } from '../../../../src/core/templates/workflows/propose-batch.js';
 import {
-  ISSUE_RECONCILIATION_STEP,
+  ISSUE_RECONCILIATION_PRE_AUTHORING,
+  ISSUE_RECONCILIATION_POST_AUTHORING,
   CLOSE_CLAIM_RULES,
   STOP_AND_SURFACE_GUARDRAIL,
 } from '../../../../src/core/templates/workflows/scope-reconciliation.js';
@@ -124,31 +125,49 @@ describe('propose-batch workflow templates', () => {
   describe('originating-issue reconciliation (issue #100 criterion 1)', () => {
     const body = getProposeBatchSkillTemplate().instructions;
 
-    it('carries the shared reconciliation step verbatim', () => {
-      expect(body).toContain(ISSUE_RECONCILIATION_STEP);
+    it('carries both shared reconciliation halves verbatim', () => {
+      expect(body).toContain(ISSUE_RECONCILIATION_PRE_AUTHORING);
+      expect(body).toContain(ISSUE_RECONCILIATION_POST_AUTHORING);
     });
 
-    it('reconciles before the manifest is scaffolded', () => {
-      const reconcileAt = body.indexOf(
-        '4. **Reconcile the manifest against every originating issue (before scaffolding)**'
-      );
-      const scaffoldAt = body.indexOf('5. **Scaffold the manifest via existing machinery (shallow DAG)**');
+    it('enumerates before the phases are sliced', () => {
+      const preAt = body.indexOf(ISSUE_RECONCILIATION_PRE_AUTHORING);
+      const sliceAt = body.indexOf('3. **Slice into ordered vertical-slice phases**');
 
-      expect(reconcileAt).toBeGreaterThan(-1);
-      expect(scaffoldAt).toBeGreaterThan(reconcileAt);
+      expect(preAt).toBeGreaterThan(-1);
+      expect(sliceAt).toBeGreaterThan(preAt);
+    });
+
+    it('maps and surfaces after the phases are drafted, before the manifest is scaffolded', () => {
+      const draftedAt = body.indexOf('4. **Require success criteria + a proof-of-work per phase (hard gate)**');
+      const reconcileAt = body.indexOf(
+        '5. **Reconcile the drafted manifest against every originating issue (before scaffolding)**'
+      );
+      const postAt = body.indexOf(ISSUE_RECONCILIATION_POST_AUTHORING);
+      const scaffoldAt = body.indexOf('6. **Scaffold the manifest via existing machinery (shallow DAG)**');
+      const newBatchAt = body.indexOf('ratchet new batch <name>');
+
+      expect(draftedAt).toBeGreaterThan(-1);
+      expect(reconcileAt).toBeGreaterThan(draftedAt);
+      expect(postAt).toBeGreaterThan(reconcileAt);
+      expect(scaffoldAt).toBeGreaterThan(postAt);
+      expect(newBatchAt).toBeGreaterThan(postAt);
       expect(body).toMatch(/BEFORE `ratchet new batch` is run/);
-      expect(body).toMatch(/surface every requirement the\s+manifest leaves uncovered to the user BEFORE the manifest is scaffolded/i);
     });
 
     it('fetches every issue the objective or a phase originates from', () => {
       expect(body).toMatch(/identify every originating issue/i);
-      expect(body).toMatch(/fetch each originating issue through the project's issue tracker/i);
+      expect(body).toMatch(/fetch each issue through the project's issue tracker/i);
       expect(body).toMatch(/when the objective, a phase, or a change intent originates from a tracked\s+issue/i);
     });
 
-    it('reconciles each phase goal, success criterion, and change-level done', () => {
-      expect(body).toMatch(/each phase `goal`, each phase `success` criterion, and each change-level\s+`done`/i);
-      expect(body).toMatch(/map each enumerated requirement onto the phase `goal`, phase `success`, or\s+change-level `done`/i);
+    it('names each phase goal, success criterion, and change-level done as the mapping targets', () => {
+      expect(body).toMatch(/each phase `goal`, each phase `success` criterion, and each\s+change-level `done`/i);
+    });
+
+    it('carries no hand-written restatement of the mapping rule', () => {
+      expect(body).not.toMatch(/map each enumerated requirement onto/i);
+      expect(body.split('Map every enumerated requirement').length - 1).toBe(1);
     });
 
     it('forbids self-approving an omission in plan prose', () => {
@@ -210,7 +229,8 @@ describe('propose-batch workflow templates', () => {
     for (const adapter of adapters) {
       const { fileContent } = generateCommand(content, adapter);
       const label = `tool: ${adapter.toolId}`;
-      expect(fileContent, label).toMatch(/fetch each originating issue through the project's issue tracker/i);
+      expect(fileContent, label).toContain(ISSUE_RECONCILIATION_PRE_AUTHORING);
+      expect(fileContent, label).toContain(ISSUE_RECONCILIATION_POST_AUTHORING);
       expect(fileContent, label).toMatch(/MUST NOT self-approve an omission by writing it into plan prose/i);
       expect(fileContent, label).toMatch(/no premature close-claims in the manifest/i);
       expect(fileContent, label).toContain('"partially addresses #N"');

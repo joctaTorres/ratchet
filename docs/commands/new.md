@@ -36,7 +36,10 @@ ratchet new change <name> [options]
    default (ratchet)`. When `--schema` is supplied, the named schema must exist
    (project-local or bundled); an unrecognised schema name exits with an error.
 3. **Refuse-if-exists.** If `.ratchet/changes/<name>/` already exists the
-   command exits with an error. No files are modified.
+   command exits with an error. No files are modified. A directory whose only
+   entry is `.run/` (reports posted with [`ratchet report`](./report.md) before
+   the change was scaffolded) does not count as existing: the change is
+   scaffolded into it and the `.run/` journal is kept.
 4. **Files created.**
    - `.ratchet/changes/<name>/` — the change directory.
    - `.ratchet/changes/<name>/.ratchet.yaml` — change metadata containing the

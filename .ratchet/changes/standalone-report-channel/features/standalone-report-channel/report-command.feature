@@ -21,6 +21,17 @@ Feature: Batch-less report command
     When I run "ratchet report new-idea --blocker \"which database?\""
     Then ".ratchet/changes/new-idea/.run/journal.jsonl" gains one "blocker" entry for change "new-idea"
 
+  Scenario: A pre-propose report does not block creating the change
+    Given "ratchet report new-idea --status \"starting\"" has run before the change was created
+    When I run "ratchet new change new-idea"
+    Then the change "new-idea" is created successfully
+    And the earlier report is still in ".ratchet/changes/new-idea/.run/journal.jsonl"
+
+  Scenario: A pre-propose report does not make propose refuse the name
+    Given "ratchet report new-idea --blocker \"which database?\"" has run before the change was created
+    When I run "ratchet propose \"anything\" --name new-idea"
+    Then propose does not refuse "new-idea" as an existing change
+
   Scenario Outline: An invalid change name is rejected before any path is built
     Given a project whose "src" directory exists
     When I run "ratchet report <name> --complete \"done\""

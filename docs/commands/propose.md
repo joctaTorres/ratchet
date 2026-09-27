@@ -39,7 +39,9 @@ toward.
 2. **Refuse-if-exists.** If `.ratchet/changes/<change>/` already exists, the
    command fails before resolving settings or spawning — `propose` creates a new
    change, it does not resume an existing one. Use `apply`/`verify` to advance an
-   existing change, or pass `--name <other>`.
+   existing change, or pass `--name <other>`. A directory whose only entry is
+   `.run/` (reports posted with [`ratchet report`](./report.md) before the
+   change was scaffolded) does not count as existing.
 3. **Standalone settings.** Settings resolve `flag → project config → default`
    via `resolveChangeStepSettings` (no manifest). An invalid `--agent`,
    `--locus`, or `--image` value fails with an actionable error before any agent

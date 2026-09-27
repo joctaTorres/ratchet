@@ -16,10 +16,13 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { reportCommand } from '../../src/commands/report.js';
 import { applyCommand } from '../../src/commands/apply.js';
+import { proposeCommand } from '../../src/commands/propose.js';
+import { createChange, isChangeCreated } from '../../src/utils/change-utils.js';
+import { readChangeDiskState } from '../../src/core/batch/engine/transition.js';
 import { appendJournal, readJournal } from '../../src/core/batch/journal.js';
 import { readChangeJournalTolerantForLocus } from '../../src/core/batch/engine/run-state.js';
 import type { Spawner } from '../../src/core/batch/engine/agent.js';
-import { CommandFixture, makeCommandFixture } from './change-fixture.js';
+import { CommandFixture, makeCommandFixture, completingSpawner } from './change-fixture.js';
 
 describe('reportCommand', () => {
   let fixture: CommandFixture;
@@ -181,5 +184,74 @@ describe('standalone apply through the prompted report channel', () => {
     await applyCommand('add-hello', { json: true }, { projectRoot: () => fixture.root, spawner });
 
     expect(lastResult().state).toBe('blocked');
+  });
+});
+
+/**
+ * Implements features/standalone-report-channel/report-command.feature:
+ * "A pre-propose report does not block creating the change" and
+ * "A pre-propose report does not make propose refuse the name". A change
+ * directory whose ONLY entry is `.run/` is not a created change.
+ */
+describe('a .run/-only change directory is not a created change', () => {
+  let fixture: CommandFixture;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    fixture = await makeCommandFixture('ratchet-report-prepropose-');
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    logSpy.mockRestore();
+    await fixture.cleanup();
+  });
+
+  const changeDir = (name: string) => path.join(fixture.root, '.ratchet', 'changes', name);
+
+  it('isChangeCreated: absent and .run/-only are not created; empty or scaffolded are', async () => {
+    expect(isChangeCreated(changeDir('absent'))).toBe(false);
+
+    await reportCommand('run-only', { status: 'starting' }, fixture.root);
+    expect(isChangeCreated(changeDir('run-only'))).toBe(false);
+    expect(readChangeDiskState(fixture.root, 'run-only').exists).toBe(false);
+
+    await fs.mkdir(changeDir('empty'), { recursive: true });
+    expect(isChangeCreated(changeDir('empty'))).toBe(true);
+
+    await fixture.writeChangeWithTasks('scaffolded', { done: 0, total: 1 });
+    await reportCommand('scaffolded', { status: 'x' }, fixture.root);
+    expect(isChangeCreated(changeDir('scaffolded'))).toBe(true);
+  });
+
+  it('createChange scaffolds into a .run/-only directory and keeps the journal', async () => {
+    await reportCommand('new-idea', { status: 'starting' }, fixture.root);
+
+    await createChange(fixture.root, 'new-idea');
+
+    expect(existsSync(path.join(changeDir('new-idea'), '.ratchet.yaml'))).toBe(true);
+    expect(
+      readChangeJournalTolerantForLocus(fixture.root, { change: 'new-idea' }, 'new-idea')
+    ).toMatchObject([{ kind: 'progress', message: 'starting' }]);
+  });
+
+  it('createChange still rejects a directory that holds more than .run/', async () => {
+    await fixture.writeChangeWithTasks('taken', { done: 0, total: 1 });
+    await reportCommand('taken', { status: 'x' }, fixture.root);
+
+    await expect(createChange(fixture.root, 'taken')).rejects.toThrow(/already exists/);
+  });
+
+  it('propose does not refuse a name that only has pre-propose reports', async () => {
+    await reportCommand('new-idea', { blocker: 'which database?' }, fixture.root);
+    const { spawner, calls } = completingSpawner(fixture.root, 'new-idea');
+
+    await proposeCommand(
+      'anything',
+      { name: 'new-idea' },
+      { projectRoot: () => fixture.root, spawner }
+    );
+
+    expect(calls()).toBe(1);
   });
 });

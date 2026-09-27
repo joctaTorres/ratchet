@@ -15,3 +15,10 @@ Feature: A reported standalone step advances
     And a stub agent that exits 0 without reporting
     When I run "ratchet apply add-hello --json"
     Then the step result state is "blocked"
+
+  Scenario: A standalone propose whose agent reports before scaffolding ends advanced
+    Given a project with no change "add-hello"
+    And a stub agent that runs "ratchet report add-hello --status" first, then "ratchet new change add-hello", then the prompted "--complete" report
+    When I run "ratchet propose \"say hello\" --name add-hello"
+    Then the stub's "ratchet new change add-hello" succeeds
+    And the step result state is "advanced"

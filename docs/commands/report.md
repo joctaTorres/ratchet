@@ -41,6 +41,10 @@ Exactly one kind flag must be provided.
 - The change directory is not required to exist: a fresh `ratchet propose`
   spawns its agent before `.ratchet/changes/<change>/` is created, and a report
   posted then is appended to `.ratchet/changes/<change>/.run/journal.jsonl`.
+  A directory whose only entry is `.run/` is not a created change:
+  [`ratchet new change`](./new.md) scaffolds into it (keeping the journal),
+  [`ratchet propose`](./propose.md) does not refuse the name, and the engine's
+  on-disk state reports the change as not existing.
 - The entry is always written to the `{ change }` run-state locus. `report` never
   resolves a batch, so a batch in the project cannot capture the report.
 - No parked state (`state.json`) is written: the engine maps a standalone step's

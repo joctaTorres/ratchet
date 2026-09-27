@@ -314,6 +314,8 @@ describe('whole-batch PR opening — batch apply e2e against the fake spawn seam
 
     expect(apply.exitCode).toBe(0);
     expect(apply.stderr).toContain('⚠ agent overridden by RATCHET_BATCH_AGENT_CMD');
+    // The notice goes to stderr, so --json stdout stays one JSON document.
+    expect(JSON.parse(apply.stdout).agentOverride).toBe(true);
     expect(prOpenActions(sentinel)).toHaveLength(1);
   }, 180000);
 });

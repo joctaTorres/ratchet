@@ -55,6 +55,7 @@ import {
 import { proposeCommand, type ProposeOptions } from '../commands/propose.js';
 import { applyCommand, type ApplyOptions } from '../commands/apply.js';
 import { verifyCommand, type VerifyOptions } from '../commands/verify.js';
+import { reportCommand, type ReportOptions } from '../commands/report.js';
 import { maybeShowTelemetryNotice, trackCommand, shutdown } from '../telemetry/index.js';
 
 const program = new Command();
@@ -454,6 +455,25 @@ withChangeStepFlags(
   .action(async (change: string, options: VerifyOptions) => {
     try {
       await verifyCommand(change, options);
+    } catch (error) {
+      console.log();
+      ora().fail(`Error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('report <change>')
+  .helpGroup('Workflow:')
+  .description('Report progress, a blocker, or completion on a standalone change step')
+  .option('--status <message>', 'Record routine progress')
+  .option('--blocker <message>', 'Raise a blocker')
+  .option('--needs-input <message>', 'Request input')
+  .option('--complete <message>', 'Signal the step produced its output')
+  .option('--json', 'Output as JSON')
+  .action(async (change: string, options: ReportOptions) => {
+    try {
+      await reportCommand(change, options);
     } catch (error) {
       console.log();
       ora().fail(`Error: ${(error as Error).message}`);

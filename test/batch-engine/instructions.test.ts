@@ -375,3 +375,39 @@ describe('buildAgentInstructions — spec-form agent resolves the mapped invocat
     expect(text).toContain('/rct-apply add-login-api');
   });
 });
+
+/**
+ * Implements: features/standalone-report-channel/standalone-prompt.feature
+ * A standalone step (no batch — the headless propose/apply/verify verbs) must
+ * name the batch-less `ratchet report <change>` channel, never a batch; a batch
+ * step keeps the batch-scoped channel unchanged.
+ */
+describe('buildAgentInstructions — standalone report channel (no batch)', () => {
+  for (const transition of ['propose', 'apply', 'verify'] as const) {
+    it(`never mentions a batch for a standalone ${transition}`, () => {
+      const text = buildAgentInstructions(
+        context(transition, { batch: undefined, change: 'add-hello' })
+      );
+      expect(text).not.toContain('undefined');
+      expect(text).not.toContain('ratchet batch report');
+      expect(text).not.toContain('ratchet batch');
+      expect(text).toContain('You are advancing the ratchet change "add-hello" (standalone, no batch).');
+      expect(text).toContain('You MUST finish by running `ratchet report add-hello --complete "<summary>"`');
+      for (const kind of ['--status', '--blocker', '--needs-input', '--complete']) {
+        expect(text).toContain(`  ratchet report add-hello ${kind} "`);
+      }
+    });
+  }
+
+  it('keeps the batch-scoped report channel when a batch drives the step', () => {
+    const text = buildAgentInstructions(context('apply', { batch: 'b1', change: 'add-hello' }));
+    expect(text.startsWith('You are advancing the ratchet batch "b1".')).toBe(true);
+    expect(text).toContain(
+      'You MUST finish by running `ratchet batch report b1 --change add-hello --complete "<summary>"`'
+    );
+    for (const kind of ['--status', '--blocker', '--needs-input', '--complete']) {
+      expect(text).toContain(`  ratchet batch report b1 --change add-hello ${kind} "`);
+    }
+    expect(text).not.toContain('ratchet report add-hello');
+  });
+});

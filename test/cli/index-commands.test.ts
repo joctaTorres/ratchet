@@ -43,6 +43,7 @@ async function loadAll() {
   const propose = await import('../../src/commands/propose.js');
   const apply = await import('../../src/commands/apply.js');
   const verify = await import('../../src/commands/verify.js');
+  const report = await import('../../src/commands/report.js');
   const template = await import('../../src/commands/template.js');
   const list = await import('../../src/core/list.js');
   const update = await import('../../src/core/update.js');
@@ -53,7 +54,7 @@ async function loadAll() {
   const init = await import('../../src/core/init.js');
   const { program } = await import('../../src/cli/index.js');
   return {
-    program, telemetry, workflow, batch, evalMod, propose, apply, verify,
+    program, telemetry, workflow, batch, evalMod, propose, apply, verify, report,
     template, list, update, archive, view, validate, doctor, init,
   };
 }
@@ -101,6 +102,7 @@ const COMMANDS: CommandCase[] = [
   { label: 'propose', args: ['propose', 'do a thing'], install: (m) => vi.spyOn(m.propose, 'proposeCommand') as unknown as Mock },
   { label: 'apply', args: ['apply', 'foo'], install: (m) => vi.spyOn(m.apply, 'applyCommand') as unknown as Mock },
   { label: 'verify', args: ['verify', 'foo'], install: (m) => vi.spyOn(m.verify, 'verifyCommand') as unknown as Mock },
+  { label: 'report', args: ['report', 'foo', '--complete', 'done'], install: (m) => vi.spyOn(m.report, 'reportCommand') as unknown as Mock },
   { label: 'batch new', args: ['batch', 'new', 'foo'], install: (m) => vi.spyOn(m.batch, 'newBatchCommand') as unknown as Mock },
   { label: 'batch status', args: ['batch', 'status'], install: (m) => vi.spyOn(m.batch, 'batchStatusCommand') as unknown as Mock },
   { label: 'batch view', args: ['batch', 'view'], install: (m) => vi.spyOn(m.batch, 'batchViewCommand') as unknown as Mock },

@@ -12,14 +12,15 @@ actions.
 
 ## Members and order
 
-The following five commands carry `.helpGroup('Workflow:')` and render under the
+The following six commands carry `.helpGroup('Workflow:')` and render under the
 `Workflow:` heading, in this order:
 
 1. `propose`
 2. `apply`
 3. `verify`
-4. `batch`
-5. `eval`
+4. `report`
+5. `batch`
+6. `eval`
 
 The order reflects registration order, which Commander v14 preserves within a
 help group.
@@ -33,7 +34,7 @@ is not listed under `Workflow:`: `init`, `update`, `list`, `view`, `archive`,
 ## Mechanism
 
 The grouping uses Commander v14 help groups: `.helpGroup('Workflow:')` on each of
-the five command builders assigns it to the named section, and the parent help
+the six command builders assigns it to the named section, and the parent help
 renderer prints each distinct group under its heading. The trailing colon is part
 of the label, so it renders as a heading. The same heading appears for both
 `ratchet --help` and the no-arguments help output.

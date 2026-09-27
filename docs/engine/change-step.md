@@ -73,10 +73,18 @@ For one forced transition it:
 2. Resolves the run-state locus: `.ratchet/batches/<batch>/run/` when `batch` is
    set, else `.ratchet/changes/<change>/.run/`.
 3. Builds the agent instructions for the forced transition (including any
-   `guidance`), selects the runtime, and spawns **exactly one** agent.
+   `guidance`), selects the runtime, and spawns **exactly one** agent. The
+   instructions name the report channel for the locus: `ratchet batch report
+   <batch> --change <change>` when `batch` is set, else the batch-less
+   [`ratchet report <change>`](../commands/report.md); a standalone prompt never
+   mentions a batch.
 4. Snapshots the journal delta and the on-disk change-state delta for the
    session, maps the session to an `EngineStepOutcome`, and appends the outcome
-   journal entry at the resolved locus.
+   journal entry at the resolved locus. After a `propose` session it stamps a
+   missing `.ratchet.yaml` into `.ratchet/changes/<change>/`, except when that
+   directory's only entry is `.run/` (the agent reported through
+   [`ratchet report`](../commands/report.md) but never scaffolded the change),
+   which is left unstamped.
 5. Returns a `StepResult`.
 
 It does **not** take the per-batch lock and does **not** derive the transition.

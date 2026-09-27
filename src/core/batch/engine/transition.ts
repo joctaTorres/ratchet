@@ -19,6 +19,7 @@ import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import type { JournalEntry } from '../journal.js';
 import type { Transition } from './contract.js';
+import { isChangeCreated } from '../../../utils/change-utils.js';
 
 const RATCHET_DIR = '.ratchet';
 
@@ -75,7 +76,7 @@ export function readChangeDiskState(projectRoot: string, change: string): Change
     };
   }
 
-  const exists = existsSync(changeDir(projectRoot, change));
+  const exists = isChangeCreated(changeDir(projectRoot, change));
   if (!exists) {
     return {
       exists: false,

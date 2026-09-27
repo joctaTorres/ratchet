@@ -864,9 +864,16 @@ on shell steps in headless mode.
 
 | Posture | Flags emitted |
 |---|---|
-| `repo-sandboxed-permissive` | `--sandbox workspace-write --ask-for-approval never` |
-| `curated-allowlist` | `--sandbox workspace-write --ask-for-approval on-request` |
-| `full-autonomy` | `--full-auto` |
+| `repo-sandboxed-permissive` | `--sandbox workspace-write -c approval_policy=never` |
+| `curated-allowlist` | `--sandbox workspace-write -c approval_policy=on-request` |
+| `full-autonomy` | `--dangerously-bypass-approvals-and-sandbox` |
+
+The flags are appended after the `exec` subcommand, so only options that `codex
+exec` accepts are emitted (verified against codex-cli 0.157.1). The approval
+policy is set through the `-c` config override because `-a/--ask-for-approval`
+is an option of the root `codex` command only. `full-autonomy` disables both
+approvals and the codex sandbox. The operator denylist is not applied to codex
+(codex exec policy is file-based); the `workspace-write` sandbox bounds writes.
 
 **cursor:**
 

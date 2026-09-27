@@ -13,8 +13,8 @@ verifyDepsBeforeRun: false
 # keyed by major so a single entry covers that major's whole vulnerable range:
 #   brace-expansion  DoS via unbounded expansion + the follow-up bypass of the
 #                    CVE-2026-14257 mitigation (patched in 1.1.18 / 2.1.4 / 5.0.9)
-#   js-yaml          quadratic CPU in !!omap resolution, plus maxTotalMergeKeys
-#                    not limiting CPU for empty merge sources
+#   js-yaml          quadratic CPU in !!omap resolution (fixed in 4.3.1), plus
+#                    empty merge sources bypassing maxTotalMergeKeys
 #                    (GHSA-2883-xcg3-v3hh, patched in 4.3.2)
 #   nanoid           non-secure/custom generators loop forever on negative or
 #                    zero size (patched in 3.3.18)

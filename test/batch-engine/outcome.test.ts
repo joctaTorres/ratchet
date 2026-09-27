@@ -5,6 +5,7 @@
  *  - features/model-failure-attribution/attribution-hint.feature
  *  - features/model-failure-attribution/unchanged-surfaces.feature
  *  - features/signal-kill-hint-gate/signal-kill-hint-gate.feature
+ *  - features/honest-outcome/rejected-cli-option.feature
  *
  * The attribution enrichment is pure, so it lands at the unit layer: the hint
  * fires only on the full argv-rejection signature (explicit model + supplying
@@ -21,6 +22,7 @@ import {
   mapSessionToOutcome,
   type MapOutcomeInput,
   type ModelAttribution,
+  detectRejectedCliOption,
 } from '../../src/core/batch/engine/outcome.js';
 import type { ChangeDiskState } from '../../src/core/batch/engine/transition.js';
 import type { AgentSpawnResult } from '../../src/core/batch/engine/agent.js';
@@ -469,5 +471,100 @@ describe('mapSessionToOutcome — signal-kill hint gate', () => {
     expect(gated).toEqual(today);
     expect(gated.blocker).toMatch(/via signal SIGKILL/);
     expect(gated.blocker).not.toMatch(/if this model id is invalid/i);
+  });
+});
+
+// features/honest-outcome/rejected-cli-option.feature — an agent CLI rejecting
+// an argument is reported as an argv rejection, not a model problem (#114).
+describe('mapSessionToOutcome — rejected CLI option', () => {
+  const codexAttribution: ModelAttribution = {
+    stage: 'apply',
+    agent: 'codex',
+    model: 'gpt-6-sol',
+    scope: 'manifest',
+  };
+  const REJECT_STDERR =
+    "error: unexpected argument '--ask-for-approval' found\n\nUsage: codex exec [OPTIONS] [PROMPT]";
+
+  it('detects the clap rejection phrasing and extracts the option', () => {
+    expect(detectRejectedCliOption(REJECT_STDERR)).toBe('--ask-for-approval');
+    expect(detectRejectedCliOption('error: unknown model id "x"')).toBeUndefined();
+    expect(detectRejectedCliOption('')).toBeUndefined();
+  });
+
+  it('names the rejected option and agent instead of the model-id hint', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: 2, stderr: REJECT_STDERR }),
+        modelAttribution: codexAttribution,
+      })
+    );
+    expect(outcome.state).toBe('failed');
+    for (const surface of [outcome.blocker, outcome.message, outcome.detail]) {
+      expect(surface).toContain('"--ask-for-approval"');
+      expect(surface).toContain('"codex" agent');
+      expect(surface).not.toContain('If this model id is invalid');
+    }
+    expect(outcome.blocker).toContain('without reporting completion');
+    expect(outcome.detail).toContain("unexpected argument '--ask-for-approval' found");
+  });
+
+  it('names the rejected option without an explicit model, using agentName', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: 2, stderr: "error: unexpected argument '--full-auto' found" }),
+        agentName: 'codex',
+      })
+    );
+    expect(outcome.blocker).toContain('"--full-auto"');
+    expect(outcome.blocker).toContain('"codex" agent');
+  });
+
+  it('falls back to a generic agent label with no attribution or agentName', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: 2, stderr: "error: unexpected argument '--x' found" }),
+      })
+    );
+    expect(outcome.blocker).toContain('The agent rejected the command-line option "--x"');
+  });
+
+  it('keeps the model-attribution hint when stderr has no argument rejection', () => {
+    const outcome = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: 1, stderr: 'error: unknown model id "gpt-6-sol"' }),
+        modelAttribution: codexAttribution,
+        agentName: 'codex',
+      })
+    );
+    expect(outcome.blocker).toContain('If this model id is invalid');
+    expect(outcome.blocker).not.toContain('rejected the command-line option');
+  });
+
+  it('does not fire on a signal kill or after journal progress', () => {
+    const killed = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        spawn: spawn({ exitCode: null, signal: 'SIGKILL', stderr: REJECT_STDERR }),
+        agentName: 'codex',
+      })
+    );
+    expect(killed.blocker).not.toContain('rejected the command-line option');
+    const progressed = mapSessionToOutcome(
+      input({
+        transition: 'apply',
+        sessionEntries: [
+          { at: '', kind: 'progress', message: 'x', change: 'add-login-api', transition: 'apply' },
+        ] as JournalEntry[],
+        sessionIndices: [0],
+        spawn: spawn({ exitCode: 2, stderr: REJECT_STDERR }),
+        agentName: 'codex',
+      })
+    );
+    expect(progressed.blocker).not.toContain('rejected the command-line option');
   });
 });

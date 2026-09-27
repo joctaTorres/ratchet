@@ -41,7 +41,10 @@ toward.
    change, it does not resume an existing one. Use `apply`/`verify` to advance an
    existing change, or pass `--name <other>`. A directory whose only entry is
    `.run/` (reports posted with [`ratchet report`](./report.md) before the
-   change was scaffolded) does not count as existing.
+   change was scaffolded) does not count as existing. After the agent exits, the
+   engine stamps a missing `.ratchet.yaml` only into a scaffolded change; a
+   `.run/`-only directory left by an early `--blocker` stays unstamped, so
+   re-running `propose --name <change>` is not refused.
 3. **Standalone settings.** Settings resolve `flag → project config → default`
    via `resolveChangeStepSettings` (no manifest). An invalid `--agent`,
    `--locus`, or `--image` value fails with an actionable error before any agent

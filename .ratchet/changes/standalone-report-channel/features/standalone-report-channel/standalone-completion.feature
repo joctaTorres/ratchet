@@ -22,3 +22,13 @@ Feature: A reported standalone step advances
     When I run "ratchet propose \"say hello\" --name add-hello"
     Then the stub's "ratchet new change add-hello" succeeds
     And the step result state is "advanced"
+
+  Scenario: An early-blocked standalone propose stays retryable
+    Given a project with no change "new-idea"
+    And a stub agent that runs "ratchet report new-idea --blocker \"which database?\"" and exits without scaffolding
+    When I run "ratchet propose \"anything\" --name new-idea --json"
+    Then the step result state is "blocked" with blocker "which database?"
+    And ".ratchet/changes/new-idea/" holds only ".run/" and no ".ratchet.yaml"
+    When I run "ratchet propose \"anything\" --name new-idea" again with an agent that scaffolds and reports completion
+    Then propose does not refuse "new-idea" as an existing change
+    And the change "new-idea" is created with a ".ratchet.yaml"

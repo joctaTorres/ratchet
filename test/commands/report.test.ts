@@ -255,3 +255,58 @@ describe('a .run/-only change directory is not a created change', () => {
     expect(calls()).toBe(1);
   });
 });
+
+/**
+ * Implements features/standalone-report-channel/standalone-completion.feature:
+ * "An early-blocked standalone propose stays retryable". The post-propose
+ * metadata stamp must skip a `.run/`-only directory.
+ */
+describe('an early-blocked standalone propose stays retryable', () => {
+  let fixture: CommandFixture;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    fixture = await makeCommandFixture('ratchet-report-retry-');
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    logSpy.mockRestore();
+    await fixture.cleanup();
+  });
+
+  it('blocks without stamping, then a retried propose scaffolds the change', async () => {
+    const dir = path.join(fixture.root, '.ratchet', 'changes', 'new-idea');
+    const blocking: Spawner = async () => {
+      await reportCommand('new-idea', { blocker: 'which database?' }, fixture.root);
+      return { exitCode: 0, signal: null, stdout: '', stderr: '' };
+    };
+
+    await proposeCommand(
+      'anything',
+      { name: 'new-idea', json: true },
+      { projectRoot: () => fixture.root, spawner: blocking }
+    );
+
+    const printed = logSpy.mock.calls.map((c) => String(c[0]));
+    expect(JSON.parse(printed[printed.length - 1])).toMatchObject({
+      state: 'blocked',
+      blocker: 'which database?',
+    });
+    expect(await fs.readdir(dir)).toEqual(['.run']);
+
+    const scaffolding: Spawner = async () => {
+      await createChange(fixture.root, 'new-idea');
+      await reportCommand('new-idea', { complete: 'scaffolded' }, fixture.root);
+      return { exitCode: 0, signal: null, stdout: '', stderr: '' };
+    };
+    await proposeCommand(
+      'anything',
+      { name: 'new-idea' },
+      { projectRoot: () => fixture.root, spawner: scaffolding }
+    );
+
+    expect(existsSync(path.join(dir, '.ratchet.yaml'))).toBe(true);
+    expect(logSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('change proposed');
+  });
+});

@@ -140,3 +140,40 @@ describe('standalone propose e2e — report before scaffolding', () => {
     expect(journal).toContain('"kind":"completion"');
   });
 });
+
+describe('standalone propose e2e — early blocker then retry', () => {
+  it('parks blocked without stamping the change, and a retry creates it', async () => {
+    const base = await fs.mkdtemp(path.join(tmpdir(), 'ratchet-standalone-retry-'));
+    tempRoots.push(base);
+    const projectDir = path.join(base, 'project');
+    const changeDir = path.join(projectDir, '.ratchet', 'changes', CHANGE);
+    await fs.mkdir(path.join(projectDir, '.ratchet', 'changes'), { recursive: true });
+    await fs.writeFile(path.join(projectDir, '.ratchet', 'config.yaml'), 'schema: ratchet\n', 'utf-8');
+    const cli = `${JSON.stringify(NODE)} ${JSON.stringify(CLI_ENTRY)}`;
+
+    const blocked = await runCLI(['--no-color', 'propose', 'say hello', '--name', CHANGE], {
+      cwd: projectDir,
+      env: {
+        RATCHET_BATCH_AGENT_CMD: `cat >/dev/null; ${cli} report ${CHANGE} --blocker "which database?"`,
+      },
+      timeoutMs: 120000,
+    });
+    const blockedOut = `${blocked.stdout}${blocked.stderr}`;
+    expect(blockedOut).toContain('blocked');
+    expect(blockedOut).toContain('which database?');
+    expect(await fs.readdir(changeDir)).toEqual(['.run']);
+
+    const sentinel = path.join(base, 'new-change.exit');
+    const retry = await runCLI(['--no-color', 'propose', 'say hello', '--name', CHANGE], {
+      cwd: projectDir,
+      env: { RATCHET_BATCH_AGENT_CMD: preScaffoldReportingAgent(sentinel) },
+      timeoutMs: 120000,
+    });
+    const retryOut = `${retry.stdout}${retry.stderr}`;
+    expect(retryOut).not.toContain('already exists');
+    expect(retry.exitCode).toBe(0);
+    expect(readFileSync(sentinel, 'utf-8').trim()).toBe('0');
+    expect(retryOut).toContain('change proposed');
+    expect(existsSync(path.join(changeDir, '.ratchet.yaml'))).toBe(true);
+  });
+});

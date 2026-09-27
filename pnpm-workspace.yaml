@@ -13,7 +13,8 @@ verifyDepsBeforeRun: false
 # keyed by major so a single entry covers that major's whole vulnerable range:
 #   brace-expansion  DoS via unbounded expansion + the follow-up bypass of the
 #                    CVE-2026-14257 mitigation (patched in 1.1.18 / 2.1.4 / 5.0.9)
-#   js-yaml          quadratic CPU in !!omap resolution (patched in 4.3.1)
+#   js-yaml          quadratic CPU in !!omap resolution (4.3.1), plus the
+#                    follow-up advisory fixed in 4.3.2
 #   nanoid           non-secure/custom generators loop forever on negative or
 #                    zero size (patched in 3.3.18)
 #   postcss          path traversal in sourceMappingURL auto-loading, plus the
@@ -24,6 +25,6 @@ overrides:
   brace-expansion@1: 1.1.18
   brace-expansion@2: 2.1.4
   brace-expansion@5: 5.0.9
-  js-yaml@4: 4.3.1
+  js-yaml@4: 4.3.2
   nanoid@3: 3.3.18
   postcss@8: 8.5.23

@@ -1,0 +1,39 @@
+# Phase-one excerpt of `.ratchet/batches/engine-runtime-hardening/batch.yaml`,
+# as reported in issue #100's worked example.
+#
+# This is the manifest AS AUTHORED — the input to the check, not a model to copy.
+# It is what a `propose-batch` run produced before the workflow carried any
+# originating-issue reconciliation step or close-claim rule, and it is the
+# artifact that locked `Closes #80` in before anyone had decided what would
+# actually be built.
+
+name: engine-runtime-hardening
+
+phases:
+  - name: phase-1
+    goal: >-
+      Make the agent-override seam auditable: a loud notice on every overridden
+      spawn, override provenance stamped into the journal, and the spawn-request
+      construction extracted into one shared helper. The phase PR MUST link
+      `Closes #89` and `Closes #80`.
+    success: >-
+      An overridden spawn prints the notice in text and sets `agentOverride:
+      true` in `--json`; every journal entry written under an override carries
+      `via: "env-override"`; the three duplicated override+resolveAdapter copies
+      are replaced by one `buildAgentSpawnRequest`. The phase PR links
+      `Closes #89` and `Closes #80`.
+    proofOfWork:
+      kind: integration
+      run: pnpm vitest run test/core/batch/engine/agent-spawn.test.ts
+      pass: exit-zero
+
+    changes:
+      - name: gate-and-mark-agent-cmd-override
+        after: []
+        done: >-
+          Every spawn made while `RATCHET_BATCH_AGENT_CMD` or
+          `RATCHET_EVAL_AGENT_CMD` is set prints a one-line override notice
+          (text and `--json`), stamps `via: "env-override"` provenance into the
+          journal entries and run records it produces, and builds its spawn
+          request through the single shared `buildAgentSpawnRequest` helper
+          rather than the three duplicated copies. Fixes #80.

@@ -3,6 +3,12 @@ import {
   getProposeBatchSkillTemplate,
   getRctProposeBatchCommandTemplate,
 } from '../../../../src/core/templates/workflows/propose-batch.js';
+import {
+  ISSUE_RECONCILIATION_PRE_AUTHORING,
+  ISSUE_RECONCILIATION_POST_AUTHORING,
+  CLOSE_CLAIM_RULES,
+  STOP_AND_SURFACE_GUARDRAIL,
+} from '../../../../src/core/templates/workflows/scope-reconciliation.js';
 import { CommandAdapterRegistry } from '../../../../src/core/command-generation/registry.js';
 import { generateCommand } from '../../../../src/core/command-generation/generator.js';
 import type { CommandContent } from '../../../../src/core/command-generation/types.js';
@@ -113,6 +119,122 @@ describe('propose-batch workflow templates', () => {
       expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/batch orchestrator/i);
       // Indirect path: defer; lazy change creation during `ratchet batch apply`.
       expect(fileContent, `tool: ${adapter.toolId}`).toMatch(/ratchet batch apply/);
+    }
+  });
+
+  describe('originating-issue reconciliation (issue #100 criterion 1)', () => {
+    const body = getProposeBatchSkillTemplate().instructions;
+
+    it('carries both shared reconciliation halves verbatim', () => {
+      expect(body).toContain(ISSUE_RECONCILIATION_PRE_AUTHORING);
+      expect(body).toContain(ISSUE_RECONCILIATION_POST_AUTHORING);
+    });
+
+    it('enumerates before the phases are sliced', () => {
+      const preAt = body.indexOf(ISSUE_RECONCILIATION_PRE_AUTHORING);
+      const sliceAt = body.indexOf('3. **Slice into ordered vertical-slice phases**');
+
+      expect(preAt).toBeGreaterThan(-1);
+      expect(sliceAt).toBeGreaterThan(preAt);
+    });
+
+    it('maps and surfaces after the phases are drafted, before the manifest is scaffolded', () => {
+      const draftedAt = body.indexOf('4. **Require success criteria + a proof-of-work per phase (hard gate)**');
+      const reconcileAt = body.indexOf(
+        '5. **Reconcile the drafted manifest against every originating issue (before scaffolding)**'
+      );
+      const postAt = body.indexOf(ISSUE_RECONCILIATION_POST_AUTHORING);
+      const scaffoldAt = body.indexOf('6. **Scaffold the manifest via existing machinery (shallow DAG)**');
+      const newBatchAt = body.indexOf('ratchet new batch <name>');
+
+      expect(draftedAt).toBeGreaterThan(-1);
+      expect(reconcileAt).toBeGreaterThan(draftedAt);
+      expect(postAt).toBeGreaterThan(reconcileAt);
+      expect(scaffoldAt).toBeGreaterThan(postAt);
+      expect(newBatchAt).toBeGreaterThan(postAt);
+      expect(body).toMatch(/BEFORE `ratchet new batch` is run/);
+    });
+
+    it('fetches every issue the objective or a phase originates from', () => {
+      expect(body).toMatch(/identify every originating issue/i);
+      expect(body).toMatch(/fetch each issue through the project's issue tracker/i);
+      expect(body).toMatch(/when the objective, a phase, or a change intent originates from a tracked\s+issue/i);
+    });
+
+    it('names each phase goal, success criterion, and change-level done as the mapping targets', () => {
+      expect(body).toMatch(/each phase `goal`, each phase `success` criterion, and each\s+change-level `done`/i);
+    });
+
+    it('carries no hand-written restatement of the mapping rule', () => {
+      expect(body).not.toMatch(/map each enumerated requirement onto/i);
+      expect(body.split('Map every enumerated requirement').length - 1).toBe(1);
+    });
+
+    it('forbids self-approving an omission in plan prose', () => {
+      expect(body).toMatch(/MUST NOT self-approve an omission by writing it into plan prose/i);
+    });
+  });
+
+  describe('no premature close-claims (issue #100 criterion 2)', () => {
+    const body = getProposeBatchSkillTemplate().instructions;
+
+    it('forbids hard-coding a close-claim in a goal, a success criterion, or a done', () => {
+      expect(body).toMatch(/no premature close-claims in the manifest/i);
+      expect(body).toMatch(
+        /MUST NOT hard-code\s+`Closes #N` or `Fixes #N` in a phase `goal`, in a phase `success`\s+criterion, or in a change-level `done` for work that has not yet been scoped\s+and verified/i
+      );
+    });
+
+    it('requires "targets #N" / "addresses #N" phrasing for phase contracts', () => {
+      expect(body).toContain('**"targets #N"**');
+      expect(body).toContain('**"addresses #N"**');
+      expect(body).toMatch(/never as a closing claim/i);
+    });
+
+    it('requires partial coverage to say "partially addresses #N"', () => {
+      expect(body).toContain('**"partially addresses #N"**');
+      expect(body).toMatch(/MUST NOT say `Fixes #N` or `Closes #N`/);
+    });
+
+    it('earns the closing linkage at pull-request-authoring time', () => {
+      expect(body).toMatch(
+        /`Closes #N` linkage is earned at pull-request-authoring time, only\s+after the issue's material requirements are confirmed implemented/i
+      );
+    });
+
+    it('repeats the phrasing rule where the manifest fields are written', () => {
+      expect(body).toMatch(/\*\*Issue references\*\*/);
+      expect(body).toMatch(/Never write `Closes #N` or\s+`Fixes #N` into the manifest/i);
+    });
+
+    it('embeds the shared close-claim and stop-and-surface guardrails verbatim', () => {
+      expect(body).toContain(CLOSE_CLAIM_RULES);
+      expect(body).toContain(STOP_AND_SURFACE_GUARDRAIL);
+    });
+  });
+
+  it('renders the reconciliation and close-claim rules into every registered tool command', () => {
+    const cmd = getRctProposeBatchCommandTemplate();
+    const content: CommandContent = {
+      id: 'rct-propose-batch',
+      name: cmd.name,
+      description: cmd.description,
+      category: cmd.category,
+      tags: cmd.tags,
+      body: cmd.content,
+    };
+
+    const adapters = CommandAdapterRegistry.getAll();
+    expect(adapters.length).toBeGreaterThanOrEqual(5);
+    for (const adapter of adapters) {
+      const { fileContent } = generateCommand(content, adapter);
+      const label = `tool: ${adapter.toolId}`;
+      expect(fileContent, label).toContain(ISSUE_RECONCILIATION_PRE_AUTHORING);
+      expect(fileContent, label).toContain(ISSUE_RECONCILIATION_POST_AUTHORING);
+      expect(fileContent, label).toMatch(/MUST NOT self-approve an omission by writing it into plan prose/i);
+      expect(fileContent, label).toMatch(/no premature close-claims in the manifest/i);
+      expect(fileContent, label).toContain('"partially addresses #N"');
+      expect(fileContent, label).toMatch(/stop-and-surface event/i);
     }
   });
 });

@@ -62,6 +62,8 @@ export interface InvariantGateInput {
   readFile?: FileReader;
   spawner?: Spawner;
   agentName?: string;
+  /** Operator opt-in for a `RATCHET_EVAL_AGENT_CMD` override (`--allow-agent-override`). */
+  allowAgentOverride?: boolean;
 }
 
 /**
@@ -101,6 +103,7 @@ export async function evaluateInvariantGate(
       readFile: input.readFile,
       spawner: input.spawner,
       agentName: input.agentName,
+      allowAgentOverride: input.allowAgentOverride,
     });
     outcomes.push(outcome);
     if (isInvariantViolation(outcome)) failing.push(outcome.id);

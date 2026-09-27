@@ -22,6 +22,11 @@ export interface ChangeStepCommonOptions {
   agent?: string;
   locus?: string;
   image?: string;
+  /**
+   * `--allow-agent-override`: the explicit operator opt-in that lets an active
+   * `RATCHET_BATCH_AGENT_CMD` stand in for the agent (refused without it).
+   */
+  allowAgentOverride?: boolean;
   json?: boolean;
 }
 

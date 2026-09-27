@@ -103,6 +103,8 @@ export interface InvariantEvalContext {
   readFile?: FileReader;
   spawner?: Spawner;
   agentName?: string;
+  /** Operator opt-in for a `RATCHET_EVAL_AGENT_CMD` override (see MutationHarnessDeps). */
+  allowAgentOverride?: boolean;
 }
 
 /**
@@ -262,6 +264,7 @@ async function evaluateMutation(
       bash: ctx.bash,
       spawner: ctx.spawner,
       agentName: ctx.agentName,
+      allowAgentOverride: ctx.allowAgentOverride,
     });
   } catch (err) {
     // Fail closed: an oracle/harness that cannot run at all is unevaluable,

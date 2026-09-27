@@ -241,7 +241,7 @@ describe('ratchet eval CLI e2e', () => {
 
     // The seeder appends the fault to the tracked source file, producing a diff.
     const seed = `cat >/dev/null; echo 'bug' >> app.txt`;
-    const res = await runCLI(['eval', 'run', '--judge', 'deterministic', '--json'], {
+    const res = await runCLI(['eval', 'run', '--allow-agent-override', '--judge', 'deterministic', '--json'], {
       cwd,
       env: { RATCHET_EVAL_AGENT_CMD: seed },
     });
@@ -285,7 +285,7 @@ describe('ratchet eval CLI e2e', () => {
 
   it('runs the agent judge through the stub and passes on evidence', async () => {
     const cwd = await prepareProject();
-    const res = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
+    const res = await runCLI(['eval', 'run', '--allow-agent-override', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: agentEnv(true, 'the output is readable text'),
     });
@@ -298,7 +298,7 @@ describe('ratchet eval CLI e2e', () => {
 
   it('agent judge fails closed when the verdict carries no evidence', async () => {
     const cwd = await prepareProject();
-    const run = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
+    const run = await runCLI(['eval', 'run', '--allow-agent-override', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: { RATCHET_EVAL_AGENT_CMD: `cat >/dev/null; echo 'I am not sure either way.'` },
     });
@@ -338,7 +338,7 @@ features/multi/m#two:
     );
     // Scope to the multi feature so both its cases (same fixture) run; setup
     // must bootstrap the fixture exactly once and be reused for the second case.
-    const run = await runCLI(['eval', 'run', '--path', 'multi', '--json'], {
+    const run = await runCLI(['eval', 'run', '--allow-agent-override', '--path', 'multi', '--json'], {
       cwd,
       env: agentEnv(true, 'fine'),
     });
@@ -369,7 +369,7 @@ features/cli/status#status-as-text:
 `
     );
     const stub = `cat >/dev/null; n=$(cat ${counter} 2>/dev/null || echo 0); echo $((n+1)) > ${counter}; if [ "$n" = "0" ]; then echo '[{"verdict": "yes", "evidence": "looks good"}]'; else echo '[{"verdict": "no", "evidence": "actually broken"}]'; fi`;
-    const run = await runCLI(['eval', 'run', '--judge', 'llm-judge', '--json'], {
+    const run = await runCLI(['eval', 'run', '--allow-agent-override', '--judge', 'llm-judge', '--json'], {
       cwd,
       env: { RATCHET_EVAL_AGENT_CMD: stub },
     });
@@ -409,7 +409,7 @@ features/cli/status#status-as-text:
     const cwd = await prepareProject();
     // First run in auto mode so BOTH cases are judged — a complete run. Only a
     // complete run can be promoted (the aggregation completeness guard).
-    const first = await runCLI(['eval', 'run', '--json'], {
+    const first = await runCLI(['eval', 'run', '--allow-agent-override', '--json'], {
       cwd,
       env: agentEnv(true, 'the output is readable text'),
     });
@@ -422,7 +422,7 @@ features/cli/status#status-as-text:
       path.join(cwd, '.ratchet', 'evals', 'fixtures', 'status-ok', 'output.txt'),
       'nothing useful here\n'
     );
-    const second = await runCLI(['eval', 'run', '--json'], {
+    const second = await runCLI(['eval', 'run', '--allow-agent-override', '--json'], {
       cwd,
       env: agentEnv(true, 'the output is readable text'),
     });
@@ -551,7 +551,7 @@ features/cli/status#status-as-text:
 
   it('warns when a case that was pass in the baseline is now skipped', async () => {
     const cwd = await prepareProject();
-    const first = await runCLI(['eval', 'run', '--json'], {
+    const first = await runCLI(['eval', 'run', '--allow-agent-override', '--json'], {
       cwd,
       env: agentEnv(true, 'the output is readable text'),
     });
@@ -563,7 +563,7 @@ features/cli/status#status-as-text:
       path.join(cwd, '.ratchet', 'config.yaml'),
       'schema: ratchet\neval:\n  skip:\n    - "features/cli/status#status-as-json"\n'
     );
-    const json = await runCLI(['eval', 'run', '--json'], {
+    const json = await runCLI(['eval', 'run', '--allow-agent-override', '--json'], {
       cwd,
       env: agentEnv(true, 'the output is readable text'),
     });
@@ -575,7 +575,7 @@ features/cli/status#status-as-text:
       )
     ).toBe(true);
 
-    const text = await runCLI(['eval', 'run'], { cwd, env: agentEnv(true, 'the output is readable text') });
+    const text = await runCLI(['eval', 'run', '--allow-agent-override'], { cwd, env: agentEnv(true, 'the output is readable text') });
     expect(text.stdout).toContain('warn:');
     expect(text.stdout).toContain('features/cli/status#status-as-json');
   });
@@ -590,7 +590,7 @@ features/cli/status#status-as-text:
       path.join(cwd, '.ratchet', 'features', 'skip', 's.feature'),
       'Feature: Skip\n  @skip\n  Scenario: Tag skipped\n    Given a\n    Then b\n'
     );
-    const run = await runCLI(['eval', 'run', '--json'], {
+    const run = await runCLI(['eval', 'run', '--allow-agent-override', '--json'], {
       cwd,
       env: agentEnv(true, 'the output is readable text'),
     });

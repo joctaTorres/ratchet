@@ -96,7 +96,10 @@ export async function proposeCommand(
     guidance,
   });
 
-  const engine = new RatchetBatchEngine(deps);
+  const engine = new RatchetBatchEngine({
+    ...deps,
+    allowAgentOverride: deps.allowAgentOverride === true || options.allowAgentOverride === true,
+  });
   const result = await engine.runChangeStep(context);
 
   renderStepResult(change, result, options.json, {

@@ -51,6 +51,10 @@ Exactly one kind flag must be provided.
   outcome from the session's journal entries — `completion` → `advanced`,
   `blocker` / `needs-input` → `blocked`, and no completion → `blocked`
   ("without reporting completion").
+- When `report` runs inside a stand-in spawned under an allowed agent-command
+  override (the override script exports `RATCHET_SPAWN_VIA=env-override`), the
+  entry is stamped `"via": "env-override"`, as `batch report` does. See
+  [Agent-command override](../engine/agent-runtime.md#agent-command-override).
 
 | Kind flag | Journal entry appended |
 |---|---|

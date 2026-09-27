@@ -301,6 +301,75 @@ Permission flags resolved from the active policy (see
 [Agent permissions](#agent-permissions) below) are appended to the base args
 after the adapter's own argv.
 
+## Agent-command override
+
+`RATCHET_BATCH_AGENT_CMD` (batch engine) and `RATCHET_EVAL_AGENT_CMD` (eval judge
+and mutation harness) let a shell command stand in for the coding agent, so
+e2e tests and evals can drive the orchestration deterministically without a real
+agent. The override replaces the agent with an arbitrary command, so it is gated.
+
+All three spawn seams (the engine's `buildSpawnRequest`, the judge's
+`buildVoteRequest`, and the mutation harness's `buildSeedRequest`) build their
+request through one shared helper, `buildAgentSpawnRequest` in
+`src/core/batch/engine/agent.ts`. The gate, notice, and permission forwarding
+live only there.
+
+| Condition | Result |
+|---|---|
+| Variable unset or whitespace-only | The configured adapter is spawned as usual; no opt-in needed. |
+| Variable set, no opt-in | **Refused.** Nothing is spawned. The batch step fails as a resumable `blocked` step; `eval run` aborts before any case runs. The message names the variable and the flag. |
+| Variable set, `--allow-agent-override` passed | The override runs in place of the agent. |
+
+**Opt-in.** Pass `--allow-agent-override` on `ratchet batch apply`, `ratchet
+apply`, `ratchet verify`, `ratchet propose`, or `ratchet eval run`. In-process
+callers pass `EngineDeps.allowAgentOverride` / `RunOptions.allowAgentOverride`.
+The opt-in is never read from the environment, so a leftover variable (from CI,
+an eval session, or a `.envrc`) can never replace the agent on its own.
+
+**Request shape.** An allowed override runs as:
+
+```text
+bash -c 'export RATCHET_SPAWN_VIA=env-override; <override>' <agent> <permission flags...>
+```
+
+The step instructions arrive on stdin, as for a real agent. Inside the script,
+`$0` is the agent the stage resolved to (for example `claude`), and `$@` holds
+exactly the flags `resolvePermissionFlags(<agent>, policy, projectRoot)` would
+have appended for that agent. A stub can ignore them. A wrapper that launches a
+real agent should pass `"$@"` through. Ratchet **forwards** the policy to the
+override but cannot **enforce** it on an arbitrary command. If a permission
+policy is present but the resolved agent has no translator and no
+`permissions.raw` entry, the spawn is refused rather than run without flags. The
+eval judge and mutation harness carry no permission policy, so nothing is
+forwarded there. The override is not stream-JSON-capable, so its output streams
+raw, and it carries no model attribution.
+
+**Notice.** Every overridden spawn writes `⚠ agent overridden by <VAR>` to
+**stderr**, so `--json` stdout stays one JSON document. The step result carries
+`agentOverride: true` (`batch apply --json` and the standalone verbs' `--json`).
+`eval run --json` carries a top-level `agentOverride: true`, and its text output
+leads with the notice.
+
+**Provenance.** Records produced under an override are stamped with `via:
+"env-override"`:
+
+- the journal entry the engine appends for the overridden transition, PR, or
+  decomposition step;
+- every entry the stand-in appends through `ratchet batch report` or the
+  batch-less `ratchet report`, which stamp
+  when its environment carries `RATCHET_SPAWN_VIA=env-override`. Because the
+  script exports this marker itself, it reaches the stand-in under every runtime.
+  A leftover `RATCHET_BATCH_AGENT_CMD` in an operator's shell stamps nothing;
+- the persisted eval run record (`EvalRun.via`), when `eval run` executed with an
+  allowed override.
+
+Real agent work is never stamped, and readers ignore the field.
+
+**Posture display.** While `RATCHET_BATCH_AGENT_CMD` is set, `ratchet batch
+config` shows the permission posture as **NOT ENFORCED**. Its `--json` output
+reports `agentOverride: { active, envVar, permissionsEnforced }`. See
+[`batch config`](../commands/batch.md).
+
 ## Skill-in-spawn-locus guarantee
 
 Defined in `src/core/batch/engine/skill-locus.ts`.
@@ -790,6 +859,11 @@ without rendering.
 
 Defined in `src/core/batch/permissions-policy.ts` (policy schema and types) and
 `src/core/batch/runtime/agent-permissions.ts` (per-agent translator).
+
+The posture is enforced only when a real adapter is spawned. Under an allowed
+agent-command override, the resolved flags are forwarded to the override command
+but not enforced, and `batch config` reports the posture as NOT ENFORCED. See
+[Agent-command override](#agent-command-override).
 
 ### Policy shape
 

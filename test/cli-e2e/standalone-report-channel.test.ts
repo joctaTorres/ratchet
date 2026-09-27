@@ -5,6 +5,7 @@
  * Implements features/standalone-report-channel/standalone-completion.feature.
  *
  * Drives the BUILT CLI with the existing `RATCHET_BATCH_AGENT_CMD` fake spawn
+ * (opted in via `--allow-agent-override`)
  * seam: a POSIX-shell stub agent reads its instructions on stdin, extracts the
  * `ratchet report <change> --complete` command the prompt tells it to run, and
  * runs it against the built CLI. With no batch in sight, a reporting agent must
@@ -74,7 +75,7 @@ describe('standalone apply e2e — batch-less report channel', () => {
   it('ends advanced when the agent runs the prompted `ratchet report` command', async () => {
     const projectDir = await prepareProject();
 
-    const apply = await runCLI(['--no-color', 'apply', CHANGE], {
+    const apply = await runCLI(['--no-color', 'apply', CHANGE, '--allow-agent-override'], {
       cwd: projectDir,
       env: { RATCHET_BATCH_AGENT_CMD: reportingAgent() },
       timeoutMs: 120000,
@@ -92,12 +93,21 @@ describe('standalone apply e2e — batch-less report channel', () => {
     );
     expect(journal).toContain('"kind":"completion"');
     expect(journal).toContain('created hello.txt');
+    // The stand-in ran under an allowed override, so the entry it reported
+    // through `ratchet report` carries override provenance
+    // (features/agent-cmd-override/override-provenance.feature).
+    const reported = journal
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((e: { message: string }) => e.message === 'created hello.txt');
+    expect(reported.via).toBe('env-override');
   });
 
   it('still parks as blocked when the agent exits without reporting', async () => {
     const projectDir = await prepareProject();
 
-    const apply = await runCLI(['--no-color', 'apply', CHANGE], {
+    const apply = await runCLI(['--no-color', 'apply', CHANGE, '--allow-agent-override'], {
       cwd: projectDir,
       env: { RATCHET_BATCH_AGENT_CMD: 'cat >/dev/null' },
       timeoutMs: 120000,
@@ -118,7 +128,7 @@ describe('standalone propose e2e — report before scaffolding', () => {
     await fs.writeFile(path.join(projectDir, '.ratchet', 'config.yaml'), 'schema: ratchet\n', 'utf-8');
     const sentinel = path.join(base, 'new-change.exit');
 
-    const propose = await runCLI(['--no-color', 'propose', 'say hello', '--name', CHANGE], {
+    const propose = await runCLI(['--no-color', 'propose', 'say hello', '--name', CHANGE, '--allow-agent-override'], {
       cwd: projectDir,
       env: { RATCHET_BATCH_AGENT_CMD: preScaffoldReportingAgent(sentinel) },
       timeoutMs: 120000,
@@ -151,7 +161,7 @@ describe('standalone propose e2e — early blocker then retry', () => {
     await fs.writeFile(path.join(projectDir, '.ratchet', 'config.yaml'), 'schema: ratchet\n', 'utf-8');
     const cli = `${JSON.stringify(NODE)} ${JSON.stringify(CLI_ENTRY)}`;
 
-    const blocked = await runCLI(['--no-color', 'propose', 'say hello', '--name', CHANGE], {
+    const blocked = await runCLI(['--no-color', 'propose', 'say hello', '--name', CHANGE, '--allow-agent-override'], {
       cwd: projectDir,
       env: {
         RATCHET_BATCH_AGENT_CMD: `cat >/dev/null; ${cli} report ${CHANGE} --blocker "which database?"`,
@@ -164,7 +174,7 @@ describe('standalone propose e2e — early blocker then retry', () => {
     expect(await fs.readdir(changeDir)).toEqual(['.run']);
 
     const sentinel = path.join(base, 'new-change.exit');
-    const retry = await runCLI(['--no-color', 'propose', 'say hello', '--name', CHANGE], {
+    const retry = await runCLI(['--no-color', 'propose', 'say hello', '--name', CHANGE, '--allow-agent-override'], {
       cwd: projectDir,
       env: { RATCHET_BATCH_AGENT_CMD: preScaffoldReportingAgent(sentinel) },
       timeoutMs: 120000,

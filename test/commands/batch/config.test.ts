@@ -5,6 +5,10 @@
  * batch settings over an isolated tmpdir fixture repo — values render with their
  * source, the secret `authToken` never leaks, and invalid `--set` input leaves
  * the project config file untouched.
+ *
+ * Also implements features/agent-cmd-override/config-posture-honesty.feature:
+ * under an active `RATCHET_BATCH_AGENT_CMD` the posture is shown as NOT ENFORCED
+ * (text) and `agentOverride` reports the real state (JSON).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -218,5 +222,53 @@ describe('batchConfigCommand permissions block', () => {
     expect(out).toContain('Bash(rm:*)');
     expect(out).toContain('raw.claude');
     expect(out).toContain('--allowedTools');
+  });
+
+  describe('under an agent-cmd override', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const plainPostureLine = /posture\s+curated-allowlist\s+\S*\[user\]/;
+
+    it('never shows the posture as enforced while an override is active (text)', async () => {
+      vi.stubEnv('RATCHET_BATCH_AGENT_CMD', 'echo stub');
+
+      await batchConfigCommand(undefined, {});
+
+      const out = output();
+      expect(out).toMatch(/posture\s+curated-allowlist\s+.*NOT ENFORCED/);
+      expect(out).toContain('RATCHET_BATCH_AGENT_CMD');
+      expect(out).toContain('--allow-agent-override');
+      expect(out).not.toMatch(plainPostureLine);
+    });
+
+    it('reports the override state in --json', async () => {
+      vi.stubEnv('RATCHET_BATCH_AGENT_CMD', 'echo stub');
+
+      await batchConfigCommand(undefined, { json: true });
+
+      expect(JSON.parse(output()).agentOverride).toEqual({
+        active: true,
+        envVar: 'RATCHET_BATCH_AGENT_CMD',
+        permissionsEnforced: false,
+      });
+    });
+
+    it.each(['', '   '])('displays the posture as before with no override (%j)', async (value) => {
+      vi.stubEnv('RATCHET_BATCH_AGENT_CMD', value);
+
+      await batchConfigCommand(undefined, {});
+      expect(output()).toMatch(plainPostureLine);
+      expect(output()).not.toContain('NOT ENFORCED');
+
+      logSpy.mockClear();
+      await batchConfigCommand(undefined, { json: true });
+      expect(JSON.parse(output()).agentOverride).toEqual({
+        active: false,
+        envVar: 'RATCHET_BATCH_AGENT_CMD',
+        permissionsEnforced: true,
+      });
+    });
   });
 });

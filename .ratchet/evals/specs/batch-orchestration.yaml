@@ -747,7 +747,7 @@ changes/batch-orchestration/features/batch-apply/apply-handoff#apply-advances-on
       # ready step, drives EXACTLY one transition (propose, scaffolding the
       # change), and returns — it does not run on to apply in the same invocation.
       export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent.sh"
-      ratchet batch apply q3-auth --json > /tmp/apply1.json
+      ratchet batch apply q3-auth --allow-agent-override --json > /tmp/apply1.json
       python3 -c "import json; d=json.load(open('/tmp/apply1.json')); assert d['state']=='advanced', d; assert d['change']=='add-login-api', d; assert d['transition']=='propose', d"
       # Exactly one transition happened: the change now exists with a plan but is
       # only in-progress (propose ran, apply did NOT auto-continue this call).
@@ -767,18 +767,18 @@ changes/batch-orchestration/features/batch-apply/apply-handoff#apply-respects-ga
       # apply with no recorded answer must NOT advance and must report what input
       # is required; once an answer is recorded the step resumes.
       export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent-blocker.sh"
-      ratchet batch apply q3-auth --json > /tmp/halt1.json
+      ratchet batch apply q3-auth --allow-agent-override --json > /tmp/halt1.json
       python3 -c "import json; d=json.load(open('/tmp/halt1.json')); assert d['state']=='blocked', d; assert 'cookie or header sessions' in (d.get('blocker') or ''), d"
       # Parked as blocked, not advanced (no change directory created).
       ratchet batch status q3-auth --json | python3 -c "import sys,json; c=json.load(sys.stdin)['phases'][0]['changes'][0]; assert c['status']=='blocked', c; assert c['parked']['kind']=='blocked', c"
       test ! -e .ratchet/changes/add-login-api
       # Apply again WITHOUT an answer: the engine refuses to cross the halt and
       # reports the required input.
-      ratchet batch apply q3-auth --json > /tmp/halt2.json
+      ratchet batch apply q3-auth --allow-agent-override --json > /tmp/halt2.json
       python3 -c "import json; d=json.load(open('/tmp/halt2.json')); assert d['state']=='parked', d; assert 'answer' in d.get('hint',''), d"
       # Record an answer, then apply resumes the step with the answer in context.
       ratchet batch report q3-auth --change add-login-api --answer 'use header bearer tokens' >/dev/null
-      ratchet batch apply q3-auth --json > /tmp/halt3.json
+      ratchet batch apply q3-auth --allow-agent-override --json > /tmp/halt3.json
       python3 -c "import json; d=json.load(open('/tmp/halt3.json')); assert d['state']=='advanced', d; assert d['transition']=='propose', d"
       test -f .ratchet/changes/add-login-api/plan.md
 
@@ -792,7 +792,7 @@ changes/batch-orchestration/features/batch-apply/apply-handoff#apply-renders-a-r
       # The non-JSON apply output is a rich view of the step that ran: the change
       # it ran for, the transition, and the outcome line.
       export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent.sh"
-      out="$(ratchet --no-color batch apply q3-auth)"
+      out="$(ratchet --no-color batch apply q3-auth --allow-agent-override)"
       printf '%s' "$out" > /tmp/applyview.out
       echo "$out" | grep -q 'add-login-api'
       echo "$out" | grep -q 'propose'
@@ -816,6 +816,6 @@ changes/batch-orchestration/features/batch-manifest/create-batch#changes-are-cre
       ratchet batch status q3-auth --json | python3 -c "import sys,json; c=json.load(sys.stdin)['phases'][0]['changes'][0]; assert c['exists'] is False, c; assert c['status']=='ready', c"
       # Running one apply step realizes the change directory lazily.
       export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent.sh"
-      ratchet batch apply q3-auth >/dev/null
+      ratchet batch apply q3-auth --allow-agent-override >/dev/null
       test -d .ratchet/changes/add-login-api
 

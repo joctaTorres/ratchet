@@ -60,6 +60,26 @@ describe('reportCommand', () => {
     expect(existsSync(path.join(fixture.root, '.ratchet', 'batches'))).toBe(false);
   });
 
+  // features/agent-cmd-override/override-provenance.feature: the batch-less
+  // report channel stamps entries a stand-in reports under an allowed override,
+  // and a leftover RATCHET_BATCH_AGENT_CMD alone stamps nothing.
+  it('stamps via: env-override only when reported from an override stand-in', async () => {
+    await fixture.makeChange('add-hello');
+    try {
+      vi.stubEnv('RATCHET_SPAWN_VIA', 'env-override');
+      await reportCommand('add-hello', { status: 'stand-in' }, fixture.root);
+      vi.stubEnv('RATCHET_SPAWN_VIA', '');
+      vi.stubEnv('RATCHET_BATCH_AGENT_CMD', 'echo leftover');
+      await reportCommand('add-hello', { status: 'manual' }, fixture.root);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    const [stamped, manual] = journalOf('add-hello');
+    expect(stamped.via).toBe('env-override');
+    expect(manual.via).toBeUndefined();
+  });
+
   it('prints a human line per kind, or JSON with --json', async () => {
     await fixture.makeChange('add-hello');
     await reportCommand('add-hello', { status: 's' }, fixture.root);

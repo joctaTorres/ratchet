@@ -5,6 +5,10 @@
  * channel over an isolated tmpdir fixture repo — each report kind writes the right
  * journal/park state, and malformed invocations (no `--change`, zero or multiple
  * report kinds) are rejected.
+ *
+ * Also implements features/agent-cmd-override/override-provenance.feature: entries
+ * a stand-in reports under an engine-spawned override (`RATCHET_SPAWN_VIA`) carry
+ * `via: 'env-override'`; a leftover `RATCHET_BATCH_AGENT_CMD` alone stamps nothing.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -131,5 +135,29 @@ describe('batchReportCommand', () => {
 
     expect(getParkedStep(fixture.root, 'b', 'c1')?.feedback).toBe('wrong approach');
     expect(output()).toMatch(/re-runs propose/);
+  });
+
+  describe('override provenance', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it.each([
+      ['status', { status: 's' }],
+      ['blocker', { blocker: 'b' }],
+      ['needs-input', { needsInput: 'n' }],
+      ['complete', { complete: 'c' }],
+    ])('stamps a %s entry reported from an override stand-in', async (_kind, opts) => {
+      vi.stubEnv('RATCHET_SPAWN_VIA', 'env-override');
+      await batchReportCommand('b', { change: 'c1', ...opts });
+      expect(readJournalForChange(fixture.root, 'b', 'c1')[0].via).toBe('env-override');
+    });
+
+    it('does not stamp when only a leftover RATCHET_BATCH_AGENT_CMD is set', async () => {
+      vi.stubEnv('RATCHET_SPAWN_VIA', '');
+      vi.stubEnv('RATCHET_BATCH_AGENT_CMD', 'echo leftover');
+      await batchReportCommand('b', { change: 'c1', complete: 'done' });
+      expect(readJournalForChange(fixture.root, 'b', 'c1')[0].via).toBeUndefined();
+    });
   });
 });

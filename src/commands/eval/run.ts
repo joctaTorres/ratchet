@@ -1,5 +1,5 @@
 /**
- * `ratchet eval run [scope] [--gate <ids>] [--only <ids>] [--no-llm-judge] [--judge <mode>] [--include-skipped] [--holdout | --no-holdout] [--json]`
+ * `ratchet eval run [scope] [--gate <ids>] [--only <ids>] [--no-llm-judge] [--judge <mode>] [--include-skipped] [--holdout | --no-holdout] [--allow-agent-override] [--json]`
  *
  * Snapshot the in-scope set, judge every bound case whose contributor is enabled
  * through the engine seams against its fixture working copy, persist the run
@@ -14,6 +14,7 @@
 
 import chalk from 'chalk';
 import { executeRun, evaluateRun, type EvalReport } from '../../core/eval/index.js';
+import { agentOverrideNotice, EVAL_AGENT_CMD_ENV } from '../../core/batch/engine/index.js';
 import {
   projectRoot,
   resolveScope,
@@ -36,6 +37,11 @@ export interface EvalRunOptions extends ScopeFlags {
   judge?: string;
   /** `--include-skipped`: judge cases that would otherwise be excluded by a skip filter. */
   includeSkipped?: boolean;
+  /**
+   * `--allow-agent-override`: the explicit operator opt-in that lets an active
+   * `RATCHET_EVAL_AGENT_CMD` stand in for the judge / seeding agent.
+   */
+  allowAgentOverride?: boolean;
   json?: boolean;
 }
 
@@ -66,11 +72,14 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
     skip,
     includeSkipped: options.includeSkipped,
     holdout: options.holdout,
+    allowAgentOverride: options.allowAgentOverride === true,
   });
   // The run path evaluates the invariant gate (with the spawner) and persists its
   // full result onto the run, so a later `eval report` renders the same verdict
   // read-only.
-  const report = await evaluateRun(root, run.runId);
+  const report = await evaluateRun(root, run.runId, {
+    allowAgentOverride: options.allowAgentOverride === true,
+  });
   const warnings = [...specWarnings, ...baselineSkipWarnings(report.diff)];
 
   if (options.json) {
@@ -78,6 +87,8 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
       JSON.stringify(
         {
           runId: run.runId,
+          // Present only when the run executed under an allowed override.
+          ...(run.via ? { agentOverride: true } : {}),
           overall: report.overall,
           scorecard: report.scorecard,
           contributors: report.contributors,
@@ -93,6 +104,11 @@ export async function evalRunCommand(options: EvalRunOptions = {}): Promise<void
       )
     );
     return;
+  }
+  if (run.via) {
+    // The text scorecard leads with the override notice so a synthetic run is
+    // unmistakable even when no agent spawn happened to fire.
+    console.log(chalk.yellow(agentOverrideNotice(EVAL_AGENT_CMD_ENV)));
   }
   renderRun(run.runId, report, warnings);
 }

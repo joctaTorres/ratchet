@@ -5,6 +5,7 @@ Feature: Deterministic agent injection for batch apply
 
   Scenario: A stub command stands in for the coding agent
     Given the environment variable "RATCHET_BATCH_AGENT_CMD" is set to a shell command
+    And the operator passed "--allow-agent-override"
     When the engine drives a transition for a batch step
     Then it runs that command via bash instead of spawning the configured agent
     And the command receives the same step instructions on stdin

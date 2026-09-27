@@ -38,6 +38,10 @@ import type { AgentStage, AgentSpec } from '../agent-setting.js';
 import {
   resolveAdapter,
   UnknownAgentError,
+  AgentOverrideRefusedError,
+  BATCH_AGENT_CMD_ENV,
+  ENV_OVERRIDE_PROVENANCE,
+  buildAgentSpawnRequest,
   type AgentAdapter,
   type AgentSpawnRequest,
   type AgentSpawnResult,
@@ -110,6 +114,15 @@ export interface EngineDeps {
    * render/verify/fail paths without touching disk.
    */
   skillLocusDeps?: SkillLocusDeps;
+  /**
+   * The explicit operator opt-in for a `RATCHET_BATCH_AGENT_CMD` override (the
+   * `--allow-agent-override` flag). Default `false`: an active override is then
+   * REFUSED (failed step, nothing spawned) instead of silently replacing the
+   * configured agent. Never read from the environment.
+   */
+  allowAgentOverride?: boolean;
+  /** Where the per-spawn override notice goes (defaults to stderr). */
+  notify?: (line: string) => void;
 }
 
 /**
@@ -172,6 +185,8 @@ export class RatchetBatchEngine {
   private readonly adapters?: Record<string, AgentAdapter>;
   private readonly projectRoot: () => string;
   private readonly skillLocusDeps?: SkillLocusDeps;
+  private readonly allowAgentOverride: boolean;
+  private readonly notify?: (line: string) => void;
 
   constructor(deps: EngineDeps = {}) {
     this.runtimeOverride =
@@ -180,6 +195,8 @@ export class RatchetBatchEngine {
     this.adapters = deps.adapters;
     this.projectRoot = deps.projectRoot ?? resolveProjectRoot;
     this.skillLocusDeps = deps.skillLocusDeps;
+    this.allowAgentOverride = deps.allowAgentOverride === true;
+    this.notify = deps.notify;
   }
 
   /**
@@ -324,8 +341,9 @@ export class RatchetBatchEngine {
     }
 
     // Build instructions + the spawn request for this single forced transition.
-    // A `RATCHET_BATCH_AGENT_CMD` override stands in for the agent; otherwise the
-    // configured adapter is resolved (rejecting unknowns before any spawn).
+    // The configured adapter is resolved (rejecting unknowns before any spawn);
+    // an allowed `RATCHET_BATCH_AGENT_CMD` override then stands in for it, and a
+    // disallowed one refuses the step (see `buildSpawnRequest`).
     const instructions = buildAgentInstructions(ctx);
     // Thread the batch name through the env so the runtime can place the temp
     // prompt file under `.ratchet/batches/<batch>/.run/<id>/`. With no batch the
@@ -337,14 +355,16 @@ export class RatchetBatchEngine {
     let emitsStreamJson = false;
     let spec: AgentSpec | undefined;
     let agentName: string | undefined;
+    let agentOverride = false;
     try {
       const built = this.buildSpawnRequest(ctx, instructions, projectRoot, env, transition);
       request = built.request;
       emitsStreamJson = built.emitsStreamJson;
       spec = built.spec;
       agentName = built.agentName;
+      agentOverride = built.agentOverride;
     } catch (err) {
-      if (err instanceof UnknownAgentError) {
+      if (err instanceof UnknownAgentError || err instanceof AgentOverrideRefusedError) {
         return toStepResult({
           state: 'failed',
           change,
@@ -387,6 +407,7 @@ export class RatchetBatchEngine {
       parkForApproval: this.shouldParkForApproval(ctx, transition),
       modelAttribution,
       agentName,
+      agentOverride,
       before,
       diskBefore,
       diskAfter: () => {
@@ -477,6 +498,7 @@ export class RatchetBatchEngine {
     let emitsStreamJson = false;
     let spec: AgentSpec | undefined;
     let agentName: string | undefined;
+    let agentOverride = false;
     try {
       const built = this.buildSpawnRequest(
         { batch, change: key, settings: context.settings },
@@ -489,8 +511,9 @@ export class RatchetBatchEngine {
       emitsStreamJson = built.emitsStreamJson;
       spec = built.spec;
       agentName = built.agentName;
+      agentOverride = built.agentOverride;
     } catch (err) {
-      if (err instanceof UnknownAgentError) {
+      if (err instanceof UnknownAgentError || err instanceof AgentOverrideRefusedError) {
         return toStepResult({
           state: 'failed',
           change: key,
@@ -538,6 +561,7 @@ export class RatchetBatchEngine {
       parkForApproval: false,
       modelAttribution,
       agentName,
+      agentOverride,
       before,
       diskBefore: diskState,
       diskAfter: () => diskState,
@@ -653,6 +677,7 @@ export class RatchetBatchEngine {
     let emitsStreamJson = false;
     let spec: AgentSpec | undefined;
     let agentName: string | undefined;
+    let agentOverride = false;
     try {
       // Route the PR step through the `pr` STAGE of the agent map, exactly as a
       // change step routes propose/apply/verify: a stage-map spawns the mapped
@@ -670,8 +695,9 @@ export class RatchetBatchEngine {
       emitsStreamJson = built.emitsStreamJson;
       spec = built.spec;
       agentName = built.agentName;
+      agentOverride = built.agentOverride;
     } catch (err) {
-      if (err instanceof UnknownAgentError) {
+      if (err instanceof UnknownAgentError || err instanceof AgentOverrideRefusedError) {
         return toStepResult({
           state: 'failed',
           change: key,
@@ -714,6 +740,7 @@ export class RatchetBatchEngine {
       parkForApproval: false,
       modelAttribution,
       agentName,
+      agentOverride,
       before,
       diskBefore: diskState,
       diskAfter: () => diskState,
@@ -747,6 +774,8 @@ export class RatchetBatchEngine {
     parkForApproval: boolean;
     modelAttribution?: ModelAttribution;
     agentName?: string;
+    /** The spawn runs under an allowed override: stamp provenance + flag the result. */
+    agentOverride?: boolean;
     before: number;
     diskBefore: ChangeDiskState;
     diskAfter: () => ChangeDiskState;
@@ -762,6 +791,7 @@ export class RatchetBatchEngine {
       parkForApproval,
       modelAttribution,
       agentName,
+      agentOverride,
       before,
       diskBefore,
       diskAfter,
@@ -826,18 +856,20 @@ export class RatchetBatchEngine {
         outcome.blocker ??
         `${transition} ${outcome.state}`,
       transition,
+      ...(agentOverride ? { via: ENV_OVERRIDE_PROVENANCE } : {}),
     });
 
-    return toStepResult(outcome);
+    return toStepResult(agentOverride ? { ...outcome, agentOverride: true } : outcome);
   }
 
   /**
-   * Build the spawn request for one transition. When `RATCHET_BATCH_AGENT_CMD`
-   * is set, that command stands in for the coding-agent binary (used by e2e/eval
-   * checks to exercise the orchestration deterministically without a real agent),
-   * receiving the step instructions on stdin. Otherwise the configured adapter is
-   * resolved as usual — rejecting unknown adapters before any spawn. Mirrors
-   * `RATCHET_EVAL_AGENT_CMD` in the eval judge.
+   * Build the spawn request for one transition through the SHARED override gate
+   * (`buildAgentSpawnRequest`). The stage's adapter is always resolved first, so
+   * an unknown agent is rejected (`UnknownAgentError`) before any spawn, override
+   * or not. An active `RATCHET_BATCH_AGENT_CMD` is honored only with the explicit
+   * `allowAgentOverride` opt-in (else `AgentOverrideRefusedError`), and the
+   * stand-in receives the resolved permission flags as `$@` — see
+   * `buildAgentSpawnRequest`.
    */
   private buildSpawnRequest(
     context: { batch?: string; change: string; settings: BatchSettings },
@@ -849,20 +881,11 @@ export class RatchetBatchEngine {
     request: AgentSpawnRequest;
     emitsStreamJson: boolean;
     spec?: AgentSpec;
-    /** Resolved adapter name; absent under the `bash -c` override. */
+    /** Resolved adapter name; absent under the override. */
     agentName?: string;
+    /** True when the spawn runs under an allowed override. */
+    agentOverride: boolean;
   } {
-    const override = process.env.RATCHET_BATCH_AGENT_CMD;
-    if (override && override.trim().length > 0) {
-      // The `bash -c` override stands in for the agent binary and is NOT
-      // stream-json-capable (keeps e2e/eval deterministic) → raw streaming. It
-      // bypasses spec parsing, so no `AgentSpec` is returned — the override
-      // path carries no model attribution by construction.
-      return {
-        request: { command: 'bash', args: ['-c', override], instructions, cwd: projectRoot, env },
-        emitsStreamJson: false,
-      };
-    }
     // Resolve the spawn agent for the running transition's STAGE when one is
     // given (propose/apply/verify/decompose/pr) — a stage-map routes each stage
     // independently; a scalar/unset agent resolves the same for every stage.
@@ -872,27 +895,31 @@ export class RatchetBatchEngine {
     const resolved = stage
       ? resolveAgentForStage(context.settings.agent, stage)
       : scalarAgent(context.settings.agent);
-    // Parse the resolved spec ONCE per transition: the stored value is a whole
-    // `agent[:model]` spec string (config load already rejected malformed specs,
-    // so this parse cannot throw on validated config). The adapter is resolved by
-    // the AGENT PART — an unknown agent part still throws `UnknownAgentError`
-    // before any spawn, naming `rex` not `rex:some-model`; the model part is
-    // threaded to the adapter via `AgentRequestContext.model` so the adapter
-    // emits its own flag. A bare agent name (no `:`) parses to `{ agent }` with
-    // no `model` key, so the adapter emits no flag and the agent uses its
-    // harness-configured default model — byte-for-byte today's argv.
     const spec = resolved !== undefined ? parseAgentSpec(resolved) : undefined;
     const adapter = resolveAdapter(spec?.agent, this.adapters);
+    const { request, agentOverride } = buildAgentSpawnRequest({
+      overrideEnvVar: BATCH_AGENT_CMD_ENV,
+      env,
+      allowOverride: this.allowAgentOverride,
+      instructions,
+      cwd: projectRoot,
+      agentName: adapter.name,
+      permissions: context.settings.permissions,
+      buildAdapterRequest: () =>
+        adapter.buildRequest({ ...context, model: spec?.model }, instructions, projectRoot, env),
+      notify: this.notify,
+    });
+    if (agentOverride) {
+      // The `bash -c` stand-in is NOT stream-json-capable (keeps e2e/eval
+      // deterministic) → raw streaming, and it carries no model attribution.
+      return { request, emitsStreamJson: false, agentOverride };
+    }
     return {
-      request: adapter.buildRequest(
-        { ...context, model: spec?.model },
-        instructions,
-        projectRoot,
-        env
-      ),
+      request,
       emitsStreamJson: adapter.emitsStreamJson === true,
       spec,
       agentName: adapter.name,
+      agentOverride,
     };
   }
 

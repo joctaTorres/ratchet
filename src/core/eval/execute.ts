@@ -24,6 +24,12 @@ import { resolveSkip, type SkipReason } from './skip.js';
 import { filterCasesByHoldout } from './holdout.js';
 import { contributorForBindingKind, type ContributorId } from './aggregate.js';
 import {
+  activeAgentCmdOverride,
+  assertAgentOverrideAllowed,
+  ENV_OVERRIDE_PROVENANCE,
+  EVAL_AGENT_CMD_ENV,
+} from '../batch/engine/index.js';
+import {
   generateRunId,
   persistRun,
   persistCaseArtifacts,
@@ -55,6 +61,12 @@ export interface RunOptions {
   /** Override the run id / clock (tests). */
   runId?: string;
   now?: Date;
+  /**
+   * `eval run --allow-agent-override`: the explicit operator opt-in that lets an
+   * active `RATCHET_EVAL_AGENT_CMD` stand in for the judge / seeding agent. An
+   * active override without it refuses the whole run before any case runs.
+   */
+  allowAgentOverride?: boolean;
 }
 
 export interface RunOutcome {
@@ -126,6 +138,12 @@ function summarizeEvidence(evidence: CaseVerdict['evidence']): string {
 
 /** Run the eval over the in-scope set and persist the result. */
 export async function executeRun(projectRoot: string, options: RunOptions): Promise<RunOutcome> {
+  const allowAgentOverride = options.allowAgentOverride === true;
+  // Refuse up front (before any fixture or spawn) when an override is active
+  // without the opt-in; the spawn-time gate in the shared helper is the backstop.
+  assertAgentOverrideAllowed(EVAL_AGENT_CMD_ENV, process.env, allowAgentOverride);
+  const overridden = activeAgentCmdOverride(EVAL_AGENT_CMD_ENV, process.env) !== undefined;
+  const judgeDeps: JudgeDeps = { ...(options.judge ?? {}), allowAgentOverride };
   const cases = filterCasesByHoldout(enumerateEvalSet(projectRoot, options.scope), options.holdout);
   const specs = loadEvalSpecs(projectRoot);
   const fixtures = new FixtureManager(projectRoot, options.fixtures);
@@ -137,6 +155,7 @@ export async function executeRun(projectRoot: string, options: RunOptions): Prom
     gate: ALL_CONTRIBUTOR_IDS.filter((id) => options.gate.has(id)),
     cases: [],
     verdicts: {},
+    ...(overridden ? { via: ENV_OVERRIDE_PROVENANCE } : {}),
   };
 
   for (const c of cases) {
@@ -157,7 +176,7 @@ export async function executeRun(projectRoot: string, options: RunOptions): Prom
     // A bound case's contributor is its binding kind, folded through the shared mapping.
     const contributor = contributorForBindingKind(bound.binding.kind);
     run.verdicts[c.id] = options.gate.has(contributor)
-      ? await judgeBound(projectRoot, run.runId, c, bound, fixtures, options.judge ?? {})
+      ? await judgeBound(projectRoot, run.runId, c, bound, fixtures, judgeDeps)
       : disabledContributor(contributor);
   }
 

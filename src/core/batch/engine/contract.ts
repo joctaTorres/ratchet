@@ -245,4 +245,10 @@ export interface StepResult {
   /** Pointer to journal entries this step produced (indices or ids). */
   journalRefs?: number[];
   message?: string;
+  /**
+   * Present (`true`) only when this step's spawn ran under an allowed
+   * `RATCHET_BATCH_AGENT_CMD` override — the step is synthetic, not real agent
+   * work. Absent otherwise, so override-free output is unchanged.
+   */
+  agentOverride?: true;
 }

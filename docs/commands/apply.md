@@ -28,7 +28,8 @@ ratchet apply <change> [options]
 | `--agent` | `<agent>` | Override the coding agent for this step. |
 | `--locus` | `<locus>` | Where the agent runs: `local`, `docker`, or `remote`. |
 | `--image` | `<image>` | Container image for `--locus docker`. |
-| `--json` | | Output the structured step result as JSON. |
+| `--allow-agent-override` | | Allow `RATCHET_BATCH_AGENT_CMD` to stand in for the coding agent. Without this flag, an active override is refused and nothing is spawned. See [Agent-command override](../engine/agent-runtime.md#agent-command-override). |
+| `--json` | | Output the structured step result as JSON. A step that ran under an allowed override carries `"agentOverride": true`. |
 
 ## Preconditions
 

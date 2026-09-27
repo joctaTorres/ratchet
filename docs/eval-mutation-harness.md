@@ -122,11 +122,15 @@ export async function runMutationHarness(
    caught: it propagates to the caller as "could not run at all", distinct from
    "ran and was red".
 3. **Seed** — for each of up to `invariant.budget` attempts, the harness
-   builds a spawn request the same way `judge.ts`'s `buildVoteRequest` does:
-   `RATCHET_EVAL_AGENT_CMD`, when set, stands in for the agent binary
-   (deterministic e2e testing); otherwise `resolveAdapter(deps.agentName)`
-   resolves the configured coding agent's adapter and `buildRequest` builds
-   the request, which `deps.spawner` (default `realSpawner`) runs. The
+   builds a spawn request through the shared `buildAgentSpawnRequest` helper,
+   the same one `judge.ts`'s `buildVoteRequest` and the batch engine use. When
+   `RATCHET_EVAL_AGENT_CMD` is set, it stands in for the agent binary
+   (deterministic e2e testing), but only when `eval run` was given
+   `--allow-agent-override`. Otherwise the override is refused, and the run
+   stamps its record `via: "env-override"`. With no override,
+   `resolveAdapter(deps.agentName)` resolves the configured coding agent's
+   adapter and `buildRequest` builds the request. `deps.spawner` (default
+   `realSpawner`) runs it. The
    instructions (`buildSeedInstructions`) ask the agent to make exactly one
    small, discrete edit to a non-test source file and to not run the test
    suite itself.
@@ -227,7 +231,8 @@ stays independently testable in isolation from that reduction.
 ## Agent-neutrality
 
 Every seed request is built through `resolveAdapter(deps.agentName).buildRequest(...)`
-(or the `RATCHET_EVAL_AGENT_CMD` test override) — the same adapter registry
+(or the `RATCHET_EVAL_AGENT_CMD` test override, gated by `eval run
+--allow-agent-override` in the shared `buildAgentSpawnRequest` helper) — the same adapter registry
 and spawn seam `judge.ts`'s `llm-judge` binding uses. There is no
 agent-specific branch anywhere in this module: `runMutationHarness` never
 checks which coding agent is configured before seeding, satisfying the

@@ -137,7 +137,7 @@ working copy and persist the run.
 ### Synopsis
 
 ```bash
-ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--holdout | --no-holdout] [--gate <ids> | --only <ids> | --no-llm-judge | --no-invariants] [--judge <mode>] [--include-skipped] [--json]
+ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--holdout | --no-holdout] [--gate <ids> | --only <ids> | --no-llm-judge | --no-invariants] [--judge <mode>] [--include-skipped] [--allow-agent-override] [--json]
 ```
 
 ### Options
@@ -155,7 +155,16 @@ ratchet eval run [--changes | --change <name> | --path <dir-or-file>] [--holdout
 | `--no-invariants` | | Disable the `invariants` contributor for this run (the manifest is not evaluated and no invariant command runs). |
 | `--judge` | `auto \| deterministic \| llm-judge` | **Deprecated** legacy alias mapped onto the gate: `deterministic` disables `llm-judge`, `llm-judge` disables `deterministic`, `auto` enables both. Prefer `--gate`/`--only`/`--no-llm-judge`. |
 | `--include-skipped` | | Judge cases that would otherwise be excluded by skip filters (`eval.skip` config or an in-file `@skip` tag), overriding both sources for this run. |
-| `--json` | | Output as JSON: `{ runId, overall, scorecard, contributors, invariants, regressions, warnings, cases }` (`invariantLoadError` is added when the manifest could not be loaded). `cases[]` is one entry per case — `{ id, scenario, verdict, source, rubric, clauses, votes, skip? }` — carrying a judged case's resolved rubric/per-clause evidence/per-juror votes or a skipped case's skip source/detail. |
+| `--allow-agent-override` | | Allow `RATCHET_EVAL_AGENT_CMD` to stand in for the judge and mutation-seeding agent. Without this flag, an active override refuses the whole run before any case runs, and nothing is persisted. |
+| `--json` | | Output as JSON: `{ runId, overall, scorecard, contributors, invariants, regressions, warnings, cases }` (`invariantLoadError` is added when the manifest could not be loaded; `agentOverride: true` is added when the run executed under an allowed override). `cases[]` is one entry per case — `{ id, scenario, verdict, source, rubric, clauses, votes, skip? }` — carrying a judged case's resolved rubric/per-clause evidence/per-juror votes or a skipped case's skip source/detail. |
+
+**Agent-command override.** `RATCHET_EVAL_AGENT_CMD` replaces the judge and
+seeding agent with a shell command, for deterministic e2e runs. It takes effect
+only with `--allow-agent-override`. An allowed override writes `⚠ agent
+overridden by RATCHET_EVAL_AGENT_CMD` to stderr on every spawn, the text output
+leads with that notice, and the persisted run record is stamped `"via":
+"env-override"` so its agent-judged evidence is recognizably synthetic. See
+[Agent-command override](../engine/agent-runtime.md#agent-command-override).
 
 The contributor gate selects which verdict contributors execute and gate the
 run. Resolution precedence is default (all contributors enabled) ◁ the project

@@ -11,6 +11,11 @@ import chalk from 'chalk';
 import { resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
 import { resolveBatchName } from './shared.js';
 import {
+  ENV_OVERRIDE_PROVENANCE,
+  SPAWN_VIA_ENV,
+  type EnvOverrideProvenance,
+} from '../../core/batch/engine/agent.js';
+import {
   appendJournal,
   parkStep,
   recordAnswer,
@@ -59,6 +64,19 @@ export async function batchReportCommand(
   console.log(result.text);
 }
 
+/**
+ * Provenance for entries a report appends: `via: 'env-override'` when the
+ * reporting process is a stand-in the engine spawned under an allowed agent-cmd
+ * override (the override script exports `RATCHET_SPAWN_VIA` only for such a
+ * spawn). A leftover `RATCHET_BATCH_AGENT_CMD` in an operator's shell stamps
+ * nothing. Shared by `batch report` and the batch-less `ratchet report`.
+ */
+export function reportProvenance(): { via?: EnvOverrideProvenance } {
+  return process.env[SPAWN_VIA_ENV] === ENV_OVERRIDE_PROVENANCE
+    ? { via: ENV_OVERRIDE_PROVENANCE }
+    : {};
+}
+
 /** A report kind flag, named as it appears on the CLI (`--<kind>`). */
 export type ReportKind = 'status' | 'blocker' | 'needs-input' | 'complete' | 'answer' | 'reject';
 
@@ -104,11 +122,11 @@ function applyReport(
 ): { kind: string; change: string; text: string } {
   switch (kind) {
     case 'status':
-      appendJournal(projectRoot, batch, { change, kind: 'progress', message });
+      appendJournal(projectRoot, batch, { change, kind: 'progress', message, ...reportProvenance() });
       return { kind, change, text: chalk.dim(`Recorded progress for ${change}: ${message}`) };
 
     case 'blocker':
-      appendJournal(projectRoot, batch, { change, kind: 'blocker', message });
+      appendJournal(projectRoot, batch, { change, kind: 'blocker', message, ...reportProvenance() });
       parkStep(projectRoot, batch, { change, kind: 'blocked', reason: message });
       return {
         kind,
@@ -117,7 +135,7 @@ function applyReport(
       };
 
     case 'needs-input':
-      appendJournal(projectRoot, batch, { change, kind: 'needs-input', message });
+      appendJournal(projectRoot, batch, { change, kind: 'needs-input', message, ...reportProvenance() });
       parkStep(projectRoot, batch, { change, kind: 'blocked', reason: message });
       return {
         kind,
@@ -126,7 +144,7 @@ function applyReport(
       };
 
     case 'complete':
-      appendJournal(projectRoot, batch, { change, kind: 'completion', message });
+      appendJournal(projectRoot, batch, { change, kind: 'completion', message, ...reportProvenance() });
       // Under an after-propose gate, a finished propose parks for approval.
       if (options.awaitingApproval) {
         parkStep(projectRoot, batch, {

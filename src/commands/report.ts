@@ -17,7 +17,7 @@ import chalk from 'chalk';
 import { resolveCurrentPlanningHomeSync } from '../core/planning-home.js';
 import { appendJournalForLocus, type JournalEntry } from '../core/batch/journal.js';
 import { validateChangeName } from '../utils/change-utils.js';
-import { selectReportKind } from './batch/report.js';
+import { reportProvenance, selectReportKind } from './batch/report.js';
 
 export interface ReportOptions {
   status?: string;
@@ -53,7 +53,12 @@ export async function reportCommand(
     throw new Error(`Invalid change name "${change}": ${name.error}.`);
   }
 
-  appendJournalForLocus(projectRoot, { change }, { change, kind: JOURNAL_KIND[kind], message });
+  appendJournalForLocus(projectRoot, { change }, {
+    change,
+    kind: JOURNAL_KIND[kind],
+    message,
+    ...reportProvenance(),
+  });
 
   if (options.json) {
     console.log(JSON.stringify({ kind, change }, null, 2));

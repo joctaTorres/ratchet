@@ -5,14 +5,23 @@ import os from 'os';
 import { appendJournal } from 'ratchet-ai';
 import type { ResolvedStepContext, BatchSettings, ProofOfWork } from 'ratchet-ai';
 import { RatchetBatchEngine } from '../../src/core/batch/engine/engine.js';
+import { readJournal } from '../../src/core/batch/journal.js';
+import { resolvePermissionFlags } from '../../src/core/batch/runtime/agent-permissions.js';
+import type { ResolvedPermissionsPolicy } from '../../src/core/batch/permissions-policy.js';
 import type { AgentAdapter, Spawner, AgentSpawnRequest } from '../../src/core/batch/engine/agent.js';
 
 /**
- * The `RATCHET_BATCH_AGENT_CMD` override seam: when set, the engine runs the
- * command via `bash -c` (feeding instructions on stdin) INSTEAD of resolving the
- * configured adapter. Unset → behavior is identical to today. The `Spawner`
- * (unit-test injection seam) stays untouched either way; here we use it to
- * capture the request the engine built.
+ * The `RATCHET_BATCH_AGENT_CMD` override seam: when set AND the operator opted in
+ * (`allowAgentOverride`, the `--allow-agent-override` flag), the engine runs the
+ * command via `bash -c` (instructions on stdin) in place of the configured
+ * adapter; without the opt-in the step is refused and nothing is spawned. Unset
+ * → behavior is identical to today. The `Spawner` captures the built request.
+ *
+ * Implements:
+ *   - features/agent-cmd-override/opt-in-gate.feature
+ *   - features/agent-cmd-override/override-notice.feature
+ *   - features/agent-cmd-override/override-provenance.feature (engine entry)
+ *   - features/agent-cmd-override/override-permissions.feature
  */
 
 let projectRoot: string;
@@ -84,15 +93,24 @@ function fakeAgent(behavior: {
   return { adapter, spawner, calls, state };
 }
 
-function engineWith(behavior: Parameters<typeof fakeAgent>[0]) {
+function engineWith(
+  behavior: Parameters<typeof fakeAgent>[0],
+  opts: { allowAgentOverride?: boolean } = { allowAgentOverride: true }
+) {
   const fake = fakeAgent(behavior);
+  const notices: string[] = [];
   const engine = new RatchetBatchEngine({
     spawner: fake.spawner,
     adapters: { fake: fake.adapter },
     projectRoot: () => projectRoot,
+    allowAgentOverride: opts.allowAgentOverride,
+    notify: (line) => notices.push(line),
   });
-  return { engine, fake };
+  return { engine, fake, notices };
 }
+
+const reportComplete = (root: string, batch: string, change: string) =>
+  appendJournal(root, batch, { change, kind: 'completion', message: 'proposed', transition: 'propose' });
 
 describe('RatchetBatchEngine.runStep — RATCHET_BATCH_AGENT_CMD override', () => {
   it('runs the override via `bash -c` with instructions on stdin, skipping the adapter', async () => {
@@ -109,7 +127,8 @@ describe('RatchetBatchEngine.runStep — RATCHET_BATCH_AGENT_CMD override', () =
     expect(fake.calls.length).toBe(1);
     const req = fake.calls[0];
     expect(req.command).toBe('bash');
-    expect(req.args).toEqual(['-c', 'echo stub-agent']);
+    // $0 names the resolved agent; no permission policy → no forwarded flags.
+    expect(req.args).toEqual(['-c', 'export RATCHET_SPAWN_VIA=env-override; echo stub-agent', 'fake']);
     expect(req.cwd).toBe(projectRoot);
     expect(req.instructions.length).toBeGreaterThan(0); // step instructions on stdin
   });
@@ -155,5 +174,92 @@ describe('RatchetBatchEngine.runStep — RATCHET_BATCH_AGENT_CMD override', () =
     const retry = await engine.runStep(context());
     expect(retry.state).toBe('blocked');
     expect(fake.calls.length).toBe(2);
+  });
+
+  it('refuses an override without the opt-in: nothing spawned, resumable failed step', async () => {
+    process.env[ENV] = 'echo stub-agent';
+    const { engine, fake, notices } = engineWith({ report: reportComplete }, { allowAgentOverride: false });
+
+    const result = await engine.runStep(context());
+
+    expect(result.state).toBe('blocked');
+    expect(result.blocker).toMatch(/RATCHET_BATCH_AGENT_CMD.*--allow-agent-override/);
+    expect(result.agentOverride).toBeUndefined();
+    expect(fake.calls).toHaveLength(0); // neither the stub nor the configured agent ran
+    expect(fake.state.adapterCalls).toBe(0);
+    expect(notices).toEqual([]); // the refusal is reported, not the notice
+
+    // Resumable: once the operator opts in, the same step runs.
+    const allowed = engineWith({ report: reportComplete });
+    const retry = await allowed.engine.runStep(context());
+    expect(retry.state).toBe('advanced');
+  });
+
+  it('the opt-in alone changes nothing when no override is set', async () => {
+    const { engine, fake, notices } = engineWith({ report: reportComplete });
+
+    const result = await engine.runStep(context());
+
+    expect(result.state).toBe('advanced');
+    expect(fake.calls[0].command).toBe('fake-agent');
+    expect(result.agentOverride).toBeUndefined();
+    expect(notices).toEqual([]);
+    expect(readJournal(projectRoot, 'b').every((e) => e.via === undefined)).toBe(true);
+  });
+
+  it('flags the result, emits the notice once, and stamps the outcome journal entry', async () => {
+    process.env[ENV] = 'echo stub-agent';
+    const { engine, fake, notices } = engineWith({ report: reportComplete });
+
+    const result = await engine.runStep(context());
+
+    expect(result.state).toBe('advanced');
+    expect(result.agentOverride).toBe(true);
+    expect(notices).toEqual(['⚠ agent overridden by RATCHET_BATCH_AGENT_CMD']);
+    expect(fake.calls[0].args[1]).toMatch(/^export RATCHET_SPAWN_VIA=env-override; /);
+    const journal = readJournal(projectRoot, 'b');
+    const outcomeEntry = journal[journal.length - 1];
+    expect(outcomeEntry.via).toBe('env-override');
+    // The fake stub appended its report in-process (no inherited env), so only
+    // the engine's own entry is stamped here; report stamping is covered in
+    // test/commands/batch/report.test.ts.
+    expect(journal[0].via).toBeUndefined();
+  });
+
+  it('forwards the resolved permission flags to the override as $@', async () => {
+    process.env[ENV] = 'echo stub-agent';
+    const policy: ResolvedPermissionsPolicy = {
+      posture: 'repo-sandboxed-permissive',
+      allow: [],
+      deny: [],
+      raw: {},
+    };
+    const { engine, fake } = engineWith({ report: reportComplete });
+
+    await engine.runStep(context({ settings: settings({ agent: 'claude', permissions: policy }) }));
+
+    expect(fake.calls[0].args).toEqual([
+      '-c',
+      'export RATCHET_SPAWN_VIA=env-override; echo stub-agent',
+      'claude',
+      ...resolvePermissionFlags('claude', policy, projectRoot),
+    ]);
+  });
+
+  it('refuses when the permission policy cannot be translated for the resolved agent', async () => {
+    process.env[ENV] = 'echo stub-agent';
+    const policy: ResolvedPermissionsPolicy = {
+      posture: 'repo-sandboxed-permissive',
+      allow: [],
+      deny: [],
+      raw: {},
+    };
+    const { engine, fake } = engineWith({ report: reportComplete });
+
+    const result = await engine.runStep(context({ settings: settings({ permissions: policy }) }));
+
+    expect(result.state).toBe('blocked');
+    expect(result.blocker).toMatch(/cannot be translated for agent 'fake'/);
+    expect(fake.calls).toHaveLength(0);
   });
 });

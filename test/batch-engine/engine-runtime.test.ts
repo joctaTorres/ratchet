@@ -122,6 +122,8 @@ describe('RatchetBatchEngine — routing through the AgentRuntime seam', () => {
       adapters: { fake: adapter },
       projectRoot: () => projectRoot,
       printLine: (line) => printed.push(line),
+      allowAgentOverride: true,
+      notify: () => {},
     });
 
     const result = await engine.runStep(context());
@@ -129,7 +131,7 @@ describe('RatchetBatchEngine — routing through the AgentRuntime seam', () => {
     expect(result.state).toBe('advanced');
     // The override command flowed THROUGH the runtime.
     expect(calls[0].command).toBe('bash');
-    expect(calls[0].args).toEqual(['-c', 'echo stub-agent']);
+    expect(calls[0].args).toEqual(['-c', 'export RATCHET_SPAWN_VIA=env-override; echo stub-agent', 'fake']);
     expect(printed).toEqual(['stub output']);
   });
 

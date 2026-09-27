@@ -408,6 +408,7 @@ const withChangeStepFlags = (cmd: Command): Command =>
     .option('--agent <agent>', 'Override the coding agent for this step')
     .option('--locus <locus>', 'Where the agent runs: local | docker | remote')
     .option('--image <image>', 'Container image for locus docker')
+    .option('--allow-agent-override', 'Allow RATCHET_BATCH_AGENT_CMD to stand in for the coding agent (refused without this flag)')
     .option('--json', 'Output as JSON');
 
 withChangeStepFlags(
@@ -603,6 +604,7 @@ batchCmd
 batchCmd
   .command('apply [name]')
   .description('Advance the batch by one step via the bundled engine')
+  .option('--allow-agent-override', 'Allow RATCHET_BATCH_AGENT_CMD to stand in for the coding agent (refused without this flag)')
   .option('--json', 'Output as JSON')
   .action(async (name: string | undefined, options: BatchApplyOptions) => {
     try {
@@ -676,6 +678,10 @@ withScopeFlags(
     .option(
       '--include-skipped',
       'Judge cases that would otherwise be excluded by skip filters (eval.skip config or an in-file @skip tag)'
+    )
+    .option(
+      '--allow-agent-override',
+      'Allow RATCHET_EVAL_AGENT_CMD to stand in for the judge/seed agent (refused without this flag)'
     )
     .option('--json', 'Output as JSON')
 ).action(async (options: EvalRunOptions) => {

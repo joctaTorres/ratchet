@@ -62,6 +62,12 @@ export interface JournalEntry {
   transition?: string;
   /** Present only on `proof-of-work` entries: the recorded verdict. */
   proof?: ProofOfWorkRecord;
+  /**
+   * Provenance: `'env-override'` when the entry was produced under an agent-cmd
+   * override (by the engine for an overridden spawn, or by the stand-in's own
+   * `batch report`). Absent for real agent work.
+   */
+  via?: 'env-override';
 }
 
 export type ParkedKind = 'blocked' | 'awaiting-approval';

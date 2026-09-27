@@ -48,6 +48,8 @@ import {
   realBashRunner,
   realSpawner,
   resolveAdapter,
+  buildAgentSpawnRequest,
+  EVAL_AGENT_CMD_ENV,
   type BashRunner,
   type BashResult,
   type Spawner,
@@ -84,6 +86,12 @@ export interface MutationHarnessDeps {
   spawner?: Spawner;
   /** Agent name for the seeding subprocess (default resolves the engine default). */
   agentName?: string;
+  /**
+   * The explicit operator opt-in (`eval run --allow-agent-override`) that lets an
+   * active `RATCHET_EVAL_AGENT_CMD` stand in for the seeding agent. Without it an
+   * active override is refused by the shared spawn-request helper.
+   */
+  allowAgentOverride?: boolean;
 }
 
 /**
@@ -143,20 +151,26 @@ function seedContext(invariant: MutationInvariant): AgentRequestContext {
 }
 
 /**
- * Build the spawn request for one seed attempt. When `RATCHET_EVAL_AGENT_CMD`
- * is set, that command stands in for the coding-agent binary (used by e2e
- * tests to exercise the agent path deterministically without a real agent).
- * Otherwise the configured adapter is resolved as usual — mirrors `judge.ts`'s
- * `buildVoteRequest` exactly, so there is no agent-specific branch here.
+ * Build the spawn request for one seed attempt through the shared override gate
+ * (`buildAgentSpawnRequest`) — the same helper the judge and the batch engine
+ * use, so there is no agent-specific branch here. An active
+ * `RATCHET_EVAL_AGENT_CMD` stands in only with the operator opt-in.
  */
-function buildSeedRequest(invariant: MutationInvariant, cwd: string, agentName?: string): AgentSpawnRequest {
+function buildSeedRequest(
+  invariant: MutationInvariant,
+  cwd: string,
+  deps: Pick<MutationHarnessDeps, 'agentName' | 'allowAgentOverride'>
+): AgentSpawnRequest {
   const instructions = buildSeedInstructions(invariant);
-  const override = process.env.RATCHET_EVAL_AGENT_CMD;
-  if (override && override.trim().length > 0) {
-    return { command: 'bash', args: ['-c', override], instructions, cwd, env: process.env };
-  }
-  const adapter = resolveAdapter(agentName);
-  return adapter.buildRequest(seedContext(invariant), instructions, cwd, process.env);
+  return buildAgentSpawnRequest({
+    overrideEnvVar: EVAL_AGENT_CMD_ENV,
+    env: process.env,
+    allowOverride: deps.allowAgentOverride === true,
+    instructions,
+    cwd,
+    buildAdapterRequest: () =>
+      resolveAdapter(deps.agentName).buildRequest(seedContext(invariant), instructions, cwd, process.env),
+  }).request;
 }
 
 /**
@@ -272,7 +286,7 @@ export async function runMutationHarness(
   const mutants: MutantOutcome[] = [];
   for (let attempt = 0; attempt < invariant.budget; attempt++) {
     try {
-      const request = buildSeedRequest(invariant, cwd, deps.agentName);
+      const request = buildSeedRequest(invariant, cwd, deps);
       await spawner(request);
 
       await bash('git add -A', cwd);

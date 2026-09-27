@@ -22,6 +22,28 @@ import {
   type BatchSettings,
 } from '../../core/batch/config.js';
 import { batchExists } from '../../core/batch/manifest.js';
+import {
+  activeAgentCmdOverride,
+  ALLOW_AGENT_OVERRIDE_FLAG,
+  BATCH_AGENT_CMD_ENV,
+} from '../../core/batch/engine/agent.js';
+
+/**
+ * The real enforcement state of the permission posture. An active
+ * `RATCHET_BATCH_AGENT_CMD` replaces the agent with an arbitrary shell command:
+ * the resolved flags are only FORWARDED to it (as `$@`), never enforced by
+ * ratchet, so no surface may display the posture as enforced while it is set.
+ */
+export interface AgentOverrideState {
+  active: boolean;
+  envVar: typeof BATCH_AGENT_CMD_ENV;
+  permissionsEnforced: boolean;
+}
+
+export function agentOverrideState(env: NodeJS.ProcessEnv = process.env): AgentOverrideState {
+  const active = activeAgentCmdOverride(BATCH_AGENT_CMD_ENV, env) !== undefined;
+  return { active, envVar: BATCH_AGENT_CMD_ENV, permissionsEnforced: !active };
+}
 
 export interface BatchConfigOptions {
   set?: string;
@@ -76,11 +98,13 @@ export async function batchConfigCommand(
       ...resolved,
       settings: redactSettings(resolved.settings),
     };
-    console.log(JSON.stringify({ name: name ?? null, ...safe }, null, 2));
+    console.log(
+      JSON.stringify({ name: name ?? null, ...safe, agentOverride: agentOverrideState() }, null, 2)
+    );
     return;
   }
 
-  printResolved(name, resolved);
+  printResolved(name, resolved, agentOverrideState());
 }
 
 const KEYS: (keyof BatchSettings)[] = [
@@ -95,7 +119,11 @@ const KEYS: (keyof BatchSettings)[] = [
   'authToken',
 ];
 
-function printResolved(name: string | undefined, resolved: ResolvedBatchSettings): void {
+function printResolved(
+  name: string | undefined,
+  resolved: ResolvedBatchSettings,
+  override: AgentOverrideState
+): void {
   const heading = name ? `Effective batch settings for '${name}'` : 'Batch settings (project)';
   console.log(chalk.bold(`\n${heading}\n`));
 
@@ -115,7 +143,17 @@ function printResolved(name: string | undefined, resolved: ResolvedBatchSettings
   const permissions = display.permissions;
   if (permissions) {
     console.log(chalk.bold('\n  permissions'));
-    console.log(`    posture      ${permissions.posture}  ${sourceLabel(resolved.sources.permissions)}`);
+    if (override.active) {
+      // Never display the posture as enforced while an override voids it.
+      console.log(
+        `    posture      ${permissions.posture}  ${chalk.red.bold('NOT ENFORCED')} — ` +
+          `${override.envVar} overrides the agent (spawns refused unless ` +
+          `${ALLOW_AGENT_OVERRIDE_FLAG}; flags are forwarded to the override command, ` +
+          `never enforced by ratchet)`
+      );
+    } else {
+      console.log(`    posture      ${permissions.posture}  ${sourceLabel(resolved.sources.permissions)}`);
+    }
     if (permissions.allow.length > 0) {
       console.log(`    allow        ${permissions.allow.join(', ')}`);
     }

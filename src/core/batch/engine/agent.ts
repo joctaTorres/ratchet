@@ -14,7 +14,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { resolvePermissionFlags } from '../runtime/agent-permissions.js';
+import { canTranslatePermissions, resolvePermissionFlags } from '../runtime/agent-permissions.js';
 import type { ResolvedPermissionsPolicy } from '../permissions-policy.js';
 import { AI_TOOLS, type AIToolOption } from '../../config.js';
 
@@ -69,6 +69,157 @@ export interface AgentSpawnRequest {
 
 /** The injectable process-spawn seam. */
 export type Spawner = (request: AgentSpawnRequest) => Promise<AgentSpawnResult>;
+
+/** The env var that overrides the batch engine's coding-agent spawn. */
+export const BATCH_AGENT_CMD_ENV = 'RATCHET_BATCH_AGENT_CMD';
+/** The env var that overrides the eval judge / mutation harness agent spawn. */
+export const EVAL_AGENT_CMD_ENV = 'RATCHET_EVAL_AGENT_CMD';
+/** The CLI flag an operator passes to deliberately allow an agent-cmd override. */
+export const ALLOW_AGENT_OVERRIDE_FLAG = '--allow-agent-override';
+
+/**
+ * Provenance marker stamped on journal entries and eval run records produced
+ * under an agent-cmd override, so synthetic runs are distinguishable from real
+ * agent work after the fact.
+ */
+export type EnvOverrideProvenance = 'env-override';
+export const ENV_OVERRIDE_PROVENANCE: EnvOverrideProvenance = 'env-override';
+
+/**
+ * Env var exported ONLY inside a stand-in built under an allowed override (value
+ * {@link ENV_OVERRIDE_PROVENANCE}). `ratchet batch report`, run by the stand-in,
+ * stamps its journal entries from it — so a leftover override var in an
+ * operator's shell never mislabels a manual report. It is exported at the head
+ * of the `bash -c` script itself (not only set on `request.env`) so it reaches
+ * the stand-in under every runtime, including ones that launch the command with
+ * their own environment.
+ */
+export const SPAWN_VIA_ENV = 'RATCHET_SPAWN_VIA';
+
+/**
+ * The active agent-cmd override for `envVar` in `env`, or `undefined` when
+ * unset / whitespace-only (a blank value is inactive, never an override).
+ */
+export function activeAgentCmdOverride(
+  envVar: string,
+  env: NodeJS.ProcessEnv
+): string | undefined {
+  const trimmed = env[envVar]?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/**
+ * The `bash -c` script an allowed override runs: export the provenance marker,
+ * then run the operator's command unchanged.
+ */
+export function overrideScript(override: string): string {
+  return `export ${SPAWN_VIA_ENV}=${ENV_OVERRIDE_PROVENANCE}; ${override}`;
+}
+
+/** The one-line notice emitted on every spawn made under an override. */
+export function agentOverrideNotice(envVar: string): string {
+  return `⚠ agent overridden by ${envVar}`;
+}
+
+/**
+ * A spawn refused by the override gate: the override is active but the operator
+ * did not opt in, or the resolved permission policy cannot be forwarded to it.
+ * Nothing is spawned; callers surface the message as a failed step / run.
+ */
+export class AgentOverrideRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AgentOverrideRefusedError';
+  }
+}
+
+/** The refusal message for an active override without the operator opt-in. */
+export function agentOverrideNotAllowedMessage(envVar: string): string {
+  return (
+    `${envVar} is set but agent overrides are disabled: pass ${ALLOW_AGENT_OVERRIDE_FLAG} ` +
+    `to run it in place of the configured agent, or unset ${envVar}.`
+  );
+}
+
+/**
+ * Refuse up front when `envVar` carries an active override the operator did not
+ * opt into. Used by callers (e.g. `executeRun`) that must fail before any work,
+ * not just at spawn time; the spawn-time gate in {@link buildAgentSpawnRequest}
+ * applies the same rule.
+ */
+export function assertAgentOverrideAllowed(
+  envVar: string,
+  env: NodeJS.ProcessEnv,
+  allowOverride: boolean
+): void {
+  if (activeAgentCmdOverride(envVar, env) !== undefined && !allowOverride) {
+    throw new AgentOverrideRefusedError(agentOverrideNotAllowedMessage(envVar));
+  }
+}
+
+/**
+ * Build an agent spawn request through the ONE shared override gate. Every spawn
+ * seam (the batch engine, the eval judge, the mutation harness) delegates here,
+ * so the gate, the notice, and permission forwarding exist in exactly one place.
+ *
+ * - No active override → `buildAdapterRequest()` (called exactly once).
+ * - Active override without `allowOverride` → {@link AgentOverrideRefusedError}.
+ *   The opt-in is an explicit parameter, never read from the environment.
+ * - Active override with a permission policy whose agent has no translator →
+ *   refused, rather than silently spawning without any permission flags.
+ * - Otherwise → `bash -c <override> <agentName> <permission flags...>`: the
+ *   stand-in sees the agent as `$0` and the flags a real agent would have
+ *   received as `$@`. The script exports {@link SPAWN_VIA_ENV} before running
+ *   the override (provenance), and `notify` receives the override notice
+ *   (stderr by default).
+ *
+ * Pure over its inputs apart from `notify`, so it is unit-testable directly.
+ */
+export function buildAgentSpawnRequest(args: {
+  overrideEnvVar: string;
+  env: NodeJS.ProcessEnv;
+  allowOverride: boolean;
+  instructions: string;
+  cwd: string;
+  /** Agent the spawn resolved to; names `$0` and selects the forwarded flags. */
+  agentName?: string;
+  /** Resolved permission policy to forward; absent → no flags to forward. */
+  permissions?: ResolvedPermissionsPolicy;
+  buildAdapterRequest: () => AgentSpawnRequest;
+  notify?: (line: string) => void;
+}): { request: AgentSpawnRequest; agentOverride: boolean } {
+  const override = activeAgentCmdOverride(args.overrideEnvVar, args.env);
+  if (override === undefined) {
+    return { request: args.buildAdapterRequest(), agentOverride: false };
+  }
+  if (!args.allowOverride) {
+    throw new AgentOverrideRefusedError(agentOverrideNotAllowedMessage(args.overrideEnvVar));
+  }
+  const agentName = args.agentName ?? DEFAULT_AGENT;
+  let flags: string[] = [];
+  if (args.permissions) {
+    if (!canTranslatePermissions(agentName, args.permissions)) {
+      throw new AgentOverrideRefusedError(
+        `${args.overrideEnvVar} override refused: the '${args.permissions.posture}' permission ` +
+          `policy cannot be translated for agent '${agentName}', so it could not be forwarded ` +
+          `to the override command.`
+      );
+    }
+    flags = resolvePermissionFlags(agentName, args.permissions, args.cwd);
+  }
+  const notify = args.notify ?? ((line: string) => process.stderr.write(line + '\n'));
+  notify(agentOverrideNotice(args.overrideEnvVar));
+  return {
+    request: {
+      command: 'bash',
+      args: ['-c', overrideScript(override), agentName, ...flags],
+      instructions: args.instructions,
+      cwd: args.cwd,
+      env: args.env,
+    },
+    agentOverride: true,
+  };
+}
 
 export interface AgentAdapter {
   readonly name: string;

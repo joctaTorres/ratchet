@@ -322,3 +322,20 @@ export function resolvePermissionFlags(
   const rawForAgent = policy.raw[agent] ?? [];
   return [...postureFlags, ...rawForAgent];
 }
+
+/**
+ * Whether a resolved policy can be translated into argv for `agentName`: the
+ * agent has a posture mapper, or the policy carries a `raw` entry for it. The
+ * agent-cmd override forwards `resolvePermissionFlags` output to its stand-in;
+ * an agent with neither would silently yield NO flags, so the override refuses
+ * to spawn instead of dropping the policy.
+ *
+ * Pure: no I/O, no spawning.
+ */
+export function canTranslatePermissions(
+  agentName: string,
+  policy: ResolvedPermissionsPolicy
+): boolean {
+  const own = (o: object) => Object.prototype.hasOwnProperty.call(o, agentName);
+  return own(AGENT_MAPPERS) || own(policy.raw);
+}

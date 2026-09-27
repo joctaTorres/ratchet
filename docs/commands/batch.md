@@ -249,6 +249,21 @@ resolved in this order (nearest wins): manifest overrides ← project config
 Each value is annotated with its source: `[manifest]`, `[project]`, `[user]`,
 or `[default]`. `authToken` is always redacted in output (`***`).
 
+**Under an agent-command override**: while `RATCHET_BATCH_AGENT_CMD` is set to a
+non-blank value, the `posture` line reads `NOT ENFORCED` and names the variable
+in place of the normal posture line. The override replaces the agent with an
+arbitrary command: overridden spawns are refused unless `batch apply` gets
+`--allow-agent-override`, and even then the resolved flags are only forwarded to
+the command, not enforced. The `--json` output always includes an
+`agentOverride` object reporting the real state:
+
+```json
+"agentOverride": { "active": true, "envVar": "RATCHET_BATCH_AGENT_CMD", "permissionsEnforced": false }
+```
+
+With no override set, `active` is `false` and `permissionsEnforced` is `true`.
+See [Agent-command override](../engine/agent-runtime.md#agent-command-override).
+
 **With `--set key=value`**: writes the project-level config (`batch:` section)
 only. Invalid enum values are rejected and the file is left unchanged. Secret
 values (e.g. `authToken`) are not echoed back.
@@ -339,7 +354,7 @@ Advance the batch by one step via the bundled engine.
 ### Synopsis
 
 ```bash
-ratchet batch apply [name] [--json]
+ratchet batch apply [name] [--allow-agent-override] [--json]
 ```
 
 `[name]` defaults to the current active batch when omitted.
@@ -348,7 +363,13 @@ ratchet batch apply [name] [--json]
 
 | Option | Description |
 |---|---|
-| `--json` | Output the structured `StepResult` as JSON. |
+| `--allow-agent-override` | Allow `RATCHET_BATCH_AGENT_CMD` to stand in for the coding agent. Without this flag, an active override is refused: the step is reported `blocked` with a message naming the variable and the flag, and nothing is spawned. |
+| `--json` | Output the structured `StepResult` as JSON. A step that ran under an allowed override carries `"agentOverride": true`. |
+
+Each spawn made under an allowed override prints `⚠ agent overridden by
+RATCHET_BATCH_AGENT_CMD` to stderr. The resulting journal entries are stamped
+`"via": "env-override"`. See
+[Agent-command override](../engine/agent-runtime.md#agent-command-override).
 
 ### Behavior
 

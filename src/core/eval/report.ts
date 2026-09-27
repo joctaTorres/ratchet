@@ -232,6 +232,8 @@ export interface EvaluateRunDeps {
   readFile?: FileReader;
   spawner?: Spawner;
   agentName?: string;
+  /** Operator opt-in for a `RATCHET_EVAL_AGENT_CMD` override (`--allow-agent-override`). */
+  allowAgentOverride?: boolean;
 }
 
 /**
@@ -267,6 +269,7 @@ export async function evaluateRun(
     readFile: deps.readFile,
     spawner: deps.spawner,
     agentName: deps.agentName,
+    allowAgentOverride: deps.allowAgentOverride,
   });
   run.invariantGate = gate;
   persistRun(projectRoot, run);

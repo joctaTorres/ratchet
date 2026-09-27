@@ -30,6 +30,8 @@ export interface EngineStepOutcome {
   detail?: string;
   message?: string;
   journalRefs?: number[];
+  /** Set when the spawn ran under an allowed agent-cmd override. */
+  agentOverride?: true;
 }
 
 /**
@@ -53,6 +55,7 @@ export function toStepResult(outcome: EngineStepOutcome): StepResult {
       detail: outcome.detail,
       journalRefs: outcome.journalRefs,
       message: outcome.message ?? outcome.detail,
+      ...(outcome.agentOverride ? { agentOverride: true as const } : {}),
     };
   }
   return {
@@ -64,6 +67,7 @@ export function toStepResult(outcome: EngineStepOutcome): StepResult {
     detail: outcome.detail,
     journalRefs: outcome.journalRefs,
     message: outcome.message,
+    ...(outcome.agentOverride ? { agentOverride: true as const } : {}),
   };
 }
 

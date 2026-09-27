@@ -160,7 +160,8 @@ copy** and is what grants the spawned judge permission to act.
   must be force-added (`git add -f`) to be tracked.
 - Adapter selection: `ratchet eval run` currently always resolves the default
   adapter (`claude`) — there is no flag to pick another agent (only the
-  `RATCHET_EVAL_AGENT_CMD` test stub). Selecting the adapter is a possible
+  `RATCHET_EVAL_AGENT_CMD` test stub, honored only with
+  `--allow-agent-override`). Selecting the adapter is a possible
   follow-up in the eval implementation.
 
 See `fixtures/eval-self-run/` — an llm-judged case that dogfoods eval itself
@@ -176,6 +177,13 @@ on stdin) **instead of** resolving/spawning the configured adapter; unset → th
 adapter path is unchanged. The unit-test `Spawner` injection is untouched and
 complementary — the env var is the CLI/e2e/eval seam.
 
+The override is honored **only** with the explicit opt-in flag: `ratchet batch
+apply --allow-agent-override` (and `ratchet eval run --allow-agent-override` for
+`RATCHET_EVAL_AGENT_CMD`). Without the flag, an active override is refused and
+nothing is spawned, so every check that exports the variable also passes the
+flag. An allowed override prints `⚠ agent overridden by …` to stderr, and its
+journal entries and run records are stamped `via: "env-override"`.
+
 - Fixture `fixtures/batch-apply/` is a self-contained `q3-auth` batch with one
   ready change plus two checked-in scripted "agents":
   - `agent.sh` — reads the instructions on stdin, learns the transition
@@ -187,7 +195,7 @@ complementary — the env var is the CLI/e2e/eval seam.
     then proceeds normally once an answer is in context (the resume path).
 - A batch-orchestration check points the seam at the script and asserts the
   observable state, e.g. `export RATCHET_BATCH_AGENT_CMD="bash $PWD/agent.sh"`
-  then `ratchet batch apply q3-auth --json` and a `python3 -c` assertion on
+  then `ratchet batch apply q3-auth --allow-agent-override --json` and a `python3 -c` assertion on
   `ratchet batch status --json`. The fixture copy is the cwd, so `$PWD/agent.sh`
   resolves inside it.
 

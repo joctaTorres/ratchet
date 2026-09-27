@@ -14,6 +14,13 @@
  * pointed at an isolated tmpdir fixture
  * by mocking `resolveCurrentPlanningHomeSync`; console.log is spied and the
  * fixture removed in afterEach.
+ *
+ * Also implements features/agent-cmd-override/override-provenance.feature (eval
+ * run records) and the eval half of shared-spawn-helper.feature: an active
+ * `RATCHET_EVAL_AGENT_CMD` without `--allow-agent-override` refuses the run
+ * before anything is persisted; with it the run record carries `via:
+ * 'env-override'`, `--json` carries `agentOverride: true`, and the text output
+ * leads with the override notice.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -218,5 +225,79 @@ describe('evalRunCommand', () => {
     expect(run.verdicts[SOLO_CASE].reason).toMatch(/deterministic.*disabled/i);
     // The enabled set is persisted on the run, in display order.
     expect(run.gate).toEqual(['llm-judge']);
+  });
+});
+
+describe('evalRunCommand under RATCHET_EVAL_AGENT_CMD', () => {
+  let fixture: EvalFixture;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    fixture = await makeEvalFixture();
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    resolvePlanningHomeMock.mockReturnValue({ root: fixture.root });
+    await fixture.writeFeature('solo.feature', SOLO_FEATURE);
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    await fixture.cleanup();
+  });
+
+  function output(): string {
+    return logSpy.mock.calls.map((args) => args.join(' ')).join('\n');
+  }
+
+  async function persistedRuns(): Promise<Record<string, unknown>[]> {
+    const dir = path.join(fixture.root, '.ratchet', 'evals', 'runs');
+    let files: string[] = [];
+    try {
+      files = (await fs.readdir(dir)).filter((f) => f.endsWith('.json'));
+    } catch {
+      return [];
+    }
+    return Promise.all(
+      files.map(async (f) => JSON.parse(await fs.readFile(path.join(dir, f), 'utf-8')))
+    );
+  }
+
+  it('refuses the run without --allow-agent-override and persists nothing', async () => {
+    vi.stubEnv('RATCHET_EVAL_AGENT_CMD', 'echo stub');
+
+    await expect(evalRunCommand({})).rejects.toThrow(
+      /RATCHET_EVAL_AGENT_CMD.*--allow-agent-override/
+    );
+    expect(await persistedRuns()).toHaveLength(0);
+  });
+
+  it('stamps the run record and flags --json with the opt-in', async () => {
+    vi.stubEnv('RATCHET_EVAL_AGENT_CMD', 'echo stub');
+
+    await evalRunCommand({ allowAgentOverride: true, json: true });
+
+    const [run] = await persistedRuns();
+    expect(run.via).toBe('env-override');
+    expect(JSON.parse(output()).agentOverride).toBe(true);
+  });
+
+  it('leads the text output with the override notice', async () => {
+    vi.stubEnv('RATCHET_EVAL_AGENT_CMD', 'echo stub');
+
+    await evalRunCommand({ allowAgentOverride: true });
+
+    expect(logSpy.mock.calls[0][0]).toContain('⚠ agent overridden by RATCHET_EVAL_AGENT_CMD');
+  });
+
+  it.each(['', '  '])('never stamps a run without an active override (%j)', async (value) => {
+    vi.stubEnv('RATCHET_EVAL_AGENT_CMD', value);
+
+    await evalRunCommand({ json: true });
+
+    const [run] = await persistedRuns();
+    expect(run.via).toBeUndefined();
+    expect(JSON.parse(output()).agentOverride).toBeUndefined();
+    expect(output()).not.toContain('agent overridden');
   });
 });

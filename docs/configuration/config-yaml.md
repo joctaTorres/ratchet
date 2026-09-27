@@ -235,6 +235,12 @@ per-change manifest scopes: `posture` is nearest-wins; `deny` is the union of al
 scopes; `allow` is replaced by the nearest scope that defines it; each agent's
 `raw` entry is nearest-wins per agent.
 
+The policy is enforced on real agent spawns only. While `RATCHET_BATCH_AGENT_CMD`
+overrides the agent (honored only with `--allow-agent-override`), the resolved
+flags are forwarded to the override command but not enforced, and `ratchet batch
+config` shows the posture as NOT ENFORCED. See
+[Agent-command override](../engine/agent-runtime.md#agent-command-override).
+
 | Key | Type | Default | Accepted values | Description |
 |---|---|---|---|---|
 | `posture` | string | `repo-sandboxed-permissive` | `repo-sandboxed-permissive` `curated-allowlist` `full-autonomy` | Agent-agnostic permission posture. `repo-sandboxed-permissive`: edits and ordinary build/test commands run unprompted, scoped to the repo, with a denylist blocking destructive operations (the denylist is enforced for claude only; codex is bounded by its `workspace-write` sandbox, and gemini, cursor, and opencode by their own approval gating — see [agent runtime permissions](../engine/agent-runtime.md#agent-permissions)). `curated-allowlist`: nothing runs unprompted outside an explicit allow list. `full-autonomy`: all permission checks bypassed. |

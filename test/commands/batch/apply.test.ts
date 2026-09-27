@@ -15,6 +15,7 @@ import { makeBatchFixture, type BatchFixture } from './batch-fixture.js';
 
 const {
   runStepMock,
+  engineDepsMock,
   runDecompositionStepMock,
   runPrStepMock,
   runProofOfWorkMock,
@@ -23,6 +24,7 @@ const {
   resolvePlanningHomeMock,
 } = vi.hoisted(() => ({
   runStepMock: vi.fn(),
+  engineDepsMock: vi.fn(),
   runDecompositionStepMock: vi.fn(),
   runPrStepMock: vi.fn(),
   runProofOfWorkMock: vi.fn(),
@@ -45,6 +47,9 @@ const {
 // `batch apply` imports them from their own modules, so their real logic runs.
 vi.mock('../../../src/core/batch/engine/index.js', () => ({
   RatchetBatchEngine: class {
+    constructor(deps?: unknown) {
+      engineDepsMock(deps);
+    }
     runStep = runStepMock;
     runDecompositionStep = runDecompositionStepMock;
     runPrStep = runPrStepMock;
@@ -532,5 +537,37 @@ describe('batchApplyCommand', () => {
 
     expect(output()).toContain('Nothing to do — all changes are done.');
     expect(runPrStepMock).not.toHaveBeenCalled();
+  });
+
+  // features/agent-cmd-override/opt-in-gate.feature + override-notice.feature:
+  // `--allow-agent-override` reaches the engine as its explicit opt-in dep, and
+  // the `agentOverride` flag rides the `--json` step result verbatim.
+  it('passes --allow-agent-override to the engine as its explicit opt-in (default off)', async () => {
+    await fixture.writeBatch('b', { phases: [{ ...PHASE, changes: [{ name: 'c1' }] }] });
+    runStepMock.mockResolvedValue({
+      state: 'advanced',
+      change: 'c1',
+      transition: 'propose',
+    } satisfies StepResult);
+
+    await batchApplyCommand('b', {});
+    expect(engineDepsMock).toHaveBeenLastCalledWith({ allowAgentOverride: false });
+
+    await batchApplyCommand('b', { allowAgentOverride: true });
+    expect(engineDepsMock).toHaveBeenLastCalledWith({ allowAgentOverride: true });
+  });
+
+  it('carries agentOverride in the --json step result', async () => {
+    await fixture.writeBatch('b', { phases: [{ ...PHASE, changes: [{ name: 'c1' }] }] });
+    runStepMock.mockResolvedValue({
+      state: 'advanced',
+      change: 'c1',
+      transition: 'propose',
+      agentOverride: true,
+    } satisfies StepResult);
+
+    await batchApplyCommand('b', { json: true, allowAgentOverride: true });
+
+    expect(JSON.parse(output()).agentOverride).toBe(true);
   });
 });

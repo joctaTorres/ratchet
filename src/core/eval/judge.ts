@@ -33,6 +33,8 @@ import {
   realBashRunner,
   realSpawner,
   resolveAdapter,
+  buildAgentSpawnRequest,
+  EVAL_AGENT_CMD_ENV,
   type BashRunner,
   type Spawner,
   type AgentRequestContext,
@@ -68,6 +70,12 @@ export interface JudgeDeps {
   spawner?: Spawner;
   /** Agent name for the judge subprocess (default resolves the engine default). */
   agentName?: string;
+  /**
+   * The explicit operator opt-in (`eval run --allow-agent-override`) that lets an
+   * active `RATCHET_EVAL_AGENT_CMD` stand in for the judge agent. Without it an
+   * active override is refused by the shared spawn-request helper.
+   */
+  allowAgentOverride?: boolean;
   /** Project-level jury default, layered under a per-binding `jury:` override. */
   jury?: Jury;
   /** Injected seams for the `web` binding lifecycle harness (tests never spawn a real process). */
@@ -264,19 +272,27 @@ function judgeContext(c: EvalCase): AgentRequestContext {
 }
 
 /**
- * Build the spawn request for one judge vote. When `RATCHET_EVAL_AGENT_CMD` is
- * set, that command stands in for the coding-agent binary (used by e2e tests to
- * exercise the agent path deterministically without a real agent). Otherwise the
- * configured adapter is resolved as usual.
+ * Build the spawn request for one judge vote through the shared override gate
+ * (`buildAgentSpawnRequest`): an active `RATCHET_EVAL_AGENT_CMD` stands in for
+ * the agent only with the operator opt-in (refused otherwise); without an
+ * override the configured adapter is resolved as usual.
  */
-function buildVoteRequest(c: EvalCase, binding: LlmJudgeBinding, cwd: string, agentName?: string) {
+function buildVoteRequest(
+  c: EvalCase,
+  binding: LlmJudgeBinding,
+  cwd: string,
+  deps: Pick<JudgeDeps, 'agentName' | 'allowAgentOverride'>
+) {
   const instructions = buildJudgeInstructions(c, binding);
-  const override = process.env.RATCHET_EVAL_AGENT_CMD;
-  if (override && override.trim().length > 0) {
-    return { command: 'bash', args: ['-c', override], instructions, cwd, env: process.env };
-  }
-  const adapter = resolveAdapter(agentName);
-  return adapter.buildRequest(judgeContext(c), instructions, cwd, process.env);
+  return buildAgentSpawnRequest({
+    overrideEnvVar: EVAL_AGENT_CMD_ENV,
+    env: process.env,
+    allowOverride: deps.allowAgentOverride === true,
+    instructions,
+    cwd,
+    buildAdapterRequest: () =>
+      resolveAdapter(deps.agentName).buildRequest(judgeContext(c), instructions, cwd, process.env),
+  }).request;
 }
 
 async function castVote(
@@ -285,9 +301,9 @@ async function castVote(
   rubric: string[],
   cwd: string,
   spawner: Spawner,
-  agentName?: string
+  deps: Pick<JudgeDeps, 'agentName' | 'allowAgentOverride'>
 ): Promise<JurorVote> {
-  const request = buildVoteRequest(c, binding, cwd, agentName);
+  const request = buildVoteRequest(c, binding, cwd, deps);
   const result = await spawner(request);
   return parseAgentVote(result.stdout, rubric);
 }
@@ -348,7 +364,7 @@ async function judgeAgent(
   const { votes: n, quorum } = resolveJury({ config: deps.jury, binding: binding.jury });
   const votes: JurorVote[] = [];
   for (let i = 0; i < n; i++) {
-    votes.push(await castVote(c, binding, rubric, cwd, spawner, deps.agentName));
+    votes.push(await castVote(c, binding, rubric, cwd, spawner, deps));
   }
   return { ...resolveVotes(votes, quorum), rubric, votes };
 }

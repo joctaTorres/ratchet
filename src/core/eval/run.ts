@@ -63,6 +63,12 @@ export interface CaseRecord {
 export interface EvalRun {
   runId: string;
   createdAt: string;
+  /**
+   * Provenance: `'env-override'` when the run executed with an allowed, active
+   * `RATCHET_EVAL_AGENT_CMD` override — its agent-judged evidence is synthetic.
+   * Absent for runs judged by the real configured agent.
+   */
+  via?: 'env-override';
   scope: { kind: string; target?: string };
   /**
    * The enabled contributor ids that gated this run, in display order. A case

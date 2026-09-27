@@ -268,18 +268,18 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `list` | List active changes (or `--specs` for the feature store) |
 | `view` | Interactive dashboard of changes and features |
 | `archive [name]` | Sync features into the store and archive the change |
-| `propose "<objective>"` | Headlessly create a single change from a free-text objective (`--name`, repeatable `-m`, `--agent`/`--locus`/`--image`, `--json`) |
-| `apply <change>` | Headlessly implement an existing change — forced apply step (`--force`, repeatable `-m`, `--agent`/`--locus`/`--image`, `--json`) |
-| `verify <change>` | Headlessly verify an existing change — forced verify step (`--force`, repeatable `-m`, `--agent`/`--locus`/`--image`, `--json`) |
+| `propose "<objective>"` | Headlessly create a single change from a free-text objective (`--name`, repeatable `-m`, `--agent`/`--locus`/`--image`, `--allow-agent-override`, `--json`) |
+| `apply <change>` | Headlessly implement an existing change — forced apply step (`--force`, repeatable `-m`, `--agent`/`--locus`/`--image`, `--allow-agent-override`, `--json`) |
+| `verify <change>` | Headlessly verify an existing change — forced verify step (`--force`, repeatable `-m`, `--agent`/`--locus`/`--image`, `--allow-agent-override`, `--json`) |
 | `new batch <name>` | Scaffold a batch manifest (`.ratchet/batches/<name>/batch.yaml`) |
 | `batch status [name]` | Live phase/change status derived from disk, incl. parked gates/blockers (`--json`) |
 | `batch view` / `batch list` | Rich dashboards of a batch (or all batches) |
-| `batch config [name]` | Resolved batch settings: project defaults + manifest overrides + agent permissions |
-| `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step) |
+| `batch config [name]` | Resolved batch settings: project defaults + manifest overrides + agent permissions (the posture shows **NOT ENFORCED** while `RATCHET_BATCH_AGENT_CMD` is set) |
+| `batch apply [name]` | Advance the batch by **one** transition via the bundled engine (single-step; `--allow-agent-override` to let `RATCHET_BATCH_AGENT_CMD` stand in for the agent, refused without it) |
 | `batch report [name]` | Record an agent answer / approval to cross a halt (`--change`, `--answer`) |
 | `batch rerun-proof [name]` | Invalidate a phase's recorded proof-of-work (`--phase`, `--json`) so the next `batch apply` re-runs its boundary proof |
 | `eval set` | List eval cases (one per Scenario) from `.feature` files (`--changes`, `--change <name>`, `--path`, `--holdout`/`--no-holdout`, `--json`) |
-| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--include-skipped`, `--holdout`/`--no-holdout`, `--json`) |
+| `eval run` | Judge every bound case through the engine and persist a scored run (`--gate <ids>`, `--only <ids>`, `--no-llm-judge`, `--no-invariants`, deprecated `--judge auto\|deterministic\|llm-judge`, `--include-skipped`, `--holdout`/`--no-holdout`, `--allow-agent-override` for `RATCHET_EVAL_AGENT_CMD`, `--json`) |
 | `eval record` | Manually override one case's verdict in a run (`fail` requires `--evidence`) |
 | `eval report --run <id>` | **Read-only** scorecard, failing cases with evidence, and the baseline regression diff, rendered from the run's persisted state — never re-evaluates the invariant gate (`--json`) |
 | `eval baseline <run-id>` | Promote a run to the baseline future runs are compared against |

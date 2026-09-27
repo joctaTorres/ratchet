@@ -53,6 +53,11 @@ import { resolveBatchName } from './shared.js';
 
 export interface BatchApplyOptions {
   json?: boolean;
+  /**
+   * `--allow-agent-override`: the explicit operator opt-in that lets an active
+   * `RATCHET_BATCH_AGENT_CMD` stand in for the agent (refused without it).
+   */
+  allowAgentOverride?: boolean;
 }
 
 /** The git branch names the completion PR step opens between, resolved by the CLI. */
@@ -150,7 +155,9 @@ export async function batchApplyCommand(
   const status = await computeBatchStatus(projectRoot, manifest);
 
   // The engine is bundled into this package; construct it and run in-process.
-  const engine = new RatchetBatchEngine();
+  const engine = new RatchetBatchEngine({
+    allowAgentOverride: options.allowAgentOverride === true,
+  });
 
   // The latest recorded proof per phase. Its keys are the phases whose boundary
   // proof-of-work has already run (so the boundary runs at most once and the next

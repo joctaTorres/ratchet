@@ -176,7 +176,7 @@ describe('whole-batch PR opening — batch apply e2e against the fake spawn seam
   it('opens exactly one PR with a semantic commit when prGrouping is whole-batch', async () => {
     const { projectDir, sentinel } = await prepareCompletedRepo({ prGrouping: 'whole-batch' });
 
-    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH], {
+    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH, '--allow-agent-override'], {
       cwd: projectDir,
       env: { RATCHET_BATCH_AGENT_CMD: prAgentOverride(sentinel) },
       timeoutMs: 120000,
@@ -207,7 +207,7 @@ describe('whole-batch PR opening — batch apply e2e against the fake spawn seam
   it('spawns no PR agent and leaves the terminal output unchanged when prGrouping is off', async () => {
     const { projectDir, sentinel } = await prepareCompletedRepo({ prGrouping: 'off' });
 
-    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH], {
+    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH, '--allow-agent-override'], {
       cwd: projectDir,
       env: { RATCHET_BATCH_AGENT_CMD: prAgentOverride(sentinel) },
       timeoutMs: 120000,
@@ -222,7 +222,7 @@ describe('whole-batch PR opening — batch apply e2e against the fake spawn seam
   it('behaves exactly like off when prGrouping is unset', async () => {
     const { projectDir, sentinel } = await prepareCompletedRepo(); // no settings
 
-    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH], {
+    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH, '--allow-agent-override'], {
       cwd: projectDir,
       env: { RATCHET_BATCH_AGENT_CMD: prAgentOverride(sentinel) },
       timeoutMs: 120000,
@@ -237,7 +237,7 @@ describe('whole-batch PR opening — batch apply e2e against the fake spawn seam
     const { projectDir, sentinel } = await prepareCompletedRepo({ prGrouping: 'whole-batch' });
     const env = { RATCHET_BATCH_AGENT_CMD: prAgentOverride(sentinel) };
 
-    const first = await runCLI(['--no-color', 'batch', 'apply', BATCH], {
+    const first = await runCLI(['--no-color', 'batch', 'apply', BATCH, '--allow-agent-override'], {
       cwd: projectDir,
       env,
       timeoutMs: 120000,
@@ -245,7 +245,7 @@ describe('whole-batch PR opening — batch apply e2e against the fake spawn seam
     expect(first.exitCode).toBe(0);
     expect(prOpenActions(sentinel)).toHaveLength(1);
 
-    const second = await runCLI(['--no-color', 'batch', 'apply', BATCH], {
+    const second = await runCLI(['--no-color', 'batch', 'apply', BATCH, '--allow-agent-override'], {
       cwd: projectDir,
       env,
       timeoutMs: 120000,
@@ -266,7 +266,7 @@ describe('whole-batch PR opening — batch apply e2e against the fake spawn seam
   it('surfaces a PR-open failure as a reported step failure and leaves retry possible', async () => {
     const { projectDir, sentinel } = await prepareCompletedRepo({ prGrouping: 'whole-batch' });
 
-    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH], {
+    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH, '--allow-agent-override'], {
       cwd: projectDir,
       env: { RATCHET_BATCH_AGENT_CMD: failingPrAgentOverride() },
       timeoutMs: 120000,
@@ -282,4 +282,38 @@ describe('whole-batch PR opening — batch apply e2e against the fake spawn seam
     expect(prOpenActions(sentinel)).toHaveLength(0);
     expect(hasJournaledPr(readJournal(projectDir, BATCH))).toBe(false);
   }, 120000);
+
+  // features/agent-cmd-override/opt-in-gate.feature: without the operator opt-in
+  // an active override is refused — the stub never runs, and the notice naming
+  // the variable and the flag is the observable output.
+  it('refuses RATCHET_BATCH_AGENT_CMD without --allow-agent-override (the stub never runs)', async () => {
+    const { projectDir, sentinel } = await prepareCompletedRepo({ prGrouping: 'whole-batch' });
+
+    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH], {
+      cwd: projectDir,
+      env: { RATCHET_BATCH_AGENT_CMD: prAgentOverride(sentinel) },
+      timeoutMs: 120000,
+    });
+
+    const out = `${apply.stdout}${apply.stderr}`;
+    expect(out).toMatch(/RATCHET_BATCH_AGENT_CMD is set but agent overrides are disabled/);
+    expect(out).toContain('--allow-agent-override');
+    expect(out).not.toContain('⚠ agent overridden by');
+    expect(prOpenActions(sentinel)).toHaveLength(0);
+    expect(hasJournaledPr(readJournal(projectDir, BATCH))).toBe(false);
+  }, 120000);
+
+  it('prints the override notice on stderr when the opt-in is given', async () => {
+    const { projectDir, sentinel } = await prepareCompletedRepo({ prGrouping: 'whole-batch' });
+
+    const apply = await runCLI(['--no-color', 'batch', 'apply', BATCH, '--allow-agent-override', '--json'], {
+      cwd: projectDir,
+      env: { RATCHET_BATCH_AGENT_CMD: prAgentOverride(sentinel) },
+      timeoutMs: 120000,
+    });
+
+    expect(apply.exitCode).toBe(0);
+    expect(apply.stderr).toContain('⚠ agent overridden by RATCHET_BATCH_AGENT_CMD');
+    expect(prOpenActions(sentinel)).toHaveLength(1);
+  }, 180000);
 });

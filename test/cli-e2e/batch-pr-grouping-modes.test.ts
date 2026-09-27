@@ -184,7 +184,7 @@ function prOpenActions(sentinel: string): string[] {
 
 /** One `batch apply` invocation against the fake spawn seam. */
 async function applyOnce(projectDir: string, sentinel: string): Promise<RunCLIResult> {
-  return runCLI(['--no-color', 'batch', 'apply', BATCH], {
+  return runCLI(['--no-color', 'batch', 'apply', BATCH, '--allow-agent-override'], {
     cwd: projectDir,
     env: { RATCHET_BATCH_AGENT_CMD: prAgentOverride(sentinel) },
     timeoutMs: APPLY_TIMEOUT,

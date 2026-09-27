@@ -3,7 +3,7 @@ import { program } from '../../src/cli/index.js';
 
 /**
  * Blackbox test for the top-level `Workflow:` help section. The five workflow
- * commands (`propose`, `apply`, `verify`, `batch`, `eval`) are tagged with
+ * commands (`propose`, `apply`, `verify`, `report`, `batch`, `eval`) are tagged with
  * Commander v14 help groups via `.helpGroup('Workflow:')`, so the rendered help
  * gathers them under a single `Workflow:` heading in workflow order, while the
  * setup/utility commands keep their default `Commands:` placement.
@@ -18,22 +18,24 @@ describe('top-level help: Workflow group', () => {
     expect(help).toContain('Workflow:');
   });
 
-  it('lists propose, apply, verify, batch, eval in workflow order under the heading', () => {
+  it('lists propose, apply, verify, report, batch, eval in workflow order under the heading', () => {
     const workflowIdx = help.indexOf('Workflow:');
     expect(workflowIdx).toBeGreaterThanOrEqual(0);
 
-    // All five workflow commands live after the heading...
+    // All six workflow commands live after the heading...
     const proposeIdx = help.indexOf('propose', workflowIdx);
     const applyIdx = help.indexOf('apply', workflowIdx);
     const verifyIdx = help.indexOf('verify', workflowIdx);
+    const reportIdx = help.indexOf('\n  report', workflowIdx);
     const batchIdx = help.indexOf('batch', workflowIdx);
     const evalIdx = help.indexOf('eval', workflowIdx);
 
     expect(proposeIdx).toBeGreaterThan(workflowIdx);
-    // ...and they appear in propose → apply → verify → batch → eval order.
+    // ...and they appear in propose → apply → verify → report → batch → eval order.
     expect(applyIdx).toBeGreaterThan(proposeIdx);
     expect(verifyIdx).toBeGreaterThan(applyIdx);
-    expect(batchIdx).toBeGreaterThan(verifyIdx);
+    expect(reportIdx).toBeGreaterThan(verifyIdx);
+    expect(batchIdx).toBeGreaterThan(reportIdx);
     expect(evalIdx).toBeGreaterThan(batchIdx);
   });
 

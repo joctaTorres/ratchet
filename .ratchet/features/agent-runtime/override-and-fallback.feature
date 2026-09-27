@@ -1,11 +1,12 @@
 Feature: The agent-command override and the direct-spawn fallback
   As a developer and as the test harness
-  I want RATCHET_BATCH_AGENT_CMD to run through the streaming runtime
+  I want an allowed RATCHET_BATCH_AGENT_CMD override to run through the streaming runtime
   And the old direct-spawn Spawner preserved as a fallback seam
   So that deterministic tests exercise the streaming path and a fallback exists for one release
 
   Scenario: RATCHET_BATCH_AGENT_CMD runs through the streaming runtime
     Given RATCHET_BATCH_AGENT_CMD is set to a stub command
+    And the operator passed "--allow-agent-override"
     And the execution locus is "local"
     When the engine runs a step
     Then the stub command runs through the AgentRuntime, not a bare spawn

@@ -5,7 +5,7 @@ Feature: Deterministically evaluable batch orchestration
 
   Scenario: Apply advances exactly one step driven by the stub
     Given a batch fixture and a scripted agent via "RATCHET_BATCH_AGENT_CMD"
-    When the eval check runs "ratchet batch apply" once
+    When the eval check runs "ratchet batch apply --allow-agent-override" once
     Then exactly one transition is performed and control returns
     And the verdict is decided from the observable batch state, not an LLM
 

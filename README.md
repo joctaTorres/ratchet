@@ -309,6 +309,7 @@ ratchet verify add-a-dark-mode-toggle        # check the implementation against 
 - **`propose "<objective>"`** derives a kebab-case change name from the objective (or `--name <change>`), refuses to clobber an existing change, and runs a forced `propose`. A blank/unsluggable objective with no `--name` fails with no spawn.
 - **`apply <change>`** requires the change to exist and (unless `--force`) to have a `plan.md`.
 - **`verify <change>`** requires the change to exist and (unless `--force`) every `## Tasks` checkbox to be checked.
+- **`report <change>`** is the batch-less report channel the spawned agent is told to use (`--status`, `--blocker`, `--needs-input`, `--complete`): it appends to the change-local `.run/journal.jsonl`, so a step whose agent reports `--complete` ends `advanced`.
 - All three accept repeatable **`-m, --message`** guidance (joined into one block for the agent), **`--json`**, and the standalone settings flags **`--agent`**, **`--locus`** (`local`/`docker`/`remote`), and **`--image`** — which resolve `flag → project config → default` (no manifest), validated before any agent is spawned.
 
 ## Batch orchestration

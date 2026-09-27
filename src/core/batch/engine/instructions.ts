@@ -84,13 +84,25 @@ function invocationArguments(context: ChangeStepContext): string {
   return parts.join('\n');
 }
 
+/**
+ * The report command prefix for this step's run-state locus. A batch step reports
+ * through `ratchet batch report <batch> --change <change>` (the batch run journal);
+ * a standalone step (no batch — the headless `propose`/`apply`/`verify` verbs)
+ * reports through `ratchet report <change>`, which appends to the change-local
+ * `.ratchet/changes/<change>/.run/` journal the engine reads for that step.
+ */
+function reportCommandPrefix(batch: string | undefined, change: string): string {
+  return batch ? `ratchet batch report ${batch} --change ${change}` : `ratchet report ${change}`;
+}
+
 function reportChannel(batch: string | undefined, change: string): string {
+  const report = reportCommandPrefix(batch, change);
   return [
     'Communicate ONLY by running these shell commands (do not prompt interactively):',
-    `  ratchet batch report ${batch} --change ${change} --status "<progress note>"`,
-    `  ratchet batch report ${batch} --change ${change} --blocker "<question you need answered>"`,
-    `  ratchet batch report ${batch} --change ${change} --needs-input "<what you need>"`,
-    `  ratchet batch report ${batch} --change ${change} --complete "<summary of what you did>"`,
+    `  ${report} --status "<progress note>"`,
+    `  ${report} --blocker "<question you need answered>"`,
+    `  ${report} --needs-input "<what you need>"`,
+    `  ${report} --complete "<summary of what you did>"`,
     'Raise a blocker instead of guessing when a decision is required.',
     'Post a completion ONLY when this single transition is genuinely finished.',
   ].join('\n');
@@ -188,9 +200,11 @@ function resumeGuidance(context: ChangeStepContext): string {
 
 export function buildAgentInstructions(context: ChangeStepContext): string {
   const sections = [
-    `You are advancing the ratchet batch "${context.batch}".`,
+    context.batch
+      ? `You are advancing the ratchet batch "${context.batch}".`
+      : `You are advancing the ratchet change "${context.change}" (standalone, no batch).`,
     `Perform EXACTLY ONE transition: ${context.transition.toUpperCase()} for change "${context.change}".`,
-    `You MUST finish by running \`ratchet batch report ${context.batch} --change ${context.change} --complete "<summary>"\` — without it this step is treated as unreported and parked.`,
+    `You MUST finish by running \`${reportCommandPrefix(context.batch, context.change)} --complete "<summary>"\` — without it this step is treated as unreported and parked.`,
     '',
     `Active phase: ${context.phase.name}`,
     `Phase goal: ${context.phase.goal}`,

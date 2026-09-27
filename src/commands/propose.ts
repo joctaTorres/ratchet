@@ -17,7 +17,7 @@
  *   5. Render the structured result (text or `--json`).
  */
 
-import { existsSync } from 'fs';
+import { isChangeCreated } from '../utils/change-utils.js';
 import path from 'path';
 import { resolveCurrentPlanningHomeSync } from '../core/planning-home.js';
 import { RATCHET_DIR_NAME } from '../core/config.js';
@@ -66,7 +66,7 @@ export async function proposeCommand(
 
   // 2. Refuse to clobber an existing change — propose creates, it does not resume.
   const changeDir = path.join(projectRoot, RATCHET_DIR_NAME, 'changes', change);
-  if (existsSync(changeDir)) {
+  if (isChangeCreated(changeDir)) {
     throw new Error(
       `Change "${change}" already exists (${changeDir}). ` +
         'propose creates a NEW change; use apply/verify to advance an existing one, ' +

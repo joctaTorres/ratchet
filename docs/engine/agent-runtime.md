@@ -355,7 +355,8 @@ leads with the notice.
 
 - the journal entry the engine appends for the overridden transition, PR, or
   decomposition step;
-- every entry the stand-in appends through `ratchet batch report`, which stamps
+- every entry the stand-in appends through `ratchet batch report` or the
+  batch-less `ratchet report`, which stamp
   when its environment carries `RATCHET_SPAWN_VIA=env-override`. Because the
   script exports this marker itself, it reaches the stand-in under every runtime.
   A leftover `RATCHET_BATCH_AGENT_CMD` in an operator's shell stamps nothing;

@@ -1,4 +1,5 @@
 import path from 'path';
+import { existsSync, readdirSync } from 'fs';
 import { RATCHET_DIR_NAME, DEFAULT_SCHEMA_NAME } from '../core/config.js';
 import { FileSystemUtils } from './file-system.js';
 import { writeChangeMetadata, validateSchemaName } from './change-metadata.js';
@@ -119,6 +120,26 @@ export function validateChangeName(name: string): ValidationResult {
  * const result = await createChange('/path/to/project', 'add-auth', { schema: 'my-workflow' })
  * console.log(result.schema) // 'my-workflow'
  */
+/**
+ * The change-local run-state directory name (`.ratchet/changes/<change>/.run/`).
+ * A standalone agent may report through `ratchet report <change>` before the
+ * change is scaffolded (a fresh `ratchet propose`), which creates only this
+ * directory.
+ */
+export const CHANGE_RUN_DIR_NAME = '.run';
+
+/**
+ * Whether a change has actually been created at `changeDir`: the directory exists
+ * and is not a directory whose ONLY entry is the `.run/` run-state directory. A
+ * `.run/`-only directory (early reports posted before scaffolding) is not a
+ * change yet, so `ratchet new change` and `ratchet propose` can still create it.
+ */
+export function isChangeCreated(changeDir: string): boolean {
+  if (!existsSync(changeDir)) return false;
+  const entries = readdirSync(changeDir);
+  return !(entries.length === 1 && entries[0] === CHANGE_RUN_DIR_NAME);
+}
+
 export async function createChange(
   projectRoot: string,
   name: string,
@@ -154,7 +175,9 @@ export async function createChange(
   const changeDir = path.join(options.changesDir ?? path.join(projectRoot, RATCHET_DIR_NAME, 'changes'), name);
 
   // Check if change already exists
-  if (await FileSystemUtils.directoryExists(changeDir)) {
+  // A directory holding only `.run/` (reports posted before scaffolding) is not
+  // a change yet: scaffold into it and keep the journal.
+  if (isChangeCreated(changeDir)) {
     throw new Error(`Change '${name}' already exists at ${changeDir}`);
   }
 

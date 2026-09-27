@@ -31,6 +31,10 @@ type RunLocus = { batch: string } | { change: string };
 | `journal.jsonl` | Append-only log of agent reports (progress, blocker, needs-input, completion), user answers/feedback, and phase **proof-of-work** verdicts. |
 | `state.json` | Current parked steps (`blocked` / `awaiting-approval`) for resume. |
 
+Agent reports reach the `{ batch }` locus through `ratchet batch report <batch>
+--change <change>` and the `{ change }` locus through
+[`ratchet report <change>`](../commands/report.md).
+
 A `JournalEntry` has a `kind` of `progress`, `blocker`, `needs-input`,
 `completion`, `answer`, `reject`, `proof-of-work`, or
 `proof-of-work-invalidated`. A `proof-of-work` entry additionally carries a

@@ -82,6 +82,7 @@ import {
   readChangeJournalTolerantForLocus,
 } from './run-state.js';
 import { ensureChangeMetadata } from '../../../utils/change-metadata.js';
+import { isChangeCreated } from '../../../utils/change-utils.js';
 import path from 'node:path';
 
 /** Print one streamed line to the terminal (injectable so tests can assert it). */
@@ -416,12 +417,13 @@ export class RatchetBatchEngine {
         // keys off that file, so an unstamped change is `done` in batch status
         // yet invisible to validate. Stamp it deterministically here so every
         // engine-created change is discoverable through a single mechanism
-        // (no-op when the directory is absent or already stamped).
-        if (transition === 'propose') {
-          ensureChangeMetadata(
-            path.join(projectRoot, '.ratchet', 'changes', change),
-            projectRoot
-          );
+        // (no-op when the directory is absent or already stamped). A directory
+        // holding only `.run/` — the agent reported (e.g. a blocker) through
+        // `ratchet report` but never scaffolded — is NOT stamped: stamping would
+        // make it a created change and a retried propose would refuse the name.
+        const proposedDir = path.join(projectRoot, '.ratchet', 'changes', change);
+        if (transition === 'propose' && isChangeCreated(proposedDir)) {
+          ensureChangeMetadata(proposedDir, projectRoot);
         }
         return readChangeDiskState(projectRoot, change);
       },

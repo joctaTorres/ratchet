@@ -307,7 +307,9 @@ ratchet batch report [name] --change <name> <kind-flag> <message> [--json]
 ```
 
 `[name]` defaults to the current active batch when omitted. `--change` is
-always required. Exactly one kind flag must be provided.
+always required. Exactly one kind flag must be provided. A standalone change
+step (no batch) reports through [`ratchet report <change>`](./report.md)
+instead.
 
 ### Options
 

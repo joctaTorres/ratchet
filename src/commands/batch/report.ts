@@ -47,26 +47,14 @@ export async function batchReportCommand(
     throw new Error("Missing required --change <name>.");
   }
 
-  // Exactly one report kind must be present.
-  const provided = [
-    ['status', options.status],
-    ['blocker', options.blocker],
-    ['needs-input', options.needsInput],
-    ['complete', options.complete],
-    ['answer', options.answer],
-    ['reject', options.reject],
-  ].filter(([, v]) => v !== undefined);
-
-  if (provided.length === 0) {
-    throw new Error(
-      'Provide one of --status, --blocker, --needs-input, --complete, --answer, or --reject.'
-    );
-  }
-  if (provided.length > 1) {
-    throw new Error('Provide exactly one report kind at a time.');
-  }
-
-  const [kind, message] = provided[0] as [string, string];
+  const [kind, message] = selectReportKind(options, [
+    'status',
+    'blocker',
+    'needs-input',
+    'complete',
+    'answer',
+    'reject',
+  ]);
   const result = applyReport(projectRoot, batch, change, kind, message, options);
 
   if (options.json) {
@@ -77,15 +65,51 @@ export async function batchReportCommand(
 }
 
 /**
- * Provenance for entries this report appends: `via: 'env-override'` when the
+ * Provenance for entries a report appends: `via: 'env-override'` when the
  * reporting process is a stand-in the engine spawned under an allowed agent-cmd
- * override (the engine injects `RATCHET_SPAWN_VIA` only into such a spawn's env).
- * A leftover `RATCHET_BATCH_AGENT_CMD` in an operator's shell stamps nothing.
+ * override (the override script exports `RATCHET_SPAWN_VIA` only for such a
+ * spawn). A leftover `RATCHET_BATCH_AGENT_CMD` in an operator's shell stamps
+ * nothing. Shared by `batch report` and the batch-less `ratchet report`.
  */
-function reportProvenance(): { via?: EnvOverrideProvenance } {
+export function reportProvenance(): { via?: EnvOverrideProvenance } {
   return process.env[SPAWN_VIA_ENV] === ENV_OVERRIDE_PROVENANCE
     ? { via: ENV_OVERRIDE_PROVENANCE }
     : {};
+}
+
+/** A report kind flag, named as it appears on the CLI (`--<kind>`). */
+export type ReportKind = 'status' | 'blocker' | 'needs-input' | 'complete' | 'answer' | 'reject';
+
+const REPORT_KIND_VALUE: Record<ReportKind, (o: BatchReportOptions) => string | undefined> = {
+  status: (o) => o.status,
+  blocker: (o) => o.blocker,
+  'needs-input': (o) => o.needsInput,
+  complete: (o) => o.complete,
+  answer: (o) => o.answer,
+  reject: (o) => o.reject,
+};
+
+/**
+ * Pick the single report kind present in `options`, restricted to `allowed`.
+ * Shared by `batch report` and the batch-less `ratchet report`, so both enforce
+ * the same "exactly one report kind" rule and name the kinds they accept.
+ */
+export function selectReportKind<K extends ReportKind>(
+  options: BatchReportOptions,
+  allowed: readonly K[]
+): [K, string] {
+  const provided = allowed
+    .map((kind) => [kind, REPORT_KIND_VALUE[kind](options)] as const)
+    .filter((entry): entry is readonly [K, string] => entry[1] !== undefined);
+
+  if (provided.length === 0) {
+    const flags = allowed.map((k) => `--${k}`);
+    throw new Error(`Provide one of ${flags.slice(0, -1).join(', ')}, or ${flags[flags.length - 1]}.`);
+  }
+  if (provided.length > 1) {
+    throw new Error('Provide exactly one report kind at a time.');
+  }
+  return [provided[0][0], provided[0][1]];
 }
 
 function applyReport(

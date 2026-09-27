@@ -40,7 +40,12 @@ toward.
 2. **Refuse-if-exists.** If `.ratchet/changes/<change>/` already exists, the
    command fails before resolving settings or spawning — `propose` creates a new
    change, it does not resume an existing one. Use `apply`/`verify` to advance an
-   existing change, or pass `--name <other>`.
+   existing change, or pass `--name <other>`. A directory whose only entry is
+   `.run/` (reports posted with [`ratchet report`](./report.md) before the
+   change was scaffolded) does not count as existing. After the agent exits, the
+   engine stamps a missing `.ratchet.yaml` only into a scaffolded change; a
+   `.run/`-only directory left by an early `--blocker` stays unstamped, so
+   re-running `propose --name <change>` is not refused.
 3. **Standalone settings.** Settings resolve `flag → project config → default`
    via `resolveChangeStepSettings` (no manifest). An invalid `--agent`,
    `--locus`, or `--image` value fails with an actionable error before any agent
@@ -59,6 +64,15 @@ toward.
    `--json`. The engine has already written the outcome journal entry under
    `.ratchet/changes/<change>/.run/`, so a `blocked` or `awaiting-approval` step
    stays resumable.
+
+
+## Report channel
+
+The spawned agent's prompt names no batch. It reports through
+[`ratchet report <change>`](./report.md) (`--status`, `--blocker`,
+`--needs-input`, `--complete`), which appends to the change-local journal the
+engine reads for this step. A `--complete` report maps the step to `advanced`;
+an agent that exits without one leaves the step `blocked`.
 
 ## Run state
 

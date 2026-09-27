@@ -61,6 +61,15 @@ Read from on-disk change state before any settings resolution or spawn:
    outcome journal entry is written under `.ratchet/changes/<change>/.run/`, so a
    `blocked` or `awaiting-approval` step stays resumable.
 
+
+## Report channel
+
+The spawned agent's prompt names no batch. It reports through
+[`ratchet report <change>`](./report.md) (`--status`, `--blocker`,
+`--needs-input`, `--complete`), which appends to the change-local journal the
+engine reads for this step. A `--complete` report maps the step to `advanced`;
+an agent that exits without one leaves the step `blocked`.
+
 ## Run state
 
 Run state is written under `.ratchet/changes/<change>/.run/` — never under

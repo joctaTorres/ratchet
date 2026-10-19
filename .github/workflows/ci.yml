@@ -204,10 +204,10 @@ jobs:
   #
   # Either guard alone blocks publish; together they are belt-and-braces. This
   # `real-npm-publish` slice flips the publish from a dry-run to a REAL provenance
-  # publish: the publish step now uploads to npm authenticated by the `NPM_TOKEN`
-  # secret, and the job holds `id-token: write` so npm can mint a provenance
-  # attestation. NEITHER gate is relaxed — only what happens once both are
-  # satisfied changes. The version guard (idempotency) still governs the actual
+  # publish: the publish step now uploads to npm authenticated by npm trusted
+  # publishing (GitHub OIDC; no stored token), and the job holds `id-token: write`
+  # so npm can exchange the OIDC token and mint a provenance attestation. NEITHER
+  # gate is relaxed — only what happens once both are satisfied changes. The version guard (idempotency) still governs the actual
   # upload via its `should_publish` output.
   publish:
     name: gated provenance publish
@@ -215,7 +215,8 @@ jobs:
     if: needs.ci.outputs.release_allowed == 'true'
     runs-on: ubuntu-latest
     # Least privilege, scoped to the one job that publishes: `id-token: write`
-    # lets npm provenance mint a signed attestation via GitHub's OIDC token;
+    # lets npm exchange GitHub's OIDC token for a short-lived publish credential
+    # (trusted publishing) and mint a signed provenance attestation;
     # `contents: read` is the minimal repo access the checkout needs.
     permissions:
       id-token: write
@@ -232,9 +233,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          # Point npm at the public registry so the `NODE_AUTH_TOKEN` injected at
-          # the publish step is honored for authentication.
+          # Point npm at the public registry (writes the `.npmrc` registry line
+          # that npm's trusted-publishing flow uses). No auth token is configured.
           registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm CLI >= 11.5.1; Node 22 ships npm 10.x. A
+      # caret range keeps a future npm major from changing publish behavior.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@^11.5.1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -267,9 +273,10 @@ jobs:
 
       # Real provenance publish: uploads the package to npm with a signed
       # provenance attestation (`--provenance`, requires the job's
-      # `id-token: write`) as a public package, authenticated by the `NPM_TOKEN`
-      # secret via `NODE_AUTH_TOKEN`. The `--tag` is the dynamically resolved
-      # dist-tag (a prerelease channel, or `latest` for a stable version), NOT
+      # `id-token: write`) as a public package, authenticated by npm trusted
+      # publishing: npm exchanges the job's GitHub OIDC token for a short-lived
+      # credential. No npm token secret is used and none is set. The `--tag` is
+      # the dynamically resolved dist-tag (a prerelease channel, or `latest` for a stable version), NOT
       # hard-coded. Gated on the version guard's `should_publish` output: an
       # already-published version skips this step while the job — and the whole
       # pipeline — stays green (idempotent).
@@ -278,6 +285,4 @@ jobs:
       # time. Don't "fix" an apparent missing build here.
       - name: Publish to npm (provenance)
         if: steps.version-guard.outputs.should_publish == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public --tag ${{ steps.dist-tag.outputs.tag }}

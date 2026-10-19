@@ -170,7 +170,7 @@ describe('gated publish wiring', () => {
     });
   });
 
-  describe('the real publish is authenticated from the npm token secret', () => {
+  describe('the real publish is authenticated through npm trusted publishing, not a token secret', () => {
     it('publishes a real release (no --dry-run); specifics in real-npm-publish.test.ts', () => {
       const steps = [...ciJob().steps, ...publishJob().steps];
       const realPublish = steps.find((s) => /npm\s+publish/i.test(s.run ?? ''));
@@ -178,10 +178,9 @@ describe('gated publish wiring', () => {
       expect(realPublish?.run).not.toMatch(/--dry-run/i);
     });
 
-    it('wires the npm auth token for the publish path', () => {
-      // Scan the workflow's executable content (comments stripped) for the token
-      // wiring — a comment must not satisfy the assertion, only real
-      // NODE_AUTH_TOKEN / secret references in executable YAML.
+    it('wires no npm auth token for the publish path', () => {
+      // Scan the workflow's executable content (comments stripped): no real
+      // NODE_AUTH_TOKEN / secret reference may remain in executable YAML.
       const source = readFileSync(
         path.resolve(
           path.dirname(fileURLToPath(import.meta.url)),
@@ -197,8 +196,8 @@ describe('gated publish wiring', () => {
         .split('\n')
         .map((line) => line.replace(/#.*$/, ''))
         .join('\n');
-      expect(executable).toMatch(/NODE_AUTH_TOKEN/);
-      expect(executable).toMatch(/secrets\.NPM_TOKEN/);
+      expect(executable).not.toMatch(/NODE_AUTH_TOKEN/);
+      expect(executable).not.toMatch(/secrets\.NPM_TOKEN/);
     });
   });
 

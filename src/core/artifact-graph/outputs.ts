@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import fg from 'fast-glob';
+import { globSync } from 'tinyglobby';
 import { FileSystemUtils } from '../../utils/file-system.js';
 import { filterHoldoutContent } from '../parsers/holdout-filter.js';
 
@@ -28,9 +28,12 @@ export function resolveArtifactOutputs(changeDir: string, generates: string): st
   }
 
   const normalizedPattern = FileSystemUtils.toPosixPath(generates);
-  const matches = fg
-    .sync(normalizedPattern, { cwd: changeDir, onlyFiles: true, absolute: true })
-    .map((match) => FileSystemUtils.canonicalizeExistingPath(path.normalize(match)));
+  const matches = globSync(normalizedPattern, {
+    cwd: changeDir,
+    onlyFiles: true,
+    absolute: true,
+    expandDirectories: false,
+  }).map((match) => FileSystemUtils.canonicalizeExistingPath(path.normalize(match)));
 
   return Array.from(new Set(matches)).sort();
 }

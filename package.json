@@ -2,7 +2,6 @@
   "name": "ratchet-ai",
   "version": "0.1.0-beta.4",
   "description": "AI-native spec-driven development that only moves forward",
-
   "keywords": [
     "ratchet",
     "bdd",
@@ -68,9 +67,9 @@
     "chalk": "^5.5.0",
     "commander": "^14.0.0",
     "cross-spawn": "7.0.6",
-    "fast-glob": "^3.3.3",
     "ora": "^8.2.0",
     "posthog-node": "^5.20.0",
+    "tinyglobby": "^0.2.17",
     "yaml": "^2.8.2",
     "zod": "^4.0.17"
   }

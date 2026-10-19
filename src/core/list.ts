@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import { RATCHET_DIR_NAME } from './config.js';
 import path from 'path';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
-import fg from 'fast-glob';
+import { glob } from 'tinyglobby';
 
 interface ChangeInfo {
   name: string;
@@ -161,7 +161,7 @@ export class ListCommand {
 
     let rels: string[] = [];
     try {
-      rels = await fg('**/*.feature', { cwd: featuresDir, onlyFiles: true });
+      rels = await glob('**/*.feature', { cwd: featuresDir, onlyFiles: true, expandDirectories: false });
     } catch {
       rels = [];
     }

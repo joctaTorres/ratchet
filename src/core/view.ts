@@ -3,7 +3,7 @@ import { RATCHET_DIR_NAME } from './config.js';
 import * as path from 'path';
 import chalk from 'chalk';
 import { getTaskProgressForChange, formatTaskStatus } from '../utils/task-progress.js';
-import fg from 'fast-glob';
+import { glob } from 'tinyglobby';
 
 export class ViewCommand {
   async execute(targetPath: string = '.'): Promise<void> {
@@ -140,7 +140,7 @@ export class ViewCommand {
     // Count `.feature` files grouped by capability (first path segment).
     let rels: string[] = [];
     try {
-      rels = await fg('**/*.feature', { cwd: featuresDir, onlyFiles: true });
+      rels = await glob('**/*.feature', { cwd: featuresDir, onlyFiles: true, expandDirectories: false });
     } catch {
       rels = [];
     }

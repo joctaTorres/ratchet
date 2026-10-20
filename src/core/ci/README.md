@@ -168,8 +168,11 @@ secret-scan outcomes into a single `GATE_SECURITY`, and runs
 publish is a property of the workflow **graph**, not just in-job ordering. It runs
 the version guard (`should_publish`), resolves the dist-tag, then
 `npm publish --provenance --access public --tag <resolved>` gated on
-`should_publish == 'true'`, authenticated by the `NPM_TOKEN` secret with the job
-holding `id-token: write` for provenance.
+`should_publish == 'true'`. Authentication is npm trusted publishing: the job
+holds `id-token: write`, and npm CLI >= 11.5.1 (installed by a dedicated step)
+exchanges the GitHub OIDC token for a short-lived publish credential. No
+`NPM_TOKEN` secret is used. See
+[`docs/engine/release-publish.md`](../../../docs/engine/release-publish.md).
 
 ### Fail-closed, end to end
 

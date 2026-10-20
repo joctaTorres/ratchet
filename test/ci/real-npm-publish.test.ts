@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
   loadCiWorkflow,
@@ -6,11 +9,12 @@ import {
 } from './helpers/workflow.js';
 
 /**
- * This slice flips the gated `publish` job from a dry-run to a REAL provenance
- * publish: the publish step now runs `npm publish --provenance --access public`
- * (no `--dry-run`), authenticated from the `NPM_TOKEN` secret via
- * `NODE_AUTH_TOKEN`, and the job holds `id-token: write` so npm can mint a
- * provenance attestation. NEITHER fail-closed gate is relaxed — the job still
+ * Proves `features/ci/real-npm-publish.feature`. The gated `publish` job runs a
+ * REAL provenance publish: `npm publish --provenance --access public` (no
+ * `--dry-run`), authenticated by npm trusted publishing (GitHub OIDC, no stored
+ * token), on an npm CLI >= 11.5.1, and the job holds `id-token: write` so npm
+ * can exchange the OIDC token and mint a provenance attestation. NEITHER
+ * fail-closed gate is relaxed — the job still
  * `needs: [ci]` and runs only when `needs.ci.outputs.release_allowed == 'true'`,
  * and the publish step still runs only when the version guard's
  * `should_publish` output is the literal `true`.
@@ -94,18 +98,46 @@ describe('real npm publish', () => {
     });
   });
 
-  describe('the publish is authenticated from the NPM_TOKEN secret', () => {
-    it('injects NODE_AUTH_TOKEN from secrets.NPM_TOKEN (no hard-coded token)', () => {
+  describe('the publish authenticates through npm trusted publishing', () => {
+    it('sets no NODE_AUTH_TOKEN on the publish step and hard-codes no token', () => {
       const publishStep = realPublishStep(job('publish').steps);
-      const token = publishStep.env.NODE_AUTH_TOKEN ?? '';
-      expect(token).toContain('secrets.NPM_TOKEN');
-      // The run body must not carry a literal token — auth is via the secret env.
+      expect(publishStep.env.NODE_AUTH_TOKEN).toBeUndefined();
       expect(publishStep.run ?? '').not.toMatch(/_authToken|npm_token=/i);
+    });
+
+    it('references no NPM_TOKEN secret or NODE_AUTH_TOKEN in executable YAML', () => {
+      const source = readFileSync(
+        path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          '..',
+          '..',
+          '.github',
+          'workflows',
+          'ci.yml',
+        ),
+        'utf8',
+      );
+      const executable = source
+        .split('\n')
+        .map((line) => line.replace(/#.*$/, ''))
+        .join('\n');
+      expect(executable).not.toMatch(/secrets\.NPM_TOKEN/);
+      expect(executable).not.toMatch(/NODE_AUTH_TOKEN/);
+      expect(executable).not.toMatch(/NPM_TOKEN/);
+    });
+
+    it('installs npm 11 globally before the publish step', () => {
+      const { steps } = job('publish');
+      const upgrade = findRunStepIndex(steps, 'npm install -g npm@');
+      const publishStep = findRunStepIndex(steps, 'npm publish');
+      expect(upgrade).toBeGreaterThanOrEqual(0);
+      expect(steps[upgrade].run).toMatch(/npm\s+install\s+-g\s+npm@\^?11/);
+      expect(upgrade).toBeLessThan(publishStep);
     });
   });
 
-  describe('the publish job grants provenance permissions', () => {
-    it('holds id-token: write (so npm can mint a provenance attestation)', () => {
+  describe('the publish job grants the OIDC permissions trusted publishing and provenance need', () => {
+    it('holds id-token: write (so npm can exchange the OIDC token and mint a provenance attestation)', () => {
       expect(job('publish').permissions['id-token']).toBe('write');
     });
 

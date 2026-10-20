@@ -382,7 +382,7 @@ describe('features-apply', () => {
   // swallowed into safe empty results rather than thrown.
   describe('defensive edge branches', () => {
     it('findFeatureUpdates returns [] when the features path is a file, not a directory', async () => {
-      // fast-glob with cwd pointing at a file throws; the catch maps it to [].
+      // globbing with cwd pointing at a file yields no matches (or throws, which the catch maps to []).
       await writeFile(path.join(changeDir, 'features'), 'i am a file, not a dir\n');
       const updates = await findFeatureUpdates(changeDir, storeDir);
       expect(updates).toEqual([]);

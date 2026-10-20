@@ -1,7 +1,7 @@
 import { ZodError } from 'zod';
 import { readFileSync } from 'fs';
 import path from 'path';
-import fg from 'fast-glob';
+import { glob } from 'tinyglobby';
 import {
   FeatureSchema,
   Feature,
@@ -73,7 +73,7 @@ export class Validator {
     const issues: ValidationIssue[] = [];
     let files: string[] = [];
     try {
-      files = await fg('**/*.feature', { cwd: dir, onlyFiles: true });
+      files = await glob('**/*.feature', { cwd: dir, onlyFiles: true, expandDirectories: false });
     } catch {
       files = [];
     }

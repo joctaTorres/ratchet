@@ -12,7 +12,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import fg from 'fast-glob';
+import { glob } from 'tinyglobby';
 import * as yaml from 'yaml';
 import { RATCHET_DIR_NAME } from './config.js';
 import { getStandardsDir, loadStandards } from './standards.js';
@@ -77,7 +77,7 @@ export async function findFeatureUpdates(
 
   let rels: string[] = [];
   try {
-    rels = await fg('**/*.feature', { cwd: changeFeaturesDir, onlyFiles: true });
+    rels = await glob('**/*.feature', { cwd: changeFeaturesDir, onlyFiles: true, expandDirectories: false });
   } catch {
     rels = [];
   }

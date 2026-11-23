@@ -6,7 +6,6 @@
 
 export type { SkillTemplate, CommandTemplate } from './types.js';
 
-export { getExploreSkillTemplate, getRctExploreCommandTemplate } from './workflows/explore.js';
 export { getApplyChangeSkillTemplate, getRctApplyCommandTemplate } from './workflows/apply-change.js';
 export { getArchiveChangeSkillTemplate, getRctArchiveCommandTemplate } from './workflows/archive-change.js';
 export { getVerifyChangeSkillTemplate, getRctVerifyCommandTemplate } from './workflows/verify-change.js';

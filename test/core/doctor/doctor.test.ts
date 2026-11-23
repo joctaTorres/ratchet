@@ -53,6 +53,24 @@ class FakeDeps implements BootstrapDeps {
 const ok = (stdout = ''): RunResult => ({ status: 0, stdout, stderr: '' });
 const fail = (stderr = 'boom'): RunResult => ({ status: 1, stdout: '', stderr });
 
+/**
+ * Isolated project root for the config-free checks. `runDoctorChecks` defaults
+ * its project scope to the caller's cwd, so calling it without an explicit root
+ * would read the real repository's `.ratchet/config.yaml` (e.g. a `batch.agent`
+ * setting) and eval scope — a dependency on the real repository that the
+ * testing standard's fixture pattern forbids. Every call below passes this
+ * empty root so the suite is independent of the real repo state.
+ */
+let isolatedRoot: string;
+
+beforeEach(async () => {
+  isolatedRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'ratchet-doctor-'));
+});
+
+afterEach(async () => {
+  await fsp.rm(isolatedRoot, { recursive: true, force: true });
+});
+
 /** Binaries for the real agent map (so tests track the source of truth). */
 const AGENT_BINS = Object.values(AGENT_BINARIES);
 const CLAUDE_BIN = AGENT_BINARIES.claude;
@@ -76,7 +94,7 @@ describe('runDoctorChecks', () => {
     deps.toolsOnPath.add(CLAUDE_BIN);
     deps.toolsOnPath.add('uv');
 
-    const report = runDoctorChecks(deps);
+    const report = runDoctorChecks(deps, isolatedRoot);
 
     expect(check(report, 'agent').status).toBe('pass');
     expect(check(report, 'runtime').status).toBe('pass');
@@ -89,7 +107,7 @@ describe('runDoctorChecks', () => {
     const deps = new FakeDeps(() => ok());
     deps.toolsOnPath.add('uv'); // runtime fine, only agent missing
 
-    const report = runDoctorChecks(deps);
+    const report = runDoctorChecks(deps, isolatedRoot);
     const agent = check(report, 'agent');
 
     expect(agent.status).toBe('fail');
@@ -111,7 +129,7 @@ describe('runDoctorChecks', () => {
     deps.toolsOnPath.add(CURSOR_BIN); // only cursor, NOT the default claude
     deps.toolsOnPath.add('uv');
 
-    const report = runDoctorChecks(deps);
+    const report = runDoctorChecks(deps, isolatedRoot);
     const agent = check(report, 'agent');
 
     expect(agent.status).toBe('pass');
@@ -126,7 +144,7 @@ describe('runDoctorChecks', () => {
     deps.toolsOnPath.add(CLAUDE_BIN);
     deps.toolsOnPath.add('uv');
 
-    const agent = check(runDoctorChecks(deps), 'agent');
+    const agent = check(runDoctorChecks(deps, isolatedRoot), 'agent');
     expect(agent.status).toBe('pass');
     expect(agent.detail).toContain('3.4.5');
   });
@@ -139,7 +157,7 @@ describe('runDoctorChecks', () => {
     deps.toolsOnPath.add(CLAUDE_BIN);
     deps.toolsOnPath.add('uv');
 
-    const agent = check(runDoctorChecks(deps), 'agent');
+    const agent = check(runDoctorChecks(deps, isolatedRoot), 'agent');
     expect(agent.status).toBe('pass');
     expect(agent.detail.toLowerCase()).toContain('unknown');
   });
@@ -149,7 +167,7 @@ describe('runDoctorChecks', () => {
     deps.toolsOnPath.add(CLAUDE_BIN);
     deps.toolsOnPath.add('uv');
 
-    const runtime = check(runDoctorChecks(deps), 'runtime');
+    const runtime = check(runDoctorChecks(deps, isolatedRoot), 'runtime');
     expect(runtime.status).toBe('pass');
     expect(runtime.detail.toLowerCase()).toContain('uv');
     expect(runtime.detail.toLowerCase()).toContain('preferred');
@@ -164,7 +182,7 @@ describe('runDoctorChecks', () => {
     deps.toolsOnPath.add(CLAUDE_BIN);
     // no uv on PATH
 
-    const runtime = check(runDoctorChecks(deps), 'runtime');
+    const runtime = check(runDoctorChecks(deps, isolatedRoot), 'runtime');
     expect(runtime.status).toBe('pass');
     expect(runtime.detail).toContain('3.12');
   });
@@ -179,7 +197,7 @@ describe('runDoctorChecks', () => {
     });
     deps.toolsOnPath.add(CLAUDE_BIN);
 
-    const report = runDoctorChecks(deps);
+    const report = runDoctorChecks(deps, isolatedRoot);
     const runtime = check(report, 'runtime');
     expect(runtime.status).toBe('fail');
     expect(runtime.severity).toBe('required');
@@ -200,7 +218,7 @@ describe('runDoctorChecks', () => {
     deps.toolsOnPath.add(CLAUDE_BIN);
     // no uv on PATH
 
-    const report = runDoctorChecks(deps);
+    const report = runDoctorChecks(deps, isolatedRoot);
     const runtime = check(report, 'runtime');
     expect(runtime.status).toBe('fail');
     expect(runtime.severity).toBe('required');
@@ -215,7 +233,7 @@ describe('runDoctorChecks', () => {
     const deps = new FakeDeps(() => fail()); // every probe fails (no interpreter)
     deps.toolsOnPath.add(CLAUDE_BIN);
 
-    const report = runDoctorChecks(deps);
+    const report = runDoctorChecks(deps, isolatedRoot);
     const runtime = check(report, 'runtime');
     expect(runtime.status).toBe('fail');
     expect(runtime.remedy).toBeDefined();
@@ -232,7 +250,7 @@ describe('runDoctorChecks', () => {
     deps.toolsOnPath.add(CLAUDE_BIN);
     deps.toolsOnPath.add('uv');
 
-    const report = runDoctorChecks(deps);
+    const report = runDoctorChecks(deps, isolatedRoot);
     const docker = check(report, 'docker');
     expect(docker.status).toBe('info');
     expect(docker.severity).toBe('optional');
@@ -247,7 +265,7 @@ describe('runDoctorChecks', () => {
     deps.toolsOnPath.add(CLAUDE_BIN);
     deps.toolsOnPath.add('uv');
 
-    const json = serializeReport(runDoctorChecks(deps));
+    const json = serializeReport(runDoctorChecks(deps, isolatedRoot));
     const parsed = JSON.parse(json);
 
     expect(typeof parsed).toBe('object');
@@ -269,7 +287,7 @@ describe('renderReport (human output)', () => {
     deps.toolsOnPath.add(CLAUDE_BIN);
     deps.toolsOnPath.add('uv');
 
-    const out = renderReport(runDoctorChecks(deps));
+    const out = renderReport(runDoctorChecks(deps, isolatedRoot));
     expect(out).toContain('Coding-agent CLI');
     expect(out).toContain('SWE-ReX runtime');
     expect(out).toContain('All required checks passed.');
@@ -281,7 +299,7 @@ describe('renderReport (human output)', () => {
     // No agent on PATH and no runtime → two required failures.
     const deps = new FakeDeps(() => fail());
 
-    const report = runDoctorChecks(deps);
+    const report = runDoctorChecks(deps, isolatedRoot);
     const out = renderReport(report);
     expect(out).toContain('✗'); // fail glyph
     expect(out).toContain('→'); // remedy arrow

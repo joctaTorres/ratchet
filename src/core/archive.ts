@@ -11,7 +11,7 @@ import { moveDirectory } from '../utils/move-directory.js';
 export class ArchiveCommand {
   async execute(
     changeName?: string,
-    options: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean } = {}
+    options: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean; acceptRemovedScenarios?: boolean } = {}
   ): Promise<void> {
     const targetPath = '.';
     const changesDir = path.join(targetPath, RATCHET_DIR_NAME, 'changes');
@@ -175,7 +175,11 @@ export class ArchiveCommand {
       }
 
       if (shouldUpdateFeatures) {
-        const result = await applyFeatures(targetPath, changeName, {});
+        // A scenario-loss refusal from applyFeatures aborts the archive here:
+        // the store is untouched and the change is not moved — even under -y.
+        const result = await applyFeatures(targetPath, changeName, {
+          acceptRemovedScenarios: options.acceptRemovedScenarios,
+        });
         if (result.noChanges) {
           console.log('\nNo feature changes to apply.');
         } else {

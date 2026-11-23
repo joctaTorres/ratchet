@@ -14,7 +14,7 @@ The model stays lean: every change is just **two artifacts** — feature files a
 You: /rct:propose add dark mode
 AI:  Created .ratchet/changes/add-dark-mode/
      ✓ features/theming/dark-mode.feature   — behavior as Given/When/Then
-     ✓ plan.md                              — why, what, design, tasks
+     ✓ plan.md                              — why, what, non-goals, design, tasks
      Ready for implementation.
 
 You: /rct:apply
@@ -37,7 +37,7 @@ Most developers don't trust what AI agents produce — and most spec tools can't
 - **The spec is also a regression suite.** [`ratchet eval`](#eval-suite) turns your `.feature` files into a scored, baseline-diffed eval run, judged against checked-in fixtures — never by the agent grading its own work. Behavior that passes today can't silently regress, and an agent can't go green by deleting the test.
 - **Two artifacts, no ceremony.** A change is `features/` + `plan.md`. That's it.
 - **Autonomy with a verifier.** [Batch orchestration](#batch-orchestration) slices a big objective into ordered vertical-slice phases and drives them to completion autonomously — but every phase is gated by an executable proof-of-work. The loop that runs unattended and quietly breaks three things it already had working is exactly the failure mode the gates exist to kill.
-- **From fuzzy idea to spec.** Not sure of the shape yet? `/rct:brainstorm` explores the project, clarifies one question at a time, weighs 2–3 approaches, and designs the change with you — then recommends and routes into `propose` (one change) or `propose-batch` (a phased effort).
+- **From fuzzy idea to spec.** Not sure of the shape yet? `/rct:brainstorm` triages your request (a complete one goes straight to `propose`), explores the project and echoes what it found, asks why-first questions — only when the answer changes what gets built — weighs the approaches, and plays the design back for your approval — then recommends and routes into `propose` (one change) or `propose-batch` (a phased effort).
 - **A living spec that ratchets forward.** Archiving a change copies its features into a permanent `.ratchet/features/` store — your project's always-current behavioral spec.
 - **Works with the tools you already use.** Slash commands and skills for Claude Code, OpenCode, Cursor, GitHub Copilot, and Codex.
 
@@ -48,13 +48,14 @@ Each change has exactly two artifacts, with a clear dependency:
 ```
 features/**/*.feature  ──▶  plan.md  ──▶  apply  ──▶  archive
    (Gherkin behavior)      (why+what         (tasks         (whole-file copy into
-                            +design+tasks)    tracked)        .ratchet/features/)
+                            +non-goals        tracked)        .ratchet/features/)
+                            +design+tasks)
 ```
 
 - **`features/`** — one or more Gherkin `.feature` files, grouped by capability (`features/<capability>/<name>.feature`). Each scenario must have at least one `Given`, one `When`, and one `Then`.
-- **`plan.md`** — a single document combining `## Why`, `## What Changes`, `## Design`, and a `## Tasks` checklist. The apply phase tracks progress by reading the `- [ ]` boxes here.
+- **`plan.md`** — a single document combining `## Why`, `## What Changes`, `## Non-goals`, `## Design` (with an `### Approaches considered` subsection), and a `## Tasks` checklist. The apply phase tracks progress by reading the `- [ ]` boxes here.
 - **`apply`** requires `plan`; it implements against the scenarios and checks off tasks.
-- **`archive`** validates, copies the change's features into the permanent store (add / overwrite by path, or remove via a `features/.deleted` tombstone), and moves the change into `changes/archive/<date>-<name>/`.
+- **`archive`** validates, copies the change's features into the permanent store (add / overwrite by path, or remove via a `features/.deleted` tombstone), and moves the change into `changes/archive/<date>-<name>/`. An overwrite that would drop a scenario the store already holds is refused by default — the error lists each lost scenario — unless you pass `--accept-removed-scenarios` or tombstone the whole file.
 
 ### Batches: the propose → apply loop
 
@@ -223,7 +224,7 @@ Then tell your agent what to build: `/rct:propose <your idea>` — or, when the 
 ```bash
 ratchet new change add-login                      # scaffold a change
 # write features/auth/login.feature  (Gherkin)
-# write plan.md                      (Why / What Changes / Design / Tasks)
+# write plan.md                      (Why / What Changes / Non-goals / Design / Tasks)
 ratchet validate add-login                        # check Gherkin + plan structure
 ratchet status --change add-login                 # artifact completion + applyRequires
 ratchet instructions apply --change add-login     # task list for implementation
@@ -263,7 +264,7 @@ The `core` profile installed by a stock `ratchet init` ships the change workflow
 | `new change <name>` | Scaffold a new change directory |
 | `validate [item]` | Validate a change's features + plan (`--all`, `--changes`, `--specs`) |
 | `status --change <name>` | Artifact completion status + what apply requires (`--json`) |
-| `instructions [artifact\|apply]` | Enriched, schema-driven guidance for an agent (`--json`) |
+| `instructions [artifact\|apply\|brainstorm]` | Enriched, schema-driven guidance for an agent (`--json`); `brainstorm` prints the change-free `spikes.enabled` payload (no `--change`, always exit zero) |
 | `template <name>` | Print a canonical schema template (e.g. `standard`) so authoring follows the schema |
 | `list` | List active changes (or `--specs` for the feature store) |
 | `view` | Interactive dashboard of changes and features |
@@ -436,12 +437,17 @@ stage** — one of the routable agent stages alongside `propose`, `apply`,
 `verify`, and `decompose` (route it independently in the [`agent` map](https://ratchet-ai.dev/configuration/config-yaml),
 e.g. `agent: { pr: opencode }`). That agent delegates to the shared **`/rct:open-pr`**
 instruction: it reads `git log` for the repository's own commit style (defaulting
-to semantic / Conventional Commits), commits the accumulated work, pushes the work
-branch, and opens one PR to the base branch using **whichever forge CLI your
-environment provides** (`gh`, `glab`, …) — ratchet hard-codes no forge. The PR-open
-outcome is recorded in run-state, so re-running the loop never double-opens; a
-commit/push/PR-open failure surfaces as a reported step failure and a later run
-retries. `prGrouping: off` (the default) or unset spawns no PR agent and the loop
+to semantic / Conventional Commits), commits the accumulated work, then runs
+**the project's own discovered test command** fresh on the committed tree before
+any push — a red, unrun, or undiscoverable result stops the step as a reported
+step failure, so a red tree is never pushed and the PR is never opened on an
+unproven tree — and only then pushes the work branch (**never force-pushing**; a
+rejected push is reported, not retried) and opens one PR to the base branch using
+**whichever forge CLI your environment provides** (`gh`, `glab`, …) — ratchet
+hard-codes no forge. The PR-open outcome is recorded in run-state, so re-running
+the loop never double-opens; a commit/test/push/PR-open failure surfaces as a
+reported step failure and a later run retries. `prGrouping: off` (the default)
+or unset spawns no PR agent and the loop
 behavior is unchanged. PR opening needs [a configured git remote](#requirements)
 to push to.
 
@@ -492,7 +498,9 @@ flowchart TD
   nogrouping["❌ no PR agent spawned<br/>Nothing to do — all changes are done."]
   already["❌ no second spawn<br/>Nothing to do — all changes are done."]
   spawn["⚙️ spawn one pr-stage agent<br/>/rct:open-pr (work + base branch as Input)"]
-  commit["📝 derive git-log style (semantic default)<br/>commit accumulated work · push work branch"]
+  commit["📝 derive git-log style (semantic default)<br/>commit accumulated work"]
+  test["🧪 run the project's own test command<br/>fresh on the committed tree"]
+  push["🚀 push work branch<br/>never force-push"]
   pr["🌐 open EXACTLY ONE pull request<br/>work branch → base branch (forge CLI)"]
   record["💾 record pr completion in run-state<br/>transition: 'pr' (hasJournaledPr)"]
   fail["❌ reported step failure<br/>no pr completion · retry stays possible"]
@@ -503,8 +511,11 @@ flowchart TD
   opened -- "already opened" --> already
   opened -- "not yet opened" --> spawn
   spawn --> commit
-  commit -- "success" --> pr
-  commit -- "commit / push fails" --> fail
+  commit --> test
+  test -- "green" --> push
+  test -- "red / unrun / undiscoverable" --> fail
+  push -- "success" --> pr
+  push -- "rejected — stop, no retry" --> fail
   pr -- "opened" --> record
   pr -- "PR-open fails" --> fail
 
@@ -515,7 +526,7 @@ flowchart TD
   classDef stop fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:#000000
   class done start
   class grouping,opened gate
-  class spawn,commit,pr work
+  class spawn,commit,test,push,pr work
   class record store
   class nogrouping,already,fail stop
 ```
@@ -683,8 +694,8 @@ deprecated alias mapped onto the gate.
 
 | Workflow | What it does |
 |---|---|
-| **brainstorm** | Front door for an open-ended idea: explores context, clarifies one question at a time, weighs 2–3 approaches, designs section-by-section, then recommends + gates a route into `propose` or `propose-batch` (does no implementation itself) |
-| **propose** | Clarifies intent (explore-first when unclear), enumerates every originating issue's requirements, generates `features/` + `plan.md`, then [reconciles them against every originating issue](#scope-reconciliation) |
+| **brainstorm** | Front door for an open-ended idea: triages a complete request straight to `propose`, explores + echoes context, asks why-first questions only when the answer changes what gets built (defaults said aloud otherwise), presents approaches in their own message and a compact playback labelling agent-filled proposals, designs section-by-section, then recommends + gates a route into `propose` or `propose-batch` (does no implementation itself) |
+| **propose** | Clarifies intent (explore-first when unclear), enumerates every originating issue's requirements, generates `features/` + `plan.md`, [reconciles them against every originating issue](#scope-reconciliation), and stops at the planning boundary — implementation is `/rct:apply`'s job, never the same response |
 | **apply** | Implements against each scenario's `Given/When/Then`, checking off plan tasks |
 | **verify** | Confirms the implementation satisfies every scenario and all tasks are done |
 | **archive** | Runs `ratchet archive` to ratchet features into the permanent store |
@@ -693,7 +704,7 @@ deprecated alias mapped onto the gate.
 | **apply-batch** | Autonomously drives a batch to completion — loops the single-step `ratchet batch apply`, surfaces halts/approvals + proof-of-work failures, records answers, resumes |
 | **eval** | Runs the engine-backed eval, surfaces regressions first, and guides authoring bindings for unjudged cases |
 
-> `explore` exists as an internal stance used by **propose** — it is not a standalone command (`brainstorm` is the standalone front door for open-ended design). `brainstorm`, `propose-batch`, + `apply-batch` all ship in the default `core` profile; `eval` is opt-in.
+> **brainstorm** is the standalone front door for open-ended design — no standalone `explore` command ships. `brainstorm`, `propose-batch`, + `apply-batch` all ship in the default `core` profile; `eval` is opt-in.
 
 ## Development
 
@@ -717,3 +728,5 @@ The CLI is built on `commander`, `@inquirer/prompts`, `zod`, `yaml`, `fast-glob`
 ## Credits & license
 
 ratchet is a fork of [OpenSpec](https://github.com/Fission-AI/OpenSpec) by Fission-AI. Licensed under MIT.
+
+Absorbed upstream baselines: OpenSpec 2.0.0 and superpowers 7.0.2 — the versions the upstream-absorption batch restated in ratchet terms.

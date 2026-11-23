@@ -178,6 +178,29 @@ describe('instructionsCommand', () => {
     expect(text).toContain('Always isolate fixtures.');
     expect(text).toContain('</standards>');
   });
+
+  it('carries the store-seeding line in the features artifact instruction payload', async () => {
+    // Mirrors features/propose/store-seeded-features.feature: the ratchet
+    // schema's features instruction directs starting from the existing store
+    // file — never recreating it from scratch — and keeps the
+    // one-file-per-scenario-set guidance.
+    await fixture.writeMetadata('seeded-features');
+
+    await instructionsCommand('features', { change: 'seeded-features', json: true });
+
+    const parsed = JSON.parse(output()) as { artifactId: string; instruction: string };
+    expect(parsed.artifactId).toBe('features');
+    // The YAML literal block wraps lines; collapse whitespace before pinning
+    // the payload wording.
+    const instruction = parsed.instruction.replace(/\s+/g, ' ');
+    expect(instruction).toContain(
+      'When `.ratchet/features/<capability>/<name>.feature` already exists at the target path, start from that store file'
+    );
+    expect(instruction).toContain('copy it into the change, keep its scenarios, then edit');
+    expect(instruction).toContain('never recreate it from scratch');
+    // The one-file-per-scenario-set guidance is kept.
+    expect(instruction).toContain('create one file per scenario set');
+  });
 });
 
 describe('generateApplyInstructions', () => {
@@ -223,6 +246,10 @@ describe('generateApplyInstructions', () => {
     expect(instructions.progress.total).toBe(3);
     expect(instructions.progress.complete).toBe(3);
     expect(instructions.progress.remaining).toBe(0);
+    // The completion payload suggests /rct:verify before any archive instead
+    // of presenting archive as the next step.
+    expect(instructions.instruction).toContain('/rct:verify');
+    expect(instructions.instruction).not.toContain('ready to be archived');
   });
 
   it('reports blocked when the tracked plan exists but contains no tasks', async () => {
@@ -316,6 +343,51 @@ describe('generateApplyInstructions', () => {
     expect(instructions.state).toBe('ready');
     expect(instructions.progress.total).toBe(0);
     expect(instructions.instruction).toBe('Just build it.');
+  });
+
+  it('falls back to the evidence-gated instruction when the schema has tracks but no apply instruction', async () => {
+    // Custom schema with a tracks file but no `instruction`: the ready-state
+    // fallback ticks a task only once its specified behavior is fully
+    // implemented with evidence.
+    await writeProjectSchema(
+      fixture.root,
+      'tracked-no-instruction',
+      [
+        'name: tracked-no-instruction',
+        'version: 1',
+        'artifacts:',
+        '  - id: spec',
+        '    generates: spec.md',
+        '    description: The spec',
+        '    template: spec.md',
+        'apply:',
+        '  requires: [spec]',
+        '  tracks: tasks.md',
+        '',
+      ].join('\n'),
+      { 'spec.md': '# spec template\n' }
+    );
+    const dir = await fixture.makeChange('fallback-ready');
+    await fs.writeFile(path.join(dir, 'spec.md'), '# done spec\n', 'utf-8');
+    await fs.writeFile(
+      path.join(dir, 'tasks.md'),
+      '# tasks\n\n- [ ] 1.1 do the thing\n',
+      'utf-8'
+    );
+    await fixture.writeMetadata('fallback-ready', 'schema: tracked-no-instruction\n');
+
+    const instructions = await generateApplyInstructions(
+      fixture.root,
+      'fallback-ready',
+      undefined,
+      planningHomeFor(fixture.root)
+    );
+
+    expect(instructions.state).toBe('ready');
+    expect(instructions.instruction).toContain(
+      'ticking a task only once its specified behavior is fully implemented with evidence'
+    );
+    expect(instructions.instruction).not.toContain('mark complete as you go');
   });
 
   const HELD_OUT_FEATURE = [

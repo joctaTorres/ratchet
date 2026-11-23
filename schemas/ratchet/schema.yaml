@@ -14,6 +14,9 @@ artifacts:
       - `generates` is a glob, so you choose the file names.
       - Group features by capability: create one file per scenario set at
         `features/<capability>/<name>.feature`.
+      - When `.ratchet/features/<capability>/<name>.feature` already exists at
+        the target path, start from that store file — copy it into the change,
+        keep its scenarios, then edit; never recreate it from scratch.
       - Use kebab-case for `<capability>` and `<name>` (e.g.
         `features/user-auth/login.feature`, `features/data-export/csv.feature`).
       - A capability is just the first path segment under `features/`; it groups
@@ -67,9 +70,16 @@ artifacts:
       - **## What Changes**: Bullet list of changes. Be specific about new
         capabilities, modifications, or removals. Mark breaking changes with
         **BREAKING**. Reference the feature files this plan implements.
+      - **## Non-goals**: What this change deliberately will NOT do. Each entry
+        traces to a decision the user, an originating issue, or a brainstorm
+        made - never an omission the agent approved on its own. When nothing
+        was ruled out, say so explicitly in one line.
       - **## Design**: Key technical decisions and approach - architecture,
         data model, dependencies, trade-offs, and any migration concerns.
-        Explain the "why" behind the technical choices.
+        Explain the "why" behind the technical choices. Include a
+        **### Approaches considered** subsection naming the approaches weighed
+        before settling on the design and why each was kept or dropped - "one
+        sensible way" is allowed when there is genuinely one sensible approach.
       - **## Tasks**: A checklist that breaks the work into trackable items.
         The apply phase parses this section to track progress, so follow the
         format exactly.
@@ -99,5 +109,7 @@ apply:
   tracks: plan.md
   instruction: |
     Read the feature files and the plan, implement against each Scenario's
-    Given/When/Then, and work through the pending tasks in plan.md, marking
-    them complete as you go. Pause if you hit blockers or need clarification.
+    Given/When/Then, and work through the pending tasks in plan.md, ticking a
+    task only once its specified behavior is fully implemented with evidence,
+    as the apply workflow requires. Pause if you hit blockers or need
+    clarification.

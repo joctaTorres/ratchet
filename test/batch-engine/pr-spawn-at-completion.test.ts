@@ -180,6 +180,34 @@ describe('pr-spawn-at-completion — whole-batch grouping spawns one delegating 
       journal.filter((e) => e.kind === 'completion' && e.transition === 'pr')
     ).toHaveLength(1);
   });
+
+  // Pins the delegated-lifecycle single-author rule (open-pr-tested-push task
+  // 1.5): the engine's PR prompt delegates to the shared open-pr skill and
+  // carries NO parallel copy of the lifecycle the skill authors — the tested
+  // push, the force-push ban, and the commit/push/PR-open steps live in the
+  // shared body alone, so the engine prompt can never drift from them.
+  it('the PR prompt delegates without re-describing the open-pr lifecycle', async () => {
+    await engine({ spawner: capturingSpawner }).runPrStep(prCtx());
+    expect(calls).toHaveLength(1);
+    const instr = calls[0].instructions;
+
+    // The delegation is intact: the invocation token, the Do-NOT-hand-build
+    // wording, and the resolved work/base branches all ride in the prompt.
+    expect(instr).toContain(
+      CommandAdapterRegistry.get(DEFAULT_AGENT)!.getInvocation('open-pr')
+    );
+    expect(instr).toMatch(/Do NOT hand-build/);
+    expect(instr).toMatch(/delegate to the skill/);
+    expect(instr).toContain(WORK);
+    expect(instr).toContain(BASE);
+
+    // The prompt carries NO engine-side re-description of the steps the shared
+    // open-pr body authors.
+    expect(instr).not.toMatch(/git log/);
+    expect(instr).not.toMatch(/accumulated work/);
+    expect(instr).not.toMatch(/push the work branch/);
+    expect(instr).not.toMatch(/forge CLI/);
+  });
 });
 
 describe('pr-spawn-at-completion — the pr stage routes the spawn', () => {

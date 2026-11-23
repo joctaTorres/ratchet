@@ -5,6 +5,7 @@ import os from 'os';
 import { randomUUID } from 'crypto';
 import {
   SKILL_NAMES,
+  COMMAND_IDS,
   getToolsWithSkillsDir,
   getToolSkillStatus,
   getToolStates,
@@ -13,6 +14,11 @@ import {
   getConfiguredTools,
   getAllToolVersionStatus,
 } from '../../../src/core/shared/tool-detection.js';
+import { getSkillTemplates, getCommandTemplates } from '../../../src/core/shared/skill-generation.js';
+import { ALL_WORKFLOWS } from '../../../src/core/profiles.js';
+import { AI_TOOLS } from '../../../src/core/config.js';
+import { CommandAdapterRegistry } from '../../../src/core/command-generation/index.js';
+import { toolHasAnyConfiguredCommand } from '../../../src/core/profile-sync-drift.js';
 
 describe('tool-detection', () => {
   let testDir: string;
@@ -28,7 +34,7 @@ describe('tool-detection', () => {
 
   describe('SKILL_NAMES', () => {
     it('should contain the generated skill names', () => {
-      expect(SKILL_NAMES).toHaveLength(10);
+      expect(SKILL_NAMES).toHaveLength(12);
       expect(SKILL_NAMES).toContain('ratchet-propose');
       expect(SKILL_NAMES).toContain('ratchet-apply-change');
       expect(SKILL_NAMES).toContain('ratchet-verify-change');
@@ -37,6 +43,8 @@ describe('tool-detection', () => {
       expect(SKILL_NAMES).toContain('ratchet-apply-batch');
       expect(SKILL_NAMES).toContain('ratchet-archive-batch');
       expect(SKILL_NAMES).toContain('ratchet-propose-batch');
+      expect(SKILL_NAMES).toContain('ratchet-decompose-phase');
+      expect(SKILL_NAMES).toContain('ratchet-open-pr');
       expect(SKILL_NAMES).toContain('ratchet-brainstorm');
       expect(SKILL_NAMES).toContain('ratchet-eval');
       expect(SKILL_NAMES).not.toContain('ratchet-explore');
@@ -328,6 +336,110 @@ metadata:
       const cursorStatus = statuses.find(s => s.toolId === 'cursor');
       expect(cursorStatus?.generatedByVersion).toBe('0.23.0');
       expect(cursorStatus?.needsUpdate).toBe(false);
+    });
+  });
+
+  /**
+   * Implements features/update-sync/detection-registry-parity.feature: the
+   * detection registry (SKILL_NAMES / COMMAND_IDS) covers every shipped
+   * workflow, decompose-phase and open-pr installations are counted like every
+   * other workflow, and legacy-only detection entries are tolerated.
+   */
+  describe('detection-registry parity', () => {
+    it('counts only-installed decompose-phase and open-pr skills for every tool with a skills dir', async () => {
+      const toolIds = getToolsWithSkillsDir();
+      expect(toolIds.length).toBeGreaterThan(0);
+
+      for (const toolId of toolIds) {
+        const tool = AI_TOOLS.find((t) => t.value === toolId);
+        expect(tool?.skillsDir, `no skillsDir for tool '${toolId}'`).toBeDefined();
+
+        for (const skillName of ['ratchet-decompose-phase', 'ratchet-open-pr']) {
+          const skillDir = path.join(testDir, tool!.skillsDir!, 'skills', skillName);
+          await fs.mkdir(skillDir, { recursive: true });
+          await fs.writeFile(path.join(skillDir, 'SKILL.md'), 'test content');
+        }
+
+        const status = getToolSkillStatus(testDir, toolId);
+        expect(status.configured, `expected ${toolId} to be detected as configured`).toBe(true);
+        expect(status.fullyConfigured, `expected ${toolId} to not be fully configured`).toBe(false);
+        expect(status.skillCount, `expected both new skills to count for ${toolId}`).toBe(2);
+      }
+    });
+
+    it('detects a tool with only the open-pr command installed for every registered agent', async () => {
+      const originalCodexHome = process.env.CODEX_HOME;
+      // Codex command paths are absolute under CODEX_HOME; redirect it into the
+      // fixture so the test stays hermetic and never touches the real home dir.
+      process.env.CODEX_HOME = path.join(testDir, '.codex-home');
+      try {
+        const adapters = CommandAdapterRegistry.getAll().filter((adapter) =>
+          AI_TOOLS.some((tool) => tool.value === adapter.toolId && tool.skillsDir)
+        );
+        expect(adapters.length).toBeGreaterThan(0);
+
+        for (const adapter of adapters) {
+          expect(
+            toolHasAnyConfiguredCommand(testDir, adapter.toolId),
+            `expected no configured command for ${adapter.toolId} before the file is written`
+          ).toBe(false);
+
+          const commandPath = adapter.getFilePath('open-pr');
+          // Absolute paths (codex under CODEX_HOME) are used as-is.
+          const fullPath = path.isAbsolute(commandPath)
+            ? commandPath
+            : path.join(testDir, commandPath);
+          await fs.mkdir(path.dirname(fullPath), { recursive: true });
+          await fs.writeFile(fullPath, 'test content');
+
+          expect(
+            toolHasAnyConfiguredCommand(testDir, adapter.toolId),
+            `expected the open-pr command to be detected for ${adapter.toolId}`
+          ).toBe(true);
+        }
+      } finally {
+        if (originalCodexHome === undefined) {
+          delete process.env.CODEX_HOME;
+        } else {
+          process.env.CODEX_HOME = originalCodexHome;
+        }
+      }
+    });
+
+    it('detection registry covers every workflow in ALL_WORKFLOWS', () => {
+      const skillTemplates = getSkillTemplates();
+      const commandTemplates = getCommandTemplates();
+
+      for (const workflow of ALL_WORKFLOWS) {
+        // Never skip: a workflow with no skill or command template is a hard
+        // failure, not a pass — the generation registries must cover it.
+        const skillEntry = skillTemplates.find((entry) => entry.workflowId === workflow);
+        expect(skillEntry, `workflow '${workflow}' has no skill template`).toBeDefined();
+        expect(SKILL_NAMES).toContain(skillEntry!.dirName);
+
+        const commandEntry = commandTemplates.find((entry) => entry.id === workflow);
+        expect(commandEntry, `workflow '${workflow}' has no command template`).toBeDefined();
+        expect(COMMAND_IDS).toContain(commandEntry!.id);
+      }
+    });
+
+    it('tolerates legacy-only detection entries (explore)', () => {
+      const generatedCommandIds = getCommandTemplates().map((entry) => entry.id);
+      const generatedSkillDirNames = getSkillTemplates().map((entry) => entry.dirName);
+
+      // 'explore' is a legacy command id: still detected, but no current
+      // workflow generates it — legacy ids are allowed.
+      expect(COMMAND_IDS).toContain('explore');
+      expect(generatedCommandIds).not.toContain('explore');
+
+      // Parity asserts coverage only: everything generated is detected; extra
+      // legacy entries in the registry never fail the check.
+      for (const id of generatedCommandIds) {
+        expect(COMMAND_IDS).toContain(id);
+      }
+      for (const dirName of generatedSkillDirNames) {
+        expect(SKILL_NAMES).toContain(dirName);
+      }
     });
   });
 });

@@ -609,6 +609,46 @@ ratchet batch archive [name] [-y | --yes] [--json]
 A mid-cascade failure leaves earlier changes archived and the batch directory in
 place. Re-running is safe: already-archived changes are skipped.
 
+#### Scenario-guard halt
+
+```mermaid
+flowchart TD
+    A["⚙️ Cascade archives members in phase order"] --> B{"🛡️ Scenario guard trips at a member?"}
+    B -->|"No"| C["✅ Batch directory moved to batches/archive/"]
+    B -->|"Yes"| D["❌ Halt: refusal names the member and each lost scenario with its store file"]
+    D --> E["💾 Earlier members stay archived; batch directory stays in place"]
+    E --> F["👤 Resolve the member via its own ratchet archive: features/.deleted tombstone or --accept-removed-scenarios"]
+    F --> G["🔁 Re-run ratchet batch archive: archived members are skipped"]
+    G --> C
+
+    classDef compute fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef decision fill:#FFF3CD,stroke:#8B8000,stroke-width:2px,color:black
+    classDef error fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+    classDef store fill:#D3D3D3,stroke:#333,stroke-width:2px,color:black
+    classDef actor fill:#87CEEB,stroke:#333,stroke-width:2px,color:black
+    classDef success fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+
+    class A,G compute
+    class B decision
+    class D error
+    class E store
+    class F actor
+    class C success
+```
+
+When a member change's version of a store feature file drops scenarios present
+in the store, the scenario-loss guard refuses that member's archive and the
+cascade halts at the offending member. The refusal exits non-zero, names the
+member change, and lists each lost scenario and its store file. Earlier members
+in the cascade stay archived, the batch directory is not moved, and no archived
+batch directory is created. Re-running the command skips already-archived
+members and halts again at the same member until it is resolved. Intentional
+scenario removal is resolved through the member's individual `ratchet archive`:
+either list the store-relative path in the member change's `features/.deleted`
+tombstone, or pass `--accept-removed-scenarios` to that member's archive — never
+to the batch cascade, which has no such flag. Once the offending member is
+archived, a re-run completes and moves the batch directory.
+
 **JSON output**: `{ batchName, archivedChanges, skippedArchived, skippedPending,
 archivePath?, aborted? }`.
 

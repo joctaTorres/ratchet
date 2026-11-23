@@ -202,6 +202,7 @@ export class Validator {
    * - ## What Changes present and non-empty
    * - ## Design present
    * - ## Tasks present with at least one "- [ ]" checkbox
+   * - ## Non-goals present (WARNING-only advisory when absent, never ERROR)
    */
   async validatePlan(filePath: string): Promise<ValidationReport> {
     let content: string;
@@ -274,6 +275,16 @@ export class Validator {
           message: VALIDATION_MESSAGES.PLAN_NO_TASKS,
         });
       }
+    }
+
+    // Non-goals section presence (advisory only — WARNING, never ERROR, so
+    // plans authored before the section existed keep validating).
+    if (parser.getSectionContent('Non-goals') === undefined) {
+      issues.push({
+        level: 'WARNING',
+        path: 'Non-goals',
+        message: VALIDATION_MESSAGES.PLAN_NO_NONGOALS,
+      });
     }
 
     return this.createReport(issues);

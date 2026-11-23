@@ -7,8 +7,11 @@
  * shared body" pattern `decompose-phase.ts` uses for an engine-spawned command.
  * The body instructs the agent to read `git log` for the repo's commit-message
  * style (defaulting to semantic / Conventional Commits), commit the accumulated
- * uncommitted work of the prior stage agents in that style, push the work branch
- * to its remote, and open EXACTLY ONE pull request from the work branch to the
+ * uncommitted work of the prior stage agents in that style, run the project's
+ * own discovered test command fresh on the committed tree — stopping before any
+ * push on a red, unrun, or undiscoverable result — push the work branch to its
+ * remote (never force-pushing; a rejected push is stopped and reported, never
+ * retried), and open EXACTLY ONE pull request from the work branch to the
  * base branch the surrounding instructions supply, using whichever forge CLI the
  * environment provides.
  *
@@ -35,7 +38,8 @@ import type { SkillTemplate, CommandTemplate } from '../types.js';
 
 const OPEN_PR_BODY = `Open the single pull request for the work on this branch. The prior stage agents
 have left their work uncommitted on the current work branch; your job is to commit
-that work in the repository's own commit style, push the branch, and open EXACTLY
+that work in the repository's own commit style, prove the committed tree green
+with the project's own test command, push the branch, and open EXACTLY
 ONE pull request from the work branch to the base branch the surrounding
 instructions supply — using whichever forge CLI the environment already provides.
 
@@ -68,12 +72,37 @@ only ever the value the surrounding instructions give you.
    the work branch, in the commit-message style you derived in step 1. Write a
    clear message describing the batch's change as a whole.
 
-3. **Push the work branch to its remote**
+3. **Run the project's own test command fresh on the committed tree**
+
+   Discover the project's own test command from the project itself — its
+   package manifest test script, a Makefile test target, CI configuration, or
+   whatever the project already declares. Do NOT add new ratchet configuration
+   and do NOT assume a toolchain: read what the project declares and run
+   exactly that.
+
+   Run the discovered command fresh on the committed tree — the exact commit
+   you are about to push — before any push, so the pushed tree and the PRed
+   tree are always the tested tree, never a drifted or stale one.
+
+   - If the fresh run FAILS: STOP and report the exact command and its
+     failing result. Never push a red tree, and never open the pull request
+     on a red or unrun test result.
+   - If no test command can be discovered, or the run cannot complete: STOP
+     and report the reason. The pull request is opened only on a fresh green
+     run of the project's own test command.
+
+4. **Push the work branch to its remote — never force-push**
 
    Push the work branch to its remote (setting the upstream if it is not yet
    tracked) so the forge can open a pull request from it.
 
-4. **Open exactly one pull request to the supplied base branch**
+   NEVER force-push under any circumstances — no \`git push --force\`, no
+   \`--force-with-lease\`, no force variant of any kind. If the remote rejects
+   the push, STOP and report the rejection, naming what the remote said — do
+   NOT retry the push and do NOT force it. The engine surfaces the stopped
+   step as a reported step failure, so a later run can retry cleanly.
+
+5. **Open exactly one pull request to the supplied base branch**
 
    Detect whichever forge CLI the environment provides (for example \`gh\` for
    GitHub or \`glab\` for GitLab — these are examples, not the required tool) and
@@ -97,6 +126,7 @@ After opening the PR, summarize:
 - The commit-message style you derived (and whether you defaulted to semantic /
   Conventional Commits).
 - The commit you authored on the work branch.
+- The exact test command you discovered and ran, and its fresh green result.
 - The work branch you pushed and its remote.
 - The single pull request you opened, from the work branch to the supplied base
   branch, and the forge CLI you used.
@@ -108,6 +138,11 @@ After opening the PR, summarize:
   branch's upstream, or config).
 - Match the repository's own \`git log\` commit style; default to semantic /
   Conventional Commits only when the history is inconclusive.
+- Run the project's own discovered test command fresh on the committed tree
+  before any push; never push a red tree and never open the pull request on a
+  red, unrun, or undiscoverable test result — stop and report instead.
+- Never force-push under any circumstances; on a rejected push, stop and report
+  the remote's rejection instead of retrying the push or forcing it.
 - Use whichever forge CLI the environment provides; hard-code no single forge CLI
   and no ratchet-specific toolchain command as the required tool.
 - If no forge CLI is available, stop and report — never silently substitute a

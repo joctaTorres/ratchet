@@ -43,6 +43,8 @@ run-records directory (see the table below).
 
 For each AI tool selected during `init`, ratchet writes two kinds of generated files: **skills** (agent skill markdown files under the tool's `skills/` directory) and **commands** (slash-command or prompt files in the tool's command directory). Both are fully regenerated on every `init` re-run.
 
+Skill and command bodies are rendered from shared tool-agnostic templates: every tool receives the same body text, and only the file path and frontmatter format vary by tool. Rendered bodies are agent-neutral. A reference to an agent-specific capability appears only in the capability-plus-fallback form — the capability, optionally illustrated with one tool's name, qualified with "if your agent has one", and paired with an "otherwise …" plain-prose fallback — never as a bare agent-specific tool name. A reference to another ratchet workflow uses the canonical `/rct:<name>` invocation form.
+
 ### Skill files
 
 Each skill is a `SKILL.md` file inside a named subdirectory under `<tool-dir>/skills/`. The file contains a YAML frontmatter block followed by the skill instructions.
@@ -97,7 +99,9 @@ The `core` profile (the default) installs eleven workflows. The `eval` workflow 
 The `open-pr` command is also the artifact the batch engine renders into the spawn
 locus for the whole-batch PR step: at batch completion the engine spawns a PR agent
 that delegates to `/rct:open-pr` to commit the accumulated work in the repo's
-`git log` commit style, push the work branch, and open exactly one forge-agnostic PR
+`git log` commit style, run the project's own discovered test command fresh on the
+committed tree, push only a green tree — never force-pushing, and stopping and
+reporting on a rejected push — and open exactly one forge-agnostic PR
 to its base branch. Like every command it is generated for every tool above at the
 tool's command path (e.g. claude `.claude/commands/rct/open-pr.md`, cursor
 `.cursor/commands/rct-open-pr.md`).
@@ -260,6 +264,164 @@ unearned claim is surfaced and its remaining scope carried forward, never inheri
 fact.
 
 
+### Scenario-loss accept flow in the archive workflow
+
+The `archive` workflow (the `ratchet-archive-change` skill and the `/rct:archive`
+command, rendered from one shared body for every tool in the table above) runs
+`ratchet archive` so the CLI's scenario-loss guard engages, and routes a refusal
+through the user instead of approving it on the agent's own initiative.
+
+#### Overview
+
+```mermaid
+flowchart TD
+    A[📦 First archive attempt<br/>ratchet archive — no -y · never the flag]
+    B{🛡️ Scenario-loss guard<br/>trips?}
+    C[✅ Archive proceeds<br/>store updated · change moved]
+    D[❌ Refusal — non-zero exit<br/>lists each lost scenario per store file]
+    E[🗣️ Name each lost scenario and<br/>its store file exactly as listed]
+    F[👤 Ask whether the removal is intentional<br/>structured question · otherwise plain prose]
+    G{✅ User explicitly confirms<br/>the removal is intentional?}
+    H[🔁 Retry with --accept-removed-scenarios<br/>only on that explicit approval]
+    I[🪦 Whole-file removal route<br/>features/.deleted tombstone · plain re-run · no flag]
+    J[🛠️ Restore the missing scenarios<br/>plain re-run]
+
+    A --> B
+    B -- no --> C
+    B -- yes --> D
+    D --> E
+    E --> F
+    F --> G
+    G -- yes --> H
+    G -- whole file goes --> I
+    G -- no --> J
+
+    classDef entry fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+    classDef step  fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef gate  fill:#FFD700,stroke:#333,stroke-width:2px,color:black
+    classDef halt  fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+    classDef done  fill:#ADD8E6,stroke:#333,stroke-width:2px,color:darkblue
+
+    class A entry
+    class E,F,H,I,J step
+    class B,G gate
+    class D halt
+    class C done
+```
+
+The first archive attempt runs `ratchet archive "<name>"` without `-y` and never
+with `--accept-removed-scenarios`, so the CLI's own confirmations and the
+scenario-loss guard surface to the user instead of being pre-approved. When the
+guard refuses — a non-zero exit printing `Refusing to apply features: N store
+scenario(s) would be lost.` followed by each store file and its lost scenario
+names — the workflow body directs the agent to:
+
+1. Name each lost scenario and its store file back to the user exactly as the
+   refusal lists them.
+2. Ask the user whether the removal is intentional, using a structured-question
+   capability if the agent has one and plain prose otherwise.
+3. Retry `ratchet archive "<name>" --accept-removed-scenarios` only after the
+   user explicitly confirms the removal is intentional — never on the agent's
+   own initiative and never on the first attempt.
+
+For an intentional whole-file removal, the `features/.deleted` tombstone is the
+route: the store-relative path is listed there and plain `ratchet archive` is
+re-run with no flag. Otherwise the missing scenarios are restored into the
+change's feature file and plain `ratchet archive` is re-run.
+
+### Store-seeded feature authoring in the propose workflow
+
+The `propose` workflow (the `ratchet-propose` skill and the `/rct:propose`
+command, rendered from one shared body for every tool in the table above) seeds
+each feature file from the feature store, so a scenario the store already holds
+is preserved by construction instead of being dropped by a from-scratch draft
+that the archive guard then has to refuse.
+
+#### Overview
+
+```mermaid
+flowchart TD
+    A[📝 Propose authors a features artifact<br/>one feature file at a time]
+    B[📖 Read the capability's existing store files<br/>under the feature store]
+    C{💾 A store file already exists at<br/>the file's store-relative path?}
+    D[📋 Start from that store file<br/>copy it into the change · edit the copy<br/>never author from scratch]
+    E[✍️ Author the feature file new<br/>only when the store has no file at that path]
+    F[🚫 Never add a scenario that already exists<br/>in another store file of the capability]
+    G[✅ Archive guard passes<br/>store scenarios preserved by construction]
+
+    A --> B
+    B --> C
+    C -- yes --> D
+    C -- no --> E
+    D --> F
+    E --> F
+    F --> G
+
+    classDef entry fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+    classDef step  fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef gate  fill:#FFD700,stroke:#333,stroke-width:2px,color:black
+    classDef done  fill:#ADD8E6,stroke:#333,stroke-width:2px,color:darkblue
+
+    class A entry
+    class B,D,E,F step
+    class C gate
+    class G done
+```
+
+In the artifact-creation loop, before authoring each feature file of a
+`features` artifact, the workflow body directs the agent to:
+
+1. Read the capability's existing store files under
+   `.ratchet/features/<capability>/`, and never add a scenario that already
+   exists in another store file of the capability.
+2. When a store file already exists at the file's store-relative path, start
+   the feature file from that store file — copy it into the change and edit
+   the copy, never author it from scratch — so existing store scenarios are
+   preserved by construction.
+3. Author a feature file new only when the store has no file at that path (a
+   fresh capability or a new file in an existing one).
+
+The `features` artifact instruction in the ratchet schema — the payload
+`ratchet instructions features` surfaces — carries the same rule in one line:
+when `.ratchet/features/<capability>/<name>.feature` already exists at the
+target path, start from that store file (copy it into the change, keep its
+scenarios, then edit) and never recreate it from scratch; the
+one-file-per-scenario-set layout guidance is unchanged otherwise.
+
+### Payload-conditional spike guidance in the brainstorm workflow
+
+The `brainstorm` workflow (the `ratchet-brainstorm` skill and the
+`/rct:brainstorm` command, rendered from one shared body for every tool in the
+table above) carries a payload-conditional spike-guidance block: a spike is an
+opt-in, throwaway experiment the body surfaces only when the project's
+resolved payload enables it, and the body never mentions spikes otherwise.
+
+At invocation time the agent runs `ratchet instructions brainstorm --json` and
+reads `spikes.enabled` from the payload as data — it never reads
+`.ratchet/config.yaml` directly. The payload is the single seam: the CLI
+resolves the `brainstorm.spikes` key (see
+[`brainstorm:` settings](config-yaml.md#brainstorm-settings)) into
+`spikes.enabled` — `true` only when the config carries
+`brainstorm.spikes: true`, and `false` on an absent section, an absent config,
+no ratchet root, or any internal failure. The command always exits zero (see
+[`ratchet instructions`](../commands/instructions.md#brainstorm-payload-brainstorm-argument)),
+so an unavailable payload resolves to `false`.
+
+Only when `spikes.enabled` is `true`, and an approach question is genuinely
+uncertain, the agent may offer a spike. The guidance pins four rules:
+
+- **User-approved.** The offer names what the spike would prove, and no spike
+  work begins before the user's explicit approval.
+- **Throwaway.** A spike is discarded once it has answered its question.
+- **Outside the tracked tree.** A spike is built in a scratch location outside
+  the project's tracked tree.
+- **Keeping routes through propose.** Keeping anything from a spike routes as
+  a new `/rct:propose` request; spike output is never merged into the project
+  directly.
+
+When `spikes.enabled` is `false` or the payload is unavailable, the agent
+never mentions spikes.
+
 ## Change directory artifacts
 
 `ratchet new change <name>` scaffolds a change directory at `.ratchet/changes/<name>/`. The propose workflow writes the two required artifacts into it.
@@ -269,7 +431,7 @@ fact.
 ├── features/
 │   └── <capability>/
 │       └── <name>.feature      # Gherkin: Feature / Scenario / Given-When-Then
-├── plan.md                     # ## Why / ## What Changes / ## Design / ## Tasks
+├── plan.md                     # ## Why / ## What Changes / ## Non-goals / ## Design / ## Tasks
 ├── .ratchet.yaml               # change metadata
 └── .run/
     ├── journal.jsonl           # append-only engine run log
@@ -282,13 +444,14 @@ Gherkin feature file. One or more files may exist under `features/` grouped by c
 
 ### `plan.md`
 
-Plan document with four required top-level sections:
+Plan document with five required top-level sections:
 
 | Section | Purpose |
 |---|---|
 | `## Why` | Motivation and problem statement |
 | `## What Changes` | Scope description |
-| `## Design` | Technical design; active standards are embedded here by propose |
+| `## Non-goals` | What the change deliberately will not do; each entry traces to a user, issue, or brainstorm decision — never an agent self-approved omission — with an explicit one-liner when nothing was ruled out |
+| `## Design` | Technical design, with a `### Approaches considered` subsection naming the approaches weighed ("one sensible way" allowed when there is genuinely one sensible approach); active standards are embedded here by propose |
 | `## Tasks` | Markdown checklist (`- [ ]`) tracked by the apply phase |
 
 ### `.ratchet.yaml`

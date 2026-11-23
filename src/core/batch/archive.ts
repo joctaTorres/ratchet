@@ -17,6 +17,12 @@
  * failure leaves earlier changes archived and the batch directory in place. This
  * is acceptable and recoverable — re-running skips the already-archived changes
  * (idempotent) and completes. We do not wrap the cascade in a transaction.
+ *
+ * Scenario-loss halt: when a member's feature materialization trips the
+ * scenario-loss guard (`ScenarioLossError`), the cascade halts at that member
+ * and the refusal is rethrown naming the member and reproducing the guard's
+ * listing verbatim (facts only — resolution guidance lives in the shared
+ * archive-batch workflow body). Any other error propagates unchanged.
  */
 
 import { promises as fs } from 'fs';
@@ -24,6 +30,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { RATCHET_DIR_NAME } from '../config.js';
 import { ArchiveCommand } from '../archive.js';
+import { ScenarioLossError } from '../features-apply.js';
 import { readRunState } from './journal.js';
 import {
   batchExists,
@@ -71,6 +78,28 @@ export interface BatchArchiveResult {
 /** YYYY-MM-DD for today. */
 function getArchiveDate(): string {
   return new Date().toISOString().split('T')[0];
+}
+
+/**
+ * Build the batch-level surface of a scenario-loss refusal: the member change
+ * is named, the guard's own refusal listing (each store file and lost
+ * scenario) is reproduced verbatim, and the facts are stated — the batch
+ * directory stays in place and the cascade is re-runnable with
+ * already-archived members skipped on re-run.
+ *
+ * This message is deliberately facts-only: how to resolve the halt (restore
+ * scenarios, a `features/.deleted` tombstone, archiving the member
+ * individually with `--accept-removed-scenarios`, re-running the batch
+ * archive) is lifecycle guidance authored once in the shared archive-batch
+ * workflow body, never re-authored by the engine (delegated-lifecycle).
+ */
+function formatScenarioLossHalt(changeName: string, error: ScenarioLossError): string {
+  return [
+    `Batch archive halted: the scenario-loss guard refused member change '${changeName}'.`,
+    error.message,
+    'The batch directory stays in place and the cascade is re-runnable: ' +
+      'already-archived members are skipped on re-run.',
+  ].join('\n');
 }
 
 function isChangeArchived(projectRoot: string, changeName: string): boolean {
@@ -199,7 +228,19 @@ export async function archiveBatch(
       continue;
     }
     log(`Archiving member change '${intent.name}'...`);
-    await archiveChange(intent.name);
+    try {
+      await archiveChange(intent.name);
+    } catch (err) {
+      // A scenario-loss guard refusal halts the cascade at the offending
+      // member with the member named and the guard's listing reproduced
+      // verbatim; the batch-directory move below never runs, so the batch
+      // stays in place and a re-run skips already-archived members. Any other
+      // failure propagates unchanged (the documented mid-cascade mode).
+      if (err instanceof ScenarioLossError) {
+        throw new Error(formatScenarioLossHalt(intent.name, err));
+      }
+      throw err;
+    }
     archivedChanges.push(intent.name);
   }
 

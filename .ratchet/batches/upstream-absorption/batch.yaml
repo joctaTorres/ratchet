@@ -1,0 +1,381 @@
+# Batch manifest — declarative intent for a multi-change effort.
+#
+# Absorb the fixes and improvements OpenSpec (v1.4.1 fork point → 2.0.0) and
+# superpowers (brainstorming adapted ≈v6.1 → 7.0.2) shipped since ratchet
+# forked/adapted them, restated in ratchet terms (Gherkin features + plan.md,
+# batches, standards) — never ported verbatim.
+#
+# Design approved via /rct:brainstorm (2026-11-15/16). Evidence map (upstream
+# skill → rct skill, port candidates verified against rendered runtime text and
+# adversarially reviewed): scratchpad skill-map.md from that session.
+#
+# Non-goals (decided by the user): /rct:update (tracked as issue #120),
+# skills-only delivery, project-root guard, parallel engine dispatch, delta-spec
+# / sync behavior, the superpowers design-doc file + builder check + companion
+# server, superpowers' "3 failed fixes" rule (looser than ratchet's
+# stop-on-first-error), shipping default standards (so no TDD standard).
+#
+# Constraints for every change (check each plan.md against .ratchet/standards
+# before apply): delegated-lifecycle (lifecycle text authored once in the shared
+# workflow templates), instruction-fed-config (config reaches skills only as
+# `ratchet instructions` payload data), multi-agent-support (as sharpened in
+# phase 1), documentation (each change documents its own user-facing surface).
+
+name: upstream-absorption
+created: 2026-11-16
+
+phases:
+  # ---------------------------------------------------------------------------
+  # Phase 1 — Agent-neutral skill surface. Goes first so every later slice is
+  # authored and verified against the sharpened standard and its test.
+  # ---------------------------------------------------------------------------
+  - name: agent-neutral-skill-surface
+    goal: >-
+      `ratchet init` / `ratchet update` produce tool-neutral skills and commands
+      for every agent in the supported-tools registry, and every shipped
+      workflow is detected. The multi-agent-support standard is rewritten
+      atemporally (no enumerated agent list — it already omits Gemini — and no
+      internal file paths), requires capability phrasing with a plain-prose
+      fallback instead of bare tool names (OpenSpec 1.7.0 / superpowers v6
+      harness-neutral wording), requires canonical `/rct:<name>` references, and
+      forbids agent-branching prose; a rendered-output test enforces it. The dead
+      `explore.ts` template is retired.
+    success: >-
+      No rendered skill or command, for any registered agent, instructs the
+      agent to use an agent-specific tool (AskUserQuestion, TodoWrite, …) without
+      the capability-plus-fallback form — the five current violations
+      (apply-change ×2, archive-change ×2, propose TodoWrite, plus propose's
+      missing fallback) are fixed and a test fails if one reappears;
+      `ratchet-decompose-phase` / `ratchet-open-pr` / `open-pr` are detected and a
+      parity test ties the detection registry to the workflow profiles;
+      `explore.ts` and its re-export are gone, the false "reused by propose"
+      comment and README line are corrected, and legacy `explore` cleanup on
+      update still works.
+    proofOfWork:
+      kind: integration
+      run: >-
+        pnpm vitest run test/core/shared &&
+        test ! -e src/core/templates/workflows/explore.ts &&
+        ! grep -rnE '\*\*(AskUserQuestion|TodoWrite) tool\*\*' src/core/templates/workflows
+      pass: exit-zero
+    changes:
+      - name: multi-agent-standard-neutrality
+        done: >-
+          multi-agent-support.md is atemporal and requires capability+fallback
+          phrasing, canonical /rct: references and no agent-branching prose; a
+          test iterating every registered agent fails on a bare agent-specific
+          tool name in rendered skills/commands, and the current violations are
+          fixed so it passes
+      - name: skill-registry-parity
+        done: >-
+          tool-detection lists ratchet-decompose-phase, ratchet-open-pr and the
+          open-pr command, and a test asserts the detection registry covers
+          every workflow in ALL_WORKFLOWS (legacy ids allowed)
+      - name: retire-explore-template
+        after: [skill-registry-parity]
+        done: >-
+          explore.ts and its skill-templates re-export are deleted, the
+          skill-generation comment and README agent-workflows line no longer
+          claim propose reuses it, and a test proves legacy explore artifacts are
+          still cleaned up on update
+
+  # ---------------------------------------------------------------------------
+  # Phase 2 — Honest verify / apply / propose / open-pr (lifecycle text only).
+  # ---------------------------------------------------------------------------
+  - name: honest-verify-apply
+    goal: >-
+      The lifecycle workflows can no longer claim more than they proved.
+      verify: a scenario with no implementation and no test is CRITICAL; any
+      check that could not run is reported "Not verified" and blocks "Ready for
+      archive"; verify runs the project's own test command (discovered in the
+      project, no new config) and cites the fresh result. apply: no silent
+      scope narrowing (stop, name it, ask — consistent with scope
+      reconciliation), tick `[x]` only with evidence the specified behavior is
+      fully implemented, suggest /rct:verify when all tasks are done, and the
+      skill/command bodies collapse into one shared constant. propose: planning
+      only — never implements in the same response. open-pr: runs the test
+      command on the pushed tree first and never force-pushes.
+    success: >-
+      /rct:verify on a change with an uncovered scenario or an unrun check never
+      prints "Ready for archive" and cites a fresh test-command result; /rct:apply
+      asks before narrowing scope and ticks only with evidence; propose stops at
+      the planning boundary; open-pr refuses to push red or force-push — each
+      pinned by assertions on every agent's rendered output.
+    proofOfWork:
+      kind: integration
+      # Refined at phase entry (user-approved). Falsifiable: on the pre-phase
+      # tree lifecycle-honesty.test.ts does not exist and neither 'Not verified'
+      # (verify-change.ts) nor 'force-push' (open-pr.ts) appear. The changes
+      # must create test/core/shared/lifecycle-honesty.test.ts, iterating every
+      # registered agent's RENDERED output for the phase-2 guardrails.
+      run: >-
+        pnpm vitest run test/core/shared/lifecycle-honesty.test.ts &&
+        grep -q 'Not verified' src/core/templates/workflows/verify-change.ts &&
+        grep -qi 'force-push' src/core/templates/workflows/open-pr.ts
+      pass: exit-zero
+    changes:
+      - name: verify-honest-report
+        done: >-
+          verify-change template makes a scenario with no implementation and no
+          test a CRITICAL issue, reports any check that could not run as "Not
+          verified" blocking "Ready for archive", and requires running the
+          project's own discovered test command (no new config) citing the fresh
+          result, states that reasonable inference no longer counts as test
+          evidence, and leaves @holdout handling unchanged — pinned by
+          assertions on every registered agent's rendered output in
+          test/core/shared/lifecycle-honesty.test.ts
+      - name: apply-honest-scope
+        done: >-
+          apply-change skill and command bodies collapse into one shared
+          constant that forbids silent scope narrowing (stop, name it, ask —
+          consistent with scope reconciliation), ticks [x] only with evidence
+          the specified behavior is fully implemented, and suggests /rct:verify
+          when all tasks are done — pinned by assertions on every registered
+          agent's rendered output
+      - name: propose-planning-only
+        done: >-
+          propose template states and enforces the planning boundary — it
+          authors the change artifacts and never implements them in the same
+          response — pinned by assertions on every registered agent's rendered
+          output
+      - name: open-pr-tested-push
+        done: >-
+          open-pr template runs the project's own test command on the pushed
+          tree before opening the PR, refuses to open it on a red result, never
+          force-pushes, and on a rejected push stops and reports instead of
+          retrying — pinned by assertions on every registered agent's rendered
+          output in test/core/shared/lifecycle-honesty.test.ts
+
+  # ---------------------------------------------------------------------------
+  # Phase 3 — Scenario-safe archive (CLI code + propose/archive text).
+  # ---------------------------------------------------------------------------
+  - name: scenario-safe-archive
+    goal: >-
+      Archiving can no longer silently drop scenarios from the feature store.
+      propose starts a feature file from the existing store file (copy and
+      edit, never author from scratch) and reads the capability's store files
+      first. `ratchet archive` compares Scenario / Scenario Outline names per
+      overwritten file and refuses by default when any store scenario would be
+      lost, listing them; intentional removal is a `.deleted` tombstone or the
+      new `--accept-removed-scenarios` flag. The archive skill runs without -y
+      first and asks before retrying with the flag; archive-batch halts at a
+      tripped guard. The same check catches concurrent changes overwriting each
+      other's scenarios.
+    success: >-
+      Archiving a change whose feature file lacks a scenario present in the store
+      exits non-zero naming it; the same archive with --accept-removed-scenarios
+      (or a tombstone) succeeds; a fresh capability and a superset file archive
+      normally; archive-batch stops at the offending member.
+    proofOfWork:
+      kind: integration
+      # Refined at phase entry (user-approved). Falsifiable: on the pre-phase
+      # tree neither file mentions accept-removed-scenarios and neither test
+      # file exists. The scenario-loss-guard change must create exactly
+      # test/core/features-apply-scenario-guard.test.ts (unit: lost / kept /
+      # renamed / tombstoned / flag / under -y) and
+      # test/cli-e2e/scenario-safe-archive.test.ts (refuse -> accept).
+      run: >-
+        grep -q 'accept-removed-scenarios' src/core/features-apply.ts &&
+        grep -q 'accept-removed-scenarios' docs/commands/archive.md &&
+        pnpm vitest run test/core/features-apply-scenario-guard.test.ts
+        test/cli-e2e/scenario-safe-archive.test.ts
+      pass: exit-zero
+    changes:
+      - name: scenario-loss-guard
+        done: >-
+          `ratchet archive` compares Scenario / Scenario Outline names for every
+          store file the change would overwrite (reusing the Gherkin parser) and
+          refuses by default — non-zero exit listing each lost scenario name,
+          tripping even under `-y` and when a second change overwrites the same
+          store file without the first's scenarios — while
+          `--accept-removed-scenarios`, a `features/.deleted` tombstone, a fresh
+          capability, and a superset file archive normally; pinned by unit
+          name-diff tests, ArchiveCommand tmpdir integration tests, and a
+          cli-e2e refuse→accept flow, and documented in docs/commands/archive.md
+          and README
+      - name: archive-skill-accept-flow
+        after: [scenario-loss-guard]
+        done: >-
+          the archive-change skill/command body runs `ratchet archive` so the
+          scenario guard engages, and on a scenario-loss refusal names the lost
+          scenarios and asks the user (capability-plus-fallback phrasing) before
+          retrying with `--accept-removed-scenarios`, presenting the
+          `features/.deleted` tombstone as the intentional whole-file-removal
+          route — pinned by rendered-output assertions on every registered
+          agent in the phase's new shared test file
+      - name: propose-store-seeded-features
+        after: [archive-skill-accept-flow]
+        done: >-
+          the propose body instructs reading the capability's existing store
+          files under `.ratchet/features/<capability>/` before authoring and
+          starting each feature file from the existing store file (copy and
+          edit, never author from scratch) so existing store scenarios are
+          preserved by construction — pinned by rendered-output assertions on
+          every registered agent in the shared test file
+      - name: archive-batch-guard-halt
+        after: [scenario-loss-guard, archive-skill-accept-flow]
+        done: >-
+          `ratchet batch archive` halts the cascade at the first member whose
+          scenario guard trips — the refusal surfaces the member and its lost
+          scenarios and the batch directory stays in place, re-runnable — and
+          the archive-batch body tells the agent to report the trip and stop;
+          pinned by core batch-archive tests, a cli-e2e batch-archive run, and
+          rendered-output assertions on every registered agent
+
+  # ---------------------------------------------------------------------------
+  # Phase 4 — plan.md Non-goals (on by default) + Approaches considered.
+  # ---------------------------------------------------------------------------
+  - name: plan-nongoals-approaches
+    goal: >-
+      Plans record what a change deliberately won't do and which approaches
+      were weighed. The plan template and schema instruction gain a default
+      `## Non-goals` section (between What Changes and Design; each entry traces
+      to a user/issue/brainstorm decision, never an agent self-approved
+      omission; an explicit one-liner when nothing was ruled out) and a
+      `### Approaches considered` subsection inside Design ("one sensible way"
+      allowed). `ratchet validate` warns — never errors — on a missing
+      Non-goals; verify flags an implemented Non-goal.
+    success: >-
+      New plans carry both sections; validate warns on a plan without
+      Non-goals while every existing and archived plan still validates; verify
+      reports implementation of a listed Non-goal.
+    proofOfWork:
+      kind: integration
+      # Refined at phase entry. Falsifiable pre-phase: all three greps fail on
+      # the pre-phase tree. The changes must create
+      # test/core/shared/plan-nongoals.test.ts (template, payload, per-agent
+      # rendered output, verify body) and test/core/validation.plan-nongoals.test.ts
+      # (warning-level fixtures + sweep over existing and archived plans).
+      run: >-
+        grep -q '## Non-goals' schemas/ratchet/templates/plan.md &&
+        grep -q 'Approaches considered' schemas/ratchet/templates/plan.md &&
+        grep -qi 'non-goal' src/core/templates/workflows/verify-change.ts &&
+        pnpm vitest run test/core/shared/plan-nongoals.test.ts
+        test/core/validation.plan-nongoals.test.ts
+      pass: exit-zero
+    changes:
+      - name: plan-template-nongoals-approaches
+        done: >-
+          schemas/ratchet/templates/plan.md, the schema.yaml plan instruction,
+          and the shared propose body carry a default `## Non-goals` section
+          between What Changes and Design (each entry traced to a
+          user/issue/brainstorm decision, never an agent self-approved
+          omission, with an explicit one-liner when nothing was ruled out) and
+          a `### Approaches considered` subsection inside Design ("one sensible
+          way" allowed) — pinned by template and instructions-payload
+          assertions plus rendered-output assertions on every registered agent
+          in test/core/shared/plan-nongoals.test.ts, and documented per the
+          documentation standard
+      - name: validate-nongoals-warning
+        after: [plan-template-nongoals-approaches]
+        done: >-
+          `ratchet validate` reports a WARNING — never an ERROR — when plan.md
+          lacks a `## Non-goals` section; fixtures with and without the section
+          pin the level, and a sweep over the repo's existing and archived
+          plans proves the new check adds no ERROR so every plan that validated
+          before still validates (in test/core/validation.plan-nongoals.test.ts;
+          code in src/core/validation/validator.ts and constants.ts) —
+          documented in docs/commands/validate.md
+      - name: verify-nongoal-implementation-flag
+        after: [plan-template-nongoals-approaches]
+        done: >-
+          the verify body reads plan.md's `## Non-goals` and its report flags
+          any listed Non-goal the implementation implements — pinned by
+          rendered-output assertions on every registered agent appended to
+          test/core/shared/plan-nongoals.test.ts and unit cases rejecting the pre-change body
+          shape, and documented in docs/commands/verify.md
+
+  # ---------------------------------------------------------------------------
+  # Phase 5 — brainstorm v7 + opt-in spikes; record absorbed upstream baselines.
+  # ---------------------------------------------------------------------------
+  - name: brainstorm-v7-spikes
+    goal: >-
+      /rct:brainstorm behaves like superpowers v7, in ratchet terms: triage
+      (complete request -> straight to /rct:propose), why-first open questions
+      then named options with a pick, ask only when the answer changes what gets
+      built (otherwise a correctable proposal, defaults said aloud), look before
+      asking with a first-message echo, approaches in their own message ("one
+      sensible way" allowed), 200-300-word playback labelling agent-filled
+      proposals (per-section approval kept), a skip-ahead opt-out routing to
+      propose, step-up-a-size to propose-batch, and a handoff carrying the why,
+      approaches and non-goals into propose. Spikes are opt-in via
+      `brainstorm.spikes` in .ratchet/config.yaml (off by default), delivered as
+      data by a new `ratchet instructions brainstorm --json` payload
+      (`spikes.enabled`; off on failure or no ratchet root); spikes are
+      user-approved, throwaway, built outside the tracked tree, and keeping any
+      of it is a new /rct:propose request. Absorbed upstream baselines
+      (OpenSpec 2.0.0, superpowers 7.0.2) are recorded in README credits and the
+      brainstorm provenance header.
+    success: >-
+      `ratchet instructions brainstorm --json` reports spikes.enabled true/false
+      from config and false with no root; the rendered brainstorm skill carries
+      each v7 behavior and only payload-conditional spike guidance; README
+      records the absorbed baselines.
+    proofOfWork:
+      kind: blackbox
+      # Refined at phase entry. Falsifiable pre-phase: today the CLI errors
+      # "Missing required option --change" and neither README nor brainstorm.ts
+      # carries the baseline strings. Requires: the built CLI prints a "spikes"
+      # payload for `instructions brainstorm --json` with no --change; README.md
+      # contains the exact strings "OpenSpec 2.0.0" and "superpowers 7.0.2";
+      # brainstorm.ts's provenance header contains "superpowers 7.0.2"; new
+      # test file test/core/shared/brainstorm-v7-rendered-output.test.ts.
+      run: >-
+        pnpm build &&
+        node bin/ratchet.js instructions brainstorm --json | grep -q '"spikes"' &&
+        grep -q 'OpenSpec 2.0.0' README.md &&
+        grep -q 'superpowers 7.0.2' README.md &&
+        grep -q 'superpowers 7.0.2' src/core/templates/workflows/brainstorm.ts &&
+        pnpm vitest run test/cli-e2e test/core/shared/brainstorm-v7-rendered-output.test.ts
+      pass: exit-zero
+    changes:
+      - name: brainstorm-instructions-payload
+        done: >-
+          `.ratchet/config.yaml` gains an optional `brainstorm.spikes` boolean
+          (project config schema, default off) and `ratchet instructions
+          brainstorm --json` becomes a special-case payload reporting
+          `spikes.enabled` resolved from that config — true/false from config,
+          and false with exit-zero (never throwing) on unreadable config or no
+          ratchet root — pinned by unit resolution tests and cli-e2e
+          on/off/no-root fixtures against the built CLI, and documented in
+          docs/commands/instructions.md, docs/configuration/config-yaml.md, and
+          README per the documentation standard
+      - name: brainstorm-v7-behaviors
+        done: >-
+          the shared brainstorm body is restated to superpowers v7 in ratchet
+          terms: triage routing a complete request straight to /rct:propose,
+          why-first open questions then named options with a pick, asking only
+          when the answer changes what gets built (otherwise a correctable
+          proposal with defaults said aloud), look-before-asking with a
+          first-message echo, approaches in their own message with "one
+          sensible way" allowed, a 200-300-word playback labelling agent-filled
+          proposals (per-section approval kept), a skip-ahead opt-out routing
+          to propose, step-up-a-size to propose-batch, and a handoff carrying
+          the why, approaches and non-goals into propose — agent-neutral per
+          the sharpened standard, pinned by rendered-output assertions on every
+          registered agent in the new
+          test/core/shared/brainstorm-v7-rendered-output.test.ts plus unit cases
+          rejecting the pre-change body shape, and the template's provenance
+          header records the exact string `superpowers 7.0.2` as the absorbed
+          baseline
+      - name: brainstorm-spike-guidance
+        after: [brainstorm-instructions-payload, brainstorm-v7-behaviors]
+        done: >-
+          the brainstorm body gains only payload-conditional spike guidance:
+          the agent reads `spikes.enabled` from the `ratchet instructions
+          brainstorm --json` payload (never config directly, per
+          instruction-fed-config) and, only when it is true, may offer a
+          user-approved, throwaway spike built outside the tracked tree with
+          keeping any of it routed as a new /rct:propose request — when the
+          value is false or unavailable spikes are never mentioned — pinned by
+          rendered-output assertions appended to
+          test/core/shared/brainstorm-v7-rendered-output.test.ts
+          on every registered agent, and documented in
+          docs/configuration/generated-artifacts.md per the documentation
+          standard
+      - name: upstream-baseline-credits
+        after: [brainstorm-v7-behaviors]
+        done: >-
+          README's credits section records the exact strings `OpenSpec 2.0.0`
+          and `superpowers 7.0.2` as the absorbed upstream baselines, alongside
+          the existing fork attribution

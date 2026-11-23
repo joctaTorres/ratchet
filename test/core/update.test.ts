@@ -1057,6 +1057,75 @@ ${RATCHET_MARKERS.end}
       consoleSpy.mockRestore();
     });
 
+    // Mirrors features/update-sync/legacy-explore-cleanup.feature
+    //   - Scenario: Legacy directory-based explore command is removed on forced update
+    it('removes a legacy directory-based explore command with --force', async () => {
+      // Set up a configured tool
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
+        'old'
+      );
+
+      // Legacy directory-based explore command.
+      const legacyCommandDir = path.join(testDir, '.claude', 'commands', 'ratchet');
+      await fs.mkdir(legacyCommandDir, { recursive: true });
+      await fs.writeFile(
+        path.join(legacyCommandDir, 'explore.md'),
+        'old explore command'
+      );
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      const forceUpdateCommand = new UpdateCommand({ force: true });
+      await forceUpdateCommand.execute(testDir);
+
+      // Should show cleanup message for the directory.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Removed .claude/commands/ratchet/')
+      );
+
+      // The legacy explore command directory is gone.
+      const legacyDirExists = await FileSystemUtils.directoryExists(legacyCommandDir);
+      expect(legacyDirExists).toBe(false);
+
+      consoleSpy.mockRestore();
+    });
+
+    // Mirrors features/update-sync/legacy-explore-cleanup.feature
+    //   - Scenario: Legacy file-based explore command is removed on forced update
+    it('removes a legacy file-based explore command with --force', async () => {
+      // Set up a configured tool
+      const skillsDir = path.join(testDir, '.claude', 'skills');
+      await fs.mkdir(path.join(skillsDir, 'ratchet-propose'), {
+        recursive: true,
+      });
+      await fs.writeFile(
+        path.join(skillsDir, 'ratchet-propose', 'SKILL.md'),
+        'old'
+      );
+
+      // Legacy file-based explore command (cursor pattern: ratchet-*.md).
+      const legacyCommandsDir = path.join(testDir, '.cursor', 'commands');
+      await fs.mkdir(legacyCommandsDir, { recursive: true });
+      const legacyExploreFile = path.join(legacyCommandsDir, 'ratchet-explore.md');
+      await fs.writeFile(legacyExploreFile, 'old explore command');
+
+      const consoleSpy = vi.spyOn(console, 'log');
+
+      const forceUpdateCommand = new UpdateCommand({ force: true });
+      await forceUpdateCommand.execute(testDir);
+
+      // The legacy explore command file is gone.
+      const legacyFileExists = await FileSystemUtils.fileExists(legacyExploreFile);
+      expect(legacyFileExists).toBe(false);
+
+      consoleSpy.mockRestore();
+    });
+
     it('should not show legacy cleanup messages when no legacy files exist', async () => {
       // Set up a configured tool with no legacy files
       const skillsDir = path.join(testDir, '.claude', 'skills');

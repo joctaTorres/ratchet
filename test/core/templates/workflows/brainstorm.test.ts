@@ -8,7 +8,7 @@ import { generateCommand } from '../../../../src/core/command-generation/generat
 import type { CommandContent } from '../../../../src/core/command-generation/types.js';
 
 describe('brainstorm workflow templates', () => {
-  it('exposes a skill template that guides idea -> design -> route', () => {
+  it('exposes a skill template that guides triage -> dialogue -> design -> route', () => {
     const skill = getBrainstormSkillTemplate();
 
     expect(skill.name).toBe('ratchet-brainstorm');
@@ -16,22 +16,49 @@ describe('brainstorm workflow templates', () => {
 
     const body = skill.instructions;
 
-    // Explore project context first (files, docs, recent commits) before anything.
-    expect(body).toMatch(/explore the project context first/i);
+    // Triage: a complete request routes straight to /rct:propose.
+    expect(body).toMatch(/triage/i);
+    expect(body).toMatch(/complete request/i);
+    expect(body).toMatch(/straight to\s+`\/rct:propose`/i);
+
+    // Look before asking: explore project context first, first-message echo.
+    expect(body).toMatch(/look before asking/i);
     expect(body).toMatch(/files,?\s+docs,?\s+and recent\s+commits/i);
+    expect(body).toMatch(/first message/i);
+    expect(body).toMatch(/echo/i);
 
-    // Clarifying questions: one at a time, one per message, purpose/constraints/success.
-    expect(body).toMatch(/one at a time/i);
-    expect(body).toMatch(/one question per message/i);
+    // Why-first open questions before any options; then named options with a
+    // recommended pick.
+    expect(body).toMatch(/why-first/i);
     expect(body).toMatch(/purpose, constraints, and success\s+criteria/i);
-    // Prefer multiple choice, fall back to open-ended.
-    expect(body).toMatch(/multiple-choice/i);
-    expect(body).toMatch(/open-ended/i);
+    expect(body).toMatch(/before\s+presenting\s+any\s+set\s+of\s+options/i);
+    expect(body).toMatch(/named options/i);
+    expect(body).toMatch(/recommended pick/i);
 
-    // 2-3 approaches with a leading recommendation, YAGNI.
-    expect(body).toMatch(/two to three/i);
-    expect(body).toMatch(/lead with your recommended approach/i);
+    // Ask only when the answer changes what gets built; otherwise a default
+    // said aloud as a correctable proposal.
+    expect(body).toMatch(/ask only when the answer changes what gets built/i);
+    expect(body).toMatch(/default[^.]{0,60}aloud/i);
+    expect(body).toMatch(/correctable proposal/i);
+
+    // The pre-change mechanics v7 replaced are gone from the body.
+    expect(body).not.toMatch(/one question per message/i);
+    expect(body).not.toMatch(/one at a time/i);
+    expect(body).not.toMatch(/multiple-choice/i);
+    expect(body).not.toMatch(/two to three/i);
+    expect(body).not.toMatch(/2-3 approaches/i);
+
+    // Approaches in their own message; one sensible way allowed; leading
+    // recommendation when real alternatives exist; YAGNI.
+    expect(body).toMatch(/approaches[^.]{0,80}own message/i);
+    expect(body).toMatch(/one sensible way/i);
+    expect(body).toMatch(/invent extra approaches/i);
+    expect(body).toMatch(/lead with your\s+recommended\s+approach/i);
     expect(body).toContain('YAGNI');
+
+    // Compact playback labelling agent-filled proposals.
+    expect(body).toMatch(/200-300-word/i);
+    expect(body).toMatch(/agent-filled/i);
 
     // Section-by-section design with per-section approval, isolation/clarity.
     expect(body).toMatch(/section by section/i);
@@ -56,6 +83,21 @@ describe('brainstorm workflow templates', () => {
     expect(body).toMatch(/plain prose/i);
   });
 
+  it('restates the skill description metadata to the v7 flow', () => {
+    const { description } = getBrainstormSkillTemplate();
+
+    // The description no longer describes the pre-change mechanics.
+    expect(description).not.toMatch(/one at a time/i);
+    expect(description).not.toMatch(/2-3 approaches/i);
+
+    // It describes the v7 flow instead.
+    expect(description).toMatch(/triage/i);
+    expect(description).toMatch(/why-first/i);
+    expect(description).toMatch(/200-300-word/i);
+    expect(description).toMatch(/skip-ahead/i);
+    expect(description).toMatch(/steps? up a size/i);
+  });
+
   it('describes the capability-gated, server-less, just-in-time visual aid', () => {
     const body = getBrainstormSkillTemplate().instructions;
 
@@ -77,16 +119,35 @@ describe('brainstorm workflow templates', () => {
   it('terminates by recommending and gating a route into propose / propose-batch', () => {
     const body = getBrainstormSkillTemplate().instructions;
 
-    // Single cohesive change -> propose; big split effort -> propose-batch.
+    // Single cohesive change -> propose; big split effort -> step up a size to
+    // propose-batch.
     expect(body).toContain('/rct:propose');
     expect(body).toContain('/rct:propose-batch');
     expect(body).toMatch(/single, cohesive change/i);
     expect(body).toMatch(/split into (multiple changes|phases)/i);
+    expect(body).toMatch(/step up a size/i);
+
+    // Skip-ahead opt-out routes to propose at any point.
+    expect(body).toMatch(/skip[- ]ahead/i);
+    expect(body).toMatch(/never locked into finishing every step/i);
 
     // Explicit gate, never automatic; chains in only on approval.
     expect(body).toMatch(/explicit gate, never automatic/i);
     expect(body).toMatch(/never chain in automatically/i);
     expect(body).toMatch(/on approval/i);
+  });
+
+  it('hands off the why, the approaches considered, and the non-goals', () => {
+    const body = getBrainstormSkillTemplate().instructions;
+
+    // The handoff names the dialogue's decisions and the plan sections they
+    // land in.
+    expect(body).toMatch(/hand ?off/i);
+    expect(body).toMatch(/approaches considered/i);
+    expect(body).toMatch(/non-goals/i);
+    expect(body).toContain('## Why');
+    expect(body).toContain('### Approaches considered');
+    expect(body).toContain('## Non-goals');
   });
 
   it('omits the removed source behaviors (negative scenarios)', () => {
@@ -98,7 +159,7 @@ describe('brainstorm workflow templates', () => {
     expect(body).toMatch(/do \*\*not\*\* hand off to a writing-plans skill/i);
 
     // No sub-project decomposition into separate spec/plan/impl cycles.
-    expect(body).toMatch(/do \*\*not\*\* decompose\s+the request yourself into separate sub-projects/i);
+    expect(body).toMatch(/do\s+\*\*not\*\*\s+decompose\s+the request yourself into separate sub-projects/i);
     expect(body).not.toMatch(/each sub-project gets its own spec/i);
 
     // No design-doc write, no spec self-review, no written-spec review gate.

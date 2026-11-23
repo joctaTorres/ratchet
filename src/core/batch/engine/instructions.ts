@@ -504,12 +504,9 @@ function prDelegationGuidance(context: PrStepContext): string {
     'Open the pull request by invoking the ratchet open-pr skill — run:',
     invocation,
     'It loads the project standards under ".ratchet/standards/" and is the single',
-    "author of the PR-open steps: read `git log` for the repository's commit style",
-    '(defaulting to semantic / Conventional Commits), commit the prior stage agents\'',
-    'accumulated work, push the work branch, and open EXACTLY ONE pull request to its',
-    'base branch using whichever forge CLI the environment provides. Do NOT hand-build',
-    'or re-describe the commit/push/PR-open steps yourself — delegate to the skill and',
-    'use the work/base branch identified above as its Input.',
+    'author of the PR-open steps. Do NOT hand-build or re-describe the PR-open',
+    'steps yourself — delegate to the skill and use the work/base branch',
+    'identified above as its Input.',
   ].join('\n');
 }
 

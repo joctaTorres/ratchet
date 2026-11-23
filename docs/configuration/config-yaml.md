@@ -24,6 +24,7 @@ built-in default ← user/global config ← `.ratchet/config.yaml` ← per-chang
 | `rules` | map | no | — | Per-artifact additive rules. Keys are artifact IDs from the active schema; values are arrays of rule strings. Unknown artifact IDs produce a warning. |
 | `batch` | object | no | — | Project-level defaults for batch orchestration. All sub-keys are optional; absent keys inherit the built-in default. See [`batch:` settings](#batch-settings). |
 | `eval` | object | no | — | Project-level defaults for eval orchestration. See [`eval:` settings](#eval-settings). |
+| `brainstorm` | object | no | — | Brainstorm workflow settings. See [`brainstorm:` settings](#brainstorm-settings). |
 
 ### `rules` structure
 
@@ -306,6 +307,28 @@ an in-file `@skip` Gherkin tag, checked first and independent of this config.
 A skipped case is recorded `skipped` (never silently dropped) and is counted
 in the `eval run` scorecard. `--include-skipped` on `eval run` overrides both
 the `skip` patterns and the `@skip` tag together for that run.
+
+---
+
+## `brainstorm:` settings
+
+Project-level settings for the `/rct:brainstorm` workflow.
+
+| Key | Type | Default | Accepted values | Description |
+|---|---|---|---|---|
+| `spikes` | boolean | `false` | `true` `false` | Opt the project into throwaway brainstorm spikes. When `false` (or the section is absent), the brainstorm workflow proposes solutions directly without spike experiments. |
+
+The value reaches the brainstorm skill as payload data via
+[`ratchet instructions brainstorm --json`](../commands/instructions.md#brainstorm-payload-brainstorm-argument)
+— the skill never reads this file itself. An absent `brainstorm` section
+resolves to `spikes: false`; a malformed section (e.g. a non-boolean `spikes`)
+is dropped with a warning while valid sibling fields load, also resolving to
+`false`.
+
+```yaml
+brainstorm:
+  spikes: true
+```
 
 ---
 

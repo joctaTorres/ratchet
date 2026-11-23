@@ -1,3 +1,7 @@
+// Mirrors:
+// - features/batch-archive/archive-command.feature (cascade, batch move, done gate)
+// - features/batch-archive/done-gate.feature
+// - features/batch-archive/guard-halt.feature (the scenario-loss halt describe)
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import { existsSync } from 'fs';
@@ -5,6 +9,7 @@ import path from 'path';
 import os from 'os';
 import { archiveBatch } from '../../../src/core/batch/archive.js';
 import { appendJournal } from '../../../src/core/batch/journal.js';
+import { ScenarioLossError } from '../../../src/core/features-apply.js';
 
 let projectRoot: string;
 let batchesDir: string;
@@ -328,6 +333,165 @@ describe('archiveBatch', () => {
       });
 
       expect(confirmCalled).toBe(true);
+    });
+  });
+
+  // Mirrors features/batch-archive/guard-halt.feature.
+  describe('scenario-loss halt', () => {
+    const LOST = [
+      { file: 'user-auth/login.feature', names: ['Locked account'] },
+    ];
+
+    /** The guard's refusal as thrown by `applyFeatures`, verbatim. */
+    function guardRefusal(): ScenarioLossError {
+      return new ScenarioLossError(LOST);
+    }
+
+    it('rethrows naming the member and listing each lost scenario and its store file verbatim', async () => {
+      await writeManifest();
+      await makeChange('engine-runtime', true);
+      await makeChange('rex-bootstrap', true);
+
+      let caught: unknown;
+      try {
+        await archiveBatch(projectRoot, BATCH_NAME, {
+          yes: true,
+          date: DATE,
+          log: () => {},
+          archiveChange: async (name) => {
+            if (name === 'rex-bootstrap') throw guardRefusal();
+          },
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      expect(message).toContain("'rex-bootstrap'");
+      // The guard's own listing is reproduced verbatim — every line of it.
+      expect(message).toContain(guardRefusal().message);
+      expect(message).toContain('user-auth/login.feature');
+      expect(message).toContain('Locked account');
+      expect(message).toMatch(/batch director(y|ies) stays? in place|stays in place/i);
+      expect(message).toMatch(/re-runnable/i);
+    });
+
+    it('never reaches members declared after the offender', async () => {
+      await writeManifest();
+      await makeChange('engine-runtime', true);
+      await makeChange('rex-bootstrap', true);
+
+      const attempted: string[] = [];
+      await expect(
+        archiveBatch(projectRoot, BATCH_NAME, {
+          yes: true,
+          date: DATE,
+          log: () => {},
+          archiveChange: async (name) => {
+            attempted.push(name);
+            if (name === 'engine-runtime') throw guardRefusal();
+          },
+        })
+      ).rejects.toThrow(/'engine-runtime'/);
+
+      // The cascade stopped at the offender: rex-bootstrap never ran through
+      // the change-archive flow.
+      expect(attempted).toEqual(['engine-runtime']);
+    });
+
+    it('leaves the active batch directory in place and creates no archived batch directory', async () => {
+      await writeManifest();
+      await makeChange('engine-runtime', true);
+      await makeChange('rex-bootstrap', true);
+
+      await expect(
+        archiveBatch(projectRoot, BATCH_NAME, {
+          yes: true,
+          date: DATE,
+          log: () => {},
+          archiveChange: async (name) => {
+            if (name === 'rex-bootstrap') throw guardRefusal();
+          },
+        })
+      ).rejects.toThrow(/'rex-bootstrap'/);
+
+      expect(existsSync(path.join(batchesDir, BATCH_NAME))).toBe(true);
+      expect(existsSync(path.join(batchesDir, 'archive', `${DATE}-${BATCH_NAME}`))).toBe(false);
+    });
+
+    it('re-run skips already-archived members and halts again at the same member', async () => {
+      await writeManifest();
+      // engine-runtime was archived by the previous run; rex-bootstrap still
+      // drops a store scenario.
+      await archiveChangeDir('engine-runtime');
+      await makeChange('rex-bootstrap', true);
+
+      const attempted: string[] = [];
+      await expect(
+        archiveBatch(projectRoot, BATCH_NAME, {
+          yes: true,
+          date: DATE,
+          log: () => {},
+          archiveChange: async (name) => {
+            attempted.push(name);
+            throw guardRefusal();
+          },
+        })
+      ).rejects.toThrow(/'rex-bootstrap'/);
+
+      expect(attempted).toEqual(['rex-bootstrap']);
+      expect(existsSync(path.join(batchesDir, BATCH_NAME))).toBe(true);
+    });
+
+    it('re-run after the offender is resolved completes the cascade and moves the batch', async () => {
+      await writeManifest();
+      // engine-runtime was archived by the halted run; rex-bootstrap has since
+      // been archived individually (its scenario removal accepted), so it is
+      // also under changes/archive/ now.
+      await archiveChangeDir('engine-runtime');
+      await archiveChangeDir('rex-bootstrap');
+
+      const result = await archiveBatch(projectRoot, BATCH_NAME, {
+        yes: true,
+        date: DATE,
+        log: () => {},
+        archiveChange: async () => {
+          throw new Error('must not run: both members already archived');
+        },
+      });
+
+      expect(result.skippedArchived).toEqual(['engine-runtime', 'rex-bootstrap']);
+      expect(result.archivedChanges).toEqual([]);
+      const archivePath = path.join(batchesDir, 'archive', `${DATE}-${BATCH_NAME}`);
+      expect(existsSync(path.join(batchesDir, BATCH_NAME))).toBe(false);
+      expect(existsSync(archivePath)).toBe(true);
+      expect(result.archivePath).toBe(archivePath);
+    });
+
+    it('propagates a non-scenario-loss error without the halt wrapping', async () => {
+      await writeManifest();
+      await makeChange('engine-runtime', true);
+      await makeChange('rex-bootstrap', true);
+
+      const diskFull = new Error('ENOSPC: no space left on device');
+      let caught: unknown;
+      try {
+        await archiveBatch(projectRoot, BATCH_NAME, {
+          yes: true,
+          date: DATE,
+          log: () => {},
+          archiveChange: async (name) => {
+            if (name === 'rex-bootstrap') throw diskFull;
+          },
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      // Unwrapped: the original error instance and message propagate as-is.
+      expect(caught).toBe(diskFull);
+      expect((caught as Error).message).not.toMatch(/Batch archive halted/);
     });
   });
 });

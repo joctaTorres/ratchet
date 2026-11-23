@@ -445,6 +445,85 @@ context: |
       });
     });
 
+    // Implements features/brainstorm/instructions-payload.feature — the
+    // optional `brainstorm` section is parsed field-by-field via the same
+    // resilient branch as `eval`: a valid section loads typed, a malformed
+    // section is warned-and-dropped while valid sibling fields load.
+    describe('brainstorm section', () => {
+      it('loads a valid brainstorm section as a typed optional section', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\nbrainstorm:\n  spikes: true\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.brainstorm).toEqual({ spikes: true });
+        expect(consoleWarnSpy).not.toHaveBeenCalled();
+      });
+
+      it('loads a valid brainstorm.spikes: false value faithfully (no schema default)', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\nbrainstorm:\n  spikes: false\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.brainstorm).toEqual({ spikes: false });
+        expect(consoleWarnSpy).not.toHaveBeenCalled();
+      });
+
+      it('leaves brainstorm undefined when the config names no brainstorm section', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(configDir, 'config.yaml'), 'schema: ratchet\n');
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.brainstorm).toBeUndefined();
+        expect(consoleWarnSpy).not.toHaveBeenCalled();
+      });
+
+      it('warns and drops a malformed brainstorm section while valid sibling fields load', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\nbrainstorm:\n  spikes: maybe\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.schema).toBe('ratchet');
+        expect(config?.brainstorm).toBeUndefined();
+        expect(consoleWarnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Invalid 'brainstorm' field")
+        );
+      });
+
+      it('warns and drops a non-object brainstorm section', () => {
+        const configDir = path.join(tempDir, '.ratchet');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(configDir, 'config.yaml'),
+          'schema: ratchet\nbrainstorm: yes\n'
+        );
+
+        const config = readProjectConfig(tempDir);
+
+        expect(config?.schema).toBe('ratchet');
+        expect(config?.brainstorm).toBeUndefined();
+        expect(consoleWarnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Invalid 'brainstorm' field")
+        );
+      });
+    });
+
     describe('.yml/.yaml precedence', () => {
       it('should prefer .yaml when both exist', () => {
         const configDir = path.join(tempDir, '.ratchet');

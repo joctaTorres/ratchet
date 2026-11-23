@@ -10,6 +10,45 @@ exactly one agent for a **forced** `propose` transition through the change-scope
 engine core (`runChangeStep`), with no batch manifest in sight. Run state is kept
 change-locally under `.ratchet/changes/<change>/.run/`.
 
+## Overview
+
+```mermaid
+flowchart TD
+    CLARIFY["💬 Clarify intent and derive a name<br/>explore-first when unclear"]
+    ENUMERATE["📋 Enumerate every originating<br/>issue's requirements"]
+    AUTHOR["📝 Scaffold the change and author artifacts<br/>features, then plan.md"]
+    RECONCILE["🧭 Reconcile artifacts against<br/>every originating issue"]
+    STATUS["📊 Show final status<br/>ratchet status"]
+    BOUNDARY{"🛑 Planning boundary<br/>implement in this response?"}
+    STOP["✋ End the turn — never<br/>not partially · not one task ·<br/>not a head start · not even when asked"]
+    APPLY["⚙️ /rct:apply — implementation<br/>is a separate step"]
+
+    CLARIFY --> ENUMERATE
+    ENUMERATE --> AUTHOR
+    AUTHOR --> RECONCILE
+    RECONCILE --> STATUS
+    STATUS --> BOUNDARY
+    BOUNDARY -->|"never"| STOP
+    STOP --> APPLY
+
+    classDef step    fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef decide  fill:#FFF3CD,stroke:#333,stroke-width:2px,color:#7A5D00
+    classDef stop    fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+    classDef handoff fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+
+    class CLARIFY,ENUMERATE,AUTHOR,RECONCILE,STATUS step
+    class BOUNDARY decide
+    class STOP stop
+    class APPLY handoff
+```
+
+The diagram above covers the **`/rct:propose` skill loop** — the agent-facing
+propose workflow that clarifies intent, authors the change artifacts, and stops
+at the planning boundary — which is the surface the planning-boundary rules
+govern. It does not depict the headless `ratchet propose` CLI invocation
+documented in the rest of this page; the CLI merely spawns one agent that runs
+this loop.
+
 ## Synopsis
 
 ```bash
@@ -65,6 +104,15 @@ toward.
    `.ratchet/changes/<change>/.run/`, so a `blocked` or `awaiting-approval` step
    stays resumable.
 
+
+## Planning boundary
+
+The `/rct:propose` workflow authors the change artifacts — the executable
+Gherkin features and `plan.md` — and its work ends there. It never implements
+the plan's tasks in the same response that authored them: not partially, not
+one task, not a head start, and not even when the user asks in the same
+breath. After authoring, reconciliation, and the final status, the agent ends
+its turn. Implementation is a separate [`/rct:apply`](./apply.md) step.
 
 ## Report channel
 

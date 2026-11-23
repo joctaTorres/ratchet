@@ -6,171 +6,7 @@
  */
 import type { SkillTemplate, CommandTemplate } from '../types.js';
 
-export function getApplyChangeSkillTemplate(): SkillTemplate {
-  return {
-    name: 'ratchet-apply-change',
-    description: 'Implement tasks from a Ratchet change. Use when the user wants to start implementing, continue implementation, or work through tasks against the change features and plan.',
-    instructions: `Implement tasks from a Ratchet change.
-
-**Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
-
-**Steps**
-
-1. **Select the change**
-
-   If a name is provided, use it. Otherwise:
-   - Infer from conversation context if the user mentioned a change
-   - Auto-select if only one active change exists
-   - If ambiguous, run \`ratchet list --json\` to get available changes and use the **AskUserQuestion tool** to let the user select
-
-   Always announce: "Using change: <name>" and how to override (e.g., \`/rct:apply <other>\`).
-
-2. **Check status to understand the schema**
-   \`\`\`bash
-   ratchet status --change "<name>" --json
-   \`\`\`
-   Parse the JSON to understand:
-   - \`schemaName\`: The workflow being used (the built-in schema is "ratchet")
-   - \`planningHome\`, \`changeRoot\`, and \`actionContext\`: planning scope and edit constraints
-   - The tasks live in \`plan.md\` under \`## Tasks\` (the schema's \`apply.tracks\` file)
-
-3. **Get apply instructions**
-
-   \`\`\`bash
-   ratchet instructions apply --change "<name>" --json
-   \`\`\`
-
-   This returns:
-   - \`contextFiles\`: artifact ID -> array of concrete file paths (for the ratchet schema: the \`features/**/*.feature\` files and \`plan.md\`)
-   - Progress (total, complete, remaining)
-   - Task list with status
-   - Dynamic instruction based on current state
-
-   **Handle states:**
-   - If \`state: "blocked"\` (missing artifacts): show message, suggest using ratchet-propose
-   - If \`state: "all_done"\`: congratulate, suggest archive
-   - Otherwise: proceed to implementation
-
-   **Workspace guard:** If status JSON reports \`actionContext.mode: "workspace-planning"\` and \`allowedEditRoots\` is empty, explain that full workspace apply is not supported in this slice. Treat linked repos and folders as read-only context, ask the user to select an affected area through an explicit implementation workflow, and STOP before editing files.
-
-4. **Read context files**
-
-   Read every file path listed under \`contextFiles\` from the apply instructions output.
-   For the ratchet schema these are:
-   - **features/**/*.feature**: each Scenario's Given/When/Then is the behavior contract to implement against
-   - **plan.md**: the ## Why / ## What Changes / ## Design context plus the ## Tasks checklist
-
-5. **Show current progress**
-
-   Display:
-   - Schema being used
-   - Progress: "N/M tasks complete"
-   - Remaining tasks overview
-   - Dynamic instruction from CLI
-
-6. **Implement tasks (loop until done or blocked)**
-
-   For each pending task:
-   - Show which task is being worked on
-   - Implement so each related Scenario's Given/When/Then holds true
-   - Keep changes minimal and focused
-   - Mark task complete in \`plan.md\` under \`## Tasks\`: \`- [ ]\` → \`- [x]\`
-   - Continue to next task
-
-   **Pause if:**
-   - Task is unclear → ask for clarification
-   - Implementation reveals a design issue → suggest updating artifacts
-   - Error or blocker encountered → report and wait for guidance
-   - User interrupts
-
-7. **On completion or pause, show status**
-
-   Display:
-   - Tasks completed this session
-   - Overall progress: "N/M tasks complete"
-   - If all done: suggest archive
-   - If paused: explain why and wait for guidance
-
-**Output During Implementation**
-
-\`\`\`
-## Implementing: <change-name> (schema: <schema-name>)
-
-Working on task 3/7: <task description>
-[...implementation happening...]
-✓ Task complete
-
-Working on task 4/7: <task description>
-[...implementation happening...]
-✓ Task complete
-\`\`\`
-
-**Output On Completion**
-
-\`\`\`
-## Implementation Complete
-
-**Change:** <change-name>
-**Schema:** <schema-name>
-**Progress:** 7/7 tasks complete ✓
-
-### Completed This Session
-- [x] Task 1
-- [x] Task 2
-...
-
-All tasks complete! Ready to archive this change.
-\`\`\`
-
-**Output On Pause (Issue Encountered)**
-
-\`\`\`
-## Implementation Paused
-
-**Change:** <change-name>
-**Schema:** <schema-name>
-**Progress:** 4/7 tasks complete
-
-### Issue Encountered
-<description of the issue>
-
-**Options:**
-1. <option 1>
-2. <option 2>
-3. Other approach
-
-What would you like to do?
-\`\`\`
-
-**Guardrails**
-- Keep going through tasks until done or blocked
-- Always read context files before starting (from the apply instructions output)
-- If task is ambiguous, pause and ask before implementing
-- If implementation reveals issues, pause and suggest artifact updates
-- Keep code changes minimal and scoped to each task
-- Update task checkbox immediately after completing each task
-- Pause on errors, blockers, or unclear requirements - don't guess
-- Use contextFiles from CLI output, don't assume specific file names
-
-**Fluid Workflow Integration**
-
-This skill supports the "actions on a change" model:
-
-- **Can be invoked anytime**: Before all artifacts are done (if tasks exist), after partial implementation, interleaved with other actions
-- **Allows artifact updates**: If implementation reveals design issues, suggest updating artifacts - not phase-locked, work fluidly`,
-    license: 'MIT',
-    compatibility: 'Requires ratchet CLI.',
-    metadata: { author: 'ratchet', version: '1.0' },
-  };
-}
-
-export function getRctApplyCommandTemplate(): CommandTemplate {
-  return {
-    name: 'RCT: Apply',
-    description: 'Implement tasks from a Ratchet change (Experimental)',
-    category: 'Workflow',
-    tags: ['workflow', 'artifacts', 'experimental'],
-    content: `Implement tasks from a Ratchet change.
+const APPLY_BODY = `Implement tasks from a Ratchet change.
 
 **Input**: Optionally specify a change name (e.g., \`/rct:apply add-auth\`). If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
 
@@ -181,7 +17,7 @@ export function getRctApplyCommandTemplate(): CommandTemplate {
    If a name is provided, use it. Otherwise:
    - Infer from conversation context if the user mentioned a change
    - Auto-select if only one active change exists
-   - If ambiguous, run \`ratchet list --json\` to get available changes and use the **AskUserQuestion tool** to let the user select
+   - If ambiguous, run \`ratchet list --json\` to get available changes and let the user select — use a structured-question capability such as AskUserQuestion if your agent has one, otherwise ask in plain prose
 
    Always announce: "Using change: <name>" and how to override (e.g., \`/rct:apply <other>\`).
 
@@ -208,7 +44,7 @@ export function getRctApplyCommandTemplate(): CommandTemplate {
 
    **Handle states:**
    - If \`state: "blocked"\` (missing artifacts): show message, suggest using \`/rct:propose\`
-   - If \`state: "all_done"\`: congratulate, suggest archive
+   - If \`state: "all_done"\`: congratulate, suggest running \`/rct:verify\` so the completion claims are checked before any archive
    - Otherwise: proceed to implementation
 
    **Workspace guard:** If status JSON reports \`actionContext.mode: "workspace-planning"\` and \`allowedEditRoots\` is empty, explain that full workspace apply is not supported in this slice. Treat linked repos and folders as read-only context, ask the user to select an affected area through an explicit implementation workflow, and STOP before editing files.
@@ -234,8 +70,10 @@ export function getRctApplyCommandTemplate(): CommandTemplate {
    - Show which task is being worked on
    - Implement so each related Scenario's Given/When/Then holds true
    - Keep changes minimal and focused
-   - Mark task complete in \`plan.md\` under \`## Tasks\`: \`- [ ]\` → \`- [x]\`
+   - Mark the task complete in \`plan.md\` under \`## Tasks\`: \`- [ ]\` → \`- [x]\` — but only with concrete evidence the specified behavior (the task text and each related Scenario's Given/When/Then) is fully implemented in the code just written: the files changed and the behavior observed. Never tick \`[x]\` on partial, inferred, or intended work — a partially implemented task stays unticked and is reported as partial in the session status.
    - Continue to next task
+
+   **No silent scope narrowing.** If the specified behavior cannot be implemented as written, STOP. Name the scope you would have to narrow, and ask the user — use a structured-question capability such as AskUserQuestion if your agent has one, otherwise ask in plain prose — and proceed only on the user's answer. Never silently implement a narrower behavior than the scenario or task specifies. This is the same principle scope reconciliation enforces at authoring time, applied at implementation time: an unwritten intention is an omission, and omissions are the user's decision, never the agent's.
 
    **Pause if:**
    - Task is unclear → ask for clarification
@@ -248,7 +86,7 @@ export function getRctApplyCommandTemplate(): CommandTemplate {
    Display:
    - Tasks completed this session
    - Overall progress: "N/M tasks complete"
-   - If all done: suggest archive
+   - If all done: suggest running \`/rct:verify\` so the completion claims are checked before any archive
    - If paused: explain why and wait for guidance
 
 **Output During Implementation**
@@ -279,7 +117,7 @@ Working on task 4/7: <task description>
 - [x] Task 2
 ...
 
-All tasks complete! You can archive this change with \`/rct:archive\`.
+All tasks complete! Run \`/rct:verify\` to check the completion claims before any archive.
 \`\`\`
 
 **Output On Pause (Issue Encountered)**
@@ -308,15 +146,36 @@ What would you like to do?
 - If task is ambiguous, pause and ask before implementing
 - If implementation reveals issues, pause and suggest artifact updates
 - Keep code changes minimal and scoped to each task
-- Update task checkbox immediately after completing each task
+- Never silently narrow scope: if the specified behavior cannot be implemented as written, stop, name the scope that would have to be narrowed, and ask the user before proceeding — an unwritten intention is an omission, and omissions are the user's decision, never the agent's
+- Tick a task \`[x]\` only with concrete evidence the specified behavior is fully implemented; partial, inferred, or intended work stays unticked and is reported as partial
 - Pause on errors, blockers, or unclear requirements - don't guess
 - Use contextFiles from CLI output, don't assume specific file names
+- When all tasks are done, suggest \`/rct:verify\` before any archive
 
 **Fluid Workflow Integration**
 
 This skill supports the "actions on a change" model:
 
 - **Can be invoked anytime**: Before all artifacts are done (if tasks exist), after partial implementation, interleaved with other actions
-- **Allows artifact updates**: If implementation reveals design issues, suggest updating artifacts - not phase-locked, work fluidly`
+- **Allows artifact updates**: If implementation reveals design issues, suggest updating artifacts - not phase-locked, work fluidly`;
+
+export function getApplyChangeSkillTemplate(): SkillTemplate {
+  return {
+    name: 'ratchet-apply-change',
+    description: 'Implement tasks from a Ratchet change. Use when the user wants to start implementing, continue implementation, or work through tasks against the change features and plan.',
+    instructions: APPLY_BODY,
+    license: 'MIT',
+    compatibility: 'Requires ratchet CLI.',
+    metadata: { author: 'ratchet', version: '1.0' },
+  };
+}
+
+export function getRctApplyCommandTemplate(): CommandTemplate {
+  return {
+    name: 'RCT: Apply',
+    description: 'Implement tasks from a Ratchet change (Experimental)',
+    category: 'Workflow',
+    tags: ['workflow', 'artifacts', 'experimental'],
+    content: APPLY_BODY,
   };
 }

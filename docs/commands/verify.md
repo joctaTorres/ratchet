@@ -11,6 +11,59 @@ Verify a single existing change headlessly. `verify` runs exactly one agent for 
 change-locally under `.ratchet/changes/<change>/.run/`. It completes the headless
 `propose → apply → verify` loop on a single change.
 
+## Overview
+
+```mermaid
+flowchart TD
+    ARTIFACTS["📄 Load change artifacts<br/>ratchet status · instructions apply<br/>features + plan.md"]
+    HOLDOUT{{"⚠️ heldOutCount above 0<br/>one non-blocking WARNING, count only"}}
+    COMPLETENESS{{"✅ Completeness<br/>tasks checked · features present"}}
+    CORRECTNESS{{"🔍 Correctness<br/>scenario by scenario"}}
+    COHERENCE{{"🧭 Coherence<br/>design adherence · non-goals · patterns"}}
+    STANDARDS{{"📏 Standards<br/>declared standards only · skipped when none"}}
+    DISCOVER{{"🔎 Discover test command<br/>manifest · Makefile · CI — no new config"}}
+    RUNTESTS{{"⚙️ Run test command fresh<br/>cite exact command + result"}}
+    NOTVERIFIED{"❓ any check<br/>'Not verified'?"}
+    CRITICAL{"❌ any CRITICAL issue?<br/>uncovered scenario · failing test run"}
+    BLOCKED["🚫 Not ready for archive<br/>name every 'Not verified' check + reason"]
+    FIX["🛠️ X critical issue(s) found<br/>fix before archiving"]
+    READY["🏁 Ready for archive<br/>warnings → with noted improvements"]
+
+    ARTIFACTS --> HOLDOUT
+    HOLDOUT --> COMPLETENESS
+    COMPLETENESS --> CORRECTNESS
+    CORRECTNESS --> COHERENCE
+    COHERENCE --> STANDARDS
+    STANDARDS --> DISCOVER
+    DISCOVER -->|"undiscoverable or unrunnable"| NOTVERIFIED
+    DISCOVER --> RUNTESTS
+    RUNTESTS -->|"failing run → CRITICAL"| CRITICAL
+    RUNTESTS --> NOTVERIFIED
+    NOTVERIFIED -->|"yes"| BLOCKED
+    NOTVERIFIED -->|"no"| CRITICAL
+    CRITICAL -->|"yes"| FIX
+    CRITICAL -->|"no"| READY
+
+    classDef source fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef check  fill:#FFD700,stroke:#333,stroke-width:2px,color:black
+    classDef decide fill:#ADD8E6,stroke:#333,stroke-width:2px,color:darkblue
+    classDef pass   fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+    classDef fail   fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+
+    class ARTIFACTS,HOLDOUT source
+    class COMPLETENESS,CORRECTNESS,COHERENCE,STANDARDS,DISCOVER,RUNTESTS check
+    class NOTVERIFIED,CRITICAL decide
+    class READY pass
+    class BLOCKED,FIX fail
+```
+
+The verify agent loads the change artifacts, checks four dimensions —
+Completeness, Correctness, Coherence, and the Standards the change declared
+(skipped when it declared none) — then discovers the project's own test command
+and runs it fresh. The final assessment is gated: "Ready for archive" appears
+only when every applicable check ran and no CRITICAL issues remain. Any check
+reported "Not verified", or any CRITICAL issue, blocks readiness.
+
 ## Synopsis
 
 ```bash
@@ -62,6 +115,38 @@ Read from on-disk change state before any settings resolution or spawn:
 4. Render the structured `StepResult` as text, or as JSON with `--json`. The
    outcome journal entry is written under `.ratchet/changes/<change>/.run/`, so a
    `blocked` or `awaiting-approval` step stays resumable.
+
+## Verify report honesty
+
+The verify agent's report follows these rules:
+
+- A Scenario with no implementation and no test covering it is a **CRITICAL**
+  issue ("Scenario not covered: \<name\>") and appears in the report's CRITICAL
+  priority list. It is never a WARNING.
+- Any applicable check that could not run — artifacts unreadable, search
+  inconclusive, test command undiscoverable or unrunnable — is reported
+  **"Not verified"** with the reason. A "Not verified" check is never scored as
+  passing, and every "Not verified" check blocks "Ready for archive"; the final
+  assessment names each such check and its reason instead of claiming readiness.
+- Before generating the report, the agent discovers the project's own test
+  command from the project itself (package manifest test script, Makefile test
+  target, CI configuration — whatever the project already declares), runs it
+  fresh, and cites the exact command and the fresh result. No ratchet
+  configuration is added for this. An undiscoverable or unrunnable command is
+  "Not verified"; a failing run is a CRITICAL issue.
+- Reasonable inference does not count as test evidence — test evidence means a
+  fresh run of the project's own test command.
+- When plan.md carries a `## Non-goals` section, the report flags as a
+  **WARNING** each listed Non-goal the implementation implements anyway —
+  "Non-goal implemented: \<entry\>", naming the entry, with the recommendation
+  to remove the out-of-scope implementation or confirm the reversed decision
+  with the user and update plan.md's `## Non-goals`. A plan without the
+  section, or with the explicit nothing-ruled-out one-liner, skips the check
+  and is never failed for lacking it.
+- "Ready for archive" appears only when every applicable check ran and no
+  CRITICAL issues remain.
+- `@holdout` handling is unchanged: one non-blocking WARNING naming only the
+  held-out scenario count (see [Hold-out scenarios](#hold-out-scenarios)).
 
 
 ## Report channel

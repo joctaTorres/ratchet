@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import os from 'os';
 import * as yaml from 'yaml';
 import {
@@ -175,6 +176,68 @@ describe('features-apply', () => {
 
     it('throws when the change does not exist', async () => {
       await expect(applyFeatures(root, 'nope', {})).rejects.toThrow(/not found/);
+    });
+  });
+
+  // Mirrors .ratchet/changes/retire-explore-template/features/agent-workflows/explore-template-retired.feature
+  //   - Scenario: The retired explore stance spec leaves the feature store on archive
+  describe('retire-explore-template tombstone', () => {
+    const EXPLORE_STANCE_REL = 'agent-workflows/explore-stance.feature';
+
+    it('a features/.deleted entry removes the store-relative agent-workflows/explore-stance.feature', async () => {
+      // The store still carries the retired stance spec...
+      await writeFile(
+        path.join(storeDir, 'agent-workflows', 'explore-stance.feature'),
+        'Feature: Explore as a thinking stance\n'
+      );
+      // ...and the change tombstones exactly that store-relative path.
+      await writeFile(
+        path.join(changeDir, 'features', '.deleted'),
+        `${EXPLORE_STANCE_REL}\n`
+      );
+
+      const result = await applyFeatures(root, changeName, {});
+
+      expect(result.deleted).toBe(1);
+      await expect(
+        fs.access(path.join(storeDir, 'agent-workflows', 'explore-stance.feature'))
+      ).rejects.toThrow();
+      const cap = result.byCapability.find(
+        (c) => c.capability === 'agent-workflows'
+      )!;
+      expect(cap.deleted).toBe(1);
+    });
+
+    // The subject of these assertions is the shipped change directory and the
+    // real feature store, so this test intentionally reads repository files
+    // rather than a tmpdir fixture (same posture as the standard-wording
+    // assertions in test/core/shared/agent-neutral-rendered-output.test.ts).
+    it("the change's features/.deleted lists agent-workflows/explore-stance.feature and the store still carries it", async () => {
+      const repoRoot = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../..'
+      );
+      const deletedPath = path.join(
+        repoRoot,
+        RATCHET_DIR_NAME,
+        'changes',
+        'retire-explore-template',
+        'features',
+        '.deleted'
+      );
+      const tombstones = (await fs.readFile(deletedPath, 'utf-8'))
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && !line.startsWith('#'));
+      expect(tombstones).toContain(EXPLORE_STANCE_REL);
+
+      // Pre-archive the store file must still exist, or the tombstone would
+      // have nothing to remove on archive.
+      await expect(
+        fs.access(
+          path.join(repoRoot, RATCHET_DIR_NAME, 'features', EXPLORE_STANCE_REL)
+        )
+      ).resolves.toBeUndefined();
     });
   });
 

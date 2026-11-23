@@ -59,6 +59,7 @@ A change is valid when all three sub-validators pass:
 - `## What Changes` section present and non-empty — `ERROR` if absent or blank.
 - `## Design` section present — `ERROR` if absent.
 - `## Tasks` section present with at least one `- [ ]` checkbox — `ERROR` if absent or no checkbox.
+- `## Non-goals` section present — `WARNING` if absent (plans authored before the section existed keep validating; `--strict` treats the warning as a failure, so a strict run fails every plan lacking the section, including all pre-section active plans — no pipeline impact: CI runs vitest only and the engine never passes `--strict`).
 
 **Standards** (`.ratchet/changes/<name>/.ratchet.yaml`):
 - Every tag listed under `standards` in the change's `.ratchet.yaml` must resolve to a standard in `.ratchet/standards/` — `ERROR` for each unresolved tag.

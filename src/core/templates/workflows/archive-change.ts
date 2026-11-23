@@ -14,7 +14,7 @@ const ARCHIVE_BODY = `Archive a completed change. \`ratchet archive\` copies the
 
 1. **If no change name provided, prompt for selection**
 
-   Run \`ratchet list --json\` to get available changes. Use the **AskUserQuestion tool** to let the user select.
+   Run \`ratchet list --json\` to get available changes. Let the user select — use a structured-question capability such as AskUserQuestion if your agent has one, otherwise ask in plain prose.
 
    Show only active changes (not already archived).
 
@@ -34,7 +34,7 @@ const ARCHIVE_BODY = `Archive a completed change. \`ratchet archive\` copies the
 
    **If any artifacts are not \`done\` or tasks are incomplete:**
    - Display a warning listing what is incomplete
-   - Use the **AskUserQuestion tool** to confirm the user wants to proceed
+   - Confirm the user wants to proceed — use a structured-question capability such as AskUserQuestion if your agent has one, otherwise ask in plain prose
    - Proceed only if the user confirms
 
 3. **(Optional) Remove store features**
@@ -47,15 +47,43 @@ const ARCHIVE_BODY = `Archive a completed change. \`ratchet archive\` copies the
 4. **Run the archive command**
 
    \`\`\`bash
-   ratchet archive "<name>" -y
+   ratchet archive "<name>"
    \`\`\`
+
+   The first attempt runs plain — no \`-y\`, never \`--accept-removed-scenarios\` — so the CLI's own confirmations and the scenario-loss guard surface to the user instead of being pre-approved.
 
    This single command:
    - Validates the plan (informative) and the feature files (blocking on ERROR)
    - Copies each \`features/<rel>.feature\` into \`.ratchet/features/<rel>\` (add or overwrite by relative path), and applies \`features/.deleted\` removals
    - Moves the change directory to \`changes/archive/<YYYY-MM-DD>-<name>/\` (the \`.ratchet.yaml\` moves with it)
 
+   If the plain run surfaces warnings or asks for confirmation, show the user what it printed and confirm before re-running with \`-y\`.
+
    Use \`--skip-features\` only for doc/tooling/infra changes that should not touch the feature store. Use \`--no-validate\` only as a last resort (it requires confirmation).
+
+   **If the archive refuses with a scenario loss**
+
+   \`ratchet archive\` refuses — non-zero exit — when an overwrite would drop scenarios already in the store. The refusal output has this shape:
+
+   \`\`\`
+   Refusing to apply features: N store scenario(s) would be lost.
+     <capability>/<file>.feature:
+       - <lost scenario name>
+       - <lost scenario name>
+   \`\`\`
+
+   When you see this refusal:
+   1. Name each lost scenario and its store file back to the user exactly as the refusal lists them.
+   2. Ask the user whether the removal is intentional — use a structured-question capability such as AskUserQuestion if your agent has one, otherwise ask in plain prose.
+   3. Only after the user explicitly confirms the removal is intentional, retry once with the flag:
+
+      \`\`\`bash
+      ratchet archive "<name>" --accept-removed-scenarios
+      \`\`\`
+
+      Never pass \`--accept-removed-scenarios\` on your own initiative, and never on the first attempt.
+   4. If the intent is to remove a whole feature file from the store, use the tombstone route instead: list the store-relative path in the change's \`features/.deleted\` file (one per line) and re-run plain \`ratchet archive "<name>"\` — no flag needed.
+   5. Otherwise restore the missing scenarios into the change's feature file and re-run plain \`ratchet archive "<name>"\`.
 
 5. **Display summary**
 
@@ -95,7 +123,8 @@ An archive with today's date already exists for this change.
 **Guardrails**
 - Always prompt for change selection if not provided
 - Let \`ratchet archive\` perform the feature-store copy and the move - do NOT \`mv\` the change yourself
-- Don't block archive on warnings - inform and confirm, then pass \`-y\`
+- Don't block archive on warnings - run the first attempt without \`-y\`, surface what it prints, and pass \`-y\` only to a later attempt the user has confirmed
+- Never pass \`--accept-removed-scenarios\` on the first attempt or on your own initiative - only after the user explicitly confirms the scenario removal is intentional
 - The \`.ratchet.yaml\` moves with the directory; do not delete it
 - Show a clear summary of the store changes and the archive location`;
 

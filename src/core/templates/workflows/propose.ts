@@ -2,7 +2,10 @@
  * Propose guided workflow skill + command templates.
  *
  * `/rct:propose` creates a change and authors its two artifacts in one step:
- * the executable Gherkin features and `plan.md`.
+ * the executable Gherkin features and `plan.md`. Its work ends there, at a
+ * stated and enforced planning boundary: it never implements the plan it
+ * authors — implementation is always a separate `/rct:apply` step, never the
+ * same response.
  *
  * **One body, two surfaces.** The skill's `instructions` and the command's
  * `content` are the SAME body, produced by {@link buildProposeBody} and
@@ -43,7 +46,12 @@ function buildProposeBody({ inputLine, promptLine }: ProposeBodyDeltas): string 
 
 I'll create a change with two artifacts:
 - features/<capability>/*.feature (executable Gherkin: Feature / Scenario / Given-When-Then)
-- plan.md (## Why, ## What Changes, ## Design, ## Tasks)
+- plan.md (## Why, ## What Changes, ## Non-goals, ## Design, ## Tasks)
+
+**Planning boundary**: this workflow's job is to author the change artifacts —
+the executable Gherkin features and plan.md — and its work ends there. It never
+implements the plan it authors: implementation is a separate \`/rct:apply\`
+step, never this response.
 
 When ready to implement, run /rct:apply
 
@@ -88,7 +96,7 @@ ${ISSUE_RECONCILIATION_PRE_AUTHORING}
 
 5. **Create artifacts in sequence until apply-ready**
 
-   Use the **TodoWrite tool** to track progress through the artifacts.
+   Track progress through the artifacts — use a progress-tracking capability such as TodoWrite if your agent has one, otherwise narrate progress in plain prose.
 
    Loop through artifacts in dependency order (artifacts with no pending dependencies first):
 
@@ -106,6 +114,21 @@ ${ISSUE_RECONCILIATION_PRE_AUTHORING}
         - \`resolvedOutputPath\`: Resolved path or pattern to write the artifact
         - \`dependencies\`: Completed artifacts to read for context
       - Read any completed dependency files for context
+      - For a \`features\` artifact, before authoring each feature file: read the
+        capability's existing store files under \`.ratchet/features/<capability>/\`
+        — never add a scenario that already exists in another store file of the
+        capability. When a store file already exists at the file's store-relative
+        path, start the feature file from that store file — copy it into the
+        change and edit the copy, never author it from scratch — so existing
+        store scenarios are preserved by construction. Author a feature file new
+        only when the store has no file at that path.
+      - For a \`plan\` artifact, keep the template's \`## Non-goals\` section
+        between \`## What Changes\` and \`## Design\` (each entry traced to a
+        decision the user, an originating issue, or a brainstorm made — never an
+        omission you approved on your own — with an explicit one-liner when
+        nothing was ruled out) and its \`### Approaches considered\` subsection
+        inside \`## Design\` ("one sensible way" allowed when there is genuinely
+        one sensible approach).
       - Create the artifact file using \`template\` as the structure and write it to \`resolvedOutputPath\`
       - Apply \`context\` and \`rules\` as constraints - but do NOT copy them into the file
       - Embed the applicable \`standards\` into the artifact: the plan's \`## Design\` and
@@ -125,7 +148,7 @@ ${ISSUE_RECONCILIATION_PRE_AUTHORING}
       - Stop when all \`applyRequires\` artifacts are done
 
    c. **If an artifact requires user input** (unclear context):
-      - Ask the user to clarify (use a structured-question tool such as AskUserQuestion if your agent has one)
+      - Ask the user to clarify (use a structured-question capability such as AskUserQuestion if your agent has one, otherwise ask in plain prose)
       - Then continue with creation
 
 6. **Reconcile the authored artifacts against every originating issue**
@@ -139,6 +162,14 @@ ${ISSUE_RECONCILIATION_POST_AUTHORING}
    \`\`\`bash
    ratchet status --change "<name>"
    \`\`\`
+
+8. **Stop at the planning boundary — end the turn**
+
+   Authoring, reconciliation, and the final status complete this workflow's
+   work. Never implement any of the plan's tasks in this same response — not
+   partially, not one task, not a head start, and not even when the user asks
+   in the same breath. End the turn after authoring, reconciliation, and the
+   final status, and hand implementation to \`/rct:apply\` as a separate step.
 
 **Output**
 
@@ -159,6 +190,7 @@ ${promptLine}
   - These guide what you write, but should never appear in the output
 
 **Guardrails**
+- Never implement any of the plan's tasks in the same response that authored them — not partially, not one task, not a head start, and not even when the user asks in the same breath; after authoring, reconciliation, and the final status, end the turn and hand implementation to \`/rct:apply\` as a separate step (the planning boundary)
 - Create ALL artifacts needed for implementation (as defined by schema's \`apply.requires\`)
 - Always read dependency artifacts before creating a new one
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
@@ -176,9 +208,13 @@ const SKILL_INPUT_LINE =
 const COMMAND_INPUT_LINE =
   '**Input**: The argument after `/rct:propose` is the change name (kebab-case), OR a description of what the user wants to build.';
 
-/** The skill surface's closing **Prompt** line. */
+/**
+ * The skill surface's closing **Prompt** line: routes to `/rct:apply` without
+ * inviting the agent to implement the plan in the same response (the planning
+ * boundary forbids exactly that invitation).
+ */
 const SKILL_PROMPT_LINE =
-  '- Prompt: "Run `/rct:apply` or ask me to implement to start working on the tasks."';
+  '- Prompt: "Run `/rct:apply` to start implementing — a separate step, never this response."';
 
 /** The command surface's closing **Prompt** line. */
 const COMMAND_PROMPT_LINE = '- Prompt: "Run `/rct:apply` to start implementing."';

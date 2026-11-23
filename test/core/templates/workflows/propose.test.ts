@@ -17,7 +17,7 @@ const SKILL_INPUT_LINE =
 const COMMAND_INPUT_LINE =
   '**Input**: The argument after `/rct:propose` is the change name (kebab-case), OR a description of what the user wants to build.';
 const SKILL_PROMPT_LINE =
-  '- Prompt: "Run `/rct:apply` or ask me to implement to start working on the tasks."';
+  '- Prompt: "Run `/rct:apply` to start implementing — a separate step, never this response."';
 const COMMAND_PROMPT_LINE = '- Prompt: "Run `/rct:apply` to start implementing."';
 
 describe('propose workflow templates', () => {

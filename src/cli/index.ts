@@ -15,6 +15,7 @@ import {
   statusCommand,
   instructionsCommand,
   applyInstructionsCommand,
+  brainstormInstructionsCommand,
   newChangeCommand,
   DEFAULT_SCHEMA,
   type StatusOptions,
@@ -251,7 +252,8 @@ program
   .option('-y, --yes', 'Skip confirmation prompts')
   .option('--skip-features', 'Skip feature store updates (useful for infrastructure, tooling, or doc-only changes)')
   .option('--no-validate', 'Skip validation (not recommended, requires confirmation)')
-  .action(async (changeName?: string, options?: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean }) => {
+  .option('--accept-removed-scenarios', 'Allow feature-store overwrites that drop scenarios (refused by default; the refusal lists each lost scenario)')
+  .action(async (changeName?: string, options?: { yes?: boolean; skipFeatures?: boolean; noValidate?: boolean; validate?: boolean; acceptRemovedScenarios?: boolean }) => {
     try {
       const archiveCommand = new ArchiveCommand();
       await archiveCommand.execute(changeName, options);
@@ -334,6 +336,10 @@ program
       // Special case: "apply" is not an artifact, but a command to get apply instructions
       if (artifactId === 'apply') {
         await applyInstructionsCommand(options);
+      } else if (artifactId === 'brainstorm') {
+        // Special case: "brainstorm" prints the brainstorm payload (spikes
+        // opt-in) — no --change, no ratchet root required, always exit zero.
+        await brainstormInstructionsCommand(options);
       } else {
         await instructionsCommand(artifactId, options);
       }

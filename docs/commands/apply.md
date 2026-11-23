@@ -10,6 +10,39 @@ a **forced** `apply` transition through the change-scoped engine core
 (`runChangeStep`), with no batch manifest in sight. Run state is kept
 change-locally under `.ratchet/changes/<change>/.run/`.
 
+## Overview
+
+The diagram below covers the **`/rct:apply` skill loop** — the agent-facing
+apply workflow that selects a change, loads its context, and works through the
+plan's tasks — which is the surface the apply scope-honesty rules govern. It
+does not depict the headless `ratchet apply` CLI invocation documented in the
+rest of this page; the CLI merely spawns one agent that runs this loop.
+
+```mermaid
+flowchart TD
+    A["📥 Select the change and load context<br/>(status, apply instructions, features, plan)"] --> B["⚙️ Implement each task against its<br/>scenarios' Given/When/Then"]
+    B --> C{"❓ Can the specified behavior be<br/>implemented as written?"}
+    C -->|"No"| D["🛑 STOP: name the narrowed scope<br/>and ask the user"]
+    D --> B
+    C -->|"Yes"| E{"🔍 Concrete evidence the specified<br/>behavior is fully implemented?"}
+    E -->|"No: stays unticked,<br/>reported as partial"| B
+    E -->|"Yes"| F["✅ Tick task [x] in plan.md"]
+    F --> G{"📋 All tasks done?"}
+    G -->|"No"| B
+    G -->|"Yes"| H["🧪 Suggest /rct:verify before any archive"]
+
+    classDef load fill:#E6E6FA,stroke:#333,stroke-width:2px,color:darkblue
+    classDef work fill:#90EE90,stroke:#333,stroke-width:2px,color:darkgreen
+    classDef decision fill:#FFF3CD,stroke:#333,stroke-width:2px,color:#7A5D00
+    classDef stop fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:black
+    classDef handoff fill:#B0E0E6,stroke:#333,stroke-width:2px,color:#0B3D91
+    class A load
+    class B,F work
+    class C,E,G decision
+    class D stop
+    class H handoff
+```
+
 ## Synopsis
 
 ```bash
@@ -61,6 +94,31 @@ Read from on-disk change state before any settings resolution or spawn:
    outcome journal entry is written under `.ratchet/changes/<change>/.run/`, so a
    `blocked` or `awaiting-approval` step stays resumable.
 
+
+## Apply scope honesty
+
+The apply workflow (the `/rct:apply` skill loop above) holds its completion
+claims to what it proved:
+
+- The `/rct:apply` skill and the `/rct:apply` command render from one shared
+  body constant (`APPLY_BODY` in `src/core/templates/workflows/apply-change.ts`);
+  neither carries its own copy of the apply instructions.
+- Scope narrowing is a stop-name-ask event, never silent. When the specified
+  behavior cannot be implemented as written, the agent stops, names the scope
+  it would have to narrow, and asks the user before proceeding — an unwritten
+  intention is an omission, and omissions are the user's decision, never the
+  agent's.
+- A task is ticked `[x]` in `plan.md` only with concrete evidence the
+  specified behavior (the task text and each related Scenario's
+  Given/When/Then) is fully implemented. Partial, inferred, or intended work
+  stays unticked and is reported as partial in the session status.
+- When all tasks are done, apply suggests running `/rct:verify` so the
+  completion claims are checked before any archive; archive is not presented
+  as the immediate next step.
+- The `ratchet instructions apply --json` payload defers to these rules in
+  minimal wording: the schema apply instruction and the ready-state fallback
+  tick a task only once its specified behavior is fully implemented with
+  evidence, and the `all_done` instruction suggests `/rct:verify`.
 
 ## Report channel
 

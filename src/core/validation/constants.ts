@@ -16,6 +16,8 @@ export const VALIDATION_MESSAGES = {
   CHANGE_WHAT_EMPTY: 'What Changes section cannot be empty',
   PLAN_MISSING_SECTIONS: 'Plan is missing required sections (## Why, ## What Changes, ## Design, ## Tasks)',
   PLAN_NO_TASKS: 'Plan ## Tasks section must contain at least one "- [ ]" checkbox',
+  PLAN_NO_NONGOALS:
+    'Plan should have a ## Non-goals section recording what the change deliberately will not do; when nothing was ruled out, state that explicitly in one line',
 
   // Feature (Gherkin) rules
   FEATURE_NO_HEADER: 'Feature file must start with a "Feature:" line',

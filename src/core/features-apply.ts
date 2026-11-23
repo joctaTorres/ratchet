@@ -16,6 +16,7 @@ import { glob } from 'tinyglobby';
 import * as yaml from 'yaml';
 import { RATCHET_DIR_NAME } from './config.js';
 import { getStandardsDir, loadStandards } from './standards.js';
+import { GherkinParser } from './parsers/gherkin-parser.js';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -42,6 +43,31 @@ export interface CapabilitySummary {
   unchanged: number;
 }
 
+/** Scenarios a store file would lose if the change's version were applied. */
+export interface LostScenarios {
+  /** Store-relative path of the overwritten file (e.g. "user-auth/login.feature"). */
+  file: string;
+  /** Store scenario names missing from the change's version (duplicate-free, store order). */
+  names: string[];
+}
+
+/**
+ * Thrown by `applyFeatures` when the scenario-loss guard refuses an apply. The
+ * message is the same formatted refusal the guard has always emitted (the CLI
+ * prints `.message`); the `lostScenarios` payload lets orchestrators (e.g. the
+ * batch-archive cascade) recognize the refusal structurally via `instanceof`
+ * instead of matching on the message text.
+ */
+export class ScenarioLossError extends Error {
+  readonly lostScenarios: LostScenarios[];
+
+  constructor(lostScenarios: LostScenarios[]) {
+    super(formatScenarioLossError(lostScenarios));
+    this.name = 'ScenarioLossError';
+    this.lostScenarios = lostScenarios;
+  }
+}
+
 export interface FeaturesApplyOutput {
   changeName: string;
   added: number;
@@ -50,6 +76,14 @@ export interface FeaturesApplyOutput {
   unchanged: number;
   byCapability: CapabilitySummary[];
   noChanges: boolean;
+  /**
+   * Scenario losses detected by the scenario-loss guard, grouped per
+   * overwritten store file. Empty when nothing would be lost or when the guard
+   * is bypassed with `acceptRemovedScenarios`. In a non-dryRun call a non-empty
+   * result throws instead of being returned; in a dryRun call it is reported
+   * here and nothing is written.
+   */
+  lostScenarios: LostScenarios[];
 }
 
 const FEATURES_SUBDIR = 'features';
@@ -135,6 +169,89 @@ async function filesAreIdentical(a: string, b: string): Promise<boolean> {
   }
 }
 
+// -----------------------------------------------------------------------------
+// Scenario-loss guard
+// -----------------------------------------------------------------------------
+
+function scenarioNames(content: string): string[] {
+  return new GherkinParser(content).parseFeature().scenarios.map((s) => s.name);
+}
+
+/**
+ * Diff the `Scenario` / `Scenario Outline` (and `Scenario Template`) names of
+ * two versions of one feature file, returning the store-version names that are
+ * missing from the change version. The comparison is name-based only, so a
+ * rename reports as a loss of the old name. The result is duplicate-free and
+ * in store order. Commented-out `Scenario:` lines and tag lines never
+ * contribute names (the Gherkin parser skips both).
+ */
+export function diffScenarioNames(storeContent: string, changeContent: string): string[] {
+  const changeNames = new Set(scenarioNames(changeContent));
+  const lost: string[] = [];
+  const seen = new Set<string>();
+  for (const name of scenarioNames(storeContent)) {
+    if (!changeNames.has(name) && !seen.has(name)) {
+      seen.add(name);
+      lost.push(name);
+    }
+  }
+  return lost;
+}
+
+function formatScenarioLossError(lostScenarios: LostScenarios[]): string {
+  const total = lostScenarios.reduce((n, l) => n + l.names.length, 0);
+  const lines = [
+    `Refusing to apply features: ${total} store scenario(s) would be lost.`,
+  ];
+  for (const { file, names } of lostScenarios) {
+    lines.push(`  ${file}:`);
+    for (const name of names) {
+      lines.push(`    - ${name}`);
+    }
+  }
+  lines.push(
+    'Restore the scenarios, remove the file intentionally via a features/.deleted tombstone, ' +
+      'or re-run with --accept-removed-scenarios.'
+  );
+  return lines.join('\n');
+}
+
+/**
+ * Compute the scenario losses a change would inflict per overwritten store
+ * file. A file is guarded only on a true overwrite: it must exist in the
+ * store, differ byte-for-byte, and not be listed in the change's
+ * `features/.deleted` tombstone. Adds and byte-identical files skip the check.
+ */
+async function findLostScenarios(
+  updates: FeatureUpdate[],
+  tombstones: string[]
+): Promise<LostScenarios[]> {
+  const tombstoned = new Set(tombstones.map((t) => t.split(path.sep).join('/')));
+  const losses: LostScenarios[] = [];
+  for (const update of updates) {
+    if (!update.exists) continue;
+    if (tombstoned.has(update.rel.split(path.sep).join('/'))) continue;
+    if (await filesAreIdentical(update.source, update.target)) continue;
+    let storeContent: string;
+    let changeContent: string;
+    try {
+      [storeContent, changeContent] = await Promise.all([
+        fs.readFile(update.target, 'utf-8'),
+        fs.readFile(update.source, 'utf-8'),
+      ]);
+    } catch {
+      // Unreadable target or source: no loss is provable, so the guard skips
+      // the file and the copy phase keeps its prior behavior for it.
+      continue;
+    }
+    const names = diffScenarioNames(storeContent, changeContent);
+    if (names.length > 0) {
+      losses.push({ file: update.rel, names });
+    }
+  }
+  return losses;
+}
+
 function bumpCapability(
   map: Map<string, CapabilitySummary>,
   capability: string,
@@ -159,11 +276,20 @@ function bumpCapability(
  *
  * Tombstone entries that exist in the store are removed and counted as deleted;
  * entries that do not exist are ignored.
+ *
+ * Scenario-loss guard: before any store write, every true overwrite (store
+ * file exists, bytes differ, not tombstoned) is checked for `Scenario` /
+ * `Scenario Outline` names present in the store copy but missing from the
+ * change copy. A non-dryRun call with any loss throws one error listing each
+ * file and lost scenario name (naming `--accept-removed-scenarios` and the
+ * `features/.deleted` tombstone), leaving the store byte-for-byte untouched; a
+ * dryRun call instead reports the losses on `lostScenarios` without throwing.
+ * `acceptRemovedScenarios: true` bypasses the check entirely.
  */
 export async function applyFeatures(
   root: string,
   changeName: string,
-  options: { dryRun?: boolean } = {}
+  options: { dryRun?: boolean; acceptRemovedScenarios?: boolean } = {}
 ): Promise<FeaturesApplyOutput> {
   const changeDir = path.join(root, RATCHET_DIR_NAME, 'changes', changeName);
   const storeDir = path.join(root, RATCHET_DIR_NAME, FEATURES_SUBDIR);
@@ -180,6 +306,15 @@ export async function applyFeatures(
 
   const updates = await findFeatureUpdates(changeDir, storeDir);
   const tombstones = await readTombstones(changeDir);
+
+  // The guard runs before the first copy/delete, so a refusal leaves the
+  // store untouched (atomic-by-ordering).
+  const lostScenarios = options.acceptRemovedScenarios
+    ? []
+    : await findLostScenarios(updates, tombstones);
+  if (lostScenarios.length > 0 && !options.dryRun) {
+    throw new ScenarioLossError(lostScenarios);
+  }
 
   const byCapabilityMap = new Map<string, CapabilitySummary>();
   let added = 0;
@@ -240,6 +375,7 @@ export async function applyFeatures(
     unchanged,
     byCapability,
     noChanges: added + overwritten + deleted === 0,
+    lostScenarios,
   };
 }
 

@@ -1,0 +1,3 @@
+schema: ratchet
+created: 2026-11-21
+standards: [delegated-lifecycle, instruction-fed-config, multi-agent-support, generalizable-defaults, testing, documentation]

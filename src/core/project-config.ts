@@ -110,6 +110,18 @@ export const ProjectConfigSchema = z.object({
     .partial()
     .optional()
     .describe('Project-level defaults for eval orchestration'),
+
+  // Optional: brainstorm workflow settings. `spikes` opts the project into
+  // throwaway brainstorm spikes; absent section ⇒ spikes off. Consumed as
+  // payload data by `ratchet instructions brainstorm --json`
+  // (instruction-fed-config), never read by the skill itself.
+  brainstorm: z
+    .object({
+      spikes: z.boolean().optional(),
+    })
+    .partial()
+    .optional()
+    .describe('Brainstorm workflow settings (spikes opt-in)'),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
@@ -246,6 +258,23 @@ export function readProjectConfig(projectRoot: string): ProjectConfig | null {
         console.warn(
           `Invalid 'eval' field in config (check judge value: auto|deterministic|llm-judge, ` +
             `and gate keys: ${ALL_CONTRIBUTOR_IDS.join('|')} mapped to booleans)`
+        );
+      }
+    }
+
+    // Parse brainstorm field using Zod (brainstorm workflow settings), with
+    // the same per-section resilience as `eval`: a valid section is kept, a
+    // malformed one is dropped with a warning while valid siblings load.
+    if (raw.brainstorm !== undefined) {
+      const brainstormField = ProjectConfigSchema.shape.brainstorm;
+      const brainstormResult = brainstormField.safeParse(raw.brainstorm);
+      if (brainstormResult.success) {
+        if (brainstormResult.data) {
+          config.brainstorm = brainstormResult.data;
+        }
+      } else {
+        console.warn(
+          `Invalid 'brainstorm' field in config (check spikes value: must be a boolean)`
         );
       }
     }

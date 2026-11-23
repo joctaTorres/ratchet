@@ -1,0 +1,4 @@
+# Removed feature files
+
+# The explore stance is retired with its template: nothing ships or reuses it.
+agent-workflows/explore-stance.feature

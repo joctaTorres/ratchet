@@ -527,7 +527,9 @@ flowchart TD
   nogrouping["❌ no PR agent spawned<br/>off / unset — nothing to do"]
   already["❌ no second spawn<br/>this group's PR already open"]
   spawn["⚙️ spawn one pr-stage agent<br/>/rct:open-pr (stacked work + base branch as Input)"]
-  commit["📝 derive git-log style (semantic default)<br/>commit accumulated work · push work branch"]
+  commit["📝 derive git-log style (semantic default)<br/>commit accumulated work"]
+  test["🧪 run the project's own test command<br/>fresh on the committed tree"]
+  push["🚀 push work branch<br/>never force-push"]
   pr["🌐 open EXACTLY ONE pull request<br/>work branch → stacked base branch (forge CLI)"]
   record["💾 record pr completion in run-state<br/>keyed by group: pr:batch:groupId"]
   fail["❌ reported step failure<br/>no pr completion · this group stays retryable"]
@@ -538,8 +540,11 @@ flowchart TD
   opened -- "already opened" --> already
   opened -- "not yet opened" --> spawn
   spawn --> commit
-  commit -- "success" --> pr
-  commit -- "commit / push fails" --> fail
+  commit --> test
+  test -- "green" --> push
+  test -- "red / unrun / undiscoverable" --> fail
+  push -- "success" --> pr
+  push -- "rejected — stop, no retry" --> fail
   pr -- "opened" --> record
   pr -- "PR-open fails" --> fail
 
@@ -550,7 +555,7 @@ flowchart TD
   classDef stop fill:#7f1d1d,stroke:#fca5a5,stroke-width:2px,color:#ffffff;
   class boundary start;
   class grouping,opened gate;
-  class spawn,commit,pr work;
+  class spawn,commit,test,push,pr work;
   class record store;
   class nogrouping,already,fail stop;
 ```
@@ -558,8 +563,11 @@ flowchart TD
 At each fired group boundary, `runPrStep` gates on the active grouping mode
 (`isPrGroupingActive`) and the group's own already-opened flag
 (`hasJournaledPrForGroup`), then spawns one `pr`-stage agent that delegates to
-`/rct:open-pr` to commit the accumulated work in the repo's `git log` style, open
-exactly one PR to the group's stacked base branch, and record the outcome in
+`/rct:open-pr` to commit the accumulated work in the repo's `git log` style, prove
+the committed tree green with the project's own discovered test command (a red,
+unrun, or undiscoverable result stops the step before any push), push only the
+green tree — never force-pushing, and stopping and reporting on a rejected push —
+open exactly one PR to the group's stacked base branch, and record the outcome in
 run-state keyed by group — with `off`/unset and an already-opened group both
 short-circuiting to `nothing-ready`.
 
@@ -567,8 +575,11 @@ Defined in `src/core/batch/engine/engine.ts` (`runPrStep`).
 
 `runPrStep` spawns **exactly one** PR agent that delegates to `/rct:open-pr` to
 commit the prior stage agents' accumulated work in the repository's own `git log`
-commit style (defaulting to semantic / Conventional Commits) and open a single
-pull request from the work branch to its base branch, using whichever forge CLI the
+commit style (defaulting to semantic / Conventional Commits), run the project's
+own discovered test command fresh on the committed tree — the exact commit that
+will be pushed — push only the green tree (never force-pushing; a rejected push
+is stopped and reported, not retried), and open a single pull request from the
+work branch to its base branch, using whichever forge CLI the
 environment provides. It is the structural twin of `runDecompositionStep`: it takes
 the per-batch lock, guarantees the shared command in the spawn locus, builds
 instructions, and hands the request to the shared `spawnAndMap` tail — the engine

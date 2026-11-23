@@ -8,23 +8,28 @@ sidebar_position: 15
 Output enriched instructions for creating an artifact or for applying tasks.
 The positional `[artifact]` argument selects which artifact's instructions to
 produce. The special value `apply` routes to a separate apply-instructions
-path that reads apply-phase configuration from the schema.
+path that reads apply-phase configuration from the schema. The special value
+`brainstorm` routes to a change-free payload path that reports the project's
+brainstorm workflow settings and never fails.
 
 ## Synopsis
 
 ```bash
 ratchet instructions [artifact] --change <id> [options]
 ratchet instructions apply    --change <id> [options]
+ratchet instructions brainstorm [--json]
 ```
 
-`--change` is required. `[artifact]` must be a valid artifact ID from the
-change's schema, or the literal string `apply`.
+`--change` is required, except for the `brainstorm` special case, which takes
+no `--change` and no ratchet root. `[artifact]` must be a valid artifact ID
+from the change's schema, or one of the literal strings `apply` or
+`brainstorm`.
 
 ## Options
 
 | Option | Argument | Description |
 |---|---|---|
-| `--change` | `<id>` | Change name. Required. |
+| `--change` | `<id>` | Change name. Required, except for the `brainstorm` special case. |
 | `--schema` | `<name>` | Schema override. Auto-detected from change metadata when omitted. |
 | `--json` | | Output the structured instructions object as JSON. |
 
@@ -159,6 +164,35 @@ The text output is formatted as Markdown sections:
 - `### Tasks` — checkbox list from the tracking file.
 - `### Instruction` — actionable guidance derived from state and schema configuration.
 
+### Brainstorm payload (`brainstorm` argument)
+
+When the positional argument is `brainstorm`, the command resolves the
+project's brainstorm workflow settings into a small payload and prints it.
+This special case performs no planning-home validation, no schema resolution,
+and no change lookup: it takes no `--change`, requires no ratchet root, and
+always exits with code zero — no ratchet root, an unreadable or malformed
+`.ratchet/config.yaml`, or any internal failure resolves to the disabled
+payload. An agent harness can therefore call it unconditionally at
+skill-invocation time and consume the opt-in as payload data.
+
+Resolution rule for `spikes.enabled`: `true` only when the nearest
+`.ratchet/config.yaml` carries `brainstorm.spikes: true` (see
+[`brainstorm:` settings](../configuration/config-yaml.md#brainstorm-settings)).
+An absent `brainstorm` section, an absent config file, or no planning root
+resolves to `false`.
+
+With `--json`, stdout is the payload object:
+
+```json
+{
+  "spikes": {
+    "enabled": false
+  }
+}
+```
+
+Without `--json`, stdout is a single line, `spikes.enabled: <true|false>`.
+
 ## JSON output shapes
 
 ### Artifact instructions (`--json`)
@@ -217,6 +251,23 @@ configuration or standards library.
 ```
 
 `heldOutCounts` and `heldOutCount` are 0 / empty when no `@holdout` Scenarios are present, or when the project has no `.ratchet/evals/` directory. `missingArtifacts` is omitted when empty. `progress` and `tasks` are empty when the schema defines no `tracks` file.
+
+### Brainstorm payload (`brainstorm --json`)
+
+`--json` prints a `BrainstormInstructionsPayload` object:
+
+```json
+{
+  "spikes": {
+    "enabled": true
+  }
+}
+```
+
+`spikes.enabled` is `true` only when the project's `.ratchet/config.yaml`
+carries `brainstorm.spikes: true`; every other state — section absent, config
+absent or unreadable, or no ratchet root — reports `false` with exit code
+zero.
 
 ## Related commands
 

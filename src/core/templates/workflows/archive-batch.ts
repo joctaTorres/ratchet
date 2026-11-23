@@ -59,21 +59,46 @@ run \`ratchet batch list --json\` and ask which batch to archive.
      > "This batch has incomplete changes (<names>). Archive it anyway?"
      Proceed only if the user confirms.
 
-4. **Invoke the cascading archive command**
-   \`\`\`bash
-   ratchet batch archive "<name>"
-   \`\`\`
-   Add \`--yes\` to skip the incomplete-batch confirmation prompt when archiving a
-   not-yet-done batch non-interactively (e.g. you already confirmed with the user).
-   This single command:
-   - Runs the change-archive flow for each member change in phase order
-     (feature-store materialization + standard-link materialization + move to
-     \`changes/archive/\`). Already-archived and never-created (pending) intents are
-     skipped without error.
-   - Moves the batch directory to
-     \`.ratchet/batches/archive/<YYYY-MM-DD>-<name>/\`.
+ 4. **Invoke the cascading archive command**
+    \`\`\`bash
+    ratchet batch archive "<name>"
+    \`\`\`
+    Add \`--yes\` to skip the incomplete-batch confirmation prompt when archiving a
+    not-yet-done batch non-interactively (e.g. you already confirmed with the user).
+    This single command:
+    - Runs the change-archive flow for each member change in phase order
+      (feature-store materialization + standard-link materialization + move to
+      \`changes/archive/\`). Already-archived and never-created (pending) intents are
+      skipped without error.
+    - Moves the batch directory to
+      \`.ratchet/batches/archive/<YYYY-MM-DD>-<name>/\`.
 
-   Let the command do the cascade and the move — do **not** \`mv\` anything yourself.
+    Let the command do the cascade and the move — do **not** \`mv\` anything yourself.
+
+    **Scenario-loss halt:** the command can exit non-zero with a refusal of the
+    shape \`Refusing to apply features: N store scenario(s) would be lost.\`
+    followed by each store file and its lost scenario names. A scenario-loss
+    refusal halts the cascade at the offending member change: earlier members
+    stay archived, the batch directory stays in place (it is NOT moved), and the
+    cascade is re-runnable — a re-run skips already-archived members. When you
+    see this refusal:
+    - Report the trip to the user and stop. Name the offending member change
+      and each lost scenario and its store file exactly as the refusal lists
+      them — do not paraphrase, do not retry the batch archive.
+    - Ask the user how to resolve the offending member: archive it
+      individually with \`--accept-removed-scenarios\` (accepting the scenario
+      removal) or remove the file intentionally by listing its store-relative
+      path in the member change's \`features/.deleted\` tombstone — use a
+      structured-question tool such as AskUserQuestion if your agent has one,
+      otherwise ask in plain prose.
+    - Route the user's choice through the offending member's own archive flow:
+      invoke \`/rct:archive\` for that member change (its scenario-loss accept
+      flow surfaces the refusal and asks the user again before any
+      \`--accept-removed-scenarios\` retry), then re-run \`/rct:archive-batch\`
+      once the member is archived. \`ratchet batch archive\` itself has no
+      \`--accept-removed-scenarios\` flag — never retry the batch cascade with
+      scenario losses accepted on your own initiative, and never pass
+      \`--accept-removed-scenarios\` without explicit user approval.
 
 5. **Summarize**
    Report: which member changes were archived (and any skipped), and the batch's
@@ -94,7 +119,10 @@ run \`ratchet batch list --json\` and ask which batch to archive.
   only \`ratchet\` CLI commands and user communication.
 - Report the derived batch status before archiving.
 - Archiving a not-yet-done batch is gated: confirm first, then pass \`--yes\`.
-- The cascade is idempotent — re-running skips already-archived changes.`;
+- The cascade is idempotent — re-running skips already-archived changes.
+- A scenario-loss refusal halts the cascade at the offending member: report the
+  trip and stop, ask the user how to resolve it, and never pass
+  \`--accept-removed-scenarios\` on your own initiative.`;
 
 export function getArchiveBatchSkillTemplate(): SkillTemplate {
   return {

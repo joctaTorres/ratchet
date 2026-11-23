@@ -28,7 +28,7 @@ ratchet update [path] [options]
 2. **Migration.** Before any update, `update` runs a one-time migration pass on existing projects to align them with the current profile system. Tool directories detected in the project are preserved.
 
 3. **Profile and delivery resolution.** The active profile and delivery mode are read from the global config:
-   - `core` profile (default): workflows `propose`, `apply`, `verify`, `archive`, `propose-standard`, `apply-batch`, `archive-batch`, `propose-batch`, `brainstorm`.
+   - `core` profile (default): workflows `propose`, `apply`, `verify`, `archive`, `propose-standard`, `apply-batch`, `archive-batch`, `propose-batch`, `decompose-phase`, `brainstorm`, `open-pr`.
    - `custom` profile: only the workflows listed in the global config's `workflows` field.
    - `delivery` controls whether skills, commands, or both are written.
 
@@ -41,7 +41,7 @@ ratchet update [path] [options]
    - **Version mismatch**: the `generatedBy` version embedded in existing skill files differs from the current Ratchet version.
    - **Config sync needed**: the installed set of workflows or delivery mode differs from what the active profile specifies.
    
-   Tools that already match the current version and profile are skipped. The command reports which tools are being updated and which are already up to date.
+   Detection covers the full generated skill and command set — every workflow the active profile can install, including the `ratchet-decompose-phase` and `ratchet-open-pr` skills and the `open-pr` command, is recognized, counted, and drift-checked like every other workflow. Tools that already match the current version and profile are skipped. The command reports which tools are being updated and which are already up to date.
 
 6. **Force update.** With `--force`, all configured tools are updated regardless of their current version or sync state.
 

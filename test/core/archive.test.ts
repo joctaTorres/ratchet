@@ -485,4 +485,144 @@ describe('ArchiveCommand', () => {
     expect(choices.find(c => c.value === 'progress-throws')!.name).toBe('progress-throws');
     await expect(fs.access(archivePath('progress-throws'))).resolves.toBeUndefined();
   });
+
+  // Mirror of the scenario-loss-guard scenarios in
+  // .ratchet/changes/scenario-loss-guard/features/archive-change/archive.feature
+  describe('scenario-loss guard', () => {
+    const STORE_WITH_LOGIN = `Feature: Login
+  Scenario: Successful login
+    Given a registered user
+    When they submit valid credentials
+    Then they are logged in
+`;
+
+    const DROPPING_FEATURE = `Feature: Login
+  Scenario: Password reset
+    Given a registered user
+    When they request a password reset
+    Then a reset email is sent
+`;
+
+    it('refuses by default when the change would drop a store scenario (store untouched, change not moved)', async () => {
+      await writeFile(storePath('user-auth/login.feature'), STORE_WITH_LOGIN);
+      await scaffoldChange(root, 'drop-login', { feature: DROPPING_FEATURE });
+      // No --yes: the default confirm mock accepts the feature-store prompt,
+      // so the refusal comes from the guard itself, not from a declined prompt.
+
+      await expect(new ArchiveCommand().execute('drop-login', {})).rejects.toThrow(
+        /Successful login/
+      );
+
+      // Store left byte-for-byte untouched; change still active, not archived.
+      expect(await fs.readFile(storePath('user-auth/login.feature'), 'utf-8')).toBe(
+        STORE_WITH_LOGIN
+      );
+      await expect(
+        fs.access(path.join(root, RATCHET_DIR_NAME, 'changes', 'drop-login'))
+      ).resolves.toBeUndefined();
+      await expect(fs.access(archivePath('drop-login'))).rejects.toThrow();
+    });
+
+    it('names --accept-removed-scenarios and the features/.deleted tombstone in the refusal', async () => {
+      await writeFile(storePath('user-auth/login.feature'), STORE_WITH_LOGIN);
+      await scaffoldChange(root, 'drop-login', { feature: DROPPING_FEATURE });
+
+      await expect(
+        new ArchiveCommand().execute('drop-login', { yes: true })
+      ).rejects.toThrow(/--accept-removed-scenarios/);
+      await expect(
+        new ArchiveCommand().execute('drop-login', { yes: true })
+      ).rejects.toThrow(/features\/\.deleted/);
+    });
+
+    it('archives normally with acceptRemovedScenarios when the drop is intentional', async () => {
+      await writeFile(storePath('user-auth/login.feature'), STORE_WITH_LOGIN);
+      await scaffoldChange(root, 'drop-login', { feature: DROPPING_FEATURE });
+
+      await new ArchiveCommand().execute('drop-login', {
+        yes: true,
+        acceptRemovedScenarios: true,
+      });
+
+      // Store overwritten with the change's version; change moved to archive.
+      expect(await fs.readFile(storePath('user-auth/login.feature'), 'utf-8')).toBe(
+        DROPPING_FEATURE
+      );
+      await expect(fs.access(archivePath('drop-login'))).resolves.toBeUndefined();
+    });
+
+    it('archives a fresh capability normally (no store file to guard)', async () => {
+      const reportsFeature = `Feature: Reports
+  Scenario: Monthly report
+    Given a month with activity
+    When the report runs
+    Then it summarizes the month
+`;
+      await scaffoldChange(root, 'add-reports', {
+        feature: reportsFeature,
+        rel: 'reports/monthly.feature',
+      });
+
+      await new ArchiveCommand().execute('add-reports', { yes: true });
+
+      expect(await fs.readFile(storePath('reports/monthly.feature'), 'utf-8')).toBe(
+        reportsFeature
+      );
+      await expect(fs.access(archivePath('add-reports'))).resolves.toBeUndefined();
+    });
+
+    it('archives a superset overwrite that keeps every store scenario', async () => {
+      await writeFile(storePath('user-auth/login.feature'), STORE_WITH_LOGIN);
+      const superset = `${STORE_WITH_LOGIN}
+  Scenario: Password reset
+    Given a registered user
+    When they request a password reset
+    Then a reset email is sent
+`;
+      await scaffoldChange(root, 'extend-login', { feature: superset });
+
+      await new ArchiveCommand().execute('extend-login', { yes: true });
+
+      expect(await fs.readFile(storePath('user-auth/login.feature'), 'utf-8')).toBe(
+        superset
+      );
+      await expect(fs.access(archivePath('extend-login'))).resolves.toBeUndefined();
+    });
+
+    // Concurrent-change case: change B overwrites the store file change A just
+    // archived, without A's scenarios — refused, naming each lost scenario.
+    it('refuses a second change that overwrites the same store file without the first change\'s scenarios', async () => {
+      const featureA = `Feature: Login
+  Scenario: A behavior
+    Given precondition A
+    When action A runs
+    Then outcome A holds
+`;
+      const featureB = `Feature: Login
+  Scenario: B behavior
+    Given precondition B
+    When action B runs
+    Then outcome B holds
+`;
+      await scaffoldChange(root, 'first-change', { feature: featureA });
+      await new ArchiveCommand().execute('first-change', { yes: true });
+      // A's scenario is now part of the store.
+      expect(await fs.readFile(storePath('user-auth/login.feature'), 'utf-8')).toBe(
+        featureA
+      );
+
+      await scaffoldChange(root, 'second-change', { feature: featureB });
+      await expect(
+        new ArchiveCommand().execute('second-change', { yes: true })
+      ).rejects.toThrow(/A behavior/);
+
+      // Store still holds A's version; B is not archived.
+      expect(await fs.readFile(storePath('user-auth/login.feature'), 'utf-8')).toBe(
+        featureA
+      );
+      await expect(
+        fs.access(path.join(root, RATCHET_DIR_NAME, 'changes', 'second-change'))
+      ).resolves.toBeUndefined();
+    });
+  });
 });

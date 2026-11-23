@@ -17,6 +17,7 @@ import {
   type ArtifactInstructions,
 } from '../../core/artifact-graph/index.js';
 import { hasEvalIntent } from '../../core/eval/index.js';
+import { buildBrainstormInstructionsPayload } from '../../core/brainstorm-instructions.js';
 import { getChangeDir, resolveCurrentPlanningHomeSync } from '../../core/planning-home.js';
 import {
   validateChangeExists,
@@ -38,6 +39,10 @@ export interface InstructionsOptions {
 export interface ApplyInstructionsOptions {
   change?: string;
   schema?: string;
+  json?: boolean;
+}
+
+export interface BrainstormInstructionsOptions {
   json?: boolean;
 }
 
@@ -361,14 +366,14 @@ export async function generateApplyInstructions(
     instruction = `The ${tracksFilename} file exists but contains no tasks.\nAdd tasks to ${tracksFilename} or regenerate it with ratchet-propose.`;
   } else if (tracksFile && remaining === 0 && total > 0) {
     state = 'all_done';
-    instruction = 'All tasks are complete! This change is ready to be archived.\nConsider running tests and reviewing the changes before archiving.';
+    instruction = 'All tasks are complete! Run /rct:verify to check the completion claims before any archive.';
   } else if (!tracksFile) {
     // No tracking file configured in schema - ready to apply
     state = 'ready';
     instruction = schemaInstruction?.trim() ?? 'All required artifacts complete. Proceed with implementation.';
   } else {
     state = 'ready';
-    instruction = schemaInstruction?.trim() ?? 'Read context files, work through pending tasks, mark complete as you go.\nPause if you hit blockers or need clarification.';
+    instruction = schemaInstruction?.trim() ?? 'Read context files, work through pending tasks, ticking a task only once its specified behavior is fully implemented with evidence.\nPause if you hit blockers or need clarification.';
   }
 
   return {
@@ -483,4 +488,32 @@ export function printApplyInstructionsText(instructions: ApplyInstructions): voi
   // Instruction
   console.log('### Instruction');
   console.log(instruction);
+}
+
+// -----------------------------------------------------------------------------
+// Brainstorm Instructions Command
+// -----------------------------------------------------------------------------
+
+/**
+ * Prints the brainstorm instructions payload — the special case that delivers
+ * the brainstorm workflow's config-driven opt-ins (`spikes.enabled`, resolved
+ * from `.ratchet/config.yaml` `brainstorm.spikes`) to the skill as data.
+ *
+ * This command performs no planning-home validation, no schema resolution,
+ * and no change lookup: it requires no `--change` and no ratchet root, and it
+ * never fails — the payload builder resolves no-root, unreadable-config, and
+ * any internal failure to `spikes.enabled: false`, so the process exits zero
+ * unconditionally and an agent harness can call it at skill-invocation time.
+ */
+export async function brainstormInstructionsCommand(
+  options: BrainstormInstructionsOptions
+): Promise<void> {
+  const payload = buildBrainstormInstructionsPayload();
+
+  if (options.json) {
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+
+  console.log(`spikes.enabled: ${payload.spikes.enabled}`);
 }

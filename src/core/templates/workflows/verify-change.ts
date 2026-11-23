@@ -72,6 +72,8 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
 
    Each dimension can have CRITICAL, WARNING, or SUGGESTION issues.
 
+   **"Not verified" is not a pass.** Any applicable check that could not run — evidence missing or unusable (artifacts unreadable, search inconclusive, test command undiscoverable or unrunnable) — is recorded as "Not verified" with the reason. A check reported "Not verified" is never scored as passing, and every "Not verified" check blocks "Ready for archive".
+
 6. **Verify Completeness**
 
    **Task Completion**:
@@ -99,9 +101,9 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
    - If divergence detected:
      - Add WARNING: "Scenario may not hold: <scenario name> - <details>"
      - Recommendation: "Review <file>:<lines> against the Then step"
-   - If no implementation or test covers the scenario:
-     - Add WARNING: "Scenario not covered: <scenario name>"
-     - Recommendation: "Add test or implementation for: <Given/When/Then>"
+    - If no implementation or test covers the scenario:
+      - Add CRITICAL issue: "Scenario not covered: <scenario name>"
+      - Recommendation: "Add test or implementation for: <Given/When/Then>"
 
    **Note on @holdout scenarios:** If \`heldOutCount > 0\` (step 3), a number of Scenarios were stripped from the context files before you read them. Their absence is intentional — they are held-out anti-overfitting checks enforced by \`ratchet eval run\`, not by verify. Do NOT treat the gap as a coverage deficiency or add a WARNING for missing held-out scenarios. Coverage in this step is measured over the Scenarios you can see.
 
@@ -113,6 +115,14 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
    - If a contradiction is detected:
      - Add WARNING: "Design decision not followed: <decision>"
      - Recommendation: "Update implementation or revise plan.md ## Design to match reality"
+
+   **Non-goals Adherence**:
+   - Read the \`## Non-goals\` section of plan.md when the plan carries one
+   - For each listed Non-goal, check whether the implementation implements it anyway
+   - If a listed Non-goal is implemented:
+     - Add WARNING: "Non-goal implemented: <entry>"
+     - Recommendation: "Remove the out-of-scope implementation, or confirm the reversed decision with the user and update plan.md ## Non-goals"
+   - When the plan has no \`## Non-goals\` section, or the section states explicitly that nothing was ruled out, there is nothing to check: skip this check, and never fail a plan for lacking the section
 
    **Code Pattern Consistency**:
    - Review new code for consistency with project patterns (naming, structure, style)
@@ -130,49 +140,66 @@ const VERIFY_BODY = `Verify that an implementation matches the change artifacts:
      - Recommendation: "Bring <file>:<lines> in line with <standard> guideline: <guideline>"
    - If there are no standards, skip this dimension.
 
-10. **Generate Verification Report**
+10. **Run the project's own test command (fresh test evidence)**
 
-   **Summary Scorecard**:
-   \`\`\`
-   ## Verification Report: <change-name>
+    Discover the project's own test command from the project itself — its package manifest test script, a Makefile test target, CI configuration, or whatever the project already declares. Do NOT add new ratchet configuration, and do NOT assume a toolchain: read what the project declares.
 
-   ### Summary
-   | Dimension    | Status                 |
-   |--------------|------------------------|
-   | Completeness | X/Y tasks complete     |
-   | Correctness  | M/N scenarios satisfied|
-   | Coherence    | Followed/Issues        |
-   | Standards    | K/L standards met      |
-   \`\`\`
+    - If no test command can be discovered: record the test-evidence check as "Not verified (no test command discovered)" — this blocks "Ready for archive".
+    - If the discovered command cannot be run: record the test-evidence check as "Not verified (<reason>)" — this blocks "Ready for archive".
+    - Otherwise run the command fresh, now, and cite the exact command and the fresh result (pass/fail, from this run) in the report. A stale, remembered, or inferred result is not test evidence.
+    - If the fresh run fails: add a CRITICAL issue "Test command fails: <command>" with a summary of the failing output.
 
-   **Issues by Priority**:
+11. **Generate Verification Report**
 
-   1. **CRITICAL** (Must fix before archive):
-      - Incomplete tasks
-      - Unimplemented features
-      - Each with specific, actionable recommendation
+    **Summary Scorecard**:
+    \`\`\`
+    ## Verification Report: <change-name>
 
-   2. **WARNING** (Should fix):
-      - Scenarios not satisfied or not covered
-      - Design divergences
-      - Each with specific recommendation
+    ### Summary
+    | Dimension    | Status                 |
+    |--------------|------------------------|
+    | Completeness | X/Y tasks complete     |
+    | Correctness  | M/N scenarios satisfied|
+    | Coherence    | Followed/Issues        |
+    | Standards    | K/L standards met      |
+    \`\`\`
 
-   3. **SUGGESTION** (Nice to fix):
-      - Pattern inconsistencies
-      - Minor improvements
-      - Each with specific recommendation
+    **Test evidence**: cite the exact test command discovered and run in step 10 and its fresh result, e.g. \`Tests: \`<command>\` → PASS (exit 0, this run)\` or \`Tests: Not verified (no test command discovered)\`.
 
-   **Final Assessment**:
-   - If CRITICAL issues: "X critical issue(s) found. Fix before archiving."
-   - If only warnings: "No critical issues. Y warning(s) to consider. Ready for archive (with noted improvements)."
-   - If all clear: "All scenarios satisfied and all tasks checked. Ready for archive."
+    **Issues by Priority**:
+
+    1. **CRITICAL** (Must fix before archive):
+       - Incomplete tasks
+       - Unimplemented features
+       - Scenarios with no implementation and no test covering them ("Scenario not covered: <name>")
+       - A failing fresh test-command run
+       - Each with specific, actionable recommendation
+
+    2. **WARNING** (Should fix):
+       - Scenarios where divergence is suspected (implemented but may not hold)
+       - Design divergences
+       - Non-goals the implementation implements
+       - Each with specific recommendation
+
+    3. **SUGGESTION** (Nice to fix):
+       - Pattern inconsistencies
+       - Minor improvements
+       - Each with specific recommendation
+
+    **Final Assessment**:
+    - "Ready for archive" — in either form below — appears only when every applicable check ran (no "Not verified" entries) and no CRITICAL issues remain.
+    - If any check is "Not verified": "Not ready for archive: Z check(s) could not be verified:" — name every "Not verified" check and its reason instead of claiming readiness.
+    - If CRITICAL issues: "X critical issue(s) found. Fix before archiving."
+    - If only warnings (every applicable check ran, no CRITICAL issues): "No critical issues. Y warning(s) to consider. Ready for archive (with noted improvements)."
+    - If all clear (every applicable check ran, no CRITICAL issues): "All scenarios satisfied and all tasks checked. Ready for archive."
 
 **Verification Heuristics**
 
 - **Completeness**: Focus on objective checklist items (\`## Tasks\` checkboxes, feature files present)
-- **Correctness**: Map each Given/When/Then to code and tests; use reasonable inference, don't require perfect certainty
+- **Correctness**: Map each Given/When/Then to code and tests. Reasonable inference no longer counts as test evidence — test evidence means a fresh run of the project's own test command (step 10), cited in the report
+- **Not verified**: A check that could not run is never scored as passing — report it "Not verified" with the reason; never lower it to a quieter severity and never treat it as a pass
 - **Coherence**: Look for glaring inconsistencies, don't nitpick style
-- **False Positives**: When uncertain, prefer SUGGESTION over WARNING, WARNING over CRITICAL
+- **False Positives**: When uncertain whether a real divergence exists, prefer SUGGESTION over WARNING, WARNING over CRITICAL. Uncertainty about whether a check could run is not a false positive — it is "Not verified"
 - **Actionability**: Every issue must have a specific recommendation with file/line references where applicable
 
 **Output Format**

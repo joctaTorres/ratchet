@@ -56,8 +56,6 @@ export interface CommandTemplateEntry {
  * @param workflowFilter - If provided, only return templates whose workflowId is in this array
  */
 export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemplateEntry[] {
-  // explore is internal-only: its prose is reused by propose, but it is never
-  // emitted as a generated skill or command.
   const all: SkillTemplateEntry[] = [
     { template: getApplyChangeSkillTemplate(), dirName: 'ratchet-apply-change', workflowId: 'apply' },
     { template: getArchiveChangeSkillTemplate(), dirName: 'ratchet-archive-change', workflowId: 'archive' },
@@ -85,7 +83,6 @@ export function getSkillTemplates(workflowFilter?: readonly string[]): SkillTemp
  * @param workflowFilter - If provided, only return templates whose id is in this array
  */
 export function getCommandTemplates(workflowFilter?: readonly string[]): CommandTemplateEntry[] {
-  // explore is internal-only and is never emitted as a command.
   const all: CommandTemplateEntry[] = [
     { template: getRctApplyCommandTemplate(), id: 'apply' },
     { template: getRctArchiveCommandTemplate(), id: 'archive' },

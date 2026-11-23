@@ -27,6 +27,7 @@ together with task-progress indicators, and the user selects one.
 | `-y, --yes` | | Skip all confirmation prompts; accept defaults automatically. |
 | `--skip-features` | | Skip the feature store update step. No `.feature` files are copied and no standard links are materialized. |
 | `--no-validate` | | Skip pre-archive validation. Not recommended; requires an additional confirmation prompt unless `-y` is also set. |
+| `--accept-removed-scenarios` | | Allow feature-store overwrites that drop scenarios. By default the archive refuses such overwrites and lists each lost scenario; this flag accepts the removal. |
 
 ## Behavior
 
@@ -101,6 +102,31 @@ standards declared in the change:
 A change that declares no standards produces no sidecar or reverse-link output
 from this step.
 
+#### Scenario-loss guard
+
+Before any store write, every file the change would overwrite (present in the
+store, byte-different, and not listed in the change's `features/.deleted`
+tombstone) is checked for scenario loss: the `Scenario` / `Scenario Outline`
+(and `Scenario Template`) names of the store copy are compared against the
+change copy. If any store scenario name is missing from the change's version —
+including a rename, which counts as a loss of the old name — the command
+refuses: it prints one error grouping each lost scenario name under its
+store-relative file and aborts before the first copy or delete, so the store
+is left untouched and the change is not moved into the archive.
+
+The guard trips under `-y` as well; no confirmation prompt can approve a loss.
+The intentional-removal routes are:
+
+- `--accept-removed-scenarios` — accept the removal and apply the overwrite.
+- A `features/.deleted` tombstone entry — remove the whole store file (no
+  scenario check runs for tombstoned files).
+
+New store files (fresh capabilities), byte-identical files, and overwrites
+that keep every store scenario (supersets) apply normally without tripping the
+guard. Because the comparison runs against the live store at archive time, a
+second change that overwrites a store file without the scenarios an earlier
+change just archived is refused the same way.
+
 ### 5. Move to archive
 
 The change directory is moved to:
@@ -130,6 +156,10 @@ The command exits non-zero and prints an error message if:
 - Blocking validation errors are present and `--no-validate` was not passed.
 - The computed archive destination already exists.
 - Any filesystem operation fails during the move.
+- A feature-store overwrite would drop store scenarios and
+  `--accept-removed-scenarios` was not passed (the error lists each lost
+  scenario name grouped by store file; the store is left unchanged and the
+  change is not moved).
 
 ## See also
 
